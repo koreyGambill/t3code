@@ -1601,6 +1601,17 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:setup",
+    searchTerms: ["import", "projects", "history", "setup", "welcome", "onboarding", "wsl"],
+    title: "Import projects",
+    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/welcome" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:settings",
     searchTerms: ["settings", "preferences", "configuration", "keybindings"],
     title: "Open settings",

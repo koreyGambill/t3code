@@ -271,6 +271,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
+import { ImportedSessionProgress } from "./chat/ImportedSessionProgress";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
@@ -3386,6 +3387,16 @@ export default function ChatView(props: ChatViewProps) {
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
+              {activeThreadRef &&
+              activeThread.id.startsWith("import:") &&
+              activeProviderThread?.driver === "claudeAgent" &&
+              activeThread.latestRun === null ? (
+                <ImportedSessionProgress
+                  key={activeThreadKey}
+                  threadRef={activeThreadRef}
+                  timestampFormat={timestampFormat}
+                />
+              ) : null}
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
                   pendingApprovals={pendingApprovals}

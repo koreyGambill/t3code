@@ -8,8 +8,10 @@ it asks you to sign in to T3 Connect, then to run `npx t3 connect` on your
 computer. From home, it adds compatible computers linked to your account and
 opens the app.
 
-Close setup while no import is running to go straight to the app. You can connect
-computers and agents later from Settings, or open `/welcome` to run setup again.
+Close setup while no import is running to go straight to the app. To import more
+projects later, open **Settings > Projects > Import projects**. You can also
+choose **Open setup** in **Settings > Environments**, or search for **Import projects**
+in the command palette. These actions reopen the same setup flow in an existing workspace.
 Direct links, such as Settings, open normally before setup is done.
 
 ## Connect your computers
@@ -18,6 +20,12 @@ Select one or more computers to set up. If you opened T3 Code directly from a
 server or the desktop app, that computer is already connected and selected.
 It is identified by its name, which may differ from the device running your
 browser.
+
+On Windows desktop, choose a WSL distro and **Enable WSL alongside Windows**
+to add it before continuing. Windows and WSL keep separate projects and
+conversation history. Select both computers to import from both. Enabling WSL
+does not copy or sync files or history. If WSL is already configured, use
+**Manage WSL** to change its distro or mode in Settings.
 
 You can add more computers before continuing:
 
@@ -76,10 +84,16 @@ projects it found and warns when projects or conversations may be missing.
 
 Imported projects include Claude, Codex and Pi conversations active within the last
 30 days. You can continue those conversations in T3 Code. Pi is off by default:
-enable it in Settings, then open `/welcome` to import its sessions. Pi sessions
+enable it in Settings, then choose **Import projects** to import its sessions. Pi sessions
 are read from each enabled Pi provider's session directory, which follows
 `PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
 Pi conversation imports its active branch, the one Pi reopens.
+
+Open an imported Claude Code conversation to follow its **Terminal activity**.
+This view checks the original transcript every 5 seconds while expanded and shows
+the latest messages separately from imported history. The original terminal
+still controls the session. Importing and following do not move it into T3 Code.
+Finish the terminal turn before continuing in T3 Code, which closes this view.
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.
@@ -92,8 +106,9 @@ message text and metadata it keeps need more than 32 MiB of memory. Tool output
 does not count toward that limit. It ignores malformed records and skips
 unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project,
-with up to 100,000 input records. Run import again to continue a large batch.
+Each import attempt reads up to 100 conversation files and 4 GiB per project.
+The 100,000-record limit counts visible conversation records for Claude and input
+records for other sources. Run import again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 

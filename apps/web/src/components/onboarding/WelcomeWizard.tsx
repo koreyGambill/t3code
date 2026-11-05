@@ -20,6 +20,7 @@ import {
   CommandId,
   defaultInstanceIdForDriver,
   AuthOrchestrationOperateScope,
+  AuthEnvironmentMaintainScope,
   isManagedDriverAllowed,
   ProviderDriverKind,
   ThreadId,
@@ -35,8 +36,10 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -61,6 +64,8 @@ import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, waitForProject } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
+import { desktopWslStateAtom, refreshDesktopWslState } from "../../state/desktopWslState";
+import { useEnvironmentQuery } from "../../state/query";
 import {
   managedInstanceLocks,
   managedTelemetryOffMessage,
@@ -87,6 +92,7 @@ import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
+import { applyWslEnableSelection } from "../settings/ConnectionsSettings.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
@@ -100,6 +106,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Input } from "../ui/input";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
 import { Dialog } from "../ui/dialog";
@@ -319,6 +326,51 @@ function ConnectionStep({
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
   const { environments } = useEnvironments();
+  const navigate = useNavigate();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const primaryId = primaryEnvironment?.environmentId ?? null;
+  const canMaintain = useEnvironmentScope(primaryId, AuthEnvironmentMaintainScope);
+  const bridge =
+    window.desktopBridge?.getClientPlatform() === "win32" &&
+    !isLocalEnvironmentDisabled() &&
+    canMaintain
+      ? window.desktopBridge
+      : undefined;
+  const wsl = useEnvironmentQuery(bridge ? desktopWslStateAtom : null);
+  const [wslDistro, setWslDistro] = useState<string | null>(null);
+  const [isEnablingWsl, setIsEnablingWsl] = useState(false);
+  const [wslMutationError, setWslMutationError] = useState<string | null>(null);
+  const selectedWslDistro =
+    wslDistro ??
+    wsl.data?.distro ??
+    wsl.data?.distros.find((distro) => distro.isDefault)?.name ??
+    null;
+  const enableWsl = async () => {
+    if (
+      !bridge ||
+      !wsl.data ||
+      wsl.data.enabled ||
+      wsl.data.wslOnly ||
+      isEnablingWsl ||
+      primaryId === null ||
+      !readEnvironmentScope(primaryId, AuthEnvironmentMaintainScope)
+    )
+      return;
+    setIsEnablingWsl(true);
+    setWslMutationError(null);
+    try {
+      await applyWslEnableSelection({
+        bridge,
+        mode: "both",
+        nextDistro: selectedWslDistro,
+        persistedDistro: wsl.data.distro,
+      });
+    } catch (error) {
+      setWslMutationError(error instanceof Error ? error.message : "Could not enable WSL.");
+    }
+    refreshDesktopWslState();
+    setIsEnablingWsl(false);
+  };
   const telemetryOff = managedTelemetryOffMessage(usePrimaryManagedPolicy());
   const cloudEnabled = hasCloudPublicConfig();
   const directEnvironments = environments.filter(
@@ -393,6 +445,83 @@ function ConnectionStep({
           ))}
         </fieldset>
       ) : null}
+      {bridge ? (
+        <div className="mt-4 space-y-3 rounded-lg border border-border bg-background p-3">
+          <h2 className="text-sm font-medium">Windows and WSL</h2>
+          <p className="text-sm text-muted-foreground">
+            Windows and WSL have separate projects and conversation history. Select both computers
+            above to import from both. Files and history are not copied or synced automatically.
+          </p>
+          {wsl.data?.enabled || wsl.data?.wslOnly ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {wsl.data.wslOnly
+                  ? "WSL-only mode is selected."
+                  : "WSL is enabled alongside Windows."}{" "}
+                {selectedWslDistro ? `Distro: ${selectedWslDistro}.` : "Using the default distro."}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void navigate({ to: "/settings/access", hash: "wsl-backend" })}
+              >
+                Manage WSL
+              </Button>
+            </div>
+          ) : wsl.data?.available ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Select
+                value={selectedWslDistro ?? "backend:default-wsl"}
+                onValueChange={(value) =>
+                  setWslDistro(value === "backend:default-wsl" ? null : value)
+                }
+              >
+                <SelectTrigger aria-label="WSL distro" size="sm" disabled={isEnablingWsl}>
+                  <SelectValue>{selectedWslDistro ?? "Default distro"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {wsl.data.distros.length === 0 ? (
+                    <SelectItem value="backend:default-wsl">Default distro</SelectItem>
+                  ) : (
+                    wsl.data.distros.map((distro) => (
+                      <SelectItem key={distro.name} value={distro.name}>
+                        {distro.name}
+                        {distro.isDefault ? " (default)" : ""}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectPopup>
+              </Select>
+              <Button size="sm" disabled={isEnablingWsl} onClick={() => void enableWsl()}>
+                {isEnablingWsl ? "Starting WSL…" : "Enable WSL alongside Windows"}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {wsl.isPending
+                ? "Checking WSL…"
+                : "Install a WSL 2 distro to import its projects here."}
+            </p>
+          )}
+          {wslMutationError || wsl.error || wsl.data?.preflightError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {wslMutationError ?? wsl.error ?? wsl.data?.preflightError}
+            </p>
+          ) : null}
+          {!wsl.data?.available && !wsl.isPending ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setWslMutationError(null);
+                refreshDesktopWslState();
+              }}
+            >
+              Retry WSL detection
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mt-4 space-y-2">
         {cloudEnabled ? (
           <ConnectAccountOption
@@ -461,7 +590,7 @@ function ConnectionStep({
           className="shrink-0 self-end"
           ref={continueRef}
           autoFocus={!expandPairingInitially}
-          disabled={!ready || isPairing}
+          disabled={!ready || isPairing || isEnablingWsl}
           onClick={onContinue}
         >
           Continue

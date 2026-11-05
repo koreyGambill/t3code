@@ -2,6 +2,7 @@ import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -156,6 +157,7 @@ function LocalVersionStatusLabel() {
 
 /** Environments lists the machines this app connects to; access covers who may reach this one. */
 export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
+  const navigate = useNavigate();
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -1503,6 +1505,9 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
         title="Environments"
         headerAction={
           <div className="flex items-center gap-1">
+            <Button variant="outline" size="xs" onClick={() => void navigate({ to: "/welcome" })}>
+              Open setup
+            </Button>
             {savedServerUpdateTargets.length > 0 ? (
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}

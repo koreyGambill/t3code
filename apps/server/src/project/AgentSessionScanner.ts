@@ -669,6 +669,7 @@ function extractCwd(line: string, source: AgentSessionSource): string | null | f
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
+  if (source === "claudeAgent" && record.isSidechain === true) return false;
   if (typeof record.cwd === "string" && record.cwd.trim().length > 0) {
     return record.cwd;
   }
@@ -1008,6 +1009,7 @@ export const make = Effect.gen(function* () {
               return null;
             }
             const records: Array<DecodedTranscriptRecord> = [];
+            const claudeRecordBytes: Array<number> = [];
             let cwd = Option.none<string>();
             let claudeFields = emptyClaudeFields;
             let historyBytes = 0;
@@ -1028,8 +1030,7 @@ export const make = Effect.gen(function* () {
 
             const finishRecord = () => {
               reader.write(decoder.decode());
-              recordCount += 1;
-              if (recordCount > MAX_IMPORT_RECORDS) return false;
+              if (source !== "claudeAgent" && ++recordCount > MAX_IMPORT_RECORDS) return false;
               const value = reader.finish();
               const decoded = decodeTranscriptValue(value);
               if (Option.isNone(decoded) && source === "pi") {
@@ -1041,6 +1042,15 @@ export const make = Effect.gen(function* () {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
                 }
                 if (shouldRetainDecodedRecord(source, decoded.value)) {
+                  if (source === "claudeAgent") {
+                    if (++recordCount > MAX_IMPORT_RECORDS) return false;
+                    if (records.length === MAX_IMPORTED_MESSAGES) {
+                      const index = records[0]?.type === "user" ? 1 : 0;
+                      records.splice(index, 1);
+                      historyBytes -= claudeRecordBytes.splice(index, 1)[0]!;
+                    }
+                    claudeRecordBytes.push(recordBytes);
+                  }
                   if (
                     source === "pi" &&
                     decoded.value.type === "message" &&
@@ -1089,7 +1099,12 @@ export const make = Effect.gen(function* () {
 
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, cwd, claudeFields }
+              ? {
+                  records,
+                  cwd,
+                  claudeFields,
+                  omittedMessageCount: source === "claudeAgent" ? recordCount - records.length : 0,
+                }
               : null;
           }),
         ),
@@ -1754,8 +1769,11 @@ export const make = Effect.gen(function* () {
           importedSessions.add(sessionKey);
           return Option.some<AgentSessionRecentThread>({
             _tag: "Importable",
-            thread:
-              savedTitle === undefined ? parsedThread : { ...parsedThread, title: savedTitle },
+            thread: {
+              ...parsedThread,
+              title: savedTitle ?? parsedThread.title,
+              omittedMessageCount: parsedThread.omittedMessageCount + snapshot.omittedMessageCount,
+            },
             source,
           });
         }).pipe(importReadLock.withPermits(1)),

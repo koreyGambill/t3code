@@ -2,17 +2,30 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthEnvironmentMaintainScope,
   EnvironmentId,
   ProjectId,
   type AgentSessionProjectCandidate,
   type AuthEnvironmentScope,
   type AuthSessionState,
+  type DesktopBridge,
+  type DesktopWslState,
 } from "@t3tools/contracts";
+import {
+  createHashHistory,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+  useLocation,
+} from "@tanstack/react-router";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, render } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -22,13 +35,13 @@ type CreateProjectInput = {
 };
 const state = vi.hoisted(() => ({
   selectedEnvironment: "primary",
-  addedEnvironments: [] as string[],
+  addedEnvironments: null as unknown,
   sessions: new Map<string, unknown>(),
   projects: null as unknown,
   providers: null as unknown,
   config: null as unknown,
   candidates: [] as AgentSessionProjectCandidate[],
-  createProject: vi.fn(),
+  createProject: vi.fn<(input: CreateProjectInput) => Promise<AsyncResult.Success<void>>>(),
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
   connectPairing: vi.fn(),
@@ -58,6 +71,7 @@ vi.mock(import("../../onboarding/firstRun"), async (original) => ({
   completeOnboarding: state.completeOnboarding,
 }));
 vi.mock(import("../../state/environments"), async (original) => {
+  const { useAtomValue } = await import("@effect/atom-react");
   const environment = (environmentId: string) => ({
     environmentId,
     label: environmentId,
@@ -69,7 +83,10 @@ vi.mock(import("../../state/environments"), async (original) => {
     ...(await original()),
     usePrimaryEnvironment: (() => primary) as never,
     useEnvironments: (() => ({
-      environments: [state.selectedEnvironment, ...state.addedEnvironments].map(environment),
+      environments: [
+        state.selectedEnvironment,
+        ...useAtomValue(state.addedEnvironments as Atom.Atom<string[]>),
+      ].map(environment),
     })) as never,
   };
 });
@@ -130,12 +147,24 @@ vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
   ...(await original()),
   ChatGptWelcomeCoordinator: () => <></>,
 }));
+vi.mock(import("../settings/SettingsScopeContext"), async (original) => ({
+  ...(await original()),
+  useSettingsScope: (() => ({
+    search: {},
+    scope: { kind: "all" },
+    groups: [],
+    selectScope: () => undefined,
+  })) as never,
+}));
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { refreshDesktopWslState } from "../../state/desktopWslState";
+import { ProjectsSettings } from "../settings/ProjectsSettings";
 import { WelcomeWizard } from "./WelcomeWizard";
 
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");
+const wslId = EnvironmentId.make("wsl");
 const permissionMessage = "This connection cannot import projects or thread history.";
 
 function session(scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState {
@@ -262,9 +291,10 @@ async function mountImport(remote = false) {
 // Returns the clock spy so each test can `using` it; the spy would otherwise outlive the test.
 function setup() {
   const now = vi.spyOn(Date, "now").mockReturnValue(NOW);
-  state.addedEnvironments = [];
+  state.selectedEnvironment = "primary";
+  state.addedEnvironments = Atom.make<string[]>([]).pipe(Atom.keepAlive);
   state.sessions.clear();
-  for (const id of [primaryId, remoteId]) {
+  for (const id of [primaryId, remoteId, wslId]) {
     state.sessions.set(
       id,
       Atom.make<SessionResult>(AsyncResult.success(session([AuthOrchestrationOperateScope]))).pipe(
@@ -292,6 +322,209 @@ function setup() {
   return now;
 }
 
+function wslBridge(initial: Partial<DesktopWslState> = {}) {
+  let current: DesktopWslState = {
+    available: true,
+    enabled: false,
+    wslOnly: false,
+    distro: null,
+    distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+    preflightError: null,
+    ...initial,
+  };
+  const bridge = {
+    getClientPlatform: () => "win32",
+    getLocalEnvironmentEnabled: () => true,
+    getWslState: vi.fn(async () => current),
+    setWslOnly: vi.fn(async (wslOnly: boolean) => (current = { ...current, wslOnly })),
+    setWslDistro: vi.fn(async (distro: string | null) => (current = { ...current, distro })),
+    setWslBackendEnabled: vi.fn(async (enabled: boolean) => {
+      appAtomRegistry.set(state.addedEnvironments as Atom.Writable<string[]>, ["wsl"]);
+      return (current = { ...current, enabled });
+    }),
+  };
+  return bridge;
+}
+
+it.each(["web", "desktop"] as const)(
+  "reopens project import from Settings with an existing %s workspace",
+  async (surface) => {
+    using _now = setup();
+    appAtomRegistry.set(projectsAtom(), [
+      {
+        id: ProjectId.make("existing"),
+        environmentId: primaryId,
+        workspaceRoot: "/projects/first",
+      },
+    ]);
+    function SettingsOrSetup() {
+      const path = useLocation({ select: (location) => location.pathname });
+      return path === "/welcome" ? (
+        <WelcomeWizard localAvailable onDone={state.onDone} />
+      ) : (
+        <ProjectsSettings />
+      );
+    }
+    const originalUrl = window.location.href;
+    const originalState = window.history.state;
+    const history = surface === "desktop" ? createHashHistory() : createMemoryHistory();
+    using _history = {
+      [Symbol.dispose]() {
+        history.destroy();
+        window.history.replaceState(originalState, "", originalUrl);
+      },
+    };
+    history.replace("/settings/projects");
+    const root = createRootRoute({ component: SettingsOrSetup });
+    const router = createRouter({
+      history,
+      routeTree: root.addChildren([
+        createRoute({ getParentRoute: () => root, path: "/settings/projects" }),
+        createRoute({ getParentRoute: () => root, path: "/welcome" }),
+      ]),
+    });
+    await router.load();
+    // This case exercises the desktop's real hash history as well as browser routing.
+    await using _screen = await render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <RouterProvider router={router} />
+      </RegistryContext.Provider>,
+      { router: false },
+    );
+    await click("Import projects");
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/welcome"));
+    if (surface === "desktop") expect(window.location.hash).toBe("#/welcome");
+    await click("Continue");
+    await click("Continue");
+    await click("Import 2 projects");
+    expect(state.createProject).toHaveBeenCalledOnce();
+    expect(state.importThreads).toHaveBeenCalledTimes(2);
+    expect(state.onDone).toHaveBeenCalledOnce();
+  },
+);
+
+it("enables WSL alongside Windows and imports from both environments", async () => {
+  using _now = setup();
+  appAtomRegistry.set(
+    sessionAtom(primaryId),
+    AsyncResult.success(session([AuthOrchestrationOperateScope, AuthEnvironmentMaintainScope])),
+  );
+  const bridge = wslBridge({
+    distros: [
+      { name: "Ubuntu", isDefault: true, version: 2 },
+      { name: "Debian", isDefault: false, version: 2 },
+    ],
+  });
+  const start = deferred<void>();
+  const enable = bridge.setWslBackendEnabled.getMockImplementation()!;
+  bridge.setWslBackendEnabled.mockImplementationOnce(async (enabled) => {
+    await start.promise;
+    return enable(enabled);
+  });
+  using _bridge = stubGlobal("desktopBridge", bridge as unknown as DesktopBridge);
+  refreshDesktopWslState();
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard localAvailable onDone={state.onDone} />
+    </RegistryContext.Provider>,
+  );
+  await vi.waitFor(() => expect(button("Enable WSL alongside Windows").disabled).toBe(false));
+  await page.getByRole("combobox", { name: "WSL distro" }).click();
+  await page.getByRole("option", { name: "Debian", exact: true }).click();
+  await click("Enable WSL alongside Windows");
+  expect(button("Continue").disabled).toBe(true);
+  await act(async () => {
+    start.resolve();
+    await start.promise;
+  });
+  await vi.waitFor(() => expect(button("Continue").disabled).toBe(false));
+  await click("Continue");
+  await click("Continue");
+  await click("Import 4 projects");
+  expect(state.createProject.mock.calls.map(([call]) => call.environmentId)).toEqual([
+    primaryId,
+    primaryId,
+    wslId,
+    wslId,
+  ]);
+  expect(bridge.setWslOnly).toHaveBeenCalledWith(false);
+  expect(bridge.setWslDistro).toHaveBeenCalledWith("Debian");
+  expect(state.onDone).toHaveBeenCalledOnce();
+});
+
+it("keeps Windows setup usable after WSL enable fails and allows retry", async () => {
+  using _now = setup();
+  appAtomRegistry.set(
+    sessionAtom(primaryId),
+    AsyncResult.success(session([AuthOrchestrationOperateScope, AuthEnvironmentMaintainScope])),
+  );
+  const bridge = wslBridge();
+  bridge.setWslBackendEnabled.mockRejectedValueOnce(new Error("WSL could not start"));
+  using _bridge = stubGlobal("desktopBridge", bridge as unknown as DesktopBridge);
+  refreshDesktopWslState();
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard localAvailable onDone={state.onDone} />
+    </RegistryContext.Provider>,
+  );
+  await vi.waitFor(() => expect(button("Enable WSL alongside Windows").disabled).toBe(false));
+  await click("Enable WSL alongside Windows");
+  await vi.waitFor(() => expect(pageText()).toContain("WSL could not start"));
+  expect(button("Continue").disabled).toBe(false);
+  await click("Enable WSL alongside Windows");
+  await vi.waitFor(() => expect(bridge.setWslBackendEnabled).toHaveBeenCalledTimes(2));
+  await click("Continue");
+  await click("Continue");
+  expect(state.scan.mock.calls.map(([call]) => call.environmentId)).toContain(wslId);
+});
+
+it.each([
+  { enabled: true, wslOnly: false },
+  { enabled: true, wslOnly: true },
+  { enabled: false, wslOnly: true },
+])("preserves existing WSL configuration: %j", async (configuration) => {
+  using _now = setup();
+  appAtomRegistry.set(
+    sessionAtom(primaryId),
+    AsyncResult.success(session([AuthOrchestrationOperateScope, AuthEnvironmentMaintainScope])),
+  );
+  const bridge = wslBridge({ ...configuration, distro: "Ubuntu" });
+  using _bridge = stubGlobal("desktopBridge", bridge as unknown as DesktopBridge);
+  refreshDesktopWslState();
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard localAvailable onDone={state.onDone} />
+    </RegistryContext.Provider>,
+  );
+  await vi.waitFor(() => expect(button("Manage WSL").disabled).toBe(false));
+  await click("Continue");
+  await click("Continue");
+  expect(bridge.setWslOnly).not.toHaveBeenCalled();
+  expect(bridge.setWslDistro).not.toHaveBeenCalled();
+  expect(bridge.setWslBackendEnabled).not.toHaveBeenCalled();
+});
+
+it("sets up a remote environment without probing WSL when local environments are off", async () => {
+  using _now = setup();
+  state.selectedEnvironment = "remote";
+  appAtomRegistry.set(
+    sessionAtom(primaryId),
+    AsyncResult.success(session([AuthOrchestrationOperateScope, AuthEnvironmentMaintainScope])),
+  );
+  const bridge = { ...wslBridge(), getLocalEnvironmentEnabled: () => false };
+  using _bridge = stubGlobal("desktopBridge", bridge as unknown as DesktopBridge);
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard localAvailable={false} onDone={state.onDone} />
+    </RegistryContext.Provider>,
+  );
+  await click("Continue");
+  await click("Continue");
+  expect(state.scan.mock.calls.map(([call]) => call.environmentId)).toEqual([remoteId]);
+  expect(bridge.getWslState).not.toHaveBeenCalled();
+  expect(bridge.setWslBackendEnabled).not.toHaveBeenCalled();
+});
+
 it("keeps the project selection after going back a stage", async () => {
   using _now = setup();
   await using _screen = await mountImport();
@@ -309,14 +542,14 @@ it("ticks the recent projects of a computer added after the selection changed", 
   await using _screen = await mountImport();
   await click("Select none");
 
-  state.addedEnvironments = ["remote"];
+  appAtomRegistry.set(state.addedEnvironments as Atom.Writable<string[]>, ["remote"]);
   await clickStage("Connect, step 1");
   await click("Continue");
   await click("Continue");
   expect(pageText()).toContain("2 of 4 selected");
 
   await click("Import 2 projects");
-  const created = state.createProject.mock.calls as Array<[CreateProjectInput]>;
+  const created = state.createProject.mock.calls;
   expect(created.map(([call]) => call.environmentId)).toEqual([remoteId, remoteId]);
 });
 

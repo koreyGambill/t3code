@@ -17,3 +17,12 @@ export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRunt
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
 });
+
+export const agentSessionProgress = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:progress",
+  tag: WS_METHODS.agentSessionsProgress,
+  staleTimeMs: 5_000,
+  idleTtlMs: 0,
+  refreshIntervalMs: 5_000,
+  isFinal: (result) => result.status === "continued",
+});

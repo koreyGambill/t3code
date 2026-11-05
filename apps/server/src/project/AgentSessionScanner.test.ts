@@ -1337,6 +1337,54 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("excludes Claude sidechains from discovery and the recent-thread budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        for (let index = 0; index <= 100; index += 1) {
+          const isSidechain = index < 100;
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-selected", `${index}.jsonl`),
+            contents: [
+              {
+                type: "user",
+                cwd: workspace,
+                sessionId: `session-${index}`,
+                isSidechain,
+                message: { role: "user", content: "Import this prompt" },
+              },
+              {
+                type: "assistant",
+                cwd: workspace,
+                sessionId: `session-${index}`,
+                isSidechain,
+                message: { role: "assistant", content: "Done" },
+              },
+            ]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n"),
+            mtimeMs: nowMs - index * 60_000,
+          });
+        }
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const scan = yield* scanner.scan;
+          expect.soft(scan.candidates.map((candidate) => candidate.threadCount)).toEqual([1]);
+          const outcomes = yield* Stream.runCollect(scanner.recentThreads(workspace));
+          expect(
+            outcomes.map((outcome) =>
+              outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
+            ),
+          ).toEqual(["session-100"]);
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
     it.effect("excludes Codex subagents from discovery and the recent-thread budget", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1442,43 +1490,66 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("skips excessive records without blocking an older valid transcript", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
-        yield* TestClock.setTime(nowMs);
-        const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
-        const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
-        const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
-        const exactLimit = makeRecordLimitTranscript(workspace, false);
-        // The newer transcript has 100,001 records; the older one has exactly 100,000.
-        for (const [sessionId, contents, mtimeMs] of [
-          ["excessive", exactLimit.replace("record-limit-session", "excessive") + "{}\n", nowMs],
-          ["older", exactLimit, nowMs - 1_000],
-        ] as const) {
-          yield* writeTranscript({
-            filePath: path.join(
-              codexHomePath,
-              "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${sessionId}.jsonl`,
-            ),
-            contents,
-            mtimeMs,
+    it.effect.each(["claudeAgent", "codex"] as const)(
+      "skips excessive %s records without blocking an older valid transcript",
+      (source) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
+          const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
+          const extraRecord =
+            source === "claudeAgent"
+              ? encodeTranscriptRecord({ type: "assistant", message: { content: "Reply" } }) + "\n"
+              : "{}\n";
+          const exactLimit =
+            source === "claudeAgent"
+              ? encodeTranscriptRecord({
+                  type: "user",
+                  cwd: workspace,
+                  sessionId: "record-limit-session",
+                  message: { content: "First prompt" },
+                }) +
+                "\n" +
+                extraRecord.repeat(99_999)
+              : makeRecordLimitTranscript(workspace, false);
+          // The newer transcript has 100,001 records; the older one has exactly 100,000.
+          for (const [sessionId, contents, mtimeMs] of [
+            [
+              "excessive",
+              exactLimit.replace("record-limit-session", "excessive") + extraRecord,
+              nowMs,
+            ],
+            ["older", exactLimit, nowMs - 1_000],
+          ] as const) {
+            yield* writeTranscript({
+              filePath:
+                source === "claudeAgent"
+                  ? path.join(claudeHomePath, "projects", "-slug", `${sessionId}.jsonl`)
+                  : path.join(
+                      codexHomePath,
+                      "sessions",
+                      "2026",
+                      "08",
+                      "24",
+                      `rollout-${sessionId}.jsonl`,
+                    ),
+              contents,
+              mtimeMs,
+            });
+          }
+          const outcomes = yield* runRecentThreadOutcomes({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
           });
-        }
-        const outcomes = yield* runRecentThreadOutcomes({
-          claudeHomePath,
-          codexHomePath,
-          workspaceRoot: workspace,
-        });
-        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({
-          thread: { providerSessionId: "record-limit-session" },
-        });
-      }),
+          expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
+          expect(outcomes[1]).toMatchObject({
+            thread: { providerSessionId: "record-limit-session" },
+          });
+        }),
     );
 
     it.effect("imports every transcript that fits the per-file record limit", () =>
@@ -1735,8 +1806,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               type: "assistant",
               message: { role: "assistant", model: "claude-opus-5-5", content: "First reply" },
             }),
-            // Small tool records exceed the real 32 MiB selected-history budget in aggregate.
-            ...Array.from({ length: 20_000 }, () => toolResult),
+            ...Array.from({ length: 30_000 }, () =>
+              record({ type: "assistant", message: { content: "Older reply" } }),
+            ),
+            // Tool records can outnumber conversation messages in long-running sessions.
+            ...Array.from({ length: 100_000 }, () => toolResult),
             record({ type: "user", message: { role: "user", content: "Latest prompt" } }),
             record({
               type: "assistant",
@@ -1764,9 +1838,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             providerSessionId: "latest-session",
             title: "Renamed conversation",
             model: "claude-sonnet-5-5",
+            omittedMessageCount: 29_803,
             messages: [
               { role: "user", text: "First prompt" },
-              { role: "assistant", text: "First reply" },
+              ...Array.from({ length: 198 }, () => ({ role: "assistant", text: "Older reply" })),
               { role: "user", text: "Latest prompt" },
             ],
           },

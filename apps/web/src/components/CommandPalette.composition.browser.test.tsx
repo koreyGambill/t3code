@@ -99,6 +99,15 @@ vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
 
+it("opens project import from the command palette", async () => {
+  await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette());
+  await page.getByRole("combobox").fill("import projects");
+  await page.getByText("Import projects", { exact: true }).click();
+  await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/welcome"));
+  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+});
+
 // The real palette and Base UI input must agree that confirming composition is typing.
 describe.each(["repository", "folder", "destination"] as const)("add-project %s", (step) => {
   it.each([

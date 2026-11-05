@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
@@ -9,6 +10,7 @@ import { SettingsPageContainer } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
+  const navigate = useNavigate();
   const { search: value, scope, selectScope } = useSettingsScope();
   const unavailable =
     scope.kind === "unavailable" ? (
@@ -36,6 +38,11 @@ export function ProjectsSettings() {
       (scope.reason === "project-missing" || scope.reason === "checkout-missing"));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex justify-end px-4 pt-4 sm:px-6">
+        <Button variant="outline" size="sm" onClick={() => void navigate({ to: "/welcome" })}>
+          Import projects
+        </Button>
+      </div>
       {value.project && projectScope ? (
         <ProjectSettingsPanel
           projectKey={value.project}

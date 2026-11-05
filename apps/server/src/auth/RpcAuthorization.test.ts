@@ -35,6 +35,12 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("allows imported transcript observation with read scope", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsProgress)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
     for (const method of [
       WS_METHODS.scheduledTasksListWebhookDeliveries,

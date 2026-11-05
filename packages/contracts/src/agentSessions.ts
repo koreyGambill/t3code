@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex", "pi"]);
@@ -89,3 +95,20 @@ export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanEr
     return `Failed to scan agent sessions during ${this.operation}.`;
   }
 }
+
+export const AgentSessionProgressInput = Schema.Struct({ threadId: ThreadId });
+export type AgentSessionProgressInput = typeof AgentSessionProgressInput.Type;
+
+export const AgentSessionProgressResult = Schema.Struct({
+  status: Schema.Literals(["following", "unavailable", "continued"]),
+  messages: Schema.Array(
+    Schema.Struct({
+      role: Schema.Literals(["user", "assistant"]),
+      text: Schema.String,
+      createdAt: IsoDateTime,
+    }),
+  ),
+  updatedAt: Schema.NullOr(IsoDateTime),
+  truncated: Schema.Boolean,
+});
+export type AgentSessionProgressResult = typeof AgentSessionProgressResult.Type;
