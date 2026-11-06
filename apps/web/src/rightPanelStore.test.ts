@@ -40,6 +40,55 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("offers and reopens reviews without replacing existing panels or their maximize state", async () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    store.openTerminal(refA, "terminal-a");
+    store.setMaximized(refA, true);
+    store.offerReviews(refA, "review-a");
+    let panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(panel.activeSurfaceId).toBe("terminal:terminal-a");
+    expect(panel.maximized).toBe(true);
+    expect(panel.surfaces.map((surface) => surface.id)).toEqual([
+      "file:src/app.ts",
+      "terminal:terminal-a",
+      "reviews",
+    ]);
+    store.openReviews(refA, "review-b");
+    store.setWorkspaceSection(refA, "design-notes");
+    store.closeSurface(refA, "reviews");
+    const closed = useClosedViewStore.getState().entries[0]!;
+    await reopenClosedView(closed, {
+      workspaceAvailable: true,
+      openPreview: async () => {
+        throw new Error("Unexpected browser open");
+      },
+    });
+    panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(panel.activeSurfaceId).toBe("reviews");
+    expect(panel.maximized).toBe(true);
+    expect(panel.surfaces.at(-1)).toEqual({
+      id: "reviews",
+      kind: "reviews",
+      reviewId: "review-b",
+      workspaceSection: "design-notes",
+    });
+    await reloadRightPanelStore();
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      panel,
+    );
+    store.open(refA, "reviews");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      panel.surfaces.at(-1),
+    );
+    store.openReviews(refA, "review-linked");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "reviews",
+      kind: "reviews",
+      reviewId: "review-linked",
+    });
+  });
+
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
     const store = useRightPanelStore.getState();
     const unhost = hostRightPanel(refB, refA);

@@ -29,6 +29,11 @@ const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("../DiffPanel"));
+const ThreadWorkspacePanel = lazy(() =>
+  import("../reviews/ThreadWorkspacePanel").then((module) => ({
+    default: module.ThreadWorkspacePanel,
+  })),
+);
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -62,6 +67,7 @@ export function RightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
+  readonly startedThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly visible: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
@@ -82,6 +88,19 @@ export function RightPanelSurfaceContent(props: {
   const { surface, threadRef, visible, onCloseSurface } = props;
   if (surface === null) return null;
   switch (surface.kind) {
+    case "reviews":
+      return (
+        <Suspense fallback={null}>
+          <ThreadWorkspacePanel
+            key={`${threadRef.environmentId}:${threadRef.threadId}`}
+            section={surface.workspaceSection ?? "questions"}
+            threadRef={threadRef}
+            reviewId={surface.reviewId}
+            visible={visible}
+            startedThread={props.startedThread}
+          />
+        </Suspense>
+      );
     case "preview":
       return (
         <Suspense fallback={null}>

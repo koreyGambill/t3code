@@ -139,6 +139,10 @@ export async function reopenClosedView(
     case "side-chat":
       panels.openSideChat(ref, surface.threadId);
       break;
+    case "reviews":
+      panels.openReviews(ref, surface.reviewId ?? undefined);
+      if (surface.workspaceSection) panels.setWorkspaceSection(ref, surface.workspaceSection);
+      break;
     default:
       panels.open(ref, surface.kind);
   }

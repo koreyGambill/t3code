@@ -1,3 +1,5 @@
+import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
+import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -668,6 +670,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
   Layer.mock(AgentSessionProgress.AgentSessionProgress)({}),
+  Layer.mock(ReviewArtifacts.ReviewArtifacts)({}),
+  Layer.mock(ThreadWorkspace.ThreadWorkspace)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),

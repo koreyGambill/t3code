@@ -1,3 +1,5 @@
+import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
+import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -1436,6 +1438,8 @@ export const layerWsRpc = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const agentSessionProgress = yield* AgentSessionProgress.AgentSessionProgress;
+      const reviewArtifacts = yield* ReviewArtifacts.ReviewArtifacts;
+      const threadWorkspace = yield* ThreadWorkspace.ThreadWorkspace;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -2969,6 +2973,14 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
+        [WS_METHODS.threadWorkspaceGet]: (input) => threadWorkspace.get(input),
+        [WS_METHODS.threadWorkspacePatch]: (input) => threadWorkspace.patch(input),
+        [WS_METHODS.reviewsCreate]: (input) => reviewArtifacts.create(input),
+        [WS_METHODS.reviewsList]: (input) => reviewArtifacts.list(input),
+        [WS_METHODS.reviewsGet]: (input) => reviewArtifacts.get(input),
+        [WS_METHODS.reviewsSave]: (input) => reviewArtifacts.save(input),
+        [WS_METHODS.reviewsSubmit]: (input) => reviewArtifacts.submit(input),
+        [WS_METHODS.reviewsDue]: () => reviewArtifacts.due(),
         [WS_METHODS.agentSessionsProgress]: (input) => agentSessionProgress.progress(input),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>

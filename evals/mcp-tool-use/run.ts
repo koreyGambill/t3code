@@ -51,6 +51,7 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { ReviewToolkit } from "../../apps/server/src/mcp/toolkits/reviews/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
@@ -395,6 +396,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  ReviewToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -1177,6 +1179,28 @@ export const t3Default = (
     }
     case "html_preview":
       return { width: 728, contentHeight: 560, capturedHeight: 560, consoleMessages: [] };
+    case "thread_workspace_read":
+    case "thread_workspace_update":
+      return {
+        threadId: input.threadId ?? "current-thread",
+        revision: name === "thread_workspace_read" ? 0 : Number(input.expectedRevision) + 1,
+        actionItems: input.actionItems ?? [],
+        designNotes: input.designNotes ?? "",
+        summaryNotes: input.summaryNotes ?? "",
+        updatedAt: name === "thread_workspace_read" ? null : "2026-01-01T00:00:00.000Z",
+      };
+    case "review_create":
+      return {
+        reviewId: "00000000-0000-4000-8000-000000000001",
+        threadId: input.threadId ?? "current-thread",
+      };
+    case "review_read":
+      return {
+        id: input.reviewId,
+        threadId: "current-thread",
+        content: { title: "Rollout choices", summary: "Review the rollout.", sections: [] },
+        lastSubmission: null,
+      };
     case "html_render":
       return {
         htmlRender: { attachmentId: "att-1", title: input.title ?? "Visual", height: 560 },

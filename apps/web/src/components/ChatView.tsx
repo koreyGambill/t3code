@@ -272,6 +272,8 @@ import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ImportedSessionProgress } from "./chat/ImportedSessionProgress";
+import { ThreadReviewsButton } from "./reviews/ThreadReviewsButton";
+import { useReviewSupport } from "./reviews/useReviewSupport";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
@@ -978,6 +980,7 @@ export default function ChatView(props: ChatViewProps) {
     return labels;
   })();
   const activeThreadRef = useActiveThreadRef(activeThread);
+  const reviewsSupported = useReviewSupport(activeThreadRef?.environmentId ?? null);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
@@ -3193,6 +3196,7 @@ export default function ChatView(props: ChatViewProps) {
       surface={renderedRightPanelSurface}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
+      startedThread={isServerThread}
       environmentId={activeThread.environmentId}
       visible={rightPanelOpen}
       composerDraftTarget={composerDraftTarget}
@@ -3341,6 +3345,9 @@ export default function ChatView(props: ChatViewProps) {
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
+            {isServerThread && activeThreadRef ? (
+              <ThreadReviewsButton threadRef={activeThreadRef} />
+            ) : null}
           </header>
         )}
 
@@ -3995,6 +4002,11 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
+          onAddReviews={
+            isServerThread && activeThreadRef && reviewsSupported
+              ? () => useRightPanelStore.getState().open(activeThreadRef, "reviews")
+              : undefined
+          }
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}

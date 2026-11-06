@@ -1,3 +1,5 @@
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ReviewArtifacts from "../reviewArtifacts/ReviewArtifacts.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -389,6 +391,10 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
+  ThreadWorkspace.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+  ReviewArtifacts.layer.pipe(
+    Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
+  ),
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),

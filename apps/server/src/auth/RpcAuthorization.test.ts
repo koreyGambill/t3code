@@ -35,6 +35,23 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("keeps review drafts and sends under their read and operate scopes", () => {
+    for (const method of [
+      WS_METHODS.threadWorkspaceGet,
+      WS_METHODS.reviewsGet,
+      WS_METHODS.reviewsList,
+      WS_METHODS.reviewsDue,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      WS_METHODS.threadWorkspacePatch,
+      WS_METHODS.reviewsCreate,
+      WS_METHODS.reviewsSave,
+      WS_METHODS.reviewsSubmit,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+  });
+
   it("allows imported transcript observation with read scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsProgress)).toBe(
       AuthOrchestrationReadScope,

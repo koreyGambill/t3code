@@ -1,4 +1,21 @@
 import {
+  ThreadWorkspace,
+  ThreadWorkspaceError,
+  ThreadWorkspaceGetInput,
+  ThreadWorkspacePatchInput,
+} from "./threadWorkspace.ts";
+import {
+  ReviewArtifact,
+  ReviewSummary,
+  ReviewArtifactError,
+  ReviewCreateInput,
+  ReviewListInput,
+  ReviewGetInput,
+  ReviewSaveInput,
+  ReviewSubmitInput,
+  ReviewDueInput,
+} from "./reviewArtifacts.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -423,6 +440,14 @@ export const WS_METHODS = {
 
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
+  threadWorkspaceGet: "threadWorkspace.get",
+  threadWorkspacePatch: "threadWorkspace.patch",
+  reviewsCreate: "reviews.create",
+  reviewsList: "reviews.list",
+  reviewsGet: "reviews.get",
+  reviewsSave: "reviews.save",
+  reviewsSubmit: "reviews.submit",
+  reviewsDue: "reviews.due",
   agentSessionsProgress: "agentSessions.progress",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1376,6 +1401,48 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
+  payload: ThreadWorkspaceGetInput,
+  success: ThreadWorkspace,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+const WsThreadWorkspacePatchRpc = Rpc.make(WS_METHODS.threadWorkspacePatch, {
+  payload: ThreadWorkspacePatchInput,
+  success: ThreadWorkspace,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+
+const WsReviewsCreateRpc = Rpc.make(WS_METHODS.reviewsCreate, {
+  payload: ReviewCreateInput,
+  success: ReviewArtifact,
+  error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+const WsReviewsListRpc = Rpc.make(WS_METHODS.reviewsList, {
+  payload: ReviewListInput,
+  success: Schema.Array(ReviewSummary),
+  error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+const WsReviewsGetRpc = Rpc.make(WS_METHODS.reviewsGet, {
+  payload: ReviewGetInput,
+  success: ReviewArtifact,
+  error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+const WsReviewsSaveRpc = Rpc.make(WS_METHODS.reviewsSave, {
+  payload: ReviewSaveInput,
+  success: ReviewArtifact,
+  error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+const WsReviewsSubmitRpc = Rpc.make(WS_METHODS.reviewsSubmit, {
+  payload: ReviewSubmitInput,
+  success: ReviewArtifact,
+  error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+const WsReviewsDueRpc = Rpc.make(WS_METHODS.reviewsDue, {
+  payload: ReviewDueInput,
+  success: Schema.Array(ReviewSummary),
+  error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsProgressRpc = Rpc.make(WS_METHODS.agentSessionsProgress, {
   payload: AgentSessionProgressInput,
   success: AgentSessionProgressResult,
@@ -2125,6 +2192,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
+  WsThreadWorkspaceGetRpc,
+  WsThreadWorkspacePatchRpc,
+  WsReviewsCreateRpc,
+  WsReviewsListRpc,
+  WsReviewsGetRpc,
+  WsReviewsSaveRpc,
+  WsReviewsSubmitRpc,
+  WsReviewsDueRpc,
   WsAgentSessionsProgressRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

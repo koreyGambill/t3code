@@ -1610,6 +1610,32 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
+  if (
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.reviewArtifacts === true
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:reviews",
+      title: "Open workspace",
+      searchTerms: [
+        "workspace",
+        "reviews",
+        "questions",
+        "action items",
+        "design notes",
+        "summary",
+        "reminders",
+      ],
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore
+          .getState()
+          .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "reviews");
+      },
+    });
+  }
+
   actionItems.push({
     kind: "action",
     value: "action:settings",

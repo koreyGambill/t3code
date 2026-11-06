@@ -22,7 +22,10 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "side-chat",
+  "reviews",
 ] as const;
+export type ThreadWorkspaceSection = "questions" | "action-items" | "design-notes" | "summary";
+
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code";
@@ -76,6 +79,12 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
+  | {
+      id: "reviews";
+      kind: "reviews";
+      reviewId: string | null;
+      workspaceSection?: ThreadWorkspaceSection;
+    }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -126,6 +135,9 @@ interface RightPanelStoreState {
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
+  openReviews: (ref: ScopedThreadRef, reviewId?: string) => void;
+  setWorkspaceSection: (ref: ScopedThreadRef, section: ThreadWorkspaceSection) => void;
+  offerReviews: (ref: ScopedThreadRef, reviewId: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -219,6 +231,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "reviews":
+      return { id: "reviews", kind, reviewId: null };
   }
 };
 
@@ -490,6 +504,19 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
+                    if (surface.kind === "reviews") {
+                      return surface.id === "reviews" &&
+                        (surface.reviewId === null || typeof surface.reviewId === "string")
+                        ? [
+                            surface.workspaceSection === undefined ||
+                            ["questions", "action-items", "design-notes", "summary"].includes(
+                              surface.workspaceSection,
+                            )
+                              ? surface
+                              : { ...surface, workspaceSection: "questions" },
+                          ]
+                        : [];
+                    }
                     if (
                       (surface.kind === "file" || surface.kind === "files") &&
                       "folderTrail" in surface &&
@@ -696,6 +723,42 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
+        ),
+      openReviews: (ref, reviewId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: RightPanelSurface = {
+              id: "reviews",
+              kind: "reviews",
+              reviewId: reviewId ?? null,
+            };
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
+          }),
+        ),
+      setWorkspaceSection: (ref, section) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.kind === "reviews" ? { ...surface, workspaceSection: section } : surface,
+            ),
+          })),
+        ),
+      offerReviews: (ref, reviewId) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) =>
+            current.surfaces.some((surface) => surface.kind === "reviews")
+              ? current
+              : {
+                  ...current,
+                  surfaces: [...current.surfaces, { id: "reviews", kind: "reviews", reviewId }],
+                  activeSurfaceId: current.activeSurfaceId ?? "reviews",
+                },
+          ),
         ),
       openDevice: (ref, target, automatic = false) =>
         set((state) =>

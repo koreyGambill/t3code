@@ -35,12 +35,19 @@ import {
 } from "./ui/dialog";
 
 type SnoozeChoice = { readonly snoozedUntil: string };
-type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
+type Request = {
+  readonly resolve: (choice: SnoozeChoice | null) => void;
+  readonly title?: string;
+  readonly description?: string;
+};
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
-export function requestCustomSnooze(): Promise<SnoozeChoice | null> {
+export function requestCustomSnooze(presentation?: {
+  readonly title: string;
+  readonly description: string;
+}): Promise<SnoozeChoice | null> {
   useRequest.getState().request?.resolve(null);
-  return new Promise((resolve) => useRequest.setState({ request: { resolve } }));
+  return new Promise((resolve) => useRequest.setState({ request: { resolve, ...presentation } }));
 }
 
 function finish(choice: SnoozeChoice | null) {
@@ -63,6 +70,7 @@ export function CustomSnoozeDialogHost() {
 }
 
 function CustomSnoozeDialog() {
+  const request = useRequest((state) => state.request);
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -103,8 +111,10 @@ function CustomSnoozeDialog() {
           }}
         >
           <DialogHeader>
-            <DialogTitle>Custom snooze</DialogTitle>
-            <DialogDescription>Choose when snoozed threads return to your inbox.</DialogDescription>
+            <DialogTitle>{request?.title ?? "Custom snooze"}</DialogTitle>
+            <DialogDescription>
+              {request?.description ?? "Choose when snoozed threads return to your inbox."}
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-4">
