@@ -37,6 +37,7 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
+  ScanSearch,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -140,6 +141,7 @@ export interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddReviews?: (() => void) | undefined;
+  onAddInspect?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -322,6 +324,7 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddReviews?: (() => void) | undefined;
+  onAddInspect?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -406,6 +409,18 @@ function RightPanelEmptyState(props: {
             available: true,
             disabledReason: "",
             onClick: props.onAddReviews,
+          },
+        ]
+      : []),
+    ...(props.onAddInspect
+      ? [
+          {
+            label: "Inspect",
+            icon: ScanSearch,
+            shortcut: "I",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddInspect,
           },
         ]
       : []),
@@ -611,6 +626,8 @@ function surfaceTitle(
       return "Side chat";
     case "reviews":
       return "Workspace";
+    case "inspect":
+      return "Inspect";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -703,6 +720,8 @@ function SurfaceIcon({
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "reviews":
       return <Zap className="size-3 shrink-0" />;
+    case "inspect":
+      return <ScanSearch className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1178,6 +1197,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...(props.onAddInspect
+      ? [
+          {
+            label: "Inspect",
+            icon: ScanSearch,
+            shortcut: "I",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddInspect,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -1365,7 +1396,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          props.mode === "inline" && !props.layoutControls ? "pr-36" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
@@ -1548,7 +1579,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
-            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-36 [-webkit-app-region:no-drag]"
           />
         ) : null}
       </div>
@@ -1562,6 +1593,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddReviews={props.onAddReviews}
+            onAddInspect={props.onAddInspect}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}

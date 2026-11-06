@@ -15,13 +15,20 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
-const state = vi.hoisted(() => ({ query: vi.fn(), command: vi.fn() }));
+const state = vi.hoisted(() => ({
+  query: vi.fn(),
+  counts: vi.fn(),
+  marks: vi.fn(),
+  command: vi.fn(),
+}));
 vi.mock("../../state/threadWorkspace", () => ({
   threadWorkspaceGet: state.query,
+  threadWorkspaceCounts: state.counts,
   threadWorkspacePatch: "patch",
   threadWorkspaceSaveDraft: "save",
   threadWorkspaceSubmit: "submit",
 }));
+vi.mock("../../state/threadMarks", () => ({ threadMarksGet: state.marks }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: string) => (input: unknown) => state.command(name, input),
@@ -33,12 +40,15 @@ vi.mock("./WorkspaceMarksPanel", () => ({ WorkspaceMarksPanel: () => null }));
 vi.mock("./WorkspaceThreadsPanel", () => ({ WorkspaceThreadsPanel: () => null }));
 vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <div>{text}</div> }));
 import { ThreadWorkspacePanel } from "./ThreadWorkspacePanel";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useWorkspaceViewState } from "./workspaceViewState";
 const ref = {
   environmentId: EnvironmentId.make("scratchboard-browser"),
   threadId: ThreadId.make("scratchboard"),
 };
 function setup(multiSelect = false, retired = false) {
+  useComposerDraftStore.setState({ draftsByThreadKey: {} });
   let workspace: ThreadWorkspace = {
     threadId: ref.threadId,
     revision: 1,
@@ -99,6 +109,18 @@ function setup(multiSelect = false, retired = false) {
   const atom = Atom.make(AsyncResult.success(workspace)).pipe(Atom.keepAlive);
   const queryAtom = Atom.make((get) => get(atom)).pipe(Atom.keepAlive);
   state.query.mockReset().mockReturnValue(queryAtom);
+  state.counts.mockReset().mockReturnValue(
+    Atom.make((get) => {
+      const current = AsyncResult.getOrElse(get(atom), () => workspace);
+      return AsyncResult.success({
+        questions: current.questions.length,
+        actions: current.actionItems.length,
+        designs: current.designDocuments.length,
+        relatedThreads: current.relatedThreads.length,
+      });
+    }).pipe(Atom.keepAlive),
+  );
+  state.marks.mockReset().mockReturnValue(Atom.make(AsyncResult.success([])).pipe(Atom.keepAlive));
   state.command.mockReset().mockImplementation(
     async (
       name: string,
@@ -201,6 +223,15 @@ it("shares expanded groups across tabs and sends explicit answers without accept
   await using _viewport = await wideViewport();
   const fixture = setup();
   await using _screen = await render(<Panel />);
+  await expect.element(page.getByRole("tab", { name: "Questions 1", exact: true })).toBeVisible();
+  await expect.element(page.getByRole("tab", { name: "Marks 0", exact: true })).toBeVisible();
+  await expect.element(page.getByRole("tab", { name: "Threads 0", exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("tab", { name: "Loads", exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("tab", { name: "Tokens", exact: true }))
+    .not.toBeInTheDocument();
   await expect
     .element(page.getByRole("button", { name: "Add ready responses to chat" }))
     .toBeDisabled();
@@ -210,24 +241,32 @@ it("shares expanded groups across tabs and sends explicit answers without accept
     .toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: /Storage.*Recommended/ }).click();
   await page.getByRole("button", { name: /^Execution/ }).click();
+  useComposerDraftStore.getState().setPrompt(ref, "My existing draft");
   await page.getByRole("button", { name: "Add to chat", exact: true }).click();
-  await vi.waitFor(() =>
-    expect(state.command).toHaveBeenCalledWith(
-      "submit",
-      expect.objectContaining({ input: expect.objectContaining({ itemIds: ["q1"] }) }),
-    ),
-  );
+  await vi.waitFor(() => {
+    const draft = useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)];
+    expect(draft?.prompt).toContain("My existing draft");
+    expect(draft?.prompt).toContain("Answer: Execution");
+    expect(draft?.threadContexts).toMatchObject([{ workspaceItemId: "q1" }]);
+  });
+  expect(state.command.mock.calls.some(([name]) => name === "submit")).toBe(false);
   expect(fixture.getWorkspace().userDraft.questionAnswers.q1?.selectedOptionIds).toEqual([
     "execution",
   ]);
   await page.getByRole("button", { name: "CLI design", exact: true }).last().click();
-  await page.getByRole("tab", { name: "Action items", exact: true }).click();
+  await page.getByRole("tab", { name: /^Action items 1$/ }).click();
   await expect.element(page.getByText("Share a config", { exact: true })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "CLI design", exact: true }).first().click();
   await page.getByText("Share a config", { exact: true }).click();
   await page.getByRole("button", { name: "Mark done", exact: true }).click();
   await expect.element(page.getByRole("button", { name: "Reopen", exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "Design", exact: true }).click();
+  await page.getByRole("button", { name: "Add ready responses to chat" }).click();
+  await vi.waitFor(() => {
+    const prompt = useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
+    expect(prompt.match(/Answer: Execution/g)).toHaveLength(1);
+    expect(prompt).toContain("Status: done");
+  });
+  await page.getByRole("tab", { name: /^Design 1$/ }).click();
   await expect.element(page.getByText("The host owns execution.", { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Unified", exact: true }).click();
   await page.getByText("What should a profile control?", { exact: true }).click();
@@ -235,7 +274,7 @@ it("shares expanded groups across tabs and sends explicit answers without accept
   await expect
     .element(page.getByRole("navigation", { name: "Workspace headings" }))
     .not.toBeInTheDocument();
-  await page.getByRole("tab", { name: "Questions", exact: true }).click();
+  await page.getByRole("tab", { name: /^Questions 1$/ }).click();
   useWorkspaceViewState
     .getState()
     .focusItem(`${ref.environmentId}:${ref.threadId}`, "late-question");
@@ -271,7 +310,7 @@ it("preserves multi-select local answers when another client changes the saved d
   await expect
     .element(page.getByRole("button", { name: /Storage.*Recommended/ }))
     .toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("tab", { name: "Action items", exact: true }).click();
+  await page.getByRole("tab", { name: /^Action items 1$/ }).click();
   await page.getByText("Share a config", { exact: true }).click();
   await page.getByRole("button", { name: "Mark done", exact: true }).click();
   await vi.waitFor(() =>
@@ -280,7 +319,7 @@ it("preserves multi-select local answers when another client changes the saved d
     ),
   );
   expect(state.command.mock.calls.some(([name]) => name === "patch")).toBe(false);
-  await page.getByRole("tab", { name: "Questions", exact: true }).click();
+  await page.getByRole("tab", { name: /^Questions 1$/ }).click();
   await page.getByText("What should a profile control?", { exact: true }).click();
   await page.getByRole("button", { name: "Reload saved answers" }).click();
   await expect
@@ -302,10 +341,31 @@ it("retains removed choices and private notes until the user explicitly removes 
     .toHaveValue("Keep my notes");
   await page.getByRole("button", { name: "Add to chat", exact: true }).click();
   await vi.waitFor(() =>
-    expect(state.command.mock.calls.some(([name]) => name === "submit")).toBe(true),
+    expect(
+      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)]?.prompt,
+    ).toContain("Keep my notes"),
   );
   expect(fixture.getWorkspace().userDraft.questionAnswers.q1).toEqual({
     selectedOptionIds: [],
     notes: "Keep my notes",
   });
+});
+
+it("adds a completed action without notes to the composer without sending it", async () => {
+  await using _viewport = await wideViewport();
+  setup();
+  await using _screen = await render(<Panel />);
+  await page.getByRole("tab", { name: /^Action items 1$/ }).click();
+  await page.getByText("Share a config", { exact: true }).click();
+  await page.getByRole("button", { name: "Mark done", exact: true }).click();
+  await expect
+    .element(page.getByRole("button", { name: "Add ready responses to chat" }))
+    .toBeEnabled();
+  await page.getByRole("button", { name: "Add ready responses to chat" }).click();
+  await vi.waitFor(() => {
+    const draft = useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)];
+    expect(draft?.prompt).toContain("Action: Share a config\nStatus: done");
+    expect(draft?.threadContexts).toMatchObject([{ workspaceItemId: "a1" }]);
+  });
+  expect(state.command.mock.calls.some(([name]) => name === "submit")).toBe(false);
 });

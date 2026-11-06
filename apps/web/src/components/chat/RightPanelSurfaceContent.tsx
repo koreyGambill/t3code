@@ -34,6 +34,11 @@ const ThreadWorkspacePanel = lazy(() =>
     default: module.ThreadWorkspacePanel,
   })),
 );
+const ThreadInspectPanel = lazy(() =>
+  import("../insights/ThreadInspectPanel").then((module) => ({
+    default: module.ThreadInspectPanel,
+  })),
+);
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -96,6 +101,18 @@ export function RightPanelSurfaceContent(props: {
             section={surface.workspaceSection ?? "questions"}
             threadRef={threadRef}
             reviewId={surface.reviewId}
+            visible={visible}
+            startedThread={props.startedThread}
+          />
+        </Suspense>
+      );
+    case "inspect":
+      return (
+        <Suspense fallback={null}>
+          <ThreadInspectPanel
+            key={`${threadRef.environmentId}:${threadRef.threadId}`}
+            threadRef={threadRef}
+            section={surface.inspectSection ?? "loads"}
             visible={visible}
             startedThread={props.startedThread}
           />

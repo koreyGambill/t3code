@@ -85,6 +85,13 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
       );
     case "side-chat":
       return typeof surface.threadId === "string" && surface.id === `side-chat:${surface.threadId}`;
+    case "inspect":
+      return (
+        surface.id === "inspect" &&
+        (surface.inspectSection === undefined ||
+          surface.inspectSection === "loads" ||
+          surface.inspectSection === "tokens")
+      );
     case "reviews":
       return (
         surface.id === "reviews" &&
@@ -99,8 +106,6 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             "marks",
             "threads",
             "notes",
-            "loads",
-            "tokens",
           ].includes(surface.workspaceSection))
       );
     case "pull-request":

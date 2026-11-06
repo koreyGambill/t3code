@@ -12,6 +12,7 @@ import {
 } from "./threadNotes.ts";
 import {
   ThreadWorkspace,
+  ThreadWorkspaceCounts,
   ThreadWorkspaceError,
   ThreadWorkspaceGetInput,
   ThreadWorkspacePatchInput,
@@ -462,6 +463,7 @@ export const WS_METHODS = {
   threadNotesUpdateSettings: "threadNotes.updateSettings",
   threadNotesSendSelection: "threadNotes.sendSelection",
   threadWorkspaceGet: "threadWorkspace.get",
+  threadWorkspaceCounts: "threadWorkspace.counts",
   threadWorkspacePatch: "threadWorkspace.patch",
   threadWorkspaceSaveDraft: "threadWorkspace.saveDraft",
   threadWorkspaceSubmit: "threadWorkspace.submit",
@@ -1462,6 +1464,11 @@ const WsThreadNotesSendSelectionRpc = Rpc.make(WS_METHODS.threadNotesSendSelecti
   error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadWorkspaceCountsRpc = Rpc.make(WS_METHODS.threadWorkspaceCounts, {
+  payload: ThreadWorkspaceGetInput,
+  success: ThreadWorkspaceCounts,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
 const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
   payload: ThreadWorkspaceGetInput,
   success: ThreadWorkspace,
@@ -2278,6 +2285,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadNotesUpdateSettingsRpc,
   WsThreadNotesSendSelectionRpc,
   WsThreadWorkspaceGetRpc,
+  WsThreadWorkspaceCountsRpc,
   WsThreadWorkspacePatchRpc,
   WsThreadWorkspaceSaveDraftRpc,
   WsThreadWorkspaceSubmitRpc,

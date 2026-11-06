@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { IsoDateTime, MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  MessageId,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const WORKSPACE_DEFAULT_GROUP_ID = "ungrouped";
@@ -89,6 +95,15 @@ export const ThreadWorkspace = Schema.Struct({
 export type ThreadWorkspace = typeof ThreadWorkspace.Type;
 export const WorkspacePublished = ThreadWorkspace.mapFields(Struct.omit(["userDraft"]));
 export type WorkspacePublished = typeof WorkspacePublished.Type;
+export const ThreadWorkspaceCounts = Schema.Struct({
+  questions: NonNegativeInt,
+  unansweredQuestions: NonNegativeInt,
+  actions: NonNegativeInt,
+  outstandingActions: NonNegativeInt,
+  designs: NonNegativeInt,
+  relatedThreads: NonNegativeInt,
+});
+export type ThreadWorkspaceCounts = typeof ThreadWorkspaceCounts.Type;
 export const ThreadWorkspaceGetInput = Schema.Struct({ threadId: ThreadId });
 export type ThreadWorkspaceGetInput = typeof ThreadWorkspaceGetInput.Type;
 export const ThreadWorkspacePatchInput = Schema.Struct({

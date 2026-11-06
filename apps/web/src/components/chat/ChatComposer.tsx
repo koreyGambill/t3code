@@ -276,6 +276,7 @@ import {
   countPreparingComposerImages,
   usePreparingComposerImages,
 } from "./preparingComposerImages";
+import { ComposerLocation } from "./ComposerLocation";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
@@ -3274,6 +3275,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   {prompt.trim() ||
                     (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
+                <div className="max-w-[45%] min-w-0">
+                  <ComposerLocation environmentId={environmentId} cwd={gitCwd} />
+                </div>
                 {collapsedComposerImagePreviews}
                 <button
                   type="button"
@@ -3494,6 +3498,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                <ComposerLocation environmentId={environmentId} cwd={gitCwd} />
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"

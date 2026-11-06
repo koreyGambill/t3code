@@ -538,6 +538,7 @@ type SidebarThreadRowProps = {
   // "folder-multiline" adds the card's branch and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
   navigationParent?: string | undefined;
+  familyDepth?: number | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -986,7 +987,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         },
         ...sortable.listeners,
       }
-    : {};
+    : { style: undefined };
   const destinationVerb = sortable?.isDragging
     ? props.dropVerb
     : props.sweepAction === "unsnooze"
@@ -1201,6 +1202,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <li
         data-thread-item={threadKey}
         {...sortableRootProps}
+        style={{
+          ...sortableRootProps.style,
+          marginInlineStart: Math.min(props.familyDepth ?? 0, 4) * 12,
+        }}
         {...(fileDropHandlers ?? {})}
         className={cn(
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
@@ -1397,6 +1402,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <li
       data-thread-item={threadKey}
       {...sortableRootProps}
+      style={{
+        ...sortableRootProps.style,
+        marginInlineStart: Math.min(props.familyDepth ?? 0, 4) * 12,
+      }}
       {...(fileDropHandlers ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",

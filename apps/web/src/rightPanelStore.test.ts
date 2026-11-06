@@ -40,6 +40,40 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("keeps Inspect separate from Workspace and restores its selected section", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "reviews");
+    store.setWorkspaceSection(refA, "marks");
+    store.open(refA, "inspect");
+    store.setInspectSection(refA, "tokens");
+    await reloadRightPanelStore();
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "inspect",
+      kind: "inspect",
+      inspectSection: "tokens",
+    });
+    store.closeSurface(refA, "inspect");
+    const closed = useClosedViewStore.getState().entries[0]!;
+    await reopenClosedView(closed, {
+      workspaceAvailable: true,
+      openPreview: async () => {
+        throw new Error("Unexpected browser open");
+      },
+    });
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "inspect",
+      kind: "inspect",
+      inspectSection: "tokens",
+    });
+    store.open(refA, "reviews");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      kind: "reviews",
+      workspaceSection: "marks",
+    });
+  });
+
   it("offers and reopens reviews without replacing existing panels or their maximize state", async () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "src/app.ts");

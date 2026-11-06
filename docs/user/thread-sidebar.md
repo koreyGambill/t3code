@@ -95,9 +95,8 @@ edge to pin a thread. Section labels stay readable for the whole drag, and the s
 thread is over takes the accent color. Section labels also
 identify empty sections and a collapsed settled shelf.
 
-Drag within the pinned or active section to change its order. Other rows slide aside to show the
-spot where the thread will land. Drops into either section keep the position you choose. On
-mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
+On web and desktop, drag within the pinned section to change its order. Active threads
+use recent-message order. On mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
 or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
@@ -131,22 +130,18 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
-### Fold working threads (beta)
+### Recent threads and forks
 
-Threads that are working or waiting on work they will resume from move into a collapsed
-**Working** section below the active list.
-That includes subagents, watched pull requests, and background commands or monitors the agent
-says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
-there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
-answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
-the pinned section.
+On web and desktop, pinned threads stay first. Other active conversations sort by
+when you last sent a message, with new conversations using their creation time.
+Running threads keep their status icon in the list. Streaming and completion do
+not move them into a separate section.
 
-This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
-or **Settings → General → Working section** on iOS and Android. Each device keeps its own
-choice.
-
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+Use **Fork conversation** in the chat header to branch from the latest completed
+response when the provider supports it. Forks appear below their visible source
+conversation, including nested forks. A family's most recent message determines
+its place in the active list. Pinning, snoozing, or settling a fork gives it its
+own placement in that section.
 
 ### Group threads by project (beta)
 
@@ -157,7 +152,7 @@ project's folder comes last and shows only while it has active threads. Click a 
 close it. A closed folder shows how many threads it holds, and a dot when one of them
 needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-cannot drag threads, and the Working section is off. Each device keeps its own choice.
+cannot drag threads. Each device keeps its own choice.
 
 ## Settle finished work
 

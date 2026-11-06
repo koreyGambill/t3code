@@ -448,12 +448,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
-    id: "working-shelf",
-    title: "Working section",
-    to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
-  },
-  {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",

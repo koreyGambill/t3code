@@ -7,7 +7,8 @@ reference stays the same when it moves.
 
 Ask the agent to **workspace this for later** when you want something saved.
 The agent can organize and update the board without stopping its other work.
-Ordinary chat does not populate the board automatically.
+Ordinary chat does not populate the board automatically. The Workspace badge counts
+unanswered questions and unfinished action items. Section tabs show their item counts.
 
 ## Questions and action items
 
@@ -15,10 +16,11 @@ Questions can offer one choice, several choices, or a written answer. A recommen
 choice shows the agent's advice. It is never selected on your behalf.
 
 Your answers and action notes save as you work and stay private from the agent
-until you choose **Add to chat**. Add one response or all ready responses. The
-message includes readable answers and a reference back to the workspace item.
-If saving or sending fails, your draft remains available to retry. A conflicting
-edit from another device needs resolving before you send.
+until you send them. **Add to chat** places one response or all ready responses in
+the composer, with readable answers and references back to the workspace items.
+Review or edit the draft, then send it. Completed action items are ready to add
+even without notes. If saving fails, your draft remains available to retry. A
+conflicting edit from another device needs resolving before you add responses.
 
 Action items hold outstanding needs and future work. Mark one done or reopen it
 without starting an agent run. Add it to chat when you want the agent to act on
@@ -45,14 +47,16 @@ header opens **Recent Threads**. Back and Forward follow your navigation path.
 
 Personal notes are yours. Choose a notes directory for each environment to save
 thread notes as Markdown files. Notes remain private until you select text and
-add it to chat. You can include the T3 thread ID in the file. The note includes a
+add it to the composer, then send it. You can include the T3 thread ID in the file. The note includes a
 terminal resume command when the provider has a resumable session.
 
 Workspace is available in web and desktop builds with workspace support. An
 older connected environment needs a build with support before it can serve the
 panel.
 
-## Loads and token usage
+## Inspect: loads and token usage
+
+Open a right-panel tab and choose **Inspect** for Loads and Tokens.
 
 Loads shows file reads, skill loads, and related tool activity observed in the
 conversation. Use Refresh to update these views while an agent is working. Reported events and events inferred from command text are labeled

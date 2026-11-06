@@ -7,6 +7,13 @@ import {
   type WorkspaceUserDraft,
   type ThreadActionItem,
 } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  formatWorkspaceFeedback,
+  readyWorkspaceFeedbackIds,
+  workspaceDraftError,
+} from "@t3tools/shared/workspaceFeedback";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ChevronRightIcon, CheckIcon, SendIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -16,16 +23,16 @@ import { useRightPanelStore, type ThreadWorkspaceSection } from "../../rightPane
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import {
+  threadWorkspaceCounts,
   threadWorkspaceGet,
   threadWorkspacePatch,
   threadWorkspaceSaveDraft,
-  threadWorkspaceSubmit,
 } from "../../state/threadWorkspace";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
-import { ThreadInsightsPanel } from "../insights/ThreadInsightsPanel";
+import { threadMarksGet } from "../../state/threadMarks";
 import { NotesPanel } from "../notes/NotesPanel";
 import { useReviewSupport } from "./useReviewSupport";
 import { WorkspaceMarksPanel } from "./WorkspaceMarksPanel";
@@ -42,8 +49,6 @@ const sections = [
   ["marks", "Marks"],
   ["threads", "Threads"],
   ["notes", "Notes"],
-  ["loads", "Loads"],
-  ["tokens", "Tokens"],
 ] as const;
 const emptyAnswer: WorkspaceQuestionAnswer = { selectedOptionIds: [], notes: "" };
 interface LocalDraft {
@@ -135,6 +140,30 @@ export function ThreadWorkspacePanel({
 }) {
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
   const supported = useReviewSupport(threadRef.environmentId);
+  const canQuery = visible && startedThread && supported && canRead;
+  const counts = useEnvironmentQuery(
+    canQuery
+      ? threadWorkspaceCounts({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  const marks = useEnvironmentQuery(
+    canQuery
+      ? threadMarksGet({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  const sectionCounts: Partial<Record<ThreadWorkspaceSection, number | undefined>> = {
+    questions: counts.data?.questions,
+    "action-items": counts.data?.actions,
+    "design-notes": counts.data?.designs,
+    threads: counts.data?.relatedThreads,
+    marks: marks.data?.length,
+  };
   return (
     <div className="@container/workspace flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <div
@@ -148,10 +177,16 @@ export function ThreadWorkspacePanel({
             type="button"
             role="tab"
             aria-selected={section === id}
+            aria-label={sectionCounts[id] === undefined ? label : `${label} ${sectionCounts[id]}`}
             className="shrink-0 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
             onClick={() => useRightPanelStore.getState().setWorkspaceSection(threadRef, id)}
           >
             {label}
+            {sectionCounts[id] !== undefined ? (
+              <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-3xs tabular-nums text-muted-foreground">
+                {sectionCounts[id]}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -167,8 +202,6 @@ export function ThreadWorkspacePanel({
         <p className="p-5 text-sm text-muted-foreground">
           This connection cannot read the workspace.
         </p>
-      ) : section === "loads" || section === "tokens" ? (
-        <ThreadInsightsPanel threadRef={threadRef} visible={visible} mode={section} />
       ) : section === "notes" ? (
         <NotesPanel environmentId={threadRef.environmentId} threadId={threadRef.threadId} />
       ) : (
@@ -202,7 +235,6 @@ function WorkspaceContent({
       : null,
   );
   const save = useAtomCommand(threadWorkspaceSaveDraft, { reportFailure: false });
-  const submit = useAtomCommand(threadWorkspaceSubmit, { reportFailure: false });
   const patch = useAtomCommand(threadWorkspacePatch, { reportFailure: false });
   const canWrite = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const [saved, setSaved] = useState<ThreadWorkspace | null>(null);
@@ -276,17 +308,29 @@ function WorkspaceContent({
     setError(null);
     const current = await persistDraft();
     if (current) {
-      const result = await submit({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId, expectedRevision: current.revision, itemIds },
+      const ids = itemIds.length ? itemIds : readyWorkspaceFeedbackIds(current);
+      const invalid = workspaceDraftError(current, {
+        questionAnswers: Object.fromEntries(
+          Object.entries(current.userDraft.questionAnswers).filter(([id]) => ids.includes(id)),
+        ),
+        actionNotes: {},
       });
-      if (result._tag === "Success") {
-        setSaved(result.value);
-        setSent(itemIds.length ? itemIds : (workspace?.questions.map((item) => item.id) ?? []));
-      } else {
-        const failure = squashAtomCommandFailure(result);
-        setError(failure instanceof Error ? failure.message : "Could not send responses.");
+      if (invalid) {
+        setError(invalid);
+        setBusy(false);
+        return;
       }
+      const feedback = formatWorkspaceFeedback(threadRef, current, ids);
+      const composer = useComposerDraftStore.getState();
+      const existing = composer.draftsByThreadKey[scopedThreadKey(threadRef)]?.prompt ?? "";
+      composer.addThreadContexts(threadRef, feedback.records, { appendReference: false });
+      const additions = ids
+        .map((id) => formatWorkspaceFeedback(threadRef, current, [id]).markdown)
+        .filter((markdown) => markdown && !existing.includes(markdown));
+      if (additions.length) {
+        composer.setPrompt(threadRef, [existing, ...additions].filter(Boolean).join("\n\n"));
+      }
+      setSent(ids);
     }
     setBusy(false);
     query.refresh();
@@ -332,11 +376,7 @@ function WorkspaceContent({
     return <WorkspaceMarksPanel threadRef={threadRef} annotations={workspace.markAnnotations} />;
   if (section === "threads")
     return <WorkspaceThreadsPanel threadRef={threadRef} related={workspace.relatedThreads} />;
-  const ready =
-    workspace.questions.some((question) => {
-      const answer = draft.questionAnswers[question.id];
-      return answer && (answer.selectedOptionIds.length > 0 || answer.notes.trim());
-    }) || workspace.actionItems.some((action) => Boolean(draft.actionNotes[action.id]?.trim()));
+  const ready = readyWorkspaceFeedbackIds({ ...workspace, userDraft: draft }).length > 0;
   return (
     <>
       {error || query.error ? (
@@ -458,7 +498,9 @@ function WorkspaceContent({
       {section === "questions" || section === "action-items" || section === "unified" ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
           <span className="text-3xs text-muted-foreground">
-            {local?.dirty ? "Saving answers…" : "Answers stay private until sent."}
+            {local?.dirty
+              ? "Saving answers…"
+              : "Add responses to the composer, then send when ready."}
           </span>
           <Button
             size="xs"

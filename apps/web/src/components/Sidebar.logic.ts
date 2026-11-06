@@ -613,6 +613,54 @@ export function filterSidebarV2VisibleThreads<
   );
 }
 
+/** Keeps visible forks beside their parent, with the newest family first. */
+export function groupSidebarThreadFamilies<
+  T extends Pick<SidebarThreadSummary, "id" | "environmentId" | "projectId" | "lineage">,
+>(threads: readonly T[]): Array<{ thread: T; depth: number }> {
+  const keyOf = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const byKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
+  const children = new Map<string, T[]>();
+  const parentKeyOf = (thread: T): string | null => {
+    if (thread.lineage.relationshipToParent !== "fork" || thread.lineage.parentThreadId === null)
+      return null;
+    const key = scopedThreadKey(
+      scopeThreadRef(thread.environmentId, thread.lineage.parentThreadId),
+    );
+    return byKey.get(key)?.projectId === thread.projectId ? key : null;
+  };
+  for (const thread of threads) {
+    const parent = parentKeyOf(thread);
+    if (parent === null) continue;
+    const siblings = children.get(parent) ?? [];
+    siblings.push(thread);
+    children.set(parent, siblings);
+  }
+  const rows: Array<{ thread: T; depth: number }> = [];
+  const emitted = new Set<string>();
+  const append = (thread: T, depth: number) => {
+    const key = keyOf(thread);
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    rows.push({ thread, depth });
+    for (const child of children.get(key) ?? []) append(child, depth + 1);
+  };
+  // Input order carries recency (or pin order), so a recent fork raises its whole family.
+  for (const thread of threads) {
+    let root = thread;
+    const visited = new Set<string>();
+    for (;;) {
+      const key = keyOf(root);
+      if (visited.has(key)) break;
+      visited.add(key);
+      const parent = parentKeyOf(root);
+      if (parent === null) break;
+      root = byKey.get(parent)!;
+    }
+    append(root, 0);
+  }
+  return rows;
+}
+
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
   actionableCount: number;
@@ -988,7 +1036,6 @@ export function firstValidTimestampMs(
   return 0;
 }
 
-export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 export {
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,

@@ -1,3 +1,5 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { ThreadReviewsButton } from "../reviews/ThreadReviewsButton";
 import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -11,6 +13,7 @@ import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface PanelLayoutControlsProps {
+  workspaceThreadRef?: ScopedThreadRef | undefined;
   showThreadPanelControl?: boolean;
   showTerminalControl?: boolean;
   showRightPanelControl?: boolean;
@@ -31,6 +34,7 @@ export interface PanelLayoutControlsProps {
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
+  workspaceThreadRef,
   showThreadPanelControl = true,
   showTerminalControl = true,
   showRightPanelControl = true,
@@ -104,6 +108,9 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               : "Terminal drawer is unavailable"}
           </TooltipPopup>
         </Tooltip>
+      ) : null}
+      {showRightPanelControl && workspaceThreadRef ? (
+        <ThreadReviewsButton threadRef={workspaceThreadRef} />
       ) : null}
       {showRightPanelControl ? (
         <Tooltip>

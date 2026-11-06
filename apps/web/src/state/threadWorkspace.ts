@@ -21,7 +21,10 @@ export const threadWorkspaceSaveDraft = createEnvironmentRpcCommand(connectionAt
   label: "threadWorkspace:saveDraft",
   tag: WS_METHODS.threadWorkspaceSaveDraft,
 });
-export const threadWorkspaceSubmit = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "threadWorkspace:submit",
-  tag: WS_METHODS.threadWorkspaceSubmit,
+export const threadWorkspaceCounts = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadWorkspace:counts",
+  tag: WS_METHODS.threadWorkspaceCounts,
+  staleTimeMs: 5_000,
+  refreshIntervalMs: 5_000,
+  idleTtlMs: 0,
 });

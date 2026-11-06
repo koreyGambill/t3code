@@ -23,6 +23,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-requests",
   "side-chat",
   "reviews",
+  "inspect",
 ] as const;
 export type ThreadWorkspaceSection =
   | "unified"
@@ -32,9 +33,8 @@ export type ThreadWorkspaceSection =
   | "summary"
   | "marks"
   | "threads"
-  | "notes"
-  | "loads"
-  | "tokens";
+  | "notes";
+export type ThreadInspectSection = "loads" | "tokens";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -95,10 +95,11 @@ export type RightPanelSurface =
       reviewId: string | null;
       workspaceSection?: ThreadWorkspaceSection;
     }
+  | { id: "inspect"; kind: "inspect"; inspectSection?: ThreadInspectSection }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -147,6 +148,7 @@ interface RightPanelStoreState {
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openReviews: (ref: ScopedThreadRef, reviewId?: string) => void;
   setWorkspaceSection: (ref: ScopedThreadRef, section: ThreadWorkspaceSection) => void;
+  setInspectSection: (ref: ScopedThreadRef, section: ThreadInspectSection) => void;
   offerReviews: (ref: ScopedThreadRef, reviewId: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -243,6 +245,8 @@ const singletonSurface = (
       return { id: "device", kind };
     case "reviews":
       return { id: "reviews", kind, reviewId: null };
+    case "inspect":
+      return { id: "inspect", kind, inspectSection: "loads" };
   }
 };
 
@@ -514,6 +518,17 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
+                    if (surface.kind === "inspect") {
+                      return surface.id === "inspect"
+                        ? [
+                            {
+                              ...surface,
+                              inspectSection:
+                                surface.inspectSection === "tokens" ? "tokens" : "loads",
+                            },
+                          ]
+                        : [];
+                    }
                     if (surface.kind === "reviews") {
                       return surface.id === "reviews" &&
                         (surface.reviewId === null || typeof surface.reviewId === "string")
@@ -528,8 +543,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                               "marks",
                               "threads",
                               "notes",
-                              "loads",
-                              "tokens",
                             ].includes(surface.workspaceSection)
                               ? surface
                               : { ...surface, workspaceSection: "questions" },
@@ -764,6 +777,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ...current,
             surfaces: current.surfaces.map((surface) =>
               surface.kind === "reviews" ? { ...surface, workspaceSection: section } : surface,
+            ),
+          })),
+        ),
+      setInspectSection: (ref, section) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.kind === "inspect" ? { ...surface, inspectSection: section } : surface,
             ),
           })),
         ),

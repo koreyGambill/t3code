@@ -1,5 +1,5 @@
 import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
-import type { ThreadNotesSaveInput, ThreadNotesSendSelectionInput } from "@t3tools/contracts";
+import type { ThreadNotesSaveInput } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -30,20 +30,8 @@ export const updateThreadNotesSettings = createEnvironmentRpcCommand(connectionA
   label: "threadNotes:updateSettings",
   tag: WS_METHODS.threadNotesUpdateSettings,
 });
-const send = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "threadNotes:sendSelection",
-  tag: WS_METHODS.threadNotesSendSelection,
-});
 export async function persistThreadNote(environmentId: EnvironmentId, input: ThreadNotesSaveInput) {
   const result = await runAtomCommand(appAtomRegistry, save, { environmentId, input });
-  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-  return result.value;
-}
-export async function sendThreadNoteSelection(
-  environmentId: EnvironmentId,
-  input: ThreadNotesSendSelectionInput,
-) {
-  const result = await runAtomCommand(appAtomRegistry, send, { environmentId, input });
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   return result.value;
 }

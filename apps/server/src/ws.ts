@@ -3006,6 +3006,7 @@ export const layerWsRpc = (
         [WS_METHODS.threadNotesUpdateSettings]: (input) => threadNotes.updateSettings(input),
         [WS_METHODS.threadNotesSendSelection]: (input) => threadNotes.sendSelection(input),
         [WS_METHODS.threadWorkspaceGet]: (input) => threadWorkspace.get(input),
+        [WS_METHODS.threadWorkspaceCounts]: (input) => threadWorkspace.counts(input),
         [WS_METHODS.threadWorkspacePatch]: (input) => threadWorkspace.patch(input),
         [WS_METHODS.threadWorkspaceSaveDraft]: (input) => threadWorkspace.saveDraft(input),
         [WS_METHODS.threadWorkspaceSubmit]: (input) => threadWorkspace.submit(input),

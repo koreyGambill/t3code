@@ -13,12 +13,13 @@ import {
   threadNoteGet,
   threadNotesSettings,
   updateThreadNotesSettings,
-  sendThreadNoteSelection,
 } from "../../state/threadNotes";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { randomUUID } from "../../lib/utils";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { editNote, flushNote, receiveNote, retryNote, useNoteDraft } from "./noteDraft";
 
 export function NotesPanel({
@@ -64,15 +65,25 @@ export function NotesPanel({
       ) {
         setError("The selected text changed while saving. Select it again before sharing.");
       } else {
-        await sendThreadNoteSelection(environmentId, {
-          threadId,
-          expectedRevision: note.revision,
-          startIndex: selection.start,
-          endIndex: selection.end,
-        });
+        useComposerDraftStore.getState().addReviewComment(
+          { environmentId, threadId },
+          {
+            id: `note-${randomUUID()}`,
+            sectionId: `note-${threadId}`,
+            sectionTitle: "Personal note",
+            filePath: note.path,
+            startIndex: selection.start,
+            endIndex: selection.end,
+            rangeLabel: `Selected note text (${selection.start}-${selection.end})`,
+            text: selectedText,
+            diff: "",
+          },
+        );
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not send the selection.");
+      setError(
+        cause instanceof Error ? cause.message : "Could not add the selection to the composer.",
+      );
     }
     setSending(false);
   }

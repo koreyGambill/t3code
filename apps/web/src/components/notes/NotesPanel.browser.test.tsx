@@ -21,9 +21,12 @@ vi.mock("../../state/threadNotes", () => ({
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { NotesPanel } from "./NotesPanel";
 
 it("keeps unsent notes private, saves before sharing a selected range, and retains a dirty draft on remount", async () => {
+  useComposerDraftStore.setState({ draftsByThreadKey: {} });
   const environmentId = EnvironmentId.make("notes-browser");
   const threadId = ThreadId.make("notes-browser");
   let note: ThreadNote = {
@@ -82,14 +85,17 @@ it("keeps unsent notes private, saves before sharing a selected range, and retai
     .toBeDisabled();
   expect(state.send).not.toHaveBeenCalled();
   releaseSave();
-  await vi.waitFor(() =>
-    expect(state.send).toHaveBeenCalledWith(environmentId, {
-      threadId,
-      expectedRevision: "saved",
-      startIndex: 16,
-      endIndex: 26,
-    }),
-  );
+  await vi.waitFor(() => {
+    const draft =
+      useComposerDraftStore.getState().draftsByThreadKey[
+        scopedThreadKey({ environmentId, threadId })
+      ];
+    expect(draft?.reviewComments).toMatchObject([
+      { filePath: "/notes/thread.md", text: "share this", startIndex: 16, endIndex: 26 },
+    ]);
+    expect(JSON.stringify(draft?.reviewComments)).not.toContain("private before");
+  });
+  expect(state.send).not.toHaveBeenCalled();
   expect(state.save).toHaveBeenCalled();
   await field.fill("Unsent text survives navigation");
   await view.unmount();
@@ -102,5 +108,5 @@ it("keeps unsent notes private, saves before sharing a selected range, and retai
     .element(page.getByRole("textbox", { name: "Personal thread notes" }))
     .toHaveValue("Unsent text survives navigation");
   expect(reopened.container).toBeInTheDocument();
-  expect(state.send).toHaveBeenCalledTimes(1);
+  expect(state.send).not.toHaveBeenCalled();
 });

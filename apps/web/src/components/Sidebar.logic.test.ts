@@ -20,6 +20,7 @@ import {
   searchSidebarThreads,
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
+  sortWorkingThreadsBySend,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
@@ -32,6 +33,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  groupSidebarThreadFamilies,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -136,6 +138,83 @@ describe("deleteSelectedThreadEntries", () => {
 });
 
 describe("sidebar thread lineage helpers", () => {
+  it("keeps forks beside visible parents, promotes recent families, and retains orphan rows", () => {
+    const root = makeThreadFixture({
+      id: ThreadId.make("root"),
+      environmentId: localEnvironmentId,
+    });
+    const forkOf = (id: string, parent: Thread) =>
+      makeThreadFixture({
+        id: ThreadId.make(id),
+        environmentId: localEnvironmentId,
+        lineage: { rootThreadId: root.id, parentThreadId: parent.id, relationshipToParent: "fork" },
+      });
+    const fork = forkOf("fork", root);
+    const nested = forkOf("nested", fork);
+    const sibling = forkOf("sibling", root);
+    const unrelated = makeThreadFixture({
+      id: ThreadId.make("unrelated"),
+      environmentId: localEnvironmentId,
+    });
+    const orphan = forkOf("orphan", unrelated);
+    const rows = (threads: Thread[]) =>
+      groupSidebarThreadFamilies(threads).map(({ thread, depth }) => [thread.id, depth]);
+    expect(rows([nested, unrelated, sibling, fork, root])).toEqual([
+      [root.id, 0],
+      [sibling.id, 1],
+      [fork.id, 1],
+      [nested.id, 2],
+      [unrelated.id, 0],
+    ]);
+    expect(rows([orphan, root])).toEqual([
+      [orphan.id, 0],
+      [root.id, 0],
+    ]);
+    expect(rows([fork])).toEqual([[fork.id, 0]]);
+    const oldRoot = {
+      ...root,
+      latestUserAuthoredMessageAt: "2026-03-01T00:00:00.000Z",
+      createdAt: "2026-03-01T00:00:00.000Z",
+    };
+    const newFork = {
+      ...fork,
+      latestUserAuthoredMessageAt: "2026-03-03T00:00:00.000Z",
+      createdAt: "2026-03-01T00:00:00.000Z",
+    };
+    const middle = {
+      ...unrelated,
+      latestUserAuthoredMessageAt: "2026-03-02T00:00:00.000Z",
+      createdAt: "2026-03-01T00:00:00.000Z",
+    };
+    const bySend = [middle, oldRoot, newFork];
+    expect(rows(sortWorkingThreadsBySend(bySend))).toEqual([
+      [root.id, 0],
+      [fork.id, 1],
+      [unrelated.id, 0],
+    ]);
+    expect(
+      rows(
+        sortWorkingThreadsBySend(
+          bySend.map((thread) => ({
+            ...thread,
+            updatedAt: "2026-03-10T00:00:00.000Z",
+            latestRun: makeLatestRun(),
+          })),
+        ),
+      ),
+    ).toEqual(rows(sortWorkingThreadsBySend(bySend)));
+
+    const loop = {
+      ...root,
+      lineage: { ...root.lineage, relationshipToParent: "fork" as const, parentThreadId: fork.id },
+    };
+    expect(rows([loop, fork])).toHaveLength(2);
+    expect(rows([{ ...fork, environmentId: EnvironmentId.make("other") }, root])).toEqual([
+      [fork.id, 0],
+      [root.id, 0],
+    ]);
+  });
+
   it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
     const environmentId = EnvironmentId.make("environment-row");
     const otherEnvironmentId = EnvironmentId.make("environment-other");

@@ -430,6 +430,7 @@ it.effect(
           },
           { kind: "question", title: "Recovery?" },
           { kind: "action", title: "Confirm owner" },
+          { kind: "action", title: "Completed check", status: "done" },
         ],
       });
       const question = created.items.find((item) => item.kind === "question")!;
@@ -453,6 +454,14 @@ it.effect(
           },
           actionNotes: { [action.id]: "Private owner note" },
         },
+      });
+      expect(yield* h.service.counts({ threadId })).toEqual({
+        questions: 2,
+        unansweredQuestions: 0,
+        actions: 2,
+        outstandingActions: 1,
+        designs: 0,
+        relatedThreads: 0,
       });
       h.failSend();
       expect(
@@ -493,6 +502,7 @@ it.effect(
           .submissions,
       ).toHaveLength(2);
       expect(h.attempts.at(-1)?.text).toContain("Private owner note");
+      expect(h.attempts.at(-1)?.text).toContain("Action: Completed check\nStatus: done");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

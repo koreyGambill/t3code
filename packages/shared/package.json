@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./workspaceFeedback": {
+      "types": "./src/workspaceFeedback.ts",
+      "import": "./src/workspaceFeedback.ts"
+    },
     "./workspaceMarks": {
       "types": "./src/workspaceMarks.ts",
       "import": "./src/workspaceMarks.ts"

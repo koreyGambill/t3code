@@ -1,12 +1,11 @@
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
-  type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
-import type { ThreadStructure } from "./models.ts";
+import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
 
 type Projection = ThreadStructure;
 type Run = Projection["runs"][number];
@@ -179,7 +178,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
 }
 
 export function canForkProjectedAssistantItem(input: {
-  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly projectedItem: ThreadStructureVisibleTurnItem;
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
 }): boolean {
   const item = input.projectedItem.item;

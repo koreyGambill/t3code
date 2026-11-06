@@ -8,20 +8,20 @@ import {
   ThreadWorkspaceError,
   WORKSPACE_DEFAULT_GROUP_ID,
   type ThreadWorkspaceGetInput,
+  type ThreadWorkspaceCounts,
   type ThreadWorkspacePatchInput,
   type ThreadWorkspaceSaveDraftInput,
   type ThreadWorkspaceSubmitInput,
   type ThreadWorkspaceMutateInput,
   type WorkspaceQuery,
   type WorkspaceQueryResult,
-  type WorkspaceUserDraft,
 } from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import {
-  formatComposerContextHref,
-  sanitizeComposerContextLabel,
-  toComposerContextId,
-} from "@t3tools/shared/composerContextReferences";
+  formatWorkspaceFeedback,
+  readyWorkspaceFeedbackIds,
+  workspaceDraftError,
+} from "@t3tools/shared/workspaceFeedback";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -43,6 +43,9 @@ export class ThreadWorkspace extends Context.Service<
     readonly get: (
       input: ThreadWorkspaceGetInput,
     ) => Effect.Effect<Workspace, ThreadWorkspaceError>;
+    readonly counts: (
+      input: ThreadWorkspaceGetInput,
+    ) => Effect.Effect<ThreadWorkspaceCounts, ThreadWorkspaceError>;
     readonly patch: (
       input: ThreadWorkspacePatchInput,
     ) => Effect.Effect<Workspace, ThreadWorkspaceError>;
@@ -166,21 +169,6 @@ function validationError(workspace: Workspace): string | null {
     workspace.markAnnotations.length
   )
     return "Mark URLs must be unique.";
-  return null;
-}
-function draftError(workspace: Workspace, draft: WorkspaceUserDraft): string | null {
-  for (const [id, answer] of Object.entries(draft.questionAnswers)) {
-    const question = workspace.questions.find((question) => question.id === id);
-    if (!question) continue;
-    if (
-      new Set(answer.selectedOptionIds).size !== answer.selectedOptionIds.length ||
-      answer.selectedOptionIds.some(
-        (optionId) => !question.options.some((option) => option.id === optionId),
-      ) ||
-      (!question.multiSelect && answer.selectedOptionIds.length > 1)
-    )
-      return "Answer selections must match the question's options and selection mode.";
-  }
   return null;
 }
 function queryWorkspace(workspace: Workspace, query: WorkspaceQuery): WorkspaceQueryResult {
@@ -597,7 +585,7 @@ const make = Effect.gen(function* () {
     yield* requireThread(input.threadId);
     const current = yield* read(input.threadId);
     yield* checkRevision(current, input.expectedRevision);
-    const invalid = draftError(current, input.userDraft);
+    const invalid = workspaceDraftError(current, input.userDraft);
     if (invalid !== null)
       return yield* new ThreadWorkspaceError({ code: "invalid", message: invalid });
     return yield* write({
@@ -737,12 +725,10 @@ const make = Effect.gen(function* () {
     const owner = yield* requireThread(input.threadId);
     const current = yield* read(input.threadId);
     yield* checkRevision(current, input.expectedRevision);
-    const readyQuestions = current.questions.filter((question) => {
-      const answer = current.userDraft.questionAnswers[question.id];
-      return answer !== undefined && (answer.notes.trim() || answer.selectedOptionIds.length);
-    });
+    const readyIds = new Set(readyWorkspaceFeedbackIds(current));
+    const readyQuestions = current.questions.filter((question) => readyIds.has(question.id));
     const readyActions = current.actionItems.filter(
-      (item) => input.itemIds.includes(item.id) || current.userDraft.actionNotes[item.id]?.trim(),
+      (item) => input.itemIds.includes(item.id) || readyIds.has(item.id),
     );
     const requested = new Set(
       input.itemIds.length
@@ -750,7 +736,7 @@ const make = Effect.gen(function* () {
         : [...readyQuestions, ...readyActions].map((item) => item.id),
     );
     const items = [...readyQuestions, ...readyActions].filter((item) => requested.has(item.id));
-    const invalid = draftError(current, {
+    const invalid = workspaceDraftError(current, {
       questionAnswers: Object.fromEntries(
         Object.entries(current.userDraft.questionAnswers).filter(([id]) => requested.has(id)),
       ),
@@ -785,44 +771,11 @@ const make = Effect.gen(function* () {
     const key = NodeCrypto.createHash("sha256").update(serialized).digest("hex");
     if (current.submissions.some((submission) => submission.key === key)) return current;
     const environmentId = yield* environment.getEnvironmentId;
-    const records = items.map((item) => ({
-      version: 1 as const,
-      kind: "thread" as const,
-      contextId: toComposerContextId(`workspace-${item.id}`),
-      label: sanitizeComposerContextLabel(`${item.ref ?? item.id} ${item.title}`, "thread"),
-      environmentId,
-      threadId: input.threadId,
-      title: item.title.slice(0, 200),
-      workspaceItemId: item.id,
-      workspaceSection: current.questions.some((question) => question.id === item.id)
-        ? ("questions" as const)
-        : ("actions" as const),
-    }));
-    const markdown = snapshot
-      .map(({ item, answer, note }, index) => {
-        const record = records[index]!;
-        const heading = `[${record.label}](${formatComposerContextHref("thread", record.contextId)})`;
-        const question = current.questions.find((question) => question.id === item.id);
-        if (question && answer)
-          return [
-            heading,
-            `Question: ${question.title}`,
-            ...(answer.selectedOptionIds.length
-              ? [
-                  `Answer: ${answer.selectedOptionIds.map((id) => question.options.find((option) => option.id === id)?.label ?? id).join("; ")}`,
-                ]
-              : []),
-            ...(answer.notes.trim() ? [`Notes: ${answer.notes.trim()}`] : []),
-          ].join("\n");
-        const action = current.actionItems.find((action) => action.id === item.id)!;
-        return [
-          heading,
-          `Action: ${action.title}`,
-          `Status: ${action.status}`,
-          ...(note?.trim() ? [`Notes: ${note.trim()}`] : []),
-        ].join("\n");
-      })
-      .join("\n\n");
+    const { records, markdown } = formatWorkspaceFeedback(
+      { environmentId, threadId: input.threadId },
+      current,
+      items.map((item) => item.id),
+    );
     const messageId = MessageId.make(`workspace:${input.threadId}:${key}`);
     yield* threads
       .sendToThread({
@@ -865,6 +818,20 @@ const make = Effect.gen(function* () {
   }, lock.withPermit);
   return ThreadWorkspace.of({
     get,
+    counts: Effect.fn("ThreadWorkspace.counts")(function* (input) {
+      const workspace = yield* get(input);
+      return {
+        questions: workspace.questions.length,
+        unansweredQuestions: workspace.questions.filter((question) => {
+          const answer = workspace.userDraft.questionAnswers[question.id];
+          return !answer || (!answer.selectedOptionIds.length && !answer.notes.trim());
+        }).length,
+        actions: workspace.actionItems.length,
+        outstandingActions: workspace.actionItems.filter((item) => item.status !== "done").length,
+        designs: workspace.designDocuments.length,
+        relatedThreads: workspace.relatedThreads.length,
+      };
+    }),
     patch,
     saveDraft,
     submit,

@@ -1,11 +1,15 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type RunId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentProject,
+  ThreadStructureVisibleTurnItem,
+} from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -43,7 +47,7 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { WorkspaceHistoryButton } from "../reviews/WorkspaceHistoryButton";
-import { ThreadReviewsButton } from "../reviews/ThreadReviewsButton";
+import { ForkConversationButton } from "./ForkConversationButton";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -58,6 +62,11 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
+  forkSource?: ThreadStructureVisibleTurnItem | undefined;
+  onForkFromRun?:
+    | ((input: { sourceThreadId: ThreadId; runId: RunId }) => Promise<void>)
+    | undefined;
+  forkDisabled?: boolean | undefined;
 }
 
 function resolveRenameCommit(input: {
@@ -85,6 +94,9 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
+  forkSource,
+  onForkFromRun,
+  forkDisabled,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -286,7 +298,7 @@ export const ChatHeader = memo(function ChatHeader({
       ref={breadcrumbContainerRef}
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
-        rightPanelOpen ? "pr-10" : "pr-28 sm:pr-24",
+        rightPanelOpen ? "pr-10" : "pr-36 sm:pr-32",
       )}
       onContextMenu={handleHeaderContextMenu}
     >
@@ -434,8 +446,16 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       {isServerThread ? (
         <>
+          {forkSource && onForkFromRun ? (
+            <ForkConversationButton
+              key={`${activeThreadEnvironmentId}:${activeThreadId}`}
+              environmentId={activeThreadEnvironmentId}
+              source={forkSource}
+              disabled={!canOperateThread || forkDisabled === true}
+              onFork={onForkFromRun}
+            />
+          ) : null}
           <GuestShareIndicator threadRef={activeThreadRef} />
-          <ThreadReviewsButton threadRef={activeThreadRef} />
           <WorkspaceHistoryButton threadRef={activeThreadRef} title={activeThreadTitle} />
         </>
       ) : null}

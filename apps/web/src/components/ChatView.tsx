@@ -88,6 +88,7 @@ import {
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  canForkProjectedAssistantItem,
   getUserQueuedThreadRuns,
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
@@ -3259,6 +3260,7 @@ export default function ChatView(props: ChatViewProps) {
     />
   ) : null;
   const panelToggleControlProps = {
+    workspaceThreadRef: isServerThread && activeThreadRef ? activeThreadRef : undefined,
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,
     terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
@@ -3355,6 +3357,15 @@ export default function ChatView(props: ChatViewProps) {
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               onNewThreadInProject={handleNewThreadInActiveProjectStable}
+              {...(activeThread.lineage.sideChat !== true
+                ? {
+                    forkSource: serverVisibleTurnItems.findLast((projectedItem) =>
+                      canForkProjectedAssistantItem({ projectedItem }),
+                    ),
+                    onForkFromRun: onForkFromRunStable,
+                    forkDisabled: activeEnvironmentUnavailable,
+                  }
+                : {})}
               {...(activeDraftLogicalProjectKey
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
@@ -4017,6 +4028,11 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
+          onAddInspect={
+            isServerThread && activeThreadRef
+              ? () => useRightPanelStore.getState().open(activeThreadRef, "inspect")
+              : undefined
+          }
           onAddReviews={
             isServerThread && activeThreadRef && reviewsSupported
               ? () => useRightPanelStore.getState().open(activeThreadRef, "reviews")
