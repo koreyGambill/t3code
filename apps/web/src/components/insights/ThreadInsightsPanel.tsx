@@ -5,12 +5,19 @@ import {
   type ThreadInsights,
   type ThreadLoadEvent,
 } from "@t3tools/contracts";
-import { useState } from "react";
-import { SearchIcon, RefreshCwIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  SearchIcon,
+  RefreshCwIcon,
+  FileTextIcon,
+  BookOpenIcon,
+  CircleHelpIcon,
+} from "lucide-react";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadInsightsGet } from "../../state/threadInsights";
 import { Button } from "../ui/button";
+import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { filterLoadEvents, reportedUsageTotals } from "./insightDisplay";
 import { UsageTimeline } from "./UsageTimeline";
@@ -126,10 +133,6 @@ function LoadTimeline({
   const filtered = filterLoadEvents(events, search, kind, evidence);
   return (
     <div className="space-y-4 p-4">
-      <p className="text-xs text-muted-foreground">
-        Observed tool activity, including unsuccessful requests. Inferred shell activity does not
-        prove the full file or skill reached the model.
-      </p>
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-40 flex-1">
           <InputGroup>
@@ -168,54 +171,104 @@ function LoadTimeline({
           <option value="inferred">Inferred</option>
         </select>
       </div>
-      <p className="text-xs text-muted-foreground">
-        {filtered.length} of {events.length} events
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {filtered.length} of {events.length} events
+        </p>
+        <InspectHelp label="About file and skill activity">
+          <p>
+            Tool activity includes failed requests. Inferred shell reads do not prove the entire
+            file reached the model. Automatic provider instruction loads may be unavailable.
+          </p>
+          <p>Output measures tool-result text, not file size or billed input. {estimateMethod}</p>
+        </InspectHelp>
+      </div>
       {filtered.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="text-muted-foreground">
-              <tr>
-                {["Time", "Type / source", "Path / activity", "Evidence", "Status", "Output"].map(
-                  (label) => (
-                    <th key={label} className="border-b px-2 py-2 font-medium">
-                      {label}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((event) => (
-                <tr key={event.itemId} className="align-top">
-                  <td className="whitespace-nowrap border-b px-2 py-2">{date(event.at)}</td>
-                  <td className="border-b px-2 py-2">
-                    <span>{event.kind}</span>
-                    <div className="mt-1 break-all text-muted-foreground">{event.toolName}</div>
-                  </td>
-                  <td className="min-w-44 border-b px-2 py-2">
-                    <div>{event.label}</div>
-                    {event.paths.map((path) => (
-                      <code key={path} className="mt-1 block break-all text-muted-foreground">
-                        {path}
+        <ul aria-label="File and skill activity" className="divide-y rounded-lg border px-3">
+          {filtered.map((event) => {
+            const path = event.paths[0];
+            const name = path?.split(/[\\/]/).filter(Boolean).at(-1) ?? event.label;
+            const parent = path?.replace(/[\\/][^\\/]+$/, "");
+            const Icon = event.kind === "skill" ? BookOpenIcon : FileTextIcon;
+            return (
+              <li key={event.itemId} className="min-w-0 py-3">
+                <details className="group">
+                  <summary className="cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-ring">
+                    <span className="inline-flex w-[calc(100%-1.25rem)] min-w-0 items-start gap-2 align-top">
+                      <Icon
+                        aria-hidden="true"
+                        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 break-words text-sm font-medium">
+                            {event.kind === "skill" && name === "SKILL.md"
+                              ? `${parent?.split(/[\\/]/).at(-1)} / ${name}`
+                              : name}
+                          </span>
+                          <span
+                            className={
+                              event.status === "failed"
+                                ? "shrink-0 text-xs text-destructive"
+                                : "shrink-0 text-xs text-muted-foreground"
+                            }
+                          >
+                            {event.status}
+                          </span>
+                        </span>
+                        {event.paths.length > 1 && (
+                          <span className="mt-0.5 block break-words text-xs text-muted-foreground">
+                            {event.paths
+                              .slice(1)
+                              .map((fullPath) => fullPath.split(/[\\/]/).filter(Boolean).at(-1))
+                              .join(" · ")}
+                          </span>
+                        )}
+                        {parent && (
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            {parent}
+                          </span>
+                        )}
+                        <span className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                          <span>{event.kind}</span>
+                          <span>{event.evidence}</span>
+                          <time dateTime={event.at}>
+                            {new Date(event.at).toLocaleTimeString(undefined, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </time>
+                        </span>
+                      </span>
+                    </span>
+                  </summary>
+                  <div className="mt-3 space-y-2 border-t pt-3 text-xs">
+                    <p className="break-all">{event.label}</p>
+                    {event.paths.map((fullPath) => (
+                      <code key={fullPath} className="block break-all text-muted-foreground">
+                        {fullPath}
                       </code>
                     ))}
-                  </td>
-                  <td className="border-b px-2 py-2">{event.evidence}</td>
-                  <td className="border-b px-2 py-2">{event.status}</td>
-                  <td className="whitespace-nowrap border-b px-2 py-2">
-                    {event.outputBytes === null ? "Unknown" : `${count(event.outputBytes)} B`}
-                    {event.estimatedOutputTokens !== null && (
-                      <div className="mt-1 text-muted-foreground">
-                        ~{count(event.estimatedOutputTokens)} tokens
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-muted-foreground">
+                      <dt>Tool</dt>
+                      <dd className="break-all">{event.toolName}</dd>
+                      <dt>Time</dt>
+                      <dd>{date(event.at)}</dd>
+                      <dt>Output</dt>
+                      <dd>
+                        {event.outputBytes === null
+                          ? "Unknown"
+                          : `${count(event.outputBytes)} bytes`}
+                        {event.estimatedOutputTokens !== null &&
+                          ` · ~${count(event.estimatedOutputTokens)} tokens`}
+                      </dd>
+                    </dl>
+                  </div>
+                </details>
+              </li>
+            );
+          })}
+        </ul>
       ) : (
         <p className="py-6 text-sm text-muted-foreground">
           {events.length
@@ -223,9 +276,6 @@ function LoadTimeline({
             : "No file or skill activity was identified for this run."}
         </p>
       )}
-      <p className="text-xs text-muted-foreground">
-        Output measures tool-result text, not file size or billed input. {estimateMethod}
-      </p>
     </div>
   );
 }
@@ -241,11 +291,23 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
   return (
     <div className="space-y-6 p-4">
       <section className="space-y-3">
-        <div className="flex flex-wrap justify-between gap-2">
-          <h3 className="text-sm font-semibold">Provider-reported usage</h3>
-          <span className="text-xs text-muted-foreground">
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {totals.measuredTurns} measured {totals.measuredTurns === 1 ? "turn" : "turns"} ·{" "}
             {totals.complete ? "Complete" : "Partial / unavailable"}
           </span>
+          <InspectHelp label="How tokens are counted">
+            <p>
+              Provider-reported main-agent totals. Local commands are excluded; missing usage stays
+              unknown. Other input/output covers reported subagent or compaction usage separately.
+            </p>
+            <p>Cache reads are included in input; reasoning is included in output.</p>
+            <p className="font-medium text-foreground">Provider harness: unknown</p>
+            <p>
+              Hidden provider instructions are unavailable. Input also includes conversation, tools
+              and files; the remainder cannot be attributed to the harness.
+            </p>
+          </InspectHelp>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-lg border p-3">
@@ -257,74 +319,66 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
             <p className="mt-1 text-xl tabular-nums">{count(totals.output)}</p>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Totals sum reported main-agent values for the selected runs. Local command counters are
-          excluded. Missing usage stays unknown. Other input/output covers provider-reported
-          subagent or compaction usage separately. Cache and reasoning below are subsets, not
-          additional tokens.
-        </p>
         <UsageTimeline points={usage.filter((point) => !point.localCommand)} />
         {usage.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="text-muted-foreground">
-                <tr>
-                  {[
-                    "Turn / time",
-                    "Input",
-                    "Output",
-                    "Cache read",
-                    "Cache write",
-                    "Reasoning",
-                    "Other in",
-                    "Other out",
-                    "Status",
-                  ].map((label) => (
-                    <th key={label} className="whitespace-nowrap border-b px-2 py-2 font-medium">
-                      {label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {usage.map((point) => (
-                  <tr key={point.turnId}>
-                    <td className="whitespace-nowrap border-b px-2 py-2">
-                      Turn {point.ordinal}
-                      <div className="mt-1 text-muted-foreground">{date(point.at)}</div>
-                    </td>
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+              Turn details · {usage.length}
+            </summary>
+            <div className="mt-3 divide-y">
+              {usage.map((point) => (
+                <details key={point.turnId} className="py-2 text-xs">
+                  <summary className="cursor-pointer focus-visible:outline-2 focus-visible:outline-ring">
+                    <span className="inline-flex w-[calc(100%-1.25rem)] flex-wrap justify-between gap-2 align-top">
+                      <span>Turn {point.ordinal}</span>
+                      <span className="text-muted-foreground">
+                        {point.localCommand
+                          ? "Local command (excluded)"
+                          : `${count(point.inputTokens)} in · ${count(point.outputTokens)} out`}
+                      </span>
+                    </span>
+                  </summary>
+                  <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 text-muted-foreground">
+                    <dt>Recorded</dt>
+                    <dd>{date(point.at)}</dd>
+                    <dt>Status</dt>
+                    <dd>{point.status}</dd>
                     {Object.entries({
-                      input: point.inputTokens,
-                      output: point.outputTokens,
-                      cached: point.cachedInputTokens,
-                      cacheWrite: point.cacheCreationTokens,
-                      reasoning: point.reasoningTokens,
-                      otherInput: point.otherInputTokens,
-                      otherOutput: point.otherOutputTokens,
-                    }).map(([key, value]) => (
-                      <td key={key} className="border-b px-2 py-2 text-right tabular-nums">
-                        {count(value)}
-                      </td>
+                      Input: point.inputTokens,
+                      Output: point.outputTokens,
+                      "Cache read (input subset)": point.cachedInputTokens,
+                      "Cache write": point.cacheCreationTokens,
+                      "Reasoning (output subset)": point.reasoningTokens,
+                      "Other input": point.otherInputTokens,
+                      "Other output": point.otherOutputTokens,
+                    }).map(([label, value]) => (
+                      <div key={label} className="contents">
+                        <dt>{label}</dt>
+                        <dd className="text-right tabular-nums">{count(value)}</dd>
+                      </div>
                     ))}
-                    <td className="border-b px-2 py-2">
-                      {point.localCommand ? "Local command (excluded)" : point.status}
-                      {point.hasSubagents && (
-                        <div className="mt-1 text-muted-foreground">Subagent activity reported</div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    {point.hasSubagents && (
+                      <>
+                        <dt>Subagents</dt>
+                        <dd>Activity reported</dd>
+                      </>
+                    )}
+                  </dl>
+                </details>
+              ))}
+            </div>
+          </details>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            No provider usage was recorded for the selected runs.
-          </p>
+          <p className="text-sm text-muted-foreground">No provider usage recorded.</p>
         )}
       </section>
-      <section className="space-y-3 border-t pt-4">
-        <h3 className="text-sm font-semibold">Known instruction footprint</h3>
+      <details className="space-y-3 rounded-lg border p-3">
+        <summary className="cursor-pointer text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+          Instruction estimates ·{" "}
+          {footprints.length
+            ? `${footprints.length} ${footprints.length === 1 ? "snapshot" : "snapshots"}`
+            : "Unavailable"}
+        </summary>
         <p className="text-xs text-muted-foreground">
           Payload estimates captured at dispatch. These describe known instructions, not a breakdown
           of the billed input total. {data.estimateMethod}
@@ -340,35 +394,27 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
                 <br />
                 {footprint.source}
               </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="text-muted-foreground">
-                    <tr>
-                      {["Instruction section", "Type", "Bytes", "Est. tokens"].map((label) => (
-                        <th key={label} className="border-b px-2 py-2 font-medium">
-                          {label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {footprint.parts.map((part) => (
-                      <tr key={part.key}>
-                        <td className="border-b px-2 py-2">{part.label}</td>
-                        <td className="border-b px-2 py-2 text-muted-foreground">
-                          {categories[part.category]}
-                        </td>
-                        <td className="border-b px-2 py-2 text-right tabular-nums">
-                          {count(part.bytes)}
-                        </td>
-                        <td className="border-b px-2 py-2 text-right tabular-nums">
-                          ~{count(part.estimatedTokens)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <dl className="divide-y text-xs">
+                {footprint.parts.map((part) => (
+                  <div
+                    key={part.key}
+                    className="flex flex-wrap justify-between gap-x-4 gap-y-1 py-2"
+                  >
+                    <dt className="min-w-0 flex-1 break-words">
+                      <span>{part.label}</span>
+                      <span className="mt-1 block text-muted-foreground">
+                        {categories[part.category]}
+                      </span>
+                    </dt>
+                    <dd className="text-right tabular-nums">
+                      <span>~{count(part.estimatedTokens)} tokens</span>
+                      <span className="mt-1 block text-muted-foreground">
+                        {count(part.bytes)} bytes
+                      </span>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           ))
         ) : (
@@ -377,15 +423,26 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
             reconstructed reliably.
           </p>
         )}
-        <div className="rounded-lg border p-3 text-xs text-muted-foreground">
-          <p className="font-medium text-foreground">Provider harness: unknown</p>
-          <p className="mt-1">
-            Claude's default harness and other hidden provider instructions are not exposed as an
-            exact token breakdown. Unattributed input can also include conversation, tools, files
-            and caches. We do not label the remainder as harness tokens.
-          </p>
-        </div>
-      </section>
+      </details>
     </div>
+  );
+}
+
+function InspectHelp({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} />}>
+        <CircleHelpIcon className="size-4" />
+      </PopoverTrigger>
+      <PopoverPopup width="md" padding="compact" side="bottom" align="end" aria-label={label}>
+        <div className="space-y-2 text-xs text-muted-foreground">{children}</div>
+      </PopoverPopup>
+    </Popover>
   );
 }

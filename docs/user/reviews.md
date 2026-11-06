@@ -46,7 +46,8 @@ header opens **Recent Threads**. Back and Forward follow your navigation path.
 ## Personal notes
 
 Personal notes are yours. Choose a notes directory for each environment to save
-thread notes as Markdown files. Notes remain private until you select text and
+thread notes as Markdown files. Preview the current Markdown draft without sharing it.
+Notes remain private until you select text and
 add it to the composer, then send it. You can include the T3 thread ID in the file. The note includes a
 terminal resume command when the provider has a resumable session.
 

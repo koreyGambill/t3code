@@ -19,6 +19,7 @@ vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 import { ThreadInsightsPanel } from "./ThreadInsightsPanel";
 
 it("filters observed activity and distinguishes known instruction estimates from reported provider totals", async () => {
+  state.query.mockReset();
   const threadRef = {
     environmentId: EnvironmentId.make("insights-browser"),
     threadId: ThreadId.make("insights-browser"),
@@ -124,12 +125,18 @@ it("filters observed activity and distinguishes known instruction estimates from
       <ThreadInsightsPanel threadRef={threadRef} visible mode="loads" />
     </RegistryContext.Provider>,
   );
+  await expect.element(page.getByText("settings.json", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("/work/settings.json", { exact: true })).not.toBeVisible();
+  await page.getByText("settings.json", { exact: true }).click();
   await expect.element(page.getByText("/work/settings.json", { exact: true })).toBeVisible();
   await page.getByRole("textbox", { name: "Search file and skill activity" }).fill("SKILL.md");
   await expect
     .element(page.getByText("/work/settings.json", { exact: true }))
     .not.toBeInTheDocument();
+  await expect.element(page.getByText("review / SKILL.md", { exact: true })).toBeVisible();
+  await page.getByText("review / SKILL.md", { exact: true }).click();
   await expect.element(page.getByText("/skills/review/SKILL.md", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Unknown", { exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Activity evidence" }).selectOptions("reported");
   await expect.element(page.getByText("No activity matches these filters.")).toBeVisible();
   await page.getByRole("combobox", { name: "Inspect run" }).selectOptions("run-old");
@@ -144,16 +151,26 @@ it("filters observed activity and distinguishes known instruction estimates from
   await expect
     .element(page.getByRole("figure", { name: "Reported token usage by provider turn" }))
     .toBeVisible();
+  await expect
+    .element(page.getByText("Provider harness: unknown", { exact: true }))
+    .not.toBeInTheDocument();
+  await page.getByRole("button", { name: "How tokens are counted" }).click();
   await expect.element(page.getByText("Provider harness: unknown", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "How tokens are counted" }).click();
+  await expect.element(page.getByText("Workspace instructions", { exact: true })).not.toBeVisible();
+  await page.getByText("Instruction estimates · 1 snapshot", { exact: true }).click();
   await expect.element(page.getByText("Workspace instructions", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("~100", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("~100 tokens", { exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Inspect run" }).selectOptions("all");
   expect(state.query).toHaveBeenLastCalledWith(
     expect.objectContaining({ input: { threadId: threadRef.threadId, allRuns: true } }),
   );
   appAtomRegistry.set(atom, AsyncResult.success({ ...history, selectedRunId: null }));
   await expect.element(page.getByText("1,500", { exact: true })).toBeVisible();
+  await page.getByText("Turn details · 3", { exact: true }).click();
   await expect.element(page.getByText("Local command (excluded)", { exact: true })).toBeVisible();
+  await page.getByText("Turn 1", { exact: true }).last().click();
+  await expect.element(page.getByText("Other input", { exact: true }).first()).toBeVisible();
   appAtomRegistry.set(atom, AsyncResult.success({ ...data, footprints: [] }));
   await expect
     .element(

@@ -9,9 +9,8 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
   );
   if (!points.some((point) => point.inputTokens !== null || point.outputTokens !== null))
     return null;
-  const height = 32 + points.length * 46;
   return (
-    <figure className="space-y-2" aria-label="Reported token usage by provider turn">
+    <figure className="space-y-3" aria-label="Reported token usage by provider turn">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span>
           <span className="mr-1 inline-block size-2 rounded-sm bg-primary" />
@@ -21,80 +20,68 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
           <span className="mr-1 inline-block size-2 rounded-sm bg-success" />
           Output
         </span>
-        <span>Faint segments: cache read / reasoning subsets</span>
+        <span>Faint: cached / reasoning</span>
       </div>
-      <svg
-        role="img"
-        aria-label="Input and output tokens over provider turns. Values are also listed in the table below."
-        viewBox={`0 0 520 ${height}`}
-        className="w-full"
-        style={{ minHeight: height / 2 }}
+      <div
+        className="max-h-72 space-y-3 overflow-y-auto rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+        tabIndex={points.length > 5 ? 0 : undefined}
+        role={points.length > 5 ? "region" : undefined}
+        aria-label={points.length > 5 ? "Scroll token usage by turn" : undefined}
       >
-        <text x="66" y="12" className="fill-muted-foreground text-3xs">
-          0
-        </text>
-        <text x="504" y="12" textAnchor="end" className="fill-muted-foreground text-3xs">
-          {number(max)}
-        </text>
-        {points.map((point, index) => {
+        <div
+          className="flex justify-between pl-12 text-xs text-muted-foreground"
+          aria-hidden="true"
+        >
+          <span>0</span>
+          <span>{number(max)}</span>
+        </div>
+        {points.map((point) => {
           const input = usageSegments(point.inputTokens, point.cachedInputTokens, max);
           const output = usageSegments(point.outputTokens, point.reasoningTokens, max);
-          const top = 22 + index * 46;
           return (
-            <g key={point.turnId}>
-              <title>{`Turn ${point.ordinal}: input ${number(point.inputTokens)}, output ${number(point.outputTokens)}, cached ${number(point.cachedInputTokens)}, reasoning ${number(point.reasoningTokens)}`}</title>
-              <text x="56" y={top + 17} textAnchor="end" className="fill-muted-foreground text-3xs">
+            <div
+              key={point.turnId}
+              role="img"
+              aria-label={`Turn ${point.ordinal}: input ${number(point.inputTokens)}, output ${number(point.outputTokens)}, cached ${number(point.cachedInputTokens)}, reasoning ${number(point.reasoningTokens)}`}
+              className="flex items-center gap-3"
+            >
+              <span className="w-9 shrink-0 text-xs text-muted-foreground">
                 Turn {point.ordinal}
-              </text>
-              <rect
-                x="66"
-                y={top}
-                width={input.totalWidth * 438}
-                height="12"
-                rx="2"
-                className="fill-primary"
-              />
-              <rect
-                x="66"
-                y={top}
-                width={input.subsetWidth * 438}
-                height="12"
-                rx="2"
-                className="fill-background/45"
-              />
-              <rect
-                x="66"
-                y={top + 16}
-                width={output.totalWidth * 438}
-                height="12"
-                rx="2"
-                className="fill-success"
-              />
-              <rect
-                x="66"
-                y={top + 16}
-                width={output.subsetWidth * 438}
-                height="12"
-                rx="2"
-                className="fill-background/45"
-              />
-              {point.inputTokens === null && (
-                <text x="68" y={top + 10} className="fill-muted-foreground text-3xs">
-                  Input unavailable
-                </text>
-              )}
-              {point.outputTokens === null && (
-                <text x="68" y={top + 26} className="fill-muted-foreground text-3xs">
-                  Output unavailable
-                </text>
-              )}
-            </g>
+              </span>
+              <div className="min-w-0 flex-1 space-y-1" aria-hidden="true">
+                {point.inputTokens === null ? (
+                  <p className="text-xs text-muted-foreground">Input unavailable</p>
+                ) : (
+                  <div className="relative h-3">
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-sm bg-primary"
+                      style={{ width: `${input.totalWidth * 100}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-sm bg-background/45"
+                      style={{ width: `${input.subsetWidth * 100}%` }}
+                    />
+                  </div>
+                )}
+                {point.outputTokens === null ? (
+                  <p className="text-xs text-muted-foreground">Output unavailable</p>
+                ) : (
+                  <div className="relative h-3">
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-sm bg-success"
+                      style={{ width: `${output.totalWidth * 100}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-sm bg-background/45"
+                      style={{ width: `${output.subsetWidth * 100}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
           );
         })}
-      </svg>
-      <figcaption className="text-xs text-muted-foreground">
-        Cache reads are part of input; reasoning is part of output. Neither adds to the bar total.
-      </figcaption>
+      </div>
     </figure>
   );
 }

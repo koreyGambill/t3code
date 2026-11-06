@@ -19,13 +19,16 @@ vi.mock("../../state/threadNotes", () => ({
   sendThreadNoteSelection: state.send,
   updateThreadNotesSettings: "settings",
 }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { NotesPanel } from "./NotesPanel";
 
-it("keeps unsent notes private, saves before sharing a selected range, and retains a dirty draft on remount", async () => {
+it("previews private drafts, saves before sharing a selected range, and retains a dirty draft on remount", async () => {
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
   const environmentId = EnvironmentId.make("notes-browser");
   const threadId = ThreadId.make("notes-browser");
@@ -69,6 +72,16 @@ it("keeps unsent notes private, saves before sharing a selected range, and retai
   const field = page.getByRole("textbox", { name: "Personal thread notes" });
   await expect.element(field).toHaveValue(note.text);
   expect(state.send).not.toHaveBeenCalled();
+  const markdown = "# Draft heading\n\n**Unsaved preview**";
+  await field.fill(markdown);
+  await page.getByRole("button", { name: "View notes", exact: true }).click();
+  await expect.element(page.getByRole("heading", { name: "Draft heading" })).toBeVisible();
+  await expect.element(page.getByText("Unsaved preview")).toHaveProperty("tagName", "STRONG");
+  await expect.element(field).not.toBeInTheDocument();
+  expect(note.text).toBe("private before. share this. private after.");
+  expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
+  await page.getByRole("button", { name: "Edit notes", exact: true }).click();
+  await expect.element(field).toHaveValue(markdown);
   await field.fill("private before. share this. private after. Updated");
   const element = field.element();
   if (!(element instanceof HTMLTextAreaElement)) throw new Error("Expected textarea");

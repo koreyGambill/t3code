@@ -6,7 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
-import { SendIcon, SettingsIcon } from "lucide-react";
+import { CircleHelpIcon, EyeIcon, PencilIcon, SendIcon, SettingsIcon } from "lucide-react";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import {
@@ -18,6 +18,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import ChatMarkdown from "../ChatMarkdown";
 import { randomUUID } from "../../lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { editNote, flushNote, receiveNote, retryNote, useNoteDraft } from "./noteDraft";
@@ -41,6 +44,7 @@ export function NotesPanel({
   const canConfigure = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const updateSettings = useAtomCommand(updateThreadNotesSettings);
   const [showSettings, setShowSettings] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const [directory, setDirectory] = useState("");
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -91,22 +95,77 @@ export function NotesPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold">Personal notes</h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Notes directory"
-          disabled={sending}
-          onClick={() => {
-            setDirectory(settings.data?.directory ?? "");
-            setShowSettings(!showSettings);
-          }}
-        >
-          <SettingsIcon />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={viewing ? "Edit notes" : "View notes"}
+                  disabled={!draft || sending}
+                  onClick={() => {
+                    setSelection({ start: 0, end: 0 });
+                    setViewing(!viewing);
+                  }}
+                />
+              }
+            >
+              {viewing ? <PencilIcon /> : <EyeIcon />}
+            </TooltipTrigger>
+            <TooltipPopup>{viewing ? "Edit notes" : "View notes"}</TooltipPopup>
+          </Tooltip>
+          <Popover>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <PopoverTrigger
+                    render={<Button variant="ghost" size="icon-sm" aria-label="Notes help" />}
+                  />
+                }
+              >
+                <CircleHelpIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Notes help</TooltipPopup>
+            </Tooltip>
+            <PopoverPopup align="end" width="md">
+              <div className="space-y-3 text-xs text-muted-foreground">
+                <p>Notes stay private until you add selected text to chat.</p>
+                {draft && (
+                  <>
+                    <p className="break-all select-text">{draft.note.path}</p>
+                    {draft.note.resumeCommand && (
+                      <code className="block break-all select-text">
+                        {draft.note.resumeCommand}
+                      </code>
+                    )}
+                    <p>{draft.note.resumeExplanation}</p>
+                  </>
+                )}
+              </div>
+            </PopoverPopup>
+          </Popover>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Notes directory"
+                  disabled={sending}
+                  onClick={() => {
+                    setDirectory(settings.data?.directory ?? "");
+                    setShowSettings(!showSettings);
+                  }}
+                />
+              }
+            >
+              <SettingsIcon />
+            </TooltipTrigger>
+            <TooltipPopup>Notes directory</TooltipPopup>
+          </Tooltip>
+        </div>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Your notes stay private until you add selected text to chat.
-      </p>
       {showSettings && (
         <div className="flex flex-col gap-2 rounded-lg border p-3">
           <label className="text-xs" htmlFor="notes-directory">
@@ -118,9 +177,18 @@ export function NotesPanel({
             value={directory}
             onChange={(event) => setDirectory(event.target.value)}
           />
-          <p className="text-xs text-muted-foreground">
-            Changing this opens notes in the new directory. Existing files stay where they are.
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button variant="ghost" size="icon-sm" aria-label="About notes directories" />
+              }
+            >
+              <CircleHelpIcon />
+            </TooltipTrigger>
+            <TooltipPopup>
+              Opens notes in the new directory. Existing files stay where they are.
+            </TooltipPopup>
+          </Tooltip>
           <Button
             variant="outline"
             size="sm"
@@ -187,43 +255,50 @@ export function NotesPanel({
             <span>{draft.saving ? "Saving…" : draft.dirty ? "Unsaved" : "Saved"}</span>
           </div>
           <div className="flex min-h-64 flex-1 flex-col">
-            <Textarea
-              ref={editor}
-              aria-label="Personal thread notes"
-              value={draft.text}
-              disabled={!canWrite || sending}
-              className="min-h-64 flex-1"
-              placeholder="Write your own notes in Markdown…"
-              onChange={(event) => editNote(environmentId, threadId, { text: event.target.value })}
-              onSelect={(event) =>
-                setSelection({
-                  start: event.currentTarget.selectionStart,
-                  end: event.currentTarget.selectionEnd,
-                })
-              }
-              onBlur={() => {
-                void flushNote(environmentId, threadId).catch(() => {});
-              }}
-            />
-          </div>
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!canWrite || sending || selection.end <= selection.start || !!draft.error}
-              onClick={() => void shareSelection()}
-            >
-              <SendIcon />
-              Add selection to chat
-            </Button>
-          </div>
-          <div className="space-y-2 border-t pt-3 text-xs text-muted-foreground">
-            <p className="break-all">{draft.note.path}</p>
-            {draft.note.resumeCommand && (
-              <code className="block break-all select-text">{draft.note.resumeCommand}</code>
+            {viewing ? (
+              <div aria-label="Notes preview" className="min-h-64 flex-1">
+                {draft.text ? (
+                  <ChatMarkdown text={draft.text} cwd={undefined} environmentId={environmentId} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">No notes yet.</p>
+                )}
+              </div>
+            ) : (
+              <Textarea
+                ref={editor}
+                aria-label="Personal thread notes"
+                value={draft.text}
+                disabled={!canWrite || sending}
+                className="min-h-64 flex-1"
+                placeholder="Write your own notes in Markdown…"
+                onChange={(event) =>
+                  editNote(environmentId, threadId, { text: event.target.value })
+                }
+                onSelect={(event) =>
+                  setSelection({
+                    start: event.currentTarget.selectionStart,
+                    end: event.currentTarget.selectionEnd,
+                  })
+                }
+                onBlur={() => {
+                  void flushNote(environmentId, threadId).catch(() => {});
+                }}
+              />
             )}
-            <p>{draft.note.resumeExplanation}</p>
           </div>
+          {!viewing && (
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canWrite || sending || selection.end <= selection.start || !!draft.error}
+                onClick={() => void shareSelection()}
+              >
+                <SendIcon />
+                Add selection to chat
+              </Button>
+            </div>
+          )}
         </>
       ) : (
         <p className="text-sm text-muted-foreground">
