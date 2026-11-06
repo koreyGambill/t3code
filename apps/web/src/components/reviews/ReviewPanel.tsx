@@ -6,7 +6,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { ArrowLeftIcon, CheckCheckIcon, PlusIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckCheckIcon, PlusIcon, ListIcon, SendIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -34,7 +34,8 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
+import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ReviewQuestionCard, emptyReviewAnswer } from "./ReviewQuestionCard";
 import { ReviewNotes, type ReviewQuote } from "./ReviewNotes";
 import { ReviewReminderMenu } from "./ReviewReminderMenu";
@@ -100,16 +101,10 @@ export function ReviewPanel({
     <div className="@container/review flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {reviewId === null ? (
         <>
-          <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-lg font-semibold">Questions</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Structured questions and decisions for this conversation.
-              </p>
-            </div>
+          <div className="flex h-7 shrink-0 items-center justify-end border-b border-border px-1">
             <Button
-              size="sm"
-              variant="outline"
+              size="micro"
+              variant="ghost"
               disabled={!canWrite}
               onClick={() => setCreating(true)}
             >
@@ -117,7 +112,7 @@ export function ReviewPanel({
               Create review
             </Button>
           </div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
             {list.data?.map((review) => (
               <button
                 key={review.id}
@@ -248,7 +243,7 @@ function ReviewDocument({
       key={section.id}
       type="button"
       aria-current={selectedSection === section.id ? "location" : undefined}
-      className="w-full rounded-md px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted aria-current:bg-muted aria-current:text-foreground"
+      className="w-full rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted aria-current:bg-muted aria-current:text-foreground"
       onClick={() => jump(section.id)}
     >
       {section.title}
@@ -256,62 +251,80 @@ function ReviewDocument({
   ));
   return (
     <>
-      <div className="space-y-3 border-b border-border px-5 py-4">
-        <Button variant="ghost" size="xs" onClick={onBack}>
-          <ArrowLeftIcon className="size-3" />
-          All reviews
-        </Button>
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="text-xl leading-tight font-semibold tracking-tight">
-            {artifact.content.title}
-          </h2>
-          <span role="status" className="shrink-0 pt-1 text-xs text-muted-foreground">
-            {session.submitting
-              ? "Sending…"
-              : session.saving
-                ? "Saving…"
-                : session.error
-                  ? "Unsaved"
-                  : session.dirty
-                    ? "Unsaved"
-                    : sent
-                      ? "Sent to chat"
-                      : "Saved"}
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span>
-            {answered} of {questions.length} answered
-          </span>
-          {draft.remindAt && !sent ? (
-            <span>
-              {Date.parse(draft.remindAt) <= now ? "Review is due" : "Reminder"}{" "}
-              <RelativeTime timestamp={draft.remindAt} />
-            </span>
-          ) : null}
-        </div>
-        <div className="@min-[700px]/review:hidden">
-          <Select
-            value={selectedSection}
-            onValueChange={(id) => {
-              if (id) jump(id);
-            }}
+      <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border px-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" size="icon-micro" aria-label="All reviews" onClick={onBack} />
+            }
           >
-            <SelectTrigger size="sm" aria-label="Review outline">
-              <SelectValue>
-                {artifact.content.sections.find((section) => section.id === selectedSection)
-                  ?.title ?? "Jump to section"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup>
-              {artifact.content.sections.map((section) => (
-                <SelectItem key={section.id} value={section.id}>
-                  {section.title}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+            <ArrowLeftIcon />
+          </TooltipTrigger>
+          <TooltipPopup>All reviews</TooltipPopup>
+        </Tooltip>
+        <Popover>
+          <PopoverTrigger
+            render={<Button variant="ghost" size="icon-micro" aria-label="Review outline" />}
+          >
+            <ListIcon />
+          </PopoverTrigger>
+          <PopoverPopup align="start" padding="compact">
+            <nav aria-label="Review sections" className="max-h-64 w-52 overflow-auto">
+              {outline}
+            </nav>
+          </PopoverPopup>
+        </Popover>
+        <div className="min-w-0 flex-1">
+          <Tooltip>
+            <TooltipTrigger render={<h2 tabIndex={0} className="truncate text-xs font-medium" />}>
+              {artifact.content.title}
+            </TooltipTrigger>
+            <TooltipPopup>{artifact.content.title}</TooltipPopup>
+          </Tooltip>
         </div>
+        <span
+          aria-label={`${answered} of ${questions.length} answered`}
+          className="shrink-0 text-2xs tabular-nums text-muted-foreground"
+        >
+          {answered}/{questions.length}
+        </span>
+        {draft.remindAt && !sent ? (
+          <span className="shrink-0 text-2xs text-muted-foreground">
+            {Date.parse(draft.remindAt) <= now ? "Due " : "Reminder "}
+            <RelativeTime timestamp={draft.remindAt} />
+          </span>
+        ) : null}
+        <span role="status" className="shrink-0 text-2xs text-muted-foreground">
+          {session.submitting
+            ? "Sending…"
+            : session.saving
+              ? "Saving…"
+              : session.error || session.dirty
+                ? "Unsaved"
+                : sent
+                  ? "Sent to chat"
+                  : "Saved"}
+        </span>
+        <ReviewReminderMenu
+          disabled={disabled}
+          remindAt={sent ? null : draft.remindAt}
+          onChange={(remindAt) => {
+            editReviewDraft(target, (current) => ({ ...current, remindAt }));
+            void flushReviewDraft(target);
+          }}
+        />
+        <Button
+          size="icon-micro"
+          aria-label={
+            session.submitting ? "Sending…" : sent ? "Sent to chat" : "Send review to chat"
+          }
+          disabled={disabled || session.conflict || sent || !hasResponse}
+          onClick={() => {
+            void sendReview(target);
+          }}
+        >
+          {sent ? <CheckCheckIcon /> : <SendIcon />}
+        </Button>
       </div>
       {session.error ? (
         <div
@@ -359,16 +372,7 @@ function ReviewDocument({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1">
-        <nav
-          aria-label="Review sections"
-          className="hidden w-44 shrink-0 space-y-1 overflow-y-auto border-r border-border p-3 @min-[700px]/review:block"
-        >
-          {outline}
-        </nav>
-        <div
-          ref={scrollRef}
-          className="min-h-0 min-w-0 flex-1 space-y-7 overflow-y-auto px-5 py-6 @min-[700px]/review:px-8"
-        >
+        <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-2">
           {artifact.content.summary ? (
             <div className="text-sm text-muted-foreground">
               <ChatMarkdown text={artifact.content.summary} cwd={undefined} threadRef={threadRef} />
@@ -448,29 +452,6 @@ function ReviewDocument({
             />
           </label>
         </div>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background px-5 py-4">
-        <ReviewReminderMenu
-          disabled={disabled}
-          remindAt={sent ? null : draft.remindAt}
-          onChange={(remindAt) => {
-            editReviewDraft(target, (current) => ({ ...current, remindAt }));
-            void flushReviewDraft(target);
-          }}
-        />
-        <Button
-          size="sm"
-          disabled={disabled || session.conflict || sent || !hasResponse}
-          onClick={() => {
-            void sendReview(target);
-          }}
-        >
-          {sent ? <CheckCheckIcon className="size-3.5" /> : null}
-          {session.submitting ? "Sending…" : sent ? "Sent to chat" : "Send review to chat"}
-        </Button>
-        <p className="w-full text-xs text-muted-foreground">
-          Answers and notes stay private until you send the review.
-        </p>
       </div>
     </>
   );

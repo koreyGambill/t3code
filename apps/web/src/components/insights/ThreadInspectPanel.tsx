@@ -18,32 +18,31 @@ export function ThreadInspectPanel({
   readonly visible: boolean;
   readonly startedThread: boolean;
 }) {
+  const tabs = (
+    <div role="tablist" aria-label="Inspect sections" className="flex shrink-0 gap-0.5">
+      {sections.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={section === id}
+          className="shrink-0 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
+          onClick={() => useRightPanelStore.getState().setInspectSection(threadRef, id)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-      <div
-        role="tablist"
-        aria-label="Inspect sections"
-        className="flex shrink-0 gap-1 border-b border-border p-2"
-      >
-        {sections.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={section === id}
-            className="rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
-            onClick={() => useRightPanelStore.getState().setInspectSection(threadRef, id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       {startedThread ? (
-        <ThreadInsightsPanel threadRef={threadRef} visible={visible} mode={section} />
+        <ThreadInsightsPanel threadRef={threadRef} visible={visible} mode={section} tabs={tabs} />
       ) : (
-        <p className="p-5 text-sm text-muted-foreground">
-          Send the first message to inspect this conversation's activity.
-        </p>
+        <>
+          <div className="flex h-7 shrink-0 items-center border-b border-border px-1">{tabs}</div>
+          <p className="p-2 text-xs text-muted-foreground">Send a message to inspect activity.</p>
+        </>
       )}
     </div>
   );

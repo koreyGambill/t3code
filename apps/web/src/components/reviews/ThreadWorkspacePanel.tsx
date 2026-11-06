@@ -31,9 +31,9 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Textarea } from "../ui/textarea";
 import { threadMarksGet } from "../../state/threadMarks";
-import { NotesPanel } from "../notes/NotesPanel";
 import { useReviewSupport } from "./useReviewSupport";
 import { WorkspaceMarksPanel } from "./WorkspaceMarksPanel";
 import { WorkspaceThreadsPanel } from "./WorkspaceThreadsPanel";
@@ -129,7 +129,7 @@ export function ThreadWorkspacePanel({
   threadRef,
   visible,
   startedThread,
-  section,
+  section: storedSection,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly reviewId: string | null;
@@ -137,6 +137,7 @@ export function ThreadWorkspacePanel({
   readonly startedThread: boolean;
   readonly section: ThreadWorkspaceSection;
 }) {
+  const section = storedSection === "notes" ? "unified" : storedSection;
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
   const supported = useReviewSupport(threadRef.environmentId);
   const canQuery = visible && startedThread && supported && canRead;
@@ -164,11 +165,11 @@ export function ThreadWorkspacePanel({
     marks: marks.data?.length,
   };
   return (
-    <div className="@container/workspace flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+    <div className="@container/workspace relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <div
         role="tablist"
         aria-label="Workspace sections"
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2"
+        className={`flex h-7 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border pl-1 ${section === "marks" ? "workspace-area-tabs-with-tools" : "pr-14"}`}
       >
         {sections.map(([id, label]) => (
           <button
@@ -177,12 +178,12 @@ export function ThreadWorkspacePanel({
             role="tab"
             aria-selected={section === id}
             aria-label={sectionCounts[id] === undefined ? label : `${label} ${sectionCounts[id]}`}
-            className="shrink-0 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
+            className="shrink-0 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
             onClick={() => useRightPanelStore.getState().setWorkspaceSection(threadRef, id)}
           >
             {label}
             {sectionCounts[id] !== undefined ? (
-              <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-3xs tabular-nums text-muted-foreground">
+              <span className="ml-1 rounded bg-muted px-1 text-3xs tabular-nums text-muted-foreground">
                 {sectionCounts[id]}
               </span>
             ) : null}
@@ -201,8 +202,6 @@ export function ThreadWorkspacePanel({
         <p className="p-5 text-sm text-muted-foreground">
           This connection cannot read the workspace.
         </p>
-      ) : section === "notes" ? (
-        <NotesPanel environmentId={threadRef.environmentId} threadId={threadRef.threadId} />
       ) : (
         <WorkspaceContent
           key={`${threadRef.environmentId}:${threadRef.threadId}`}
@@ -437,7 +436,7 @@ function WorkspaceContent({
           <details
             key={action.id}
             id={`workspace-item-${action.id}`}
-            className="group rounded-lg border border-border p-3"
+            className="group rounded border border-border p-2"
           >
             <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
               <ChevronRightIcon className="size-3 shrink-0 group-open:rotate-90" />
@@ -495,22 +494,27 @@ function WorkspaceContent({
         )}
       />
       {section === "questions" || section === "action-items" || section === "unified" ? (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
-          <span className="text-3xs text-muted-foreground">
-            {local?.dirty
-              ? "Saving answers…"
-              : "Add responses to the composer, then send when ready."}
-          </span>
-          <Button
-            size="xs"
-            disabled={!canWrite || busy || !ready}
-            onClick={() => {
-              void send([]);
-            }}
-          >
-            <SendIcon className="size-3" />
-            Add ready responses to chat
-          </Button>
+        <div className="absolute right-7 top-0 z-10 flex h-7 items-center bg-background px-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost"
+                  aria-label="Add ready responses to chat"
+                  disabled={!canWrite || busy || !ready}
+                  onClick={() => {
+                    void send([]);
+                  }}
+                />
+              }
+            >
+              <SendIcon />
+            </TooltipTrigger>
+            <TooltipPopup>
+              {local?.dirty ? "Saving answers…" : "Add ready responses to chat"}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       ) : null}
     </>

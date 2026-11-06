@@ -4073,6 +4073,7 @@ export default function ChatView(props: ChatViewProps) {
                     );
                     return source ? (
                       <ForkConversationButton
+                        compact
                         key={activeThreadKey}
                         environmentId={activeThread.environmentId}
                         source={source}
@@ -4083,6 +4084,7 @@ export default function ChatView(props: ChatViewProps) {
                   })()}
                 <PanelLayoutControls
                   {...panelToggleControlProps}
+                  compact
                   showTerminalControl={false}
                   showRightPanelControl={false}
                 />

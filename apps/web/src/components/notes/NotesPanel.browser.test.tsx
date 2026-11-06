@@ -82,6 +82,7 @@ it("previews private drafts, saves before sharing a selected range, and retains 
   expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
   await page.getByRole("button", { name: "Edit notes", exact: true }).click();
   await expect.element(field).toHaveValue(markdown);
+  await page.getByRole("button", { name: "Notes directory", exact: true }).click();
   await field.fill("private before. share this. private after. Updated");
   const element = field.element();
   if (!(element instanceof HTMLTextAreaElement)) throw new Error("Expected textarea");

@@ -10,6 +10,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 
 export function ReviewReminderMenu({
@@ -30,10 +31,25 @@ export function ReviewReminderMenu({
         if (open) setPresets(resolveSnoozePresets(new Date(), { formatTime }));
       }}
     >
-      <MenuTrigger render={<Button variant="outline" size="sm" disabled={disabled} />}>
-        <ClockIcon className="size-3.5" />
-        {remindAt ? "Change reminder" : "Remind me later"}
-      </MenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-micro"
+                  disabled={disabled}
+                  aria-label={remindAt ? "Change reminder" : "Remind me later"}
+                />
+              }
+            />
+          }
+        >
+          <ClockIcon />
+        </TooltipTrigger>
+        <TooltipPopup>{remindAt ? "Change reminder" : "Remind me later"}</TooltipPopup>
+      </Tooltip>
       <MenuPopup align="end">
         {presets.map((preset) => (
           <MenuItem

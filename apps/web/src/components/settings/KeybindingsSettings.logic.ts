@@ -379,6 +379,8 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "workspace.tile.splitUp") return "Split Tile Up";
   if (command === "workspace.tile.splitDown") return "Split Tile Down";
   if (command === "workspace.tile.maximize") return "Maximize Tile";
+  if (command === "workspace.tile.focusPair") return "Focus With Conversation";
+  if (command === "workspace.tile.resize") return "Resize Focused Tile (Hold)";
   if (command === "workspace.tile.previousTab") return "Previous Tab in Tile";
   if (command === "workspace.tile.nextTab") return "Next Tab in Tile";
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";

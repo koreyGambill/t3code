@@ -47,7 +47,10 @@ export function ThreadGlyph({
         <path key={path} d={path} />
       ))}
       {working ? (
-        <g aria-hidden="true">
+        <g
+          aria-hidden="true"
+          transform="translate(12 12) rotate(-25) scale(1 0.62) translate(-12 -12)"
+        >
           {["primary", "secondary"].map((ember) => (
             <g
               key={ember}
@@ -55,10 +58,10 @@ export function ThreadGlyph({
               stroke="currentColor"
               strokeWidth="1"
             >
-              <path d="M1.6 6A12 12 0 0 1 3.5 3.5" opacity="0.18" />
-              <path d="M3.5 3.5A12 12 0 0 1 7.4 0.9" opacity="0.42" />
-              <path d="M7.4 0.9A12 12 0 0 1 12 0" opacity="0.8" />
-              <circle cx="12" cy="0" r="1.35" fill="currentColor" stroke="none" />
+              <path d="M-1.9 4A16 16 0 0 1 0.7 0.7" opacity="0.18" />
+              <path d="M0.7 0.7A16 16 0 0 1 5.9 -2.8" opacity="0.42" />
+              <path d="M5.9 -2.8A16 16 0 0 1 12 -4" opacity="0.8" />
+              <circle cx="12" cy="-4" r="1.5" fill="currentColor" stroke="none" />
             </g>
           ))}
         </g>

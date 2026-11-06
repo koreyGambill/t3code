@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Columns3Icon, CopyIcon, SearchIcon, CheckIcon, RefreshCwIcon } from "lucide-react";
+import { Columns3Icon, CopyIcon, CheckIcon, RefreshCwIcon } from "lucide-react";
 import type { ScopedThreadRef, WorkspaceMarkAnnotation } from "@t3tools/contracts";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -8,7 +8,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { threadMarksGet } from "../../state/threadMarks";
 import type { WorkspaceMark } from "@t3tools/shared/workspaceMarks";
 import { Button } from "../ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
 import { markTimestamp } from "./workspaceMarks";
 
@@ -84,7 +83,7 @@ export function WorkspaceMarksPanel({
     setSort(field);
   };
   const heading = (field: keyof WorkspaceMark, label: string) => (
-    <th className="whitespace-nowrap px-2 py-2 text-left font-medium">
+    <th className="whitespace-nowrap px-2 py-1 text-left font-medium">
       <button onClick={() => sortBy(field)}>
         {label}
         {field === sort ? (ascending ? " ↑" : " ↓") : ""}
@@ -92,19 +91,7 @@ export function WorkspaceMarksPanel({
     </th>
   );
   return (
-    <div className="flex min-h-0 flex-1 flex-col p-3">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Marks</h2>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Refresh Marks"
-          disabled={query.isPending}
-          onClick={query.refresh}
-        >
-          <RefreshCwIcon className="size-4" />
-        </Button>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
       {query.error && (
         <p role="alert" className="mb-2 text-xs text-destructive">
           {query.error}
@@ -115,24 +102,27 @@ export function WorkspaceMarksPanel({
           {copyError}
         </p>
       ) : null}
-      <div className="mb-3 flex items-center gap-2">
-        <div className="min-w-0 flex-1">
-          <InputGroup>
-            <InputGroupAddon>
-              <SearchIcon className="size-4 text-muted-foreground" />
-            </InputGroupAddon>
-            <InputGroupInput
-              aria-label="Search all Marks columns"
-              placeholder="Search…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </InputGroup>
-        </div>
+      <div className="absolute top-0 right-0 z-10 flex h-7 w-[min(16rem,60%)] items-center gap-1 border-l border-border bg-background px-1">
+        <input
+          aria-label="Search all Marks columns"
+          placeholder="Search…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="h-5 min-w-0 flex-1 rounded border bg-background px-1 text-xs"
+        />
+        <Button
+          variant="ghost"
+          size="icon-micro"
+          aria-label="Refresh Marks"
+          disabled={query.isPending}
+          onClick={query.refresh}
+        >
+          <RefreshCwIcon className="size-4" />
+        </Button>
         <Popover>
           <PopoverTrigger
             render={
-              <Button size="icon-sm" variant="ghost" aria-label="Marks columns and filters">
+              <Button size="icon-micro" variant="ghost" aria-label="Marks columns and filters">
                 <Columns3Icon className="size-4" />
               </Button>
             }
@@ -175,8 +165,8 @@ export function WorkspaceMarksPanel({
           </PopoverPopup>
         </Popover>
         <Button
-          size="xs"
-          variant="outline"
+          size="micro"
+          variant="ghost"
           disabled={!rows.length}
           onClick={() => {
             void copy(
@@ -218,17 +208,17 @@ export function WorkspaceMarksPanel({
             {rows.map((mark) => (
               <tr key={mark.url} className="border-b border-border/50">
                 {preferences.local ? (
-                  <td className="whitespace-nowrap px-2 py-2 text-3xs text-muted-foreground">
+                  <td className="whitespace-nowrap px-2 py-1 text-3xs text-muted-foreground">
                     {markTimestamp(mark.timestamp, false, preferences.hour24)}
                   </td>
                 ) : null}
                 {preferences.utc ? (
-                  <td className="whitespace-nowrap px-2 py-2 text-3xs text-muted-foreground">
+                  <td className="whitespace-nowrap px-2 py-1 text-3xs text-muted-foreground">
                     {markTimestamp(mark.timestamp, true, preferences.hour24)}
                   </td>
                 ) : null}
-                {preferences.service ? <td className="px-2 py-2">{mark.service}</td> : null}
-                <td className="max-w-64 truncate px-2 py-2">
+                {preferences.service ? <td className="px-2 py-1">{mark.service}</td> : null}
+                <td className="max-w-64 truncate px-2 py-1">
                   <a
                     href={mark.url}
 
@@ -239,11 +229,11 @@ export function WorkspaceMarksPanel({
                     {mark.url}
                   </a>
                 </td>
-                {preferences.description ? <td className="px-2 py-2">{mark.description}</td> : null}
+                {preferences.description ? <td className="px-2 py-1">{mark.description}</td> : null}
                 <td>
                   <Button
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-micro"
                     aria-label={`Copy ${mark.url}`}
                     onClick={() => {
                       void copy(mark.url, mark.url);

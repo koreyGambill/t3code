@@ -26,7 +26,7 @@ of the selected theme.
 Web and desktop threads have a colored outline glyph for quick recognition. Click the glyph beside
 the conversation header, or choose **Reroll glyph** from the thread menu, to pick another. The glyph
 stays the same when you rename the thread or reopen it on another connected client. While an agent
-works, two contrasting embers orbit the glyph.
+works, two contrasting embers follow a tilted orbit around the glyph.
 
 ## Tiled workspace
 
@@ -37,8 +37,15 @@ tile group; drop on a tab bar to join groups, in the center to swap them, or at 
 New tiles start with an area chooser. Middle-click an area tab to close it. Each group keeps its color.
 The conversation can move between tiles too.
 
-Use **Ctrl+Alt+arrows** to focus a neighboring tile, add **Shift** to split the selected tab, and use
-**Ctrl+Alt+Enter** to maximize or restore a tile. **Ctrl+Alt+[** and **Ctrl+Alt+]** select tabs.
+Use **Ctrl+Alt+arrows** or **Ctrl+Alt+H/J/K/L** to focus a neighboring tile, add **Shift** to split the selected tab, and use
+**Ctrl+Alt+Enter** to maximize or restore a tile. **Ctrl+Tab** and **Ctrl+Shift+Tab** cycle tabs
+within the focused tile on Windows, Linux, and macOS.
+Hold **Ctrl+Alt+R** and move the mouse to resize the focused tile from the pointer’s starting
+position. Release to keep the size or press **Esc** to cancel. Arrow keys also adjust the size
+while holding the resize shortcut.
+Use **Ctrl+Alt+F** to show the selected tile beside the conversation group without rearranging
+the full layout. Toggle it again to restore all tiles. The shared divider can be resized, and
+maximize remains separate.
 These commands can be changed in **Settings → Keybindings**. On narrow windows, areas use the
 compact panel presentation while the wider layout stays saved.
 

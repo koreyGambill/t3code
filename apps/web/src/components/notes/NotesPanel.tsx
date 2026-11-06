@@ -92,16 +92,18 @@ export function NotesPanel({
     setSending(false);
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold">Personal notes</h2>
-        <div className="flex items-center gap-1">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex h-7 shrink-0 items-center justify-between border-b border-border px-1">
+        <span role="status" className="px-1 text-2xs text-muted-foreground">
+          {draft ? (draft.saving ? "Saving…" : draft.dirty ? "Unsaved" : "Saved") : ""}
+        </span>
+        <div className="flex items-center gap-0.5">
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon-micro"
                   aria-label={viewing ? "Edit notes" : "View notes"}
                   disabled={!draft || sending}
                   onClick={() => {
@@ -120,7 +122,7 @@ export function NotesPanel({
               <TooltipTrigger
                 render={
                   <PopoverTrigger
-                    render={<Button variant="ghost" size="icon-sm" aria-label="Notes help" />}
+                    render={<Button variant="ghost" size="icon-micro" aria-label="Notes help" />}
                   />
                 }
               >
@@ -145,12 +147,36 @@ export function NotesPanel({
               </div>
             </PopoverPopup>
           </Popover>
+          {!viewing && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-micro"
+                    aria-label="Add selection to chat"
+                    disabled={
+                      !canWrite ||
+                      sending ||
+                      selection.end <= selection.start ||
+                      !draft ||
+                      !!draft.error
+                    }
+                    onClick={() => void shareSelection()}
+                  >
+                    <SendIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup>Add selection to chat</TooltipPopup>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon-micro"
                   aria-label="Notes directory"
                   disabled={sending}
                   onClick={() => {
@@ -167,7 +193,20 @@ export function NotesPanel({
         </div>
       </div>
       {showSettings && (
-        <div className="flex flex-col gap-2 rounded-lg border p-3">
+        <div className="flex shrink-0 flex-col gap-2 border-b p-2">
+          {draft && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={draft.includeThreadId}
+                disabled={!canWrite || sending}
+                onChange={(event) =>
+                  editNote(environmentId, threadId, { includeThreadId: event.target.checked })
+                }
+              />
+              Include thread ID in file
+            </label>
+          )}
           <label className="text-xs" htmlFor="notes-directory">
             Notes directory on this environment
           </label>
@@ -180,7 +219,7 @@ export function NotesPanel({
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button variant="ghost" size="icon-sm" aria-label="About notes directories" />
+                <Button variant="ghost" size="icon-micro" aria-label="About notes directories" />
               }
             >
               <CircleHelpIcon />
@@ -240,23 +279,9 @@ export function NotesPanel({
       )}
       {draft ? (
         <>
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={draft.includeThreadId}
-                disabled={!canWrite || sending}
-                onChange={(event) =>
-                  editNote(environmentId, threadId, { includeThreadId: event.target.checked })
-                }
-              />
-              Include thread ID in file
-            </label>
-            <span>{draft.saving ? "Saving…" : draft.dirty ? "Unsaved" : "Saved"}</span>
-          </div>
-          <div className="flex min-h-64 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col p-1">
             {viewing ? (
-              <div aria-label="Notes preview" className="min-h-64 flex-1">
+              <div aria-label="Notes preview" className="min-h-0 flex-1 overflow-auto">
                 {draft.text ? (
                   <ChatMarkdown text={draft.text} cwd={undefined} environmentId={environmentId} />
                 ) : (
@@ -265,11 +290,12 @@ export function NotesPanel({
               </div>
             ) : (
               <Textarea
+                size="document"
                 ref={editor}
                 aria-label="Personal thread notes"
                 value={draft.text}
                 disabled={!canWrite || sending}
-                className="min-h-64 flex-1"
+                className="min-h-0 flex-1 overflow-auto"
                 placeholder="Write your own notes in Markdown…"
                 onChange={(event) =>
                   editNote(environmentId, threadId, { text: event.target.value })
@@ -286,19 +312,6 @@ export function NotesPanel({
               />
             )}
           </div>
-          {!viewing && (
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canWrite || sending || selection.end <= selection.start || !!draft.error}
-                onClick={() => void shareSelection()}
-              >
-                <SendIcon />
-                Add selection to chat
-              </Button>
-            </div>
-          )}
         </>
       ) : (
         <p className="text-sm text-muted-foreground">

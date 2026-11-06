@@ -1,10 +1,32 @@
-import type { TileNode } from "./threadTileLayout";
+import {
+  CONVERSATION_TAB_ID,
+  getTileGroups,
+  type TileNode,
+  type ThreadTileLayout,
+} from "./threadTileLayout";
 
 export interface TileRect {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+export function displayTileRoot(layout: ThreadTileLayout): TileNode {
+  if (!layout.focusPairGroupId) return layout.root;
+  const groups = getTileGroups(layout);
+  const conversation = groups.find((group) => group.tabs.includes(CONVERSATION_TAB_ID));
+  const target = groups.find((group) => group.id === layout.focusPairGroupId);
+  return conversation && target && conversation.id !== target.id
+    ? {
+        kind: "split",
+        id: "focus-pair-split",
+        axis: "horizontal",
+        ratio: layout.focusPairRatio ?? 0.55,
+        first: conversation,
+        second: target,
+      }
+    : layout.root;
 }
 
 export function tileGeometry(root: TileNode) {
@@ -64,4 +86,62 @@ export function directionalTile(
     if (!best || score < best.score) best = { id: group.id, score };
   }
   return best?.id ?? null;
+}
+
+export type TileResizeSplit = ReturnType<typeof tileGeometry>["splits"][number];
+
+export function resizeTileSplits(
+  root: TileNode,
+  groupId: string,
+  pointer: { x: number; y: number },
+) {
+  const { groups, splits } = tileGeometry(root);
+  const group = groups.find((entry) => entry.id === groupId);
+  if (!group) return [];
+  const center = {
+    x: group.rect.x + group.rect.width / 2,
+    y: group.rect.y + group.rect.height / 2,
+  };
+  const borders = splits.filter((split) => {
+    const rect = split.rect;
+    if (
+      center.x <= rect.x ||
+      center.x >= rect.x + rect.width ||
+      center.y <= rect.y ||
+      center.y >= rect.y + rect.height
+    )
+      return false;
+    const divider =
+      split.axis === "horizontal"
+        ? rect.x + rect.width * split.ratio
+        : rect.y + rect.height * split.ratio;
+    const start = split.axis === "horizontal" ? group.rect.x : group.rect.y;
+    const size = split.axis === "horizontal" ? group.rect.width : group.rect.height;
+    return Math.abs(divider - start) < 1e-9 || Math.abs(divider - start - size) < 1e-9;
+  });
+  return (["horizontal", "vertical"] as const).flatMap((axis) => {
+    let nearest: TileResizeSplit | undefined;
+    let distance = Infinity;
+    for (const split of borders) {
+      if (split.axis !== axis) continue;
+      const divider =
+        axis === "horizontal"
+          ? split.rect.x + split.rect.width * split.ratio
+          : split.rect.y + split.rect.height * split.ratio;
+      const nextDistance = Math.abs((axis === "horizontal" ? pointer.x : pointer.y) - divider);
+      if (nextDistance < distance) {
+        nearest = split;
+        distance = nextDistance;
+      }
+    }
+    return nearest ? [nearest] : [];
+  });
+}
+
+export function resizeTileRatio(split: TileResizeSplit, delta: { x: number; y: number }) {
+  const distance = split.axis === "horizontal" ? delta.x : delta.y;
+  const size = split.axis === "horizontal" ? split.rect.width : split.rect.height;
+  return Number.isFinite(distance) && size > 0
+    ? Math.max(0.1, Math.min(0.9, split.ratio + distance / size))
+    : split.ratio;
 }

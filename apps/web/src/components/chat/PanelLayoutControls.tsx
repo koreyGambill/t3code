@@ -15,6 +15,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export interface PanelLayoutControlsProps {
   workspaceThreadRef?: ScopedThreadRef | undefined;
   showThreadPanelControl?: boolean;
+  compact?: boolean;
   showTerminalControl?: boolean;
   showRightPanelControl?: boolean;
   terminalAvailable: boolean;
@@ -36,6 +37,7 @@ export interface PanelLayoutControlsProps {
 export const PanelLayoutControls = memo(function PanelLayoutControls({
   workspaceThreadRef,
   showThreadPanelControl = true,
+  compact = false,
   showTerminalControl = true,
   showRightPanelControl = true,
   terminalAvailable,
@@ -60,7 +62,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       onPressedChange={threadPanelPresentation === "popover" ? undefined : onToggleThreadPanel}
       aria-label="Toggle thread details panel"
       variant="ghost"
-      size="sm"
+      size={compact ? "micro" : "sm"}
     >
       <SquareMenuIcon className="size-4" />
     </Toggle>
@@ -96,7 +98,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               onPressedChange={onToggleTerminal}
               aria-label="Toggle terminal drawer"
               variant="ghost"
-              size="sm"
+              size={compact ? "micro" : "sm"}
               disabled={!terminalAvailable}
             >
               <PanelBottomIcon className="size-4" />
@@ -122,7 +124,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               aria-label="Toggle right panel"
               data-right-panel-toggle
               variant="ghost"
-              size="sm"
+              size={compact ? "micro" : "sm"}
               disabled={!rightPanelAvailable}
             >
               <PanelRightIcon className="size-4" />

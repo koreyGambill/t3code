@@ -20,8 +20,12 @@ export type ThreadTileLayout = {
   root: TileNode;
   focusedGroupId: string;
   maximizedGroupId: string | null;
+  focusPairGroupId?: string | null;
+  focusPairRatio?: number;
 };
 export type TileAction =
+  | { type: "focus-pair"; groupId: string | null }
+  | { type: "resize-focus-pair"; ratio: number }
   | { type: "activate"; groupId: string; tabId: string }
   | { type: "focus"; groupId: string }
   | { type: "move"; tabId: string; targetGroupId: string; index?: number }
@@ -120,6 +124,12 @@ function settle(layout: ThreadTileLayout): ThreadTileLayout {
   return {
     ...layout,
     root,
+    ...(layout.focusPairGroupId &&
+    !groups.some(
+      (group) => group.id === layout.focusPairGroupId && !group.tabs.includes(CONVERSATION_TAB_ID),
+    )
+      ? { focusPairGroupId: null }
+      : {}),
     focusedGroupId: groups.some((group) => group.id === layout.focusedGroupId)
       ? layout.focusedGroupId
       : groups[0]!.id,
@@ -213,11 +223,36 @@ export function syncTileLayout(
 
 export function applyTileAction(layout: ThreadTileLayout, action: TileAction): ThreadTileLayout {
   const groups = getTileGroups(layout);
-  if (action.type === "maximize")
+  if (action.type === "focus-pair") {
+    if (
+      action.groupId !== null &&
+      !groups.some(
+        (group) => group.id === action.groupId && !group.tabs.includes(CONVERSATION_TAB_ID),
+      )
+    )
+      return layout;
     return {
       ...layout,
-      maximizedGroupId: groups.some((group) => group.id === action.groupId) ? action.groupId : null,
+      focusPairGroupId: action.groupId,
+      focusPairRatio: layout.focusPairRatio ?? 0.55,
+      focusedGroupId: action.groupId ?? layout.focusedGroupId,
+      maximizedGroupId: null,
     };
+  }
+  if (action.type === "resize-focus-pair")
+    return Number.isFinite(action.ratio)
+      ? { ...layout, focusPairRatio: Math.min(0.9, Math.max(0.1, action.ratio)) }
+      : layout;
+  if (action.type === "maximize") {
+    const group = groups.find((entry) => entry.id === action.groupId);
+    return {
+      ...layout,
+      ...(layout.focusPairGroupId && group && !group.tabs.includes(CONVERSATION_TAB_ID)
+        ? { focusPairGroupId: group.id }
+        : {}),
+      maximizedGroupId: group?.id ?? null,
+    };
+  }
   if (action.type === "resize")
     return Number.isFinite(action.ratio)
       ? {
@@ -235,6 +270,9 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     return {
       ...layout,
       focusedGroupId: group.id,
+      ...(layout.focusPairGroupId && !group.tabs.includes(CONVERSATION_TAB_ID)
+        ? { focusPairGroupId: group.id }
+        : {}),
       maximizedGroupId: layout.maximizedGroupId === group.id ? group.id : null,
       root:
         action.type === "activate"
@@ -269,6 +307,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     const added: TileGroup = { kind: "group", id: action.groupId, tabs: [], activeTabId: "" };
     return settle({
       ...layout,
+      ...(layout.focusPairGroupId ? { focusPairGroupId: null } : {}),
       root: mapNode(layout.root, (node) =>
         node.id === action.targetGroupId
           ? {
@@ -289,7 +328,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     const source = groups.find((group) => group.id === action.groupId);
     const target = groups.find((group) => group.id === action.targetGroupId);
     if (!source?.tabs.length || !target || source.id === target.id) return layout;
-    return {
+    return settle({
       ...layout,
       root: mapNode(removeGroup(layout.root, source.id)!, (node) =>
         node.kind === "group" && node.id === target.id
@@ -298,20 +337,20 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       ),
       focusedGroupId: target.id,
       maximizedGroupId: null,
-    };
+    });
   }
   if (action.type === "swap-groups") {
     const first = groups.find((group) => group.id === action.firstGroupId);
     const second = groups.find((group) => group.id === action.secondGroupId);
     if (!first || !second || first.id === second.id) return layout;
-    return {
+    return settle({
       ...layout,
       root: mapNode(layout.root, (node) =>
         node.id === first.id ? second : node.id === second.id ? first : node,
       ),
       focusedGroupId: first.id,
       maximizedGroupId: null,
-    };
+    });
   }
   if (action.type === "dock-group") {
     const source = groups.find((group) => group.id === action.groupId);
@@ -324,7 +363,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     });
     if (conflictingId) return layout;
     const remaining = removeGroup(layout.root, source.id)!;
-    return {
+    return settle({
       ...layout,
       root: mapNode(remaining, (node) =>
         node.id === target.id
@@ -340,7 +379,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       ),
       focusedGroupId: source.id,
       maximizedGroupId: null,
-    };
+    });
   }
   const source = groups.find((group) => group.tabs.includes(action.tabId));
   const target = groups.find((group) => group.id === action.targetGroupId);
@@ -393,6 +432,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
   )!;
   return settle({
     ...layout,
+    ...(action.type === "split" && layout.focusPairGroupId ? { focusPairGroupId: null } : {}),
     root,
     focusedGroupId: action.type === "split" ? action.groupId : target.id,
     maximizedGroupId: null,
@@ -477,6 +517,15 @@ export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
   return root
     ? settle({
         root,
+        ...("focusPairGroupId" in value &&
+        (typeof value.focusPairGroupId === "string" || value.focusPairGroupId === null)
+          ? { focusPairGroupId: value.focusPairGroupId }
+          : {}),
+        ...("focusPairRatio" in value &&
+        typeof value.focusPairRatio === "number" &&
+        Number.isFinite(value.focusPairRatio)
+          ? { focusPairRatio: Math.min(0.9, Math.max(0.1, value.focusPairRatio)) }
+          : {}),
         focusedGroupId: value.focusedGroupId,
         maximizedGroupId:
           "maximizedGroupId" in value && typeof value.maximizedGroupId === "string"

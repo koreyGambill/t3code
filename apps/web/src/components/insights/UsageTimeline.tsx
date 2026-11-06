@@ -10,7 +10,7 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
   if (!points.some((point) => point.inputTokens !== null || point.outputTokens !== null))
     return null;
   return (
-    <figure className="space-y-3" aria-label="Reported token usage by provider turn">
+    <figure className="space-y-2" aria-label="Reported token usage by provider turn">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span>
           <span className="mr-1 inline-block size-2 rounded-sm bg-primary" />
@@ -23,7 +23,7 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
         <span>Faint: cached / reasoning</span>
       </div>
       <div
-        className="max-h-72 space-y-3 overflow-y-auto rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+        className="max-h-72 space-y-2 overflow-y-auto rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
         tabIndex={points.length > 5 ? 0 : undefined}
         role={points.length > 5 ? "region" : undefined}
         aria-label={points.length > 5 ? "Scroll token usage by turn" : undefined}
@@ -43,7 +43,7 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
               key={point.turnId}
               role="img"
               aria-label={`Turn ${point.ordinal}: input ${number(point.inputTokens)}, output ${number(point.outputTokens)}, cached ${number(point.cachedInputTokens)}, reasoning ${number(point.reasoningTokens)}`}
-              className="flex items-center gap-3"
+              className="flex items-center gap-2"
             >
               <span className="w-9 shrink-0 text-xs text-muted-foreground">
                 Turn {point.ordinal}
@@ -52,7 +52,7 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
                 {point.inputTokens === null ? (
                   <p className="text-xs text-muted-foreground">Input unavailable</p>
                 ) : (
-                  <div className="relative h-3">
+                  <div className="relative h-2">
                     <div
                       className="absolute inset-y-0 left-0 rounded-sm bg-primary"
                       style={{ width: `${input.totalWidth * 100}%` }}
@@ -66,7 +66,7 @@ export function UsageTimeline({ points }: { readonly points: ReadonlyArray<Threa
                 {point.outputTokens === null ? (
                   <p className="text-xs text-muted-foreground">Output unavailable</p>
                 ) : (
-                  <div className="relative h-3">
+                  <div className="relative h-2">
                     <div
                       className="absolute inset-y-0 left-0 rounded-sm bg-success"
                       style={{ width: `${output.totalWidth * 100}%` }}

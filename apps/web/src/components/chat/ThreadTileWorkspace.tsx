@@ -1,3 +1,4 @@
+import { useTileResizeGesture } from "./useTileResizeGesture";
 import {
   registerCommands,
   registerMenuAction,
@@ -14,6 +15,7 @@ import {
 } from "react";
 import {
   Columns2,
+  PanelLeft,
   Rows2,
   Maximize2,
   Minimize2,
@@ -35,7 +37,12 @@ import {
   getTileGroups,
   type TileGroup,
 } from "../../threadTileLayout";
-import { directionalTile, tileGeometry, type TileRect } from "../../threadTileGeometry";
+import {
+  directionalTile,
+  tileGeometry,
+  displayTileRoot,
+  type TileRect,
+} from "../../threadTileGeometry";
 import { useTheme } from "../../hooks/useTheme";
 import { SurfaceIcon, surfaceTitle, type RightPanelTabsProps } from "../RightPanelTabs";
 import { Button } from "../ui/button";
@@ -82,12 +89,33 @@ export function ThreadTileWorkspace(props: {
   const [resizeOverride, setResizeOverride] = useState<{ splitId: string; ratio: number } | null>(
     null,
   );
-  const layout = resizeOverride
-    ? reduceTileAction(savedLayout, { type: "resize", ...resizeOverride })
-    : savedLayout;
+  const gestureResize = useTileResizeGesture({
+    rootRef,
+    threadRef: props.threadRef,
+    panels: props.panels,
+  });
+  const layout = gestureResize
+    ? gestureResize.reduce(
+        (current, change) =>
+          reduceTileAction(
+            current,
+            change.splitId === "focus-pair-split"
+              ? { type: "resize-focus-pair", ratio: change.ratio }
+              : { type: "resize", ...change },
+          ),
+        savedLayout,
+      )
+    : resizeOverride
+      ? reduceTileAction(
+          savedLayout,
+          resizeOverride.splitId === "focus-pair-split"
+            ? { type: "resize-focus-pair", ratio: resizeOverride.ratio }
+            : { type: "resize", ...resizeOverride },
+        )
+      : savedLayout;
   const { resolvedTheme } = useTheme();
   const groups = getTileGroups(layout);
-  const geometry = tileGeometry(layout.root);
+  const geometry = tileGeometry(displayTileRoot(layout));
   const maximized = layout.maximizedGroupId;
   const visibleGroups = maximized
     ? geometry.groups
@@ -113,7 +141,15 @@ export function ThreadTileWorkspace(props: {
   const layoutVersion = JSON.stringify(layout);
   const apply = (
     action: Parameters<ReturnType<typeof useRightPanelStore.getState>["applyTileAction"]>[1],
-  ) => useRightPanelStore.getState().applyTileAction(props.threadRef, action);
+  ) =>
+    useRightPanelStore
+      .getState()
+      .applyTileAction(
+        props.threadRef,
+        action.type === "resize" && action.splitId === "focus-pair-split"
+          ? { type: "resize-focus-pair", ratio: action.ratio }
+          : action,
+      );
   const title = (id: string) => {
     if (id === CONVERSATION_TAB_ID) return "Conversation";
     const surface = props.panels.surfaces.find((entry) => entry.id === id);
@@ -135,6 +171,23 @@ export function ThreadTileWorkspace(props: {
       groupId: randomUUID(),
       splitId: randomUUID(),
     });
+  };
+  const toggleFocusPair = (groupId?: string) => {
+    const current = selectThreadTileLayout(
+      useRightPanelStore.getState().byThreadKey,
+      props.threadRef,
+    );
+    if (current.focusPairGroupId) {
+      apply({ type: "focus-pair", groupId: null });
+      return;
+    }
+    const entries = getTileGroups(current);
+    const preferred = entries.find((entry) => entry.id === (groupId ?? current.focusedGroupId));
+    const companion =
+      preferred && !preferred.tabs.includes(CONVERSATION_TAB_ID)
+        ? preferred
+        : entries.find((entry) => !entry.tabs.includes(CONVERSATION_TAB_ID));
+    if (companion) apply({ type: "focus-pair", groupId: companion.id });
   };
   const focus = (groupId: string) => {
     const current = selectThreadTileLayout(
@@ -175,7 +228,11 @@ export function ThreadTileWorkspace(props: {
     const moveFocus = (direction: "left" | "right" | "up" | "down") => {
       const group = currentGroup();
       if (!group) return;
-      const next = directionalTile(tileGeometry(currentLayout().root).groups, group.id, direction);
+      const next = directionalTile(
+        tileGeometry(displayTileRoot(currentLayout())).groups,
+        group.id,
+        direction,
+      );
       if (next) focus(next);
     };
     const moveTab = (direction: "left" | "right" | "up" | "down") => {
@@ -202,6 +259,7 @@ export function ThreadTileWorkspace(props: {
         );
     };
     const actions = {
+      "workspace.tile.focusPair": () => toggleFocusPair(),
       "workspace.tile.focusLeft": () => moveFocus("left"),
       "workspace.tile.focusRight": () => moveFocus("right"),
       "workspace.tile.focusUp": () => moveFocus("up"),
@@ -236,6 +294,7 @@ export function ThreadTileWorkspace(props: {
         keybindings: () => props.panels.keybindings,
         context: props.panels.getShortcutContext,
         when: (event) =>
+          !gestureResize &&
           !event.isComposing &&
           !(
             event.target instanceof Element &&
@@ -338,7 +397,12 @@ export function ThreadTileWorkspace(props: {
     if (!hovered) return null;
     const localX = (x - hovered.rect.x) / hovered.rect.width;
     const localY = (y - hovered.rect.y) / hovered.rect.height;
-    if ((y - hovered.rect.y) * bounds.height <= 32) return { groupId: hovered.id, zone: "tabs" };
+    const titlebarHeight =
+      Number.parseFloat(
+        getComputedStyle(event.currentTarget).getPropertyValue("--tile-titlebar-height"),
+      ) || 26;
+    if ((y - hovered.rect.y) * bounds.height <= titlebarHeight)
+      return { groupId: hovered.id, zone: "tabs" };
     const edges = [
       { zone: "left" as const, distance: localX },
       { zone: "right" as const, distance: 1 - localX },
@@ -516,7 +580,7 @@ export function ThreadTileWorkspace(props: {
                           data-tab-id={tabId}
                           aria-selected={group.activeTabId === tabId}
                           aria-label={title(tabId)}
-                          className="flex max-w-44 min-w-0 cursor-pointer items-center gap-1.5 px-2 py-1 text-xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                          className="flex max-w-44 min-w-0 cursor-pointer items-center gap-1 px-1.5 py-0.5 text-2xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                           draggable
                           onDragStart={(event) => {
                             event.stopPropagation();
@@ -571,7 +635,7 @@ export function ThreadTileWorkspace(props: {
                     render={
                       <Button
                         size="micro"
-                        variant={maximized ? "secondary" : "ghost-muted"}
+                        variant={maximized || layout.focusPairGroupId ? "secondary" : "ghost-muted"}
                         aria-label={`Switch tile, ${groups.length} tiles${maximized ? ", maximized" : ""}`}
                       />
                     }
@@ -579,7 +643,9 @@ export function ThreadTileWorkspace(props: {
                     <Columns2 className="size-3" />
                     {maximized
                       ? `${groups.findIndex((entry) => entry.id === id) + 1}/${groups.length} · Maximized`
-                      : `${groups.length} ${groups.length === 1 ? "tile" : "tiles"}`}
+                      : layout.focusPairGroupId
+                        ? `2/${groups.length} · Focus`
+                        : `${groups.length}`}
                   </MenuTrigger>
                   <MenuPopup align="end">
                     {groups.map((entry, index) => (
@@ -597,13 +663,29 @@ export function ThreadTileWorkspace(props: {
                         {index + 1}. {title(entry.activeTabId)}
                       </MenuItem>
                     ))}
+                    {layout.focusPairGroupId && (
+                      <MenuItem onClick={() => apply({ type: "focus-pair", groupId: null })}>
+                        Restore full layout
+                      </MenuItem>
+                    )}
                     {maximized && (
                       <MenuItem onClick={() => apply({ type: "maximize", groupId: null })}>
-                        Restore all tiles
+                        {layout.focusPairGroupId ? "Restore focus layout" : "Restore all tiles"}
                       </MenuItem>
                     )}
                   </MenuPopup>
                 </Menu>
+                <TileControl
+                  label={
+                    layout.focusPairGroupId
+                      ? "Restore full layout (Ctrl+Alt+F)"
+                      : "Focus with conversation (Ctrl+Alt+F)"
+                  }
+                  disabled={groups.length < 2}
+                  onClick={() => toggleFocusPair(id)}
+                >
+                  <PanelLeft />
+                </TileControl>
                 <TileControl
                   label="New tile to the right"
                   onClick={() => split(group, "horizontal")}
@@ -702,14 +784,19 @@ export function ThreadTileWorkspace(props: {
           const rect = placed?.rect ?? { x: 0, y: 0, width: 1, height: 1 };
           const surface = props.panels.surfaces.find((entry) => entry.id === tabId);
           const contentVisible =
-            visible && !(surface?.kind === "preview" && (dragging !== null || resizing));
+            visible &&
+            !(
+              surface?.kind === "preview" &&
+              (dragging !== null || resizing || gestureResize !== null)
+            );
           return (
             <div
               key={tabId}
               data-tile-content={tabId}
+              data-focused={layout.focusedGroupId === group?.id}
               tabIndex={-1}
               inert={!visible}
-              className="absolute z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background outline-none"
+              className="workspace-tile-content absolute z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background outline-none"
               hidden={!visible}
               style={{
                 ...rectStyle(rect),
@@ -753,6 +840,7 @@ export function ThreadTileWorkspace(props: {
                 line.axis === "horizontal"
                   ? "w-1 -translate-x-1/2 cursor-col-resize"
                   : "h-1 -translate-y-1/2 cursor-row-resize",
+                gestureResize?.some((change) => change.splitId === line.id) && "bg-ring",
               )}
               style={
                 line.axis === "horizontal"
@@ -786,6 +874,18 @@ export function ThreadTileWorkspace(props: {
               }}
             />
           ))}
+        {gestureResize && (
+          <div
+            className="fixed inset-0 z-50 cursor-move touch-none select-none"
+            data-tile-resize-overlay
+            aria-label="Resizing focused tile"
+            role="status"
+          >
+            <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded border border-ring bg-popover px-3 py-1 text-xs text-popover-foreground">
+              Resize · release to keep · Esc to cancel
+            </span>
+          </div>
+        )}
         {dragging && dropTarget && dropStyle && (
           <div
             className="pointer-events-none absolute z-30 rounded-sm border-2 border-ring bg-ring/15"
@@ -808,9 +908,9 @@ export function ThreadTileWorkspace(props: {
             <CircleHelp className="size-3" />
           </TooltipTrigger>
           <TooltipPopup>
-            Ctrl+Alt+arrows: focus tile. Add Shift: split tab. Ctrl+Alt+Enter: maximize. Ctrl+Alt+[
-            or ]: switch tab. Drag a tab to group it or split at an edge. Drag the title bar to move
-            the whole tile.
+            Ctrl+Alt+arrows or H/J/K/L: focus tile. Hold Ctrl+Alt+R and move the mouse: resize. Add
+            Shift: split tab. Ctrl+Alt+Enter: maximize. Ctrl+Alt+[ or ] / Ctrl+Tab: switch tab. Drag
+            a tab to group it or split at an edge. Drag the title bar to move the whole tile.
           </TooltipPopup>
         </Tooltip>
       </div>

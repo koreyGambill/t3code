@@ -13,8 +13,7 @@ export function WorkspaceThreadsPanel({
   const shells = useThreadShells();
   const navigate = useNavigate();
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <h2 className="mb-3 text-lg font-semibold">Threads</h2>
+    <div className="min-h-0 flex-1 overflow-y-auto p-1">
       {related.map((entry) => {
         const shell = shells.find(
           (candidate) =>
@@ -23,7 +22,7 @@ export function WorkspaceThreadsPanel({
         return (
           <button
             key={entry.threadId}
-            className="flex w-full items-start gap-3 rounded-lg border-b border-border p-3 text-left hover:bg-muted"
+            className="flex w-full items-start gap-2 rounded border-b border-border p-2 text-left hover:bg-muted"
             onClick={() => {
               void navigate({
                 to: "/$environmentId/$threadId",

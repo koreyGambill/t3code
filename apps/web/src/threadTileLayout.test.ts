@@ -258,6 +258,113 @@ describe("thread tile layout", () => {
     }
   });
 
+  it("persists a reversible conversation pair and cleans it up when its target disappears", () => {
+    let initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
+    initial = applyTileAction(initial, {
+      type: "new-group",
+      targetGroupId: "conversation-group",
+      axis: "vertical",
+      side: "after",
+      groupId: "empty",
+      splitId: "empty-split",
+    });
+    const paired = applyTileAction(initial, { type: "focus-pair", groupId: "panels-group" });
+    expect(paired.root).toBe(initial.root);
+    expect(paired.focusPairGroupId).toBe("panels-group");
+    expect(paired.focusPairRatio).toBe(0.55);
+    expect(applyTileAction(paired, { type: "focus", groupId: "empty" }).focusPairGroupId).toBe(
+      "empty",
+    );
+    expect(
+      applyTileAction(paired, { type: "focus", groupId: "conversation-group" }).focusPairGroupId,
+    ).toBe("panels-group");
+    expect(
+      applyTileAction(paired, {
+        type: "activate",
+        groupId: "conversation-group",
+        tabId: CONVERSATION_TAB_ID,
+      }).focusPairGroupId,
+    ).toBe("panels-group");
+    expect(applyTileAction(paired, { type: "maximize", groupId: "empty" }).focusPairGroupId).toBe(
+      "empty",
+    );
+    const created = applyTileAction(paired, {
+      type: "new-group",
+      targetGroupId: "panels-group",
+      axis: "vertical",
+      side: "after",
+      groupId: "chooser",
+      splitId: "new-split",
+    });
+    expect(created.focusPairGroupId).toBeNull();
+    expect(created.focusedGroupId).toBe("chooser");
+    const split = applyTileAction(paired, {
+      type: "split",
+      tabId: "notes",
+      targetGroupId: "panels-group",
+      axis: "vertical",
+      side: "after",
+      groupId: "new-notes",
+      splitId: "split-notes",
+    });
+    expect(split.focusPairGroupId).toBeNull();
+    expect(split.focusedGroupId).toBe("new-notes");
+    const pairedAgain = applyTileAction(split, { type: "focus-pair", groupId: "panels-group" });
+    expect(
+      applyTileAction(pairedAgain, { type: "activate", groupId: "new-notes", tabId: "notes" })
+        .focusPairGroupId,
+    ).toBe("new-notes");
+    const resized = applyTileAction(paired, { type: "resize-focus-pair", ratio: 0.7 });
+    expect(parseTileLayout(JSON.parse(JSON.stringify(resized)))).toEqual(resized);
+    expect(applyTileAction(resized, { type: "resize-focus-pair", ratio: 4 }).focusPairRatio).toBe(
+      0.9,
+    );
+    expect(applyTileAction(resized, { type: "resize-focus-pair", ratio: -4 }).focusPairRatio).toBe(
+      0.1,
+    );
+    expect(applyTileAction(resized, { type: "resize-focus-pair", ratio: NaN })).toBe(resized);
+    const maximized = applyTileAction(resized, { type: "maximize", groupId: "panels-group" });
+    expect(maximized.focusPairGroupId).toBe("panels-group");
+    const changed = applyTileAction(maximized, { type: "focus-pair", groupId: "empty" });
+    expect(changed.maximizedGroupId).toBeNull();
+    expect(changed.focusPairGroupId).toBe("empty");
+    expect(changed.focusPairRatio).toBe(0.7);
+    expect(
+      applyTileAction(changed, { type: "close-group", groupId: "empty" }).focusPairGroupId,
+    ).toBeNull();
+    expect(applyTileAction(paired, { type: "focus-pair", groupId: "conversation-group" })).toBe(
+      paired,
+    );
+    expect(applyTileAction(paired, { type: "focus-pair", groupId: "missing" })).toBe(paired);
+    expect(applyTileAction(paired, { type: "focus-pair", groupId: null }).root).toBe(initial.root);
+    expect(
+      applyTileAction(paired, { type: "focus-pair", groupId: null }).focusPairGroupId,
+    ).toBeNull();
+    expect(syncTileLayout(paired, ["files", "notes"], [], null, false).focusPairGroupId).toBeNull();
+    expect(
+      applyTileAction(paired, {
+        type: "merge-groups",
+        groupId: "conversation-group",
+        targetGroupId: "panels-group",
+      }).focusPairGroupId,
+    ).toBeNull();
+    expect(
+      applyTileAction(paired, {
+        type: "dock-group",
+        groupId: "panels-group",
+        targetGroupId: "conversation-group",
+        axis: "vertical",
+        side: "after",
+        splitId: "dock",
+      }).focusPairGroupId,
+    ).toBe("panels-group");
+    expect(
+      parseTileLayout({ ...paired, focusPairGroupId: "conversation-group", focusPairRatio: 12 })
+        ?.focusPairGroupId,
+    ).toBeNull();
+    expect(parseTileLayout({ ...paired, focusPairRatio: 12 })?.focusPairRatio).toBe(0.9);
+  });
+
   it("preserves independent active tabs while external activation selects the owning group", () => {
     let layout = syncTileLayout(undefined, [], ["a", "b"], "a", true);
     layout = applyTileAction(layout, {

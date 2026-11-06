@@ -51,7 +51,7 @@ it("keeps column controls open, searches hidden descriptions, and copies only th
   await expect
     .element(page.getByRole("checkbox", { name: "Description", exact: true }))
     .toBeVisible();
-  await page.getByRole("heading", { name: "Marks", exact: true }).click();
+  await page.getByRole("textbox", { name: "Search all Marks columns" }).click();
   await expect
     .element(page.getByRole("checkbox", { name: "Description", exact: true }))
     .not.toBeInTheDocument();

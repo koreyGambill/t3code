@@ -64,6 +64,8 @@ export const WORKSPACE_TILE_KEYBINDING_COMMANDS = [
   "workspace.tile.splitUp",
   "workspace.tile.splitDown",
   "workspace.tile.maximize",
+  "workspace.tile.resize",
+  "workspace.tile.focusPair",
   "workspace.tile.previousTab",
   "workspace.tile.nextTab",
 ] as const;

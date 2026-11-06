@@ -12,7 +12,9 @@ export function ForkConversationButton({
   source,
   disabled,
   onFork,
+  compact = false,
 }: {
+  readonly compact?: boolean;
   readonly environmentId: EnvironmentId;
   readonly source: ThreadStructureVisibleTurnItem;
   readonly disabled: boolean;
@@ -33,7 +35,7 @@ export function ForkConversationButton({
       <TooltipTrigger
         render={
           <Button
-            size="icon-sm"
+            size={compact ? "icon-micro" : "icon-sm"}
             variant="ghost-muted"
             aria-label="Fork conversation"
             disabled={disabled || busy || !available}

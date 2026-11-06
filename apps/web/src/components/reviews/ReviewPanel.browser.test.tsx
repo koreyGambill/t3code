@@ -332,7 +332,7 @@ it("preserves dirty notes on a remote update and requires an explicit conflict c
   expect(state.submit).not.toHaveBeenCalled();
 });
 
-it("adapts its outline to the panel width and keeps footer actions reachable", async () => {
+it("keeps the compact outline and review actions reachable at narrow and wide widths", async () => {
   const artifact = setup();
   const previousViewport = { width: window.innerWidth, height: window.innerHeight };
   await using _viewport = {
@@ -342,18 +342,19 @@ it("adapts its outline to the panel width and keeps footer actions reachable", a
   };
   await page.viewport(1200, 1000);
   await using screen = await render(panel(artifact, 380));
-  await expect.element(page.getByRole("combobox", { name: "Review outline" })).toBeVisible();
-  await expect
-    .element(page.getByRole("navigation", { name: "Review sections", includeHidden: true }))
-    .not.toBeVisible();
+  await page.getByRole("button", { name: "Review outline" }).click();
+  await expect.element(page.getByRole("navigation", { name: "Review sections" })).toBeVisible();
+  await page.getByRole("button", { name: "Review outline" }).click();
   await expect
     .element(page.getByRole("button", { name: "Send review to chat", exact: true }))
     .toBeVisible();
   await screen.rerender(panel(artifact, 980));
+  await page.getByRole("button", { name: "Review outline" }).click();
   await expect.element(page.getByRole("navigation", { name: "Review sections" })).toBeVisible();
+  await page.getByRole("button", { name: "Review outline" }).click();
   await expect
-    .element(page.getByRole("combobox", { name: "Review outline", includeHidden: true }))
-    .not.toBeVisible();
+    .element(page.getByRole("button", { name: "Send review to chat", exact: true }))
+    .toBeVisible();
 });
 
 it.each([

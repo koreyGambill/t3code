@@ -3,7 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { ThreadGlyph } from "./ThreadGlyph";
 
-it("orbits two contrasting embers in opposite directions without repainting React", async () => {
+it("orbits two contrasting embers in the same direction without repainting React", async () => {
   // The glyph and shared visibility observer have no navigation.
   await using screen = await render(
     <ThreadGlyph threadId="motion-proof" working className="size-10" />,
@@ -21,6 +21,7 @@ it("orbits two contrasting embers in opposite directions without repainting Reac
   const beginning = getComputedStyle(trace).transform;
   animation.currentTime = 800;
   expect(getComputedStyle(trace).transform).not.toBe(beginning);
+  expect(getComputedStyle(embers[1]!).animationName).toBe(getComputedStyle(trace).animationName);
   const counter = embers[1]!.getAnimations()[0]!;
   counter.pause();
   counter.currentTime = 0;

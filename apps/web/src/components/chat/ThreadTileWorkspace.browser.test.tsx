@@ -1,3 +1,5 @@
+import { dispatchMenuAction } from "../../shortcuts/dispatcher";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import "../../index.css";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
@@ -46,7 +48,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
           surfaces: panel.surfaces,
           activeSurfaceId: panel.activeSurfaceId,
           environmentId: threadRef.environmentId,
-          keybindings: [],
+          keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
           getShortcutContext: () => ({
             terminalFocus: false,
             terminalOpen: false,
@@ -186,6 +188,15 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.tabs.includes("files"))?.tabs).toContain(
     "inspect",
   );
+  const tabGroupId = layout().focusedGroupId;
+  await userEvent.keyboard("{Control>}{Tab}{/Control}");
+  expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
+    "inspect",
+  );
+  await userEvent.keyboard("{Control>}{Shift>}{Tab}{/Shift}{/Control}");
+  expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
+    "files",
+  );
   await userEvent.click(
     screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
   );
@@ -246,4 +257,75 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.id === notesChooser.id)?.tabs).toEqual([
     "notes",
   ]);
+  const notesRect = screen
+    .getByRole("textbox", { name: "Editor notes" })
+    .element()
+    .getBoundingClientRect();
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: notesRect.x + notesRect.width / 2,
+      clientY: notesRect.y + notesRect.height / 2,
+    }),
+  );
+  const beforeResize = JSON.stringify(layout().root);
+  await userEvent.keyboard("{Control>}{Alt>}{r>}");
+  await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: notesRect.x + notesRect.width / 2 + 60,
+      clientY: notesRect.y + notesRect.height / 2 + 30,
+    }),
+  );
+  expect(JSON.stringify(layout().root)).toBe(beforeResize);
+  await userEvent.keyboard("{/r}{/Alt}{/Control}");
+  expect(JSON.stringify(layout().root)).not.toBe(beforeResize);
+  const committed = JSON.stringify(layout().root);
+  await userEvent.keyboard("{Control>}{Alt>}{r>}");
+  await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
+  await userEvent.keyboard("{ArrowRight}{Escape}{/r}{/Alt}{/Control}");
+  expect(JSON.stringify(layout().root)).toBe(committed);
+  const focusedBefore = layout().focusedGroupId;
+  await userEvent.keyboard("{Control>}{Alt>}h{/Alt}{/Control}");
+  expect(layout().focusedGroupId).not.toBe(focusedBefore);
+  store.applyTileAction(threadRef, { type: "focus", groupId: notesChooser.id });
+  const fullTree = JSON.stringify(layout().root);
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(layout().focusPairGroupId).toBe(notesChooser.id);
+  expect(JSON.stringify(layout().root)).toBe(fullTree);
+  await expect.element(screen.getByRole("textbox", { name: "Editor notes" })).toBeVisible();
+  expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(2);
+  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+  expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(1);
+  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+  expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(2);
+  const pairRect = screen
+    .getByRole("textbox", { name: "Editor notes" })
+    .element()
+    .getBoundingClientRect();
+  window.dispatchEvent(
+    new PointerEvent("pointermove", { clientX: pairRect.x + 30, clientY: pairRect.y + 30 }),
+  );
+  await userEvent.keyboard("{Control>}{Alt>}{r>}");
+  await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
+  window.dispatchEvent(
+    new PointerEvent("pointermove", { clientX: pairRect.x + 90, clientY: pairRect.y + 30 }),
+  );
+  await userEvent.keyboard("{/r}{/Alt}{/Control}");
+  expect(layout().focusPairRatio).not.toBe(0.55);
+  expect(JSON.stringify(layout().root)).toBe(fullTree);
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(layout().focusPairGroupId).toBeNull();
+  expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(3);
+  expect(JSON.stringify(layout().root)).toBe(fullTree);
+
+  const beforeNativeResize = JSON.stringify(layout().root);
+  dispatchMenuAction("workspace.tile.resize");
+  await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
+  await userEvent.keyboard("{Control>}{Alt>}{ArrowLeft}");
+  await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
+  window.dispatchEvent(
+    new KeyboardEvent("keyup", { key: "r", code: "KeyR", ctrlKey: true, altKey: true }),
+  );
+  await userEvent.keyboard("{/Alt}{/Control}");
+  expect(JSON.stringify(layout().root)).not.toBe(beforeNativeResize);
 });

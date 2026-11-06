@@ -18,13 +18,6 @@ import {
   saveWorkspaceScroll,
   useWorkspaceViewState,
 } from "./workspaceViewState";
-const sections = [
-  ["unified", "Unified"],
-  ["questions", "Questions"],
-  ["action-items", "Action items"],
-  ["design-notes", "Design"],
-  ["summary", "Summary"],
-] as const;
 export function WorkspaceDocument({
   threadRef,
   section,
@@ -139,7 +132,7 @@ export function WorkspaceDocument({
     <section
       data-workspace-anchor={`${groupId}:${id}`}
       data-workspace-section={id}
-      className="scroll-mt-3 space-y-3 py-3"
+      className="scroll-mt-2 space-y-2 py-2"
     >
       <h4 className="text-xs font-medium text-muted-foreground">{label}</h4>
       {children}
@@ -184,7 +177,7 @@ export function WorkspaceDocument({
           key={group.id}
           data-workspace-group={group.id}
           data-workspace-anchor={`${group.id}:group`}
-          className="scroll-mt-3 border-b border-border/60 py-3"
+          className="scroll-mt-2 border-b border-border/60 py-2"
         >
           <button
             aria-expanded={!view.closed[`${key}:${group.id}`]}
@@ -233,13 +226,12 @@ export function WorkspaceDocument({
   useEffect(() => {
     revealSource(focusRequest, workspace);
   }, [focusRequest, workspace, revealSource]);
-  const title = sections.find(([id]) => id === section)?.[1];
   return (
     <>
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-3">
+      <div className="absolute right-0 top-0 z-10 flex h-7 items-center border-l border-border bg-background px-1">
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-micro"
           aria-label={view.outlineHidden ? "Show headings" : "Hide headings"}
           className="hidden @min-[560px]/workspace:inline-flex"
           onClick={view.toggleOutline}
@@ -251,7 +243,7 @@ export function WorkspaceDocument({
             render={
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon-micro"
                 aria-label="Browse headings"
                 className="@min-[560px]/workspace:hidden"
               >
@@ -265,13 +257,12 @@ export function WorkspaceDocument({
             </div>
           </PopoverPopup>
         </Popover>
-        <h2 className="text-base font-semibold">{title}</h2>
       </div>
       <div className="flex min-h-0 flex-1">
         {!view.outlineHidden ? (
           <nav
             aria-label="Workspace headings"
-            className={`hidden shrink-0 overflow-hidden border-r border-border @min-[560px]/workspace:flex ${section === "unified" ? "w-52 @min-[750px]/workspace:w-64" : "w-28 @min-[750px]/workspace:w-44"}`}
+            className={`hidden shrink-0 overflow-hidden border-r border-border @min-[560px]/workspace:flex ${section === "unified" ? "w-36 @min-[750px]/workspace:w-44" : "w-24 @min-[750px]/workspace:w-32"}`}
           >
             <div className="min-h-0 min-w-0 flex-1 overflow-auto p-1">
               {section === "summary" ? (
@@ -310,7 +301,7 @@ export function WorkspaceDocument({
         <div
           ref={container}
           data-workspace-scroll
-          className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-8"
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto px-2 pb-3"
           onScroll={(event) => {
             const element = event.currentTarget;
             saveWorkspaceScroll(scrollKey, element.scrollTop);
@@ -328,7 +319,7 @@ export function WorkspaceDocument({
           }}
         >
           {section === "summary" ? (
-            <div className="py-5">
+            <div className="py-2">
               {workspace.summaryNotes ? (
                 <ChatMarkdown text={workspace.summaryNotes} cwd={undefined} threadRef={threadRef} />
               ) : (

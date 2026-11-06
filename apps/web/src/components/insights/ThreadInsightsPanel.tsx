@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import {
-  SearchIcon,
+  SlidersHorizontalIcon,
   RefreshCwIcon,
   FileTextIcon,
   BookOpenIcon,
@@ -19,7 +19,6 @@ import { threadInsightsGet } from "../../state/threadInsights";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { filterLoadEvents, reportedUsageTotals } from "./insightDisplay";
 import { UsageTimeline } from "./UsageTimeline";
 
@@ -43,12 +42,17 @@ export function ThreadInsightsPanel({
   threadRef,
   visible,
   mode,
+  tabs,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly visible: boolean;
   readonly mode: "loads" | "tokens";
+  readonly tabs?: ReactNode;
 }) {
   const [selectedRun, setSelectedRun] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const [kind, setKind] = useState("");
+  const [evidence, setEvidence] = useState("");
   const effectiveSelection = mode === "loads" && selectedRun === "all" ? "" : selectedRun;
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
   const query = useEnvironmentQuery(
@@ -68,18 +72,60 @@ export function ThreadInsightsPanel({
   const data = query.data;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b p-4">
-        <h2 className="font-semibold">
-          {mode === "loads" ? "Files & skills" : "Tokens & context"}
-        </h2>
-        <div className="ml-auto flex min-w-0 items-center gap-2">
+      <header className="flex h-7 shrink-0 items-center gap-1 border-b px-1">
+        {tabs}
+        {mode === "loads" && (
+          <>
+            <input
+              aria-label="Search file and skill activity"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search…"
+              className="h-5 min-w-0 flex-1 rounded border bg-background px-1 text-xs"
+            />
+            <Popover>
+              <PopoverTrigger
+                render={<Button variant="ghost" size="icon-micro" aria-label="Activity filters" />}
+              >
+                <SlidersHorizontalIcon />
+              </PopoverTrigger>
+              <PopoverPopup align="end" padding="compact">
+                <div className="flex gap-2">
+                  <select
+                    aria-label="Activity type"
+                    value={kind}
+                    onChange={(event) => setKind(event.target.value)}
+                    className="rounded-md border bg-background px-2 py-1 text-xs"
+                  >
+                    <option value="">All types</option>
+                    {["file", "skill", "instructions", "search", "resource"].map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Activity evidence"
+                    value={evidence}
+                    onChange={(event) => setEvidence(event.target.value)}
+                    className="rounded-md border bg-background px-2 py-1 text-xs"
+                  >
+                    <option value="">All evidence</option>
+                    <option value="reported">Reported</option>
+                    <option value="inferred">Inferred</option>
+                  </select>
+                </div>
+              </PopoverPopup>
+            </Popover>
+          </>
+        )}
+        <div className="ml-auto flex min-w-0 items-center gap-1">
           <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            Run
             <select
               aria-label="Inspect run"
               value={effectiveSelection}
               onChange={(event) => setSelectedRun(event.target.value)}
-              className="min-w-0 max-w-52 rounded-md border bg-background px-2 py-1 text-foreground"
+              className="h-5 min-w-0 max-w-44 rounded border bg-background px-1 text-foreground"
             >
               <option value="">Latest run</option>
               {mode === "tokens" && <option value="all">All runs</option>}
@@ -96,7 +142,7 @@ export function ThreadInsightsPanel({
               render={
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon-micro"
                   aria-label="Refresh activity"
                   disabled={!canRead || query.isPending}
                   onClick={() => query.refresh()}
@@ -122,7 +168,13 @@ export function ThreadInsightsPanel({
           {query.isPending ? "Loading activity…" : "No activity available."}
         </p>
       ) : mode === "loads" ? (
-        <LoadTimeline events={data.loads} estimateMethod={data.estimateMethod} />
+        <LoadTimeline
+          events={data.loads}
+          estimateMethod={data.estimateMethod}
+          search={search}
+          kind={kind}
+          evidence={evidence}
+        />
       ) : (
         <TokenDetails data={data} />
       )}
@@ -133,54 +185,19 @@ export function ThreadInsightsPanel({
 function LoadTimeline({
   events,
   estimateMethod,
+  search,
+  kind,
+  evidence,
 }: {
   readonly events: ReadonlyArray<ThreadLoadEvent>;
   readonly estimateMethod: string;
+  readonly search: string;
+  readonly kind: string;
+  readonly evidence: string;
 }) {
-  const [search, setSearch] = useState("");
-  const [kind, setKind] = useState("");
-  const [evidence, setEvidence] = useState("");
   const filtered = filterLoadEvents(events, search, kind, evidence);
   return (
-    <div className="space-y-4 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-40 flex-1">
-          <InputGroup>
-            <InputGroupAddon>
-              <SearchIcon className="size-4 text-muted-foreground" />
-            </InputGroupAddon>
-            <InputGroupInput
-              aria-label="Search file and skill activity"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search activity…"
-            />
-          </InputGroup>
-        </div>
-        <select
-          aria-label="Activity type"
-          value={kind}
-          onChange={(event) => setKind(event.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-xs"
-        >
-          <option value="">All types</option>
-          {["file", "skill", "instructions", "search", "resource"].map((type) => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Activity evidence"
-          value={evidence}
-          onChange={(event) => setEvidence(event.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-xs"
-        >
-          <option value="">All evidence</option>
-          <option value="reported">Reported</option>
-          <option value="inferred">Inferred</option>
-        </select>
-      </div>
+    <div className="space-y-2 p-2">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           {filtered.length} of {events.length} events
@@ -194,14 +211,14 @@ function LoadTimeline({
         </InspectHelp>
       </div>
       {filtered.length ? (
-        <ul aria-label="File and skill activity" className="divide-y rounded-lg border px-3">
+        <ul aria-label="File and skill activity" className="divide-y rounded border px-2">
           {filtered.map((event) => {
             const path = event.paths[0];
             const name = path?.split(/[\\/]/).filter(Boolean).at(-1) ?? event.label;
             const parent = path?.replace(/[\\/][^\\/]+$/, "");
             const Icon = event.kind === "skill" ? BookOpenIcon : FileTextIcon;
             return (
-              <li key={event.itemId} className="min-w-0 py-3">
+              <li key={event.itemId} className="min-w-0 py-1.5">
                 <details className="group">
                   <summary className="cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-ring">
                     <span className="inline-flex w-[calc(100%-1.25rem)] min-w-0 items-start gap-2 align-top">
@@ -252,7 +269,7 @@ function LoadTimeline({
                       </span>
                     </span>
                   </summary>
-                  <div className="mt-3 space-y-2 border-t pt-3 text-xs">
+                  <div className="mt-2 space-y-1 border-t pt-2 text-xs">
                     <p className="break-all">{event.label}</p>
                     {event.paths.map((fullPath) => (
                       <code key={fullPath} className="block break-all text-muted-foreground">
@@ -280,7 +297,7 @@ function LoadTimeline({
           })}
         </ul>
       ) : (
-        <p className="py-6 text-sm text-muted-foreground">
+        <p className="py-2 text-xs text-muted-foreground">
           {events.length
             ? "No activity matches these filters."
             : "No file or skill activity was identified for this run."}
@@ -299,8 +316,8 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
     : data.footprints;
   const totals = reportedUsageTotals(usage);
   return (
-    <div className="space-y-6 p-4">
-      <section className="space-y-3">
+    <div className="space-y-2 p-2">
+      <section className="space-y-2">
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>
             {totals.measuredTurns} measured {totals.measuredTurns === 1 ? "turn" : "turns"} ·{" "}
@@ -319,23 +336,23 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
             </p>
           </InspectHelp>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-lg border p-3">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded border p-2">
             <p className="text-xs text-muted-foreground">Main input</p>
-            <p className="mt-1 text-xl tabular-nums">{count(totals.input)}</p>
+            <p className="text-lg tabular-nums">{count(totals.input)}</p>
           </div>
-          <div className="rounded-lg border p-3">
+          <div className="rounded border p-2">
             <p className="text-xs text-muted-foreground">Main output</p>
-            <p className="mt-1 text-xl tabular-nums">{count(totals.output)}</p>
+            <p className="text-lg tabular-nums">{count(totals.output)}</p>
           </div>
         </div>
         <UsageTimeline points={usage.filter((point) => !point.localCommand)} />
         {usage.length ? (
-          <details className="rounded-lg border p-3">
+          <details className="rounded border p-2">
             <summary className="cursor-pointer text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
               Turn details · {usage.length}
             </summary>
-            <div className="mt-3 divide-y">
+            <div className="mt-2 divide-y">
               {usage.map((point) => (
                 <details key={point.turnId} className="py-2 text-xs">
                   <summary className="cursor-pointer focus-visible:outline-2 focus-visible:outline-ring">
@@ -348,7 +365,7 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
                       </span>
                     </span>
                   </summary>
-                  <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 text-muted-foreground">
+                  <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-muted-foreground">
                     <dt>Recorded</dt>
                     <dd>{date(point.at)}</dd>
                     <dt>Status</dt>
@@ -382,7 +399,7 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
           <p className="text-sm text-muted-foreground">No provider usage recorded.</p>
         )}
       </section>
-      <details className="space-y-3 rounded-lg border p-3">
+      <details className="space-y-2 rounded border p-2">
         <summary className="cursor-pointer text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
           Instruction estimates ·{" "}
           {footprints.length
@@ -428,7 +445,7 @@ function TokenDetails({ data }: { readonly data: ThreadInsights }) {
             </div>
           ))
         ) : (
-          <p className="rounded-lg border p-3 text-sm text-muted-foreground">
+          <p className="rounded border p-2 text-sm text-muted-foreground">
             No instruction snapshot was captured for this run. Historical payloads cannot be
             reconstructed reliably.
           </p>
@@ -447,7 +464,7 @@ function InspectHelp({
 }) {
   return (
     <Popover>
-      <PopoverTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} />}>
+      <PopoverTrigger render={<Button variant="ghost" size="icon-micro" aria-label={label} />}>
         <CircleHelpIcon className="size-4" />
       </PopoverTrigger>
       <PopoverPopup width="md" padding="compact" side="bottom" align="end" aria-label={label}>

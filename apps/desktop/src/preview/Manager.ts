@@ -1450,8 +1450,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         host.send(MENU_ACTION_CHANNEL, `workspace.tile.browserFocused:${tabId}`);
       }
     };
+    let heldResizeKey: Pick<Electron.Input, "code" | "control" | "alt" | "shift" | "meta"> | null =
+      null;
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       syncMenuShortcuts(wc, input);
+      if (
+        heldResizeKey &&
+        input.type === "keyUp" &&
+        (input.code === heldResizeKey.code ||
+          (heldResizeKey.control && !input.control) ||
+          (heldResizeKey.alt && !input.alt) ||
+          (heldResizeKey.shift && !input.shift) ||
+          (heldResizeKey.meta && !input.meta))
+      ) {
+        heldResizeKey = null;
+        const resizeHost = wc.hostWebContents;
+        if (resizeHost && !resizeHost.isDestroyed())
+          resizeHost.send(MENU_ACTION_CHANNEL, "workspace.tile.resize.release");
+      }
       const host = wc.hostWebContents;
       const ambiguousAltGraph =
         hostPlatform !== "darwin" &&
@@ -1486,6 +1502,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (forwarded && host) {
         event.preventDefault();
         if (!input.isAutoRepeat) {
+          if (forwarded.command === "workspace.tile.resize")
+            heldResizeKey = {
+              code: input.code,
+              control: input.control,
+              alt: input.alt,
+              shift: input.shift,
+              meta: input.meta,
+            };
           if (
             forwarded.command.startsWith("workspace.tile.") ||
             forwarded.command === "workspace.focusNext" ||

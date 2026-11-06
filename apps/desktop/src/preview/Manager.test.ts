@@ -734,28 +734,36 @@ describe("PreviewManager", () => {
             );
             expect(focus).not.toHaveBeenCalled();
             const chords = [
-              ["ArrowLeft", "ArrowLeft", false, "workspace.tile.focusLeft"],
-              ["ArrowRight", "ArrowRight", false, "workspace.tile.focusRight"],
-              ["ArrowUp", "ArrowUp", false, "workspace.tile.focusUp"],
-              ["ArrowDown", "ArrowDown", false, "workspace.tile.focusDown"],
-              ["ArrowLeft", "ArrowLeft", true, "workspace.tile.splitLeft"],
-              ["ArrowRight", "ArrowRight", true, "workspace.tile.splitRight"],
-              ["ArrowUp", "ArrowUp", true, "workspace.tile.splitUp"],
-              ["ArrowDown", "ArrowDown", true, "workspace.tile.splitDown"],
-              ["Enter", "Enter", false, "workspace.tile.maximize"],
-              ["[", "BracketLeft", false, "workspace.tile.previousTab"],
-              ["]", "BracketRight", false, "workspace.tile.nextTab"],
+              ["ArrowLeft", "ArrowLeft", false, "workspace.tile.focusLeft", true],
+              ["ArrowRight", "ArrowRight", false, "workspace.tile.focusRight", true],
+              ["ArrowUp", "ArrowUp", false, "workspace.tile.focusUp", true],
+              ["ArrowDown", "ArrowDown", false, "workspace.tile.focusDown", true],
+              ["ArrowLeft", "ArrowLeft", true, "workspace.tile.splitLeft", true],
+              ["ArrowRight", "ArrowRight", true, "workspace.tile.splitRight", true],
+              ["ArrowUp", "ArrowUp", true, "workspace.tile.splitUp", true],
+              ["ArrowDown", "ArrowDown", true, "workspace.tile.splitDown", true],
+              ["Enter", "Enter", false, "workspace.tile.maximize", true],
+              ["[", "BracketLeft", false, "workspace.tile.previousTab", true],
+              ["]", "BracketRight", false, "workspace.tile.nextTab", true],
+              ["r", "KeyR", false, "workspace.tile.resize", true],
+              ["f", "KeyF", false, "workspace.tile.focusPair", true],
+              ["h", "KeyH", false, "workspace.tile.focusLeft", true],
+              ["j", "KeyJ", false, "workspace.tile.focusDown", true],
+              ["k", "KeyK", false, "workspace.tile.focusUp", true],
+              ["l", "KeyL", false, "workspace.tile.focusRight", true],
+              ["Tab", "Tab", false, "workspace.tile.nextTab", false],
+              ["Tab", "Tab", true, "workspace.tile.previousTab", false],
             ] as const;
             yield* manager.setForwardedShortcuts(
-              chords.map(([key, _code, shift, command]) => ({
+              chords.map(([key, _code, shift, command, alt]) => ({
                 command,
                 shortcut: parseKeybindingShortcut(
-                  `ctrl+alt+${shift ? "shift+" : ""}${key.toLowerCase()}`,
+                  `ctrl+${alt ? "alt+" : ""}${shift ? "shift+" : ""}${key.toLowerCase()}`,
                 )!,
               })),
             );
             const beforeInput = guest.listeners.get("before-input-event")!;
-            for (const [key, code, shift, command] of chords) {
+            for (const [key, code, shift, command, alt] of chords) {
               send.mockClear();
               focus.mockClear();
               const preventDefault = vi.fn();
@@ -766,7 +774,7 @@ describe("PreviewManager", () => {
                 shift,
                 meta: false,
                 control: true,
-                alt: true,
+                alt,
               };
               beforeInput({ preventDefault } as never, input as never);
               expect(preventDefault).toHaveBeenCalledOnce();
@@ -778,6 +786,17 @@ describe("PreviewManager", () => {
               beforeInput({ preventDefault } as never, { ...input, isAutoRepeat: true } as never);
               expect(send).toHaveBeenCalledOnce();
               expect(focus).toHaveBeenCalledOnce();
+              if (command === "workspace.tile.resize") {
+                send.mockClear();
+                beforeInput(
+                  { preventDefault: vi.fn() } as never,
+                  { ...input, type: "keyUp" } as never,
+                );
+                expect(send).toHaveBeenCalledExactlyOnceWith(
+                  "desktop:menu-action",
+                  "workspace.tile.resize.release",
+                );
+              }
             }
             send.mockClear();
             beforeInput(
