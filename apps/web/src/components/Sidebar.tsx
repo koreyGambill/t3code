@@ -1,3 +1,4 @@
+import { nextThreadGlyphSeed } from "../threadGlyphs";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -2674,6 +2675,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   description: error instanceof Error ? error.message : "An error occurred.",
                 }),
               );
+            }
+            return;
+          }
+          case "reroll-glyph": {
+            const result = await updateThreadMetadata({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                glyphSeed: nextThreadGlyphSeed(thread.id, thread.glyphSeed),
+              },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              toastManager.add({ type: "error", title: "Could not reroll glyph" });
             }
             return;
           }

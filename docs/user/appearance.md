@@ -21,6 +21,12 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Thread glyphs
+
+Web and desktop threads have a colored outline glyph for quick recognition. Click the glyph beside
+the conversation header, or choose **Reroll glyph** from the thread menu, to pick another. The glyph
+stays the same when you rename the thread or reopen it on another connected client.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.

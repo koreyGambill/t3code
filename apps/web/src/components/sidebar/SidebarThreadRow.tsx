@@ -1,3 +1,4 @@
+import { ThreadGlyph } from "../ThreadGlyph";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1244,19 +1245,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {/* `contents` keeps one-line rows a single flex row. */}
             <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
               {accessibleTitle}
-              {inFolder ? null : (
-                <span
-                  className={cn(
-                    "flex shrink-0 items-center transition-opacity",
-                    (!props.isActive || variantAction === "unsettle") &&
-                      "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
-                  )}
-                >
-                  {props.project ? (
-                    <ProjectFavicon project={props.project} className="size-4" />
-                  ) : null}
-                </span>
-              )}
+              <ThreadGlyph
+                threadId={thread.id}
+                seed={thread.glyphSeed}
+                className="size-5 shrink-0"
+              />
               {draftIndicator}
               {title}
               {multiline ? titleLineIcons : null}
@@ -1587,6 +1580,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <ThreadGlyph
+                threadId={thread.id}
+                seed={thread.glyphSeed}
+                className="size-5 shrink-0"
+              />
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">

@@ -139,6 +139,7 @@ export interface EnvironmentThreadShell {
   readonly id: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;
+  readonly glyphSeed?: number;
   readonly providerInstanceId: ProviderInstanceId;
   readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
   readonly runtimeMode: OrchestrationV2ThreadShell["runtimeMode"];
@@ -286,6 +287,7 @@ export function presentThreadShell(
       thread.lineage.relationshipToParent === "subagent"
         ? formatSubagentDisplayTitle(thread.title)
         : thread.title,
+    ...(thread.glyphSeed === undefined ? {} : { glyphSeed: thread.glyphSeed }),
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,

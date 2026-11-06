@@ -1,3 +1,7 @@
+import { Button } from "../ui/button";
+import { ThreadGlyph } from "../ThreadGlyph";
+import { nextThreadGlyphSeed, resolveThreadGlyph } from "../../threadGlyphs";
+import { useThreadShell } from "../../state/entities";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -104,6 +108,8 @@ export const ChatHeader = memo(function ChatHeader({
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
+  const glyphSeed = useThreadShell(activeThreadRef)?.glyphSeed;
+  const glyph = resolveThreadGlyph(activeThreadId, glyphSeed);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -302,6 +308,36 @@ export const ChatHeader = memo(function ChatHeader({
       )}
       onContextMenu={handleHeaderContextMenu}
     >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`Reroll ${glyph.colorName.toLowerCase()} ${glyph.name} glyph`}
+              disabled={!isServerThread || !canOperateThread}
+              onClick={async () => {
+                const result = await updateThreadMetadata({
+                  environmentId: activeThreadEnvironmentId,
+                  input: {
+                    threadId: activeThreadId,
+                    glyphSeed: nextThreadGlyphSeed(activeThreadId, glyphSeed),
+                  },
+                });
+                if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                  toastManager.add({ type: "error", title: "Could not reroll glyph" });
+                }
+              }}
+            />
+          }
+        >
+          <ThreadGlyph threadId={activeThreadId} seed={glyphSeed} className="size-6" />
+        </TooltipTrigger>
+        <TooltipPopup>
+          {glyph.colorName} {glyph.name} · Reroll glyph
+        </TooltipPopup>
+      </Tooltip>
       <WorkspaceBreadcrumb
         ariaLabel="Thread breadcrumb"
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"

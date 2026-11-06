@@ -2507,6 +2507,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-metadata"),
         threadId,
         title: "Renamed lifecycle thread",
+        glyphSeed: 17,
         branch: "feature/v2",
         worktreePath: "/tmp/t3-v2-worktree",
       });
@@ -2524,7 +2525,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const projectionAfterStaleWorkspaceUpdate = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.branch, "feature/v2");
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.worktreePath, "/tmp/t3-v2-worktree");
+      assert.equal(projectionAfterStaleWorkspaceUpdate.thread.glyphSeed, 17);
       const pullRequestSnapshot = yield* orchestrator.getShellSnapshot();
+      assert.equal(
+        pullRequestSnapshot.threads.find((thread) => thread.id === threadId)?.glyphSeed,
+        17,
+      );
       const pullRequest = {
         projectId,
         repository: "owner/repository",

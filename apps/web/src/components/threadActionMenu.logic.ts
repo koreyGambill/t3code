@@ -17,6 +17,7 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "reroll-glyph"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -167,6 +168,7 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
+    { id: "reroll-glyph", label: "Reroll glyph", icon: "refresh-cw" },
     ...(state.supports.titleRegeneration
       ? [
           {

@@ -1,3 +1,4 @@
+import { nextThreadGlyphSeed } from "../threadGlyphs";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
@@ -242,6 +243,17 @@ export function useThreadActionMenu(input: {
         case "auto-settle:disabled":
           await reportFailure("Failed to update auto-settle", () =>
             setThreadAutoSettle(threadRef, action === "auto-settle:enabled"),
+          );
+          return;
+        case "reroll-glyph":
+          await reportFailure("Could not reroll glyph", () =>
+            updateThreadMetadata({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                glyphSeed: nextThreadGlyphSeed(thread.id, thread.glyphSeed),
+              },
+            }),
           );
           return;
         case "rename":
