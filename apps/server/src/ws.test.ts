@@ -1,3 +1,6 @@
+import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
+import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
+import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -673,6 +676,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AgentSessionProgress.AgentSessionProgress)({}),
   Layer.mock(ReviewArtifacts.ReviewArtifacts)({}),
   Layer.mock(ThreadWorkspace.ThreadWorkspace)({}),
+  Layer.mock(ThreadMarks.ThreadMarks)({}),
+  Layer.mock(ThreadInsights.ThreadInsights)({}),
+  Layer.mock(ThreadNotes.ThreadNotes)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),

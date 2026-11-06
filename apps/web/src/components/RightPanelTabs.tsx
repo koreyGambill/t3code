@@ -46,7 +46,7 @@ import {
   MessagesSquare,
   Plus,
   TerminalSquare,
-  ClipboardList,
+  Zap,
 } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
@@ -401,7 +401,7 @@ function RightPanelEmptyState(props: {
       ? [
           {
             label: "Workspace",
-            icon: ClipboardList,
+            icon: Zap,
             shortcut: "R",
             available: true,
             disabledReason: "",
@@ -702,7 +702,7 @@ function SurfaceIcon({
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "reviews":
-      return <ClipboardList className="size-3 shrink-0" />;
+      return <Zap className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1170,7 +1170,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       ? [
           {
             label: "Workspace",
-            icon: ClipboardList,
+            icon: Zap,
             shortcut: "R",
             available: true,
             disabledReason: "",

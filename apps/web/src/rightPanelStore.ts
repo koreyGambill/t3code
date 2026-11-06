@@ -24,7 +24,17 @@ const RIGHT_PANEL_KINDS = [
   "side-chat",
   "reviews",
 ] as const;
-export type ThreadWorkspaceSection = "questions" | "action-items" | "design-notes" | "summary";
+export type ThreadWorkspaceSection =
+  | "unified"
+  | "questions"
+  | "action-items"
+  | "design-notes"
+  | "summary"
+  | "marks"
+  | "threads"
+  | "notes"
+  | "loads"
+  | "tokens";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -509,9 +519,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         (surface.reviewId === null || typeof surface.reviewId === "string")
                         ? [
                             surface.workspaceSection === undefined ||
-                            ["questions", "action-items", "design-notes", "summary"].includes(
-                              surface.workspaceSection,
-                            )
+                            [
+                              "unified",
+                              "questions",
+                              "action-items",
+                              "design-notes",
+                              "summary",
+                              "marks",
+                              "threads",
+                              "notes",
+                              "loads",
+                              "tokens",
+                            ].includes(surface.workspaceSection)
                               ? surface
                               : { ...surface, workspaceSection: "questions" },
                           ]

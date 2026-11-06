@@ -23,7 +23,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       const { projection } = yield* readThread(input.threadId);
       const workspace = yield* ThreadWorkspace;
       return yield* workspace
-        .get({ threadId: projection.thread.id })
+        .query({ ...input, threadId: projection.thread.id })
         .pipe(Effect.mapError(failure));
     }),
   ),
@@ -34,7 +34,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
         const { projection } = yield* readThread(input.threadId);
         const workspace = yield* ThreadWorkspace;
         return yield* workspace
-          .patch({ ...input, threadId: projection.thread.id })
+          .mutate({ ...input, threadId: projection.thread.id })
           .pipe(Effect.mapError(failure));
       }),
   ),
@@ -47,6 +47,8 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
         const review = yield* reviews
           .create({ threadId: projection.thread.id, content: input.content })
           .pipe(Effect.mapError(failure));
+        const workspace = yield* ThreadWorkspace;
+        yield* workspace.importReview(review).pipe(Effect.mapError(failure));
         return { reviewId: review.id, threadId: review.threadId };
       }),
   ),

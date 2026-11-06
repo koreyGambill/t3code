@@ -226,6 +226,7 @@ export const make = Effect.gen(function* () {
       pullRequestChecks: true,
       sideChats: true,
       reviewArtifacts: true,
+      workspaceVersion: 2,
       inlineMessageContext: true,
       requiredWorktreeBootstrap: true,
       threadSettlement: true,

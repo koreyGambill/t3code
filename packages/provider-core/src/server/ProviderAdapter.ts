@@ -490,6 +490,10 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  readonly onContextPrepared?: (context: {
+    readonly source: string;
+    readonly entries: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  }) => Effect.Effect<void>;
 }
 
 export interface ProviderAdapterV2SteerInput {

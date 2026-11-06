@@ -1,0 +1,106 @@
+import { RegistryContext } from "@effect/atom-react";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ThreadNote,
+  type ThreadNotesSaveInput,
+} from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
+import { act, render } from "../../../test/render";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+const state = vi.hoisted(() => ({ get: vi.fn(), settings: vi.fn(), save: vi.fn(), send: vi.fn() }));
+vi.mock("../../state/threadNotes", () => ({
+  threadNoteGet: state.get,
+  threadNotesSettings: state.settings,
+  persistThreadNote: state.save,
+  sendThreadNoteSelection: state.send,
+  updateThreadNotesSettings: "settings",
+}));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+import { NotesPanel } from "./NotesPanel";
+
+it("keeps unsent notes private, saves before sharing a selected range, and retains a dirty draft on remount", async () => {
+  const environmentId = EnvironmentId.make("notes-browser");
+  const threadId = ThreadId.make("notes-browser");
+  let note: ThreadNote = {
+    threadId,
+    path: "/notes/thread.md",
+    text: "private before. share this. private after.",
+    revision: "first",
+    includeThreadId: true,
+    resumeCommand: "codex resume 'native-id'",
+    resumeExplanation: "Run on this environment.",
+  };
+  const atom = Atom.make(AsyncResult.success(note)).pipe(Atom.keepAlive);
+  state.get.mockReturnValue(atom);
+  state.settings.mockReturnValue(
+    Atom.make(AsyncResult.success({ directory: "/notes" })).pipe(Atom.keepAlive),
+  );
+  let releaseSave = () => {};
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  state.save.mockImplementation(
+    async (_environmentId: EnvironmentId, input: ThreadNotesSaveInput) => {
+      await saveGate;
+      note = {
+        ...note,
+        text: input.text,
+        includeThreadId: input.includeThreadId,
+        revision: "saved",
+      };
+      appAtomRegistry.set(atom, AsyncResult.success(note));
+      return note;
+    },
+  );
+  state.send.mockResolvedValue(note);
+  await using view = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <NotesPanel environmentId={environmentId} threadId={threadId} />
+    </RegistryContext.Provider>,
+  );
+  const field = page.getByRole("textbox", { name: "Personal thread notes" });
+  await expect.element(field).toHaveValue(note.text);
+  expect(state.send).not.toHaveBeenCalled();
+  await field.fill("private before. share this. private after. Updated");
+  const element = field.element();
+  if (!(element instanceof HTMLTextAreaElement)) throw new Error("Expected textarea");
+  await act(() => {
+    element.focus();
+    element.setSelectionRange(16, 26);
+    document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+  });
+  await userEvent.keyboard("{Shift>}{ArrowRight}{ArrowLeft}{/Shift}");
+  await page.getByRole("button", { name: "Add selection to chat" }).click();
+  await expect.element(field).toBeDisabled();
+  await expect
+    .element(page.getByRole("checkbox", { name: "Include thread ID in file" }))
+    .toBeDisabled();
+  expect(state.send).not.toHaveBeenCalled();
+  releaseSave();
+  await vi.waitFor(() =>
+    expect(state.send).toHaveBeenCalledWith(environmentId, {
+      threadId,
+      expectedRevision: "saved",
+      startIndex: 16,
+      endIndex: 26,
+    }),
+  );
+  expect(state.save).toHaveBeenCalled();
+  await field.fill("Unsent text survives navigation");
+  await view.unmount();
+  await using reopened = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <NotesPanel environmentId={environmentId} threadId={threadId} />
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(page.getByRole("textbox", { name: "Personal thread notes" }))
+    .toHaveValue("Unsent text survives navigation");
+  expect(reopened.container).toBeInTheDocument();
+  expect(state.send).toHaveBeenCalledTimes(1);
+});

@@ -1,8 +1,22 @@
+import { ThreadMark, ThreadMarksGetInput, ThreadMarksError } from "./threadMarks.ts";
+import { ThreadInsights, ThreadInsightsGetInput, ThreadInsightsError } from "./threadInsights.ts";
+import {
+  ThreadNote,
+  ThreadNotesSettings,
+  ThreadNotesGetInput,
+  ThreadNotesSaveInput,
+  ThreadNotesSettingsInput,
+  ThreadNotesUpdateSettingsInput,
+  ThreadNotesSendSelectionInput,
+  ThreadNotesError,
+} from "./threadNotes.ts";
 import {
   ThreadWorkspace,
   ThreadWorkspaceError,
   ThreadWorkspaceGetInput,
   ThreadWorkspacePatchInput,
+  ThreadWorkspaceSaveDraftInput,
+  ThreadWorkspaceSubmitInput,
 } from "./threadWorkspace.ts";
 import {
   ReviewArtifact,
@@ -440,8 +454,17 @@ export const WS_METHODS = {
 
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
+  threadMarksGet: "threadMarks.get",
+  threadInsightsGet: "threadInsights.get",
+  threadNotesGet: "threadNotes.get",
+  threadNotesSave: "threadNotes.save",
+  threadNotesSettings: "threadNotes.settings",
+  threadNotesUpdateSettings: "threadNotes.updateSettings",
+  threadNotesSendSelection: "threadNotes.sendSelection",
   threadWorkspaceGet: "threadWorkspace.get",
   threadWorkspacePatch: "threadWorkspace.patch",
+  threadWorkspaceSaveDraft: "threadWorkspace.saveDraft",
+  threadWorkspaceSubmit: "threadWorkspace.submit",
   reviewsCreate: "reviews.create",
   reviewsList: "reviews.list",
   reviewsGet: "reviews.get",
@@ -1401,6 +1424,44 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadMarksGetRpc = Rpc.make(WS_METHODS.threadMarksGet, {
+  payload: ThreadMarksGetInput,
+  success: Schema.Array(ThreadMark),
+  error: Schema.Union([ThreadMarksError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadInsightsGetRpc = Rpc.make(WS_METHODS.threadInsightsGet, {
+  payload: ThreadInsightsGetInput,
+  success: ThreadInsights,
+  error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadNotesGetRpc = Rpc.make(WS_METHODS.threadNotesGet, {
+  payload: ThreadNotesGetInput,
+  success: ThreadNote,
+  error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
+});
+const WsThreadNotesSaveRpc = Rpc.make(WS_METHODS.threadNotesSave, {
+  payload: ThreadNotesSaveInput,
+  success: ThreadNote,
+  error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
+});
+const WsThreadNotesSettingsRpc = Rpc.make(WS_METHODS.threadNotesSettings, {
+  payload: ThreadNotesSettingsInput,
+  success: ThreadNotesSettings,
+  error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
+});
+const WsThreadNotesUpdateSettingsRpc = Rpc.make(WS_METHODS.threadNotesUpdateSettings, {
+  payload: ThreadNotesUpdateSettingsInput,
+  success: ThreadNotesSettings,
+  error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
+});
+const WsThreadNotesSendSelectionRpc = Rpc.make(WS_METHODS.threadNotesSendSelection, {
+  payload: ThreadNotesSendSelectionInput,
+  success: ThreadNote,
+  error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
+});
+
 const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
   payload: ThreadWorkspaceGetInput,
   success: ThreadWorkspace,
@@ -1408,6 +1469,17 @@ const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
 });
 const WsThreadWorkspacePatchRpc = Rpc.make(WS_METHODS.threadWorkspacePatch, {
   payload: ThreadWorkspacePatchInput,
+  success: ThreadWorkspace,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadWorkspaceSaveDraftRpc = Rpc.make(WS_METHODS.threadWorkspaceSaveDraft, {
+  payload: ThreadWorkspaceSaveDraftInput,
+  success: ThreadWorkspace,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+const WsThreadWorkspaceSubmitRpc = Rpc.make(WS_METHODS.threadWorkspaceSubmit, {
+  payload: ThreadWorkspaceSubmitInput,
   success: ThreadWorkspace,
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
@@ -2198,8 +2270,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
+  WsThreadMarksGetRpc,
+  WsThreadInsightsGetRpc,
+  WsThreadNotesGetRpc,
+  WsThreadNotesSaveRpc,
+  WsThreadNotesSettingsRpc,
+  WsThreadNotesUpdateSettingsRpc,
+  WsThreadNotesSendSelectionRpc,
   WsThreadWorkspaceGetRpc,
   WsThreadWorkspacePatchRpc,
+  WsThreadWorkspaceSaveDraftRpc,
+  WsThreadWorkspaceSubmitRpc,
   WsReviewsCreateRpc,
   WsReviewsListRpc,
   WsReviewsGetRpc,

@@ -1,3 +1,7 @@
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
+import * as ThreadInsights from "../threadInsights/ThreadInsights.ts";
+import * as InstructionFootprints from "../threadInsights/InstructionFootprints.ts";
+import * as ThreadNotes from "../threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "../reviewArtifacts/ReviewArtifacts.ts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
@@ -136,6 +140,7 @@ const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
 const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      InstructionFootprints.layer,
       layerCommandOutputHubProvided,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       layerEventSink,
@@ -395,7 +400,16 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
-  ThreadWorkspace.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+  ThreadMarks.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+  ThreadInsights.layer.pipe(
+    Layer.provide(Layer.merge(layerOrchestratorProvided, InstructionFootprints.layer)),
+  ),
+  ThreadNotes.layer.pipe(
+    Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
+  ),
+  ThreadWorkspace.layer.pipe(
+    Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
+  ),
   ReviewArtifacts.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
   ),

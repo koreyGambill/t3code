@@ -17,3 +17,11 @@ export const threadWorkspacePatch = createEnvironmentRpcCommand(connectionAtomRu
   label: "threadWorkspace:patch",
   tag: WS_METHODS.threadWorkspacePatch,
 });
+export const threadWorkspaceSaveDraft = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "threadWorkspace:saveDraft",
+  tag: WS_METHODS.threadWorkspaceSaveDraft,
+});
+export const threadWorkspaceSubmit = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "threadWorkspace:submit",
+  tag: WS_METHODS.threadWorkspaceSubmit,
+});

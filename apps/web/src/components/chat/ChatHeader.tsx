@@ -42,6 +42,8 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { WorkspaceHistoryButton } from "../reviews/WorkspaceHistoryButton";
+import { ThreadReviewsButton } from "../reviews/ThreadReviewsButton";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -284,7 +286,7 @@ export const ChatHeader = memo(function ChatHeader({
       ref={breadcrumbContainerRef}
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
-        rightPanelOpen ? "pr-10" : "pr-24",
+        rightPanelOpen ? "pr-10" : "pr-28 sm:pr-24",
       )}
       onContextMenu={handleHeaderContextMenu}
     >
@@ -430,7 +432,13 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      {isServerThread ? (
+        <>
+          <GuestShareIndicator threadRef={activeThreadRef} />
+          <ThreadReviewsButton threadRef={activeThreadRef} />
+          <WorkspaceHistoryButton threadRef={activeThreadRef} title={activeThreadTitle} />
+        </>
+      ) : null}
     </div>
   );
 });

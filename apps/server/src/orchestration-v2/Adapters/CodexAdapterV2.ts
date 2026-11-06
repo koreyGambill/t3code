@@ -6795,6 +6795,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });
+            if (turnInput.onContextPrepared) {
+              yield* turnInput.onContextPrepared({
+                source: "Codex turn/start.additionalContext",
+                entries: Object.entries(turnStartParams.additionalContext ?? {}).map(
+                  ([key, entry]) => ({
+                    key: entry.kind === "untrusted" ? `app_context:${key}` : key,
+                    text: entry.value,
+                  }),
+                ),
+              });
+            }
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
               updated.set(threadId, turnInput);

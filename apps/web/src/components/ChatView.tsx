@@ -274,7 +274,6 @@ import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ImportedSessionProgress } from "./chat/ImportedSessionProgress";
-import { ThreadReviewsButton } from "./reviews/ThreadReviewsButton";
 import { useReviewSupport } from "./reviews/useReviewSupport";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -3361,9 +3360,6 @@ export default function ChatView(props: ChatViewProps) {
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
-            {isServerThread && activeThreadRef ? (
-              <ThreadReviewsButton threadRef={activeThreadRef} />
-            ) : null}
           </header>
         )}
 

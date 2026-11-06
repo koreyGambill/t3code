@@ -2,32 +2,127 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type ScopedThreadRef,
-  type ThreadActionItem,
   type ThreadWorkspace,
+  type WorkspaceQuestionAnswer,
+  type WorkspaceUserDraft,
+  type ThreadActionItem,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useState } from "react";
-
+import { ChevronRightIcon, CheckIcon, SendIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { create } from "zustand";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useRightPanelStore, type ThreadWorkspaceSection } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
-import { threadWorkspaceGet, threadWorkspacePatch } from "../../state/threadWorkspace";
+import {
+  threadWorkspaceGet,
+  threadWorkspacePatch,
+  threadWorkspaceSaveDraft,
+  threadWorkspaceSubmit,
+} from "../../state/threadWorkspace";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
-import { ReviewPanel } from "./ReviewPanel";
+import { Textarea } from "../ui/textarea";
+import { ThreadInsightsPanel } from "../insights/ThreadInsightsPanel";
+import { NotesPanel } from "../notes/NotesPanel";
 import { useReviewSupport } from "./useReviewSupport";
+import { WorkspaceMarksPanel } from "./WorkspaceMarksPanel";
+import { WorkspaceThreadsPanel } from "./WorkspaceThreadsPanel";
+import { WorkspaceDocument } from "./WorkspaceDocument";
+import { WorkspaceQuestionCard } from "./WorkspaceQuestionCard";
 
 const sections = [
+  ["unified", "Unified"],
   ["questions", "Questions"],
   ["action-items", "Action items"],
-  ["design-notes", "Design notes"],
+  ["design-notes", "Design"],
   ["summary", "Summary"],
+  ["marks", "Marks"],
+  ["threads", "Threads"],
+  ["notes", "Notes"],
+  ["loads", "Loads"],
+  ["tokens", "Tokens"],
 ] as const;
+const emptyAnswer: WorkspaceQuestionAnswer = { selectedOptionIds: [], notes: "" };
+interface LocalDraft {
+  readonly draft: WorkspaceUserDraft;
+  readonly dirty: boolean;
+  readonly generation: number;
+  readonly baseRevision: number;
+}
+const useLocalDrafts = create<{
+  entries: Record<string, LocalDraft>;
+  edit: (key: string, draft: WorkspaceUserDraft) => void;
+  receive: (key: string, draft: WorkspaceUserDraft, revision: number) => void;
+  reset: (key: string, draft: WorkspaceUserDraft, revision: number) => void;
+  saved: (key: string, generation: number, revision: number) => void;
+  rebase: (key: string, revision: number) => void;
+}>((set) => ({
+  entries: {},
+  edit: (key, draft) =>
+    set((state) => ({
+      entries: {
+        ...state.entries,
+        [key]: {
+          draft,
+          dirty: true,
+          generation: (state.entries[key]?.generation ?? 0) + 1,
+          baseRevision: state.entries[key]?.baseRevision ?? 0,
+        },
+      },
+    })),
+  receive: (key, draft, revision) =>
+    set((state) =>
+      state.entries[key]?.dirty
+        ? state
+        : {
+            entries: {
+              ...state.entries,
+              [key]: {
+                draft,
+                dirty: false,
+                generation: state.entries[key]?.generation ?? 0,
+                baseRevision: revision,
+              },
+            },
+          },
+    ),
+  reset: (key, draft, revision) =>
+    set((state) => ({
+      entries: {
+        ...state.entries,
+        [key]: { draft, dirty: false, generation: 0, baseRevision: revision },
+      },
+    })),
+  rebase: (key, revision) =>
+    set((state) => {
+      const current = state.entries[key];
+      return current
+        ? { entries: { ...state.entries, [key]: { ...current, baseRevision: revision } } }
+        : state;
+    }),
+  saved: (key, generation, revision) =>
+    set((state) => {
+      const current = state.entries[key];
+      return current
+        ? {
+            entries: {
+              ...state.entries,
+              [key]: {
+                ...current,
+                dirty: current.generation !== generation,
+                baseRevision: revision,
+              },
+            },
+          }
+        : state;
+    }),
+}));
 
 export function ThreadWorkspacePanel({
   threadRef,
-  reviewId,
   visible,
   startedThread,
   section,
@@ -45,7 +140,7 @@ export function ThreadWorkspacePanel({
       <div
         role="tablist"
         aria-label="Workspace sections"
-        className="grid grid-cols-2 gap-1 border-b border-border p-2 @min-[500px]/workspace:grid-cols-4"
+        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2"
       >
         {sections.map(([id, label]) => (
           <button
@@ -53,62 +148,51 @@ export function ThreadWorkspacePanel({
             type="button"
             role="tab"
             aria-selected={section === id}
-            aria-controls={`workspace-${id}`}
-            className="rounded-md px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
+            className="shrink-0 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
             onClick={() => useRightPanelStore.getState().setWorkspaceSection(threadRef, id)}
           >
             {label}
           </button>
         ))}
       </div>
-      <div
-        role="tabpanel"
-        id={`workspace-${section}`}
-        aria-label={sections.find(([id]) => id === section)?.[1]}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        {!startedThread ? (
-          <p className="p-5 text-sm text-muted-foreground">
-            Send the first message to start this conversation's workspace.
-          </p>
-        ) : !supported ? (
-          <p className="p-5 text-sm text-muted-foreground">
-            Workspace is unavailable on this environment. Connect to a T3 Code build with workspace
-            support.
-          </p>
-        ) : !canRead ? (
-          <p className="p-5 text-sm text-muted-foreground">
-            This connection cannot read the workspace.
-          </p>
-        ) : section === "questions" ? (
-          <ReviewPanel
-            threadRef={threadRef}
-            reviewId={reviewId}
-            visible={visible}
-            startedThread={startedThread}
-          />
-        ) : (
-          <WorkspaceNotes
-            key={`${threadRef.environmentId}:${threadRef.threadId}`}
-            threadRef={threadRef}
-            visible={visible}
-            section={section}
-          />
-        )}
-      </div>
+      {!startedThread ? (
+        <p className="p-5 text-sm text-muted-foreground">
+          Send the first message to start this conversation's workspace.
+        </p>
+      ) : !supported ? (
+        <p className="p-5 text-sm text-muted-foreground">
+          Connect to a T3 Code build with workspace support.
+        </p>
+      ) : !canRead ? (
+        <p className="p-5 text-sm text-muted-foreground">
+          This connection cannot read the workspace.
+        </p>
+      ) : section === "loads" || section === "tokens" ? (
+        <ThreadInsightsPanel threadRef={threadRef} visible={visible} mode={section} />
+      ) : section === "notes" ? (
+        <NotesPanel environmentId={threadRef.environmentId} threadId={threadRef.threadId} />
+      ) : (
+        <WorkspaceContent
+          key={`${threadRef.environmentId}:${threadRef.threadId}`}
+          threadRef={threadRef}
+          visible={visible}
+          section={section}
+        />
+      )}
     </div>
   );
 }
 
-function WorkspaceNotes({
+function WorkspaceContent({
   threadRef,
   visible,
   section,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly visible: boolean;
-  readonly section: Exclude<ThreadWorkspaceSection, "questions">;
+  readonly section: ThreadWorkspaceSection;
 }) {
+  const key = `${threadRef.environmentId}:${threadRef.threadId}`;
   const query = useEnvironmentQuery(
     visible
       ? threadWorkspaceGet({
@@ -117,146 +201,277 @@ function WorkspaceNotes({
         })
       : null,
   );
+  const save = useAtomCommand(threadWorkspaceSaveDraft, { reportFailure: false });
+  const submit = useAtomCommand(threadWorkspaceSubmit, { reportFailure: false });
   const patch = useAtomCommand(threadWorkspacePatch, { reportFailure: false });
   const canWrite = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const [saved, setSaved] = useState<ThreadWorkspace | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const workspace =
     saved && (!query.data || saved.revision > query.data.revision) ? saved : query.data;
-  const update = async (item: ThreadActionItem, status: ThreadActionItem["status"]) => {
-    if (!workspace || pending || !canWrite) return;
-    setPending(true);
+  const local = useLocalDrafts((state) => state.entries[key]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState<string[]>([]);
+  const saveQueue = useRef<Promise<ThreadWorkspace | null>>(Promise.resolve(null));
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Receives server drafts without replacing unsaved local edits during polling.
+  useEffect(() => {
+    if (workspace) {
+      useLocalDrafts.getState().receive(key, workspace.userDraft, workspace.revision);
+    }
+  }, [key, workspace]);
+  const draft = local?.draft ?? workspace?.userDraft;
+  const saveLatestDraft = useStableCallback(async (): Promise<ThreadWorkspace | null> => {
+    const entry = useLocalDrafts.getState().entries[key];
+    if (!entry?.dirty) return workspace ?? null;
+    const result = await save({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId: threadRef.threadId,
+        expectedRevision: entry.baseRevision,
+        userDraft: entry.draft,
+      },
+    });
+    if (result._tag !== "Success") {
+      const failure = squashAtomCommandFailure(result);
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Could not save answers. Your local edits are retained.",
+      );
+      return null;
+    }
+
+    setSaved(result.value);
+    useLocalDrafts.getState().saved(key, entry.generation, result.value.revision);
+    return result.value;
+  });
+  const persistDraft = useStableCallback((): Promise<ThreadWorkspace | null> => {
+    const operation = saveQueue.current.then(saveLatestDraft);
+    saveQueue.current = operation;
+    return operation;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounces user-authored drafts; server refreshes never trigger a write.
+  useEffect(() => {
+    if (!local?.dirty || !canWrite || busy) return;
+    const timer = setTimeout(() => {
+      void persistDraft();
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [local, canWrite, busy, persistDraft]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Flushes the final user edit when switching away from this thread.
+  useEffect(
+    () => () => {
+      void persistDraft();
+    },
+    [persistDraft],
+  );
+  const edit = (next: WorkspaceUserDraft) => {
+    useLocalDrafts.getState().edit(key, next);
+    setSent([]);
+  };
+  const send = async (itemIds: string[]) => {
+    if (busy || !canWrite) return;
+    setBusy(true);
     setError(null);
+    const current = await persistDraft();
+    if (current) {
+      const result = await submit({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, expectedRevision: current.revision, itemIds },
+      });
+      if (result._tag === "Success") {
+        setSaved(result.value);
+        setSent(itemIds.length ? itemIds : (workspace?.questions.map((item) => item.id) ?? []));
+      } else {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "Could not send responses.");
+      }
+    }
+    setBusy(false);
+    query.refresh();
+  };
+  const changeStatus = async (item: ThreadActionItem) => {
+    if (!workspace || busy) return;
+    setBusy(true);
+    setError(null);
+    const current = await persistDraft();
+    if (!current) {
+      setBusy(false);
+      return;
+    }
     const result = await patch({
       environmentId: threadRef.environmentId,
       input: {
         threadId: threadRef.threadId,
-        expectedRevision: workspace.revision,
-        actionItems: workspace.actionItems.map((entry) =>
-          entry.id === item.id ? { ...entry, status } : entry,
+        expectedRevision: current.revision,
+        actionItems: current.actionItems.map((entry) =>
+          entry.id === item.id
+            ? { ...entry, status: item.status === "done" ? "open" : "done" }
+            : entry,
         ),
       },
     });
-    setPending(false);
-    if (result._tag === "Success") setSaved(result.value);
-    else {
+    if (result._tag === "Success") {
+      setSaved(result.value);
+      useLocalDrafts.getState().rebase(key, result.value.revision);
+    } else {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not update action item.");
+      setError(failure instanceof Error ? failure.message : "Could not update action.");
     }
+    setBusy(false);
     query.refresh();
   };
-  const title = sections.find(([id]) => id === section)?.[1];
-  const notes = section === "design-notes" ? workspace?.designNotes : workspace?.summaryNotes;
+  if (!workspace || !draft)
+    return (
+      <p className="p-5 text-sm text-muted-foreground">
+        {query.error ? String(query.error) : "Loading workspace…"}
+      </p>
+    );
+  if (section === "marks")
+    return <WorkspaceMarksPanel threadRef={threadRef} annotations={workspace.markAnnotations} />;
+  if (section === "threads")
+    return <WorkspaceThreadsPanel threadRef={threadRef} related={workspace.relatedThreads} />;
+  const ready =
+    workspace.questions.some((question) => {
+      const answer = draft.questionAnswers[question.id];
+      return answer && (answer.selectedOptionIds.length > 0 || answer.notes.trim());
+    }) || workspace.actionItems.some((action) => Boolean(draft.actionNotes[action.id]?.trim()));
   return (
-    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <p className="text-xs text-muted-foreground">
-          {section === "action-items"
-            ? "What the agent needs from you. Status changes save here without starting an agent run."
-            : section === "design-notes"
-              ? "The agent keeps decisions, tradeoffs, and design context here."
-              : "The agent keeps the current state and next steps here."}
-        </p>
-      </div>
-      {query.error || error ? (
-        <div role="alert" className="space-y-2 text-sm text-destructive">
-          <p>{error ?? query.error}</p>
+    <>
+      {error || query.error ? (
+        <div
+          role="alert"
+          className="shrink-0 border-b border-destructive/30 p-3 text-xs text-destructive"
+        >
+          {error ?? String(query.error)}
           <Button
-            variant="outline"
             size="xs"
+            variant="ghost"
             onClick={() => {
               setError(null);
               query.refresh();
             }}
           >
-            Refresh workspace
+            Refresh
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              if (query.data) {
+                useLocalDrafts.getState().reset(key, query.data.userDraft, query.data.revision);
+                setSaved(query.data);
+
+                setError(null);
+              }
+            }}
+          >
+            Reload saved answers
           </Button>
         </div>
       ) : null}
-      {!workspace && query.isPending ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading workspace…
-        </p>
-      ) : null}
-      {workspace && section === "action-items" ? (
-        workspace.actionItems.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">
-            Nothing needs your attention here. Ask the agent to track what it needs from you as
-            action items.
-          </p>
-        ) : (
-          workspace.actionItems.map((item) => (
-            <section
-              key={item.id}
-              aria-label={item.title}
-              className="space-y-3 rounded-xl border border-border p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="text-sm font-medium">{item.title}</h3>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {item.status === "open"
-                    ? "Open"
-                    : item.status === "deferred"
-                      ? "Deferred"
-                      : "Done"}
-                </span>
-              </div>
-              {item.details ? (
-                <ChatMarkdown text={item.details} cwd={undefined} threadRef={threadRef} />
+      <WorkspaceDocument
+        threadRef={threadRef}
+        section={section}
+        workspace={workspace}
+        renderQuestion={(question) => (
+          <WorkspaceQuestionCard
+            key={question.id}
+            question={question}
+            threadRef={threadRef}
+            answer={draft.questionAnswers[question.id] ?? emptyAnswer}
+            disabled={!canWrite || busy}
+            sent={sent.includes(question.id)}
+            onChange={(answer) =>
+              edit({
+                ...draft,
+                questionAnswers: { ...draft.questionAnswers, [question.id]: answer },
+              })
+            }
+            onSend={() => {
+              void send([question.id]);
+            }}
+          />
+        )}
+        renderAction={(action) => (
+          <details
+            key={action.id}
+            id={`workspace-item-${action.id}`}
+            className="group rounded-lg border border-border p-3"
+          >
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
+              <ChevronRightIcon className="size-3 shrink-0 group-open:rotate-90" />
+              <span className="text-3xs text-muted-foreground">{action.ref}</span>
+              <span
+                className={action.status === "done" ? "line-through text-muted-foreground" : ""}
+              >
+                {action.title}
+              </span>
+              {action.status === "done" ? (
+                <CheckIcon className="ml-auto size-3 text-primary" />
               ) : null}
-              <div className="flex flex-wrap gap-2">
-                {item.status !== "done" ? (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={!canWrite || pending}
-                    onClick={() => {
-                      void update(item, "done");
-                    }}
-                  >
-                    Mark done
-                  </Button>
-                ) : null}
-                {item.status === "open" ? (
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={!canWrite || pending}
-                    onClick={() => {
-                      void update(item, "deferred");
-                    }}
-                  >
-                    Defer
-                  </Button>
-                ) : (
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={!canWrite || pending}
-                    onClick={() => {
-                      void update(item, "open");
-                    }}
-                  >
-                    Reopen
-                  </Button>
-                )}
+            </summary>
+            <div className="mt-3 space-y-3">
+              {action.details ? (
+                <ChatMarkdown text={action.details} cwd={undefined} threadRef={threadRef} />
+              ) : null}
+              <Textarea
+                aria-label={`Notes for ${action.title}`}
+                placeholder="Your notes…"
+                value={draft.actionNotes[action.id] ?? ""}
+                disabled={!canWrite}
+                onChange={(event) =>
+                  edit({
+                    ...draft,
+                    actionNotes: { ...draft.actionNotes, [action.id]: event.target.value },
+                  })
+                }
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={!canWrite || busy}
+                  onClick={() => {
+                    void changeStatus(action);
+                  }}
+                >
+                  {action.status === "done" ? "Reopen" : "Mark done"}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={!canWrite || busy}
+                  onClick={() => {
+                    void send([action.id]);
+                  }}
+                >
+                  <SendIcon className="size-3" />
+                  Add to chat
+                </Button>
               </div>
-            </section>
-          ))
-        )
-      ) : workspace ? (
-        notes?.trim() ? (
-          <ChatMarkdown text={notes} cwd={undefined} threadRef={threadRef} />
-        ) : (
-          <p className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">
-            {section === "design-notes"
-              ? "No design notes yet. Ask the agent to record its design decisions here."
-              : "No summary yet. Ask the agent to keep a running summary here."}
-          </p>
-        )
+            </div>
+          </details>
+        )}
+      />
+      {section === "questions" || section === "action-items" || section === "unified" ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
+          <span className="text-3xs text-muted-foreground">
+            {local?.dirty ? "Saving answers…" : "Answers stay private until sent."}
+          </span>
+          <Button
+            size="xs"
+            disabled={!canWrite || busy || !ready}
+            onClick={() => {
+              void send([]);
+            }}
+          >
+            <SendIcon className="size-3" />
+            Add ready responses to chat
+          </Button>
+        </div>
       ) : null}
-    </div>
+    </>
   );
 }

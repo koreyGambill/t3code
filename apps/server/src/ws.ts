@@ -1,3 +1,6 @@
+import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
+import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
+import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
@@ -1449,6 +1452,9 @@ export const layerWsRpc = (
       const agentSessionProgress = yield* AgentSessionProgress.AgentSessionProgress;
       const reviewArtifacts = yield* ReviewArtifacts.ReviewArtifacts;
       const threadWorkspace = yield* ThreadWorkspace.ThreadWorkspace;
+      const threadMarks = yield* ThreadMarks.ThreadMarks;
+      const threadInsights = yield* ThreadInsights.ThreadInsights;
+      const threadNotes = yield* ThreadNotes.ThreadNotes;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -2992,8 +2998,17 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
+        [WS_METHODS.threadMarksGet]: (input) => threadMarks.get(input),
+        [WS_METHODS.threadInsightsGet]: (input) => threadInsights.get(input),
+        [WS_METHODS.threadNotesGet]: (input) => threadNotes.get(input),
+        [WS_METHODS.threadNotesSave]: (input) => threadNotes.save(input),
+        [WS_METHODS.threadNotesSettings]: () => threadNotes.settings(),
+        [WS_METHODS.threadNotesUpdateSettings]: (input) => threadNotes.updateSettings(input),
+        [WS_METHODS.threadNotesSendSelection]: (input) => threadNotes.sendSelection(input),
         [WS_METHODS.threadWorkspaceGet]: (input) => threadWorkspace.get(input),
         [WS_METHODS.threadWorkspacePatch]: (input) => threadWorkspace.patch(input),
+        [WS_METHODS.threadWorkspaceSaveDraft]: (input) => threadWorkspace.saveDraft(input),
+        [WS_METHODS.threadWorkspaceSubmit]: (input) => threadWorkspace.submit(input),
         [WS_METHODS.reviewsCreate]: (input) => reviewArtifacts.create(input),
         [WS_METHODS.reviewsList]: (input) => reviewArtifacts.list(input),
         [WS_METHODS.reviewsGet]: (input) => reviewArtifacts.get(input),

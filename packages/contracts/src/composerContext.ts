@@ -206,6 +206,8 @@ export type SkillContextRecord = typeof SkillContextRecord.Type;
 export const ThreadContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("thread"),
+  workspaceItemId: Schema.optional(TrimmedNonEmptyString),
+  workspaceSection: Schema.optional(Schema.Literals(["questions", "actions", "design", "summary"])),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: ContextLabel,

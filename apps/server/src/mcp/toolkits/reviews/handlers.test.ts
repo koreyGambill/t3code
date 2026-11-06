@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
-import { ThreadWorkspace } from "../../../threadWorkspace/ThreadWorkspace.ts";
+import { ThreadWorkspace, emptyWorkspace } from "../../../threadWorkspace/ThreadWorkspace.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ReviewArtifacts from "../../../reviewArtifacts/ReviewArtifacts.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -40,6 +40,7 @@ const artifact: ReviewArtifact = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 const workspace: ThreadWorkspaceDocument = {
+  ...emptyWorkspace(threadId),
   threadId,
   revision: 3,
   actionItems: [
@@ -99,16 +100,37 @@ const call = (
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(
           Layer.mock(ThreadWorkspace)({
-            get: ({ threadId }) => Effect.succeed({ ...workspace, threadId }),
-            patch: ({ threadId, expectedRevision, ...fields }) =>
+            query: ({ threadId }) =>
+              Effect.succeed({
+                threadId,
+                revision: workspace.revision,
+                groups: workspace.groups,
+                items: [
+                  {
+                    id: "credentials",
+                    ref: "A-001",
+                    groupId: "ungrouped",
+                    kind: "action",
+                    title: "Provide credentials",
+                  },
+                ],
+              }),
+            importReview: () => Effect.void,
+            mutate: ({ threadId, expectedRevision }) =>
               expectedRevision === workspace.revision
                 ? Effect.succeed({
-                    ...workspace,
-                    actionItems: fields.actionItems ?? workspace.actionItems,
-                    designNotes: fields.designNotes ?? workspace.designNotes,
-                    summaryNotes: fields.summaryNotes ?? workspace.summaryNotes,
                     threadId,
                     revision: workspace.revision + 1,
+                    groups: workspace.groups,
+                    items: [
+                      {
+                        id: "credentials",
+                        ref: "A-001",
+                        groupId: "ungrouped",
+                        kind: "action",
+                        title: "Provide credentials",
+                      },
+                    ],
                   })
                 : Effect.fail(
                     new ThreadWorkspaceError({
@@ -202,10 +224,11 @@ it.effect("lets a read-only client read submitted feedback but refuses publicati
     const create = yield* call("review_create", { threadId, content }, invocation);
     expect(failureCode(create)).toBe("capability_denied");
     const read = yield* call("thread_workspace_read", { threadId }, invocation);
-    expect(read.structuredContent).toEqual(workspace);
+    expect(read.structuredContent).toMatchObject({ threadId, revision: 3 });
+    expect(read.structuredContent).not.toHaveProperty("userDraft");
     const update = yield* call(
       "thread_workspace_update",
-      { threadId, expectedRevision: 3, summaryNotes: "Changed" },
+      { threadId, expectedRevision: 3, changes: [], summaryNotes: "Changed" },
       invocation,
     );
     expect(failureCode(update)).toBe("capability_denied");
@@ -221,7 +244,7 @@ it.effect.each([
   Effect.gen(function* () {
     const result = yield* call(
       name,
-      { content, reviewId, expectedRevision: 3 },
+      { content, reviewId, expectedRevision: 3, changes: [] },
       { ...scope, capabilities: new Set() },
     );
     expect(failureCode(result)).toBe("capability_denied");
@@ -241,18 +264,17 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const read = yield* call("thread_workspace_read", {});
-      expect(read.structuredContent).toEqual(workspace);
+      expect(read.structuredContent).toMatchObject({ threadId, revision: 3 });
+      expect(read.structuredContent).not.toHaveProperty("userDraft");
       const update = yield* call("thread_workspace_update", {
         expectedRevision: 3,
+        changes: [],
         summaryNotes: "Ready for testing.",
       });
-      expect(update.structuredContent).toEqual({
-        ...workspace,
-        revision: 4,
-        summaryNotes: "Ready for testing.",
-      });
+      expect(update.structuredContent).toMatchObject({ threadId, revision: 4 });
       const conflict = yield* call("thread_workspace_update", {
         expectedRevision: 2,
+        changes: [],
         summaryNotes: "Stale.",
       });
       expect(failureCode(conflict)).toBe("invalid_request");
@@ -270,18 +292,14 @@ it.effect("applies workspace target and ownership checks before access", () =>
     expect(failureCode(missing)).toBe("target_required");
     const explicit = yield* call(
       "thread_workspace_update",
-      { threadId: targetId, expectedRevision: 3, summaryNotes: "Target summary." },
+      { threadId: targetId, expectedRevision: 3, changes: [], summaryNotes: "Target summary." },
       invocation,
     );
-    expect(explicit.structuredContent).toEqual({
-      ...workspace,
-      threadId: targetId,
-      revision: 4,
-      summaryNotes: "Target summary.",
-    });
+    expect(explicit.structuredContent).toMatchObject({ threadId: targetId, revision: 4 });
     const escalated = yield* call("thread_workspace_update", {
       threadId: targetId,
       expectedRevision: 3,
+      changes: [],
       summaryNotes: "Target summary.",
     });
     expect(failureCode(escalated)).toBe("runtime_mode_escalation_denied");

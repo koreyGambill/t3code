@@ -4,7 +4,7 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
-Ordinary coding tasks need no T3 tools.
+Ordinary coding tasks need no orchestration tools.
 
 - Subagents: use your native tool when the child uses your provider, a model it offers, and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked, or fall back to native tools, Workflow, or CLIs. Never make a child's checkout in the shell or in \`task\`.
@@ -18,6 +18,10 @@ Ordinary coding tasks need no T3 tools.
 - In your reply, mention a thread by its \`link\`, verbatim. Never a plain title or bare id.
 - A login, token, PIN or pairing code only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
+  `### Thread workspace
+
+- Workspace is an intentional scratchboard, not automatic chat extraction. Use it when asked ("workspace this for later") or when durable questions/context help; ordinary questions can stay in chat.
+- Use \`thread_workspace_read\` for a compact index or scoped detail and \`thread_workspace_update\` for batch edits. You may organize nested groups and create/edit/move/remove questions, actions, and freeform design. IDs/refs stay stable. Recommendations are explicit, never preselected. Keep future work in Actions and whole-thread catch-up in Summary. Private user drafts/notes are unavailable until explicitly added to chat. Read only what you need; do not poll or repeat the workspace in chat.`,
   `### Visuals and preview
 
 - Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.

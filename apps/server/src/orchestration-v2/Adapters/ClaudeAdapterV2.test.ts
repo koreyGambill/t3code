@@ -668,6 +668,17 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
     assert.include(systemPrompt.append ?? "", "call `t3_background_wait`");
     assert.notInclude(systemPrompt.append ?? "", "## T3 Code devices");
+    const actualAppend = `${systemPrompt.append ?? ""}\n\nCustom launch note 🔒`;
+    const prepared = ClaudeAdapterV2.claudePreparedContextEntries(actualAppend);
+    assert.equal(
+      prepared.reduce((sum, entry) => sum + Buffer.byteLength(entry.text), 0),
+      Buffer.byteLength(actualAppend),
+    );
+    assert.include(
+      prepared.find((entry) => entry.key === "custom_claude_append")?.text ?? "",
+      "Custom launch note 🔒",
+    );
+
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");

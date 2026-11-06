@@ -1748,6 +1748,31 @@ const subagentDeviceInstructions: HookCallback = () =>
     },
   });
 
+/** Partitions the actual SDK append into generated and custom text without changing its total byte count. */
+export function claudePreparedContextEntries(
+  append: string,
+): ReadonlyArray<{ readonly key: string; readonly text: string }> {
+  const known = [
+    { key: "t3_code_runtime", text: buildRuntimeInstructions({ harness: "Claude Code" }) },
+    { key: "t3_code_orchestration", text: T3_CODE_ORCHESTRATION_INSTRUCTIONS },
+    { key: "t3_code_background", text: CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS },
+    { key: "t3_code_devices", text: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH },
+  ];
+  let remainder = append;
+  const entries: { key: string; text: string }[] = [];
+  for (const entry of known) {
+    if (!remainder.includes(entry.text)) continue;
+    entries.push(entry);
+    remainder = remainder.replace(entry.text, "");
+  }
+  if (remainder)
+    entries.push({
+      key: remainder.trim() ? "custom_claude_append" : "t3_code_separators",
+      text: remainder,
+    });
+  return entries;
+}
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly modelCatalog?: ClaudeModelCatalog;
@@ -10900,6 +10925,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
+          if (turnInput.onContextPrepared) {
+            const prompt = queryOptions.systemPrompt;
+            const append =
+              typeof prompt === "object" && prompt !== null && "append" in prompt
+                ? (prompt.append ?? "")
+                : typeof prompt === "string"
+                  ? prompt
+                  : "";
+            yield* turnInput.onContextPrepared({
+              source: "Claude SDK systemPrompt.append; preset harness text unavailable",
+              entries: claudePreparedContextEntries(append),
+            });
+          }
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));

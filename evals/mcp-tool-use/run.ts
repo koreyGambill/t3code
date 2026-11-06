@@ -1257,10 +1257,12 @@ export const t3Default = (
       return {
         threadId: input.threadId ?? "current-thread",
         revision: name === "thread_workspace_read" ? 0 : Number(input.expectedRevision) + 1,
-        actionItems: input.actionItems ?? [],
-        designNotes: input.designNotes ?? "",
-        summaryNotes: input.summaryNotes ?? "",
-        updatedAt: name === "thread_workspace_read" ? null : "2026-01-01T00:00:00.000Z",
+        groups: [{ id: "ungrouped", parentId: null, title: "Ungrouped" }],
+        items: [],
+        ...(input.section === "design" ? { designDocuments: [] } : {}),
+        ...(input.section === "questions" ? { questions: [], submissions: [] } : {}),
+        ...(input.section === "actions" ? { actionItems: [], submissions: [] } : {}),
+        ...(input.section === "summary" ? { summaryNotes: "" } : {}),
       };
     case "review_create":
       return {

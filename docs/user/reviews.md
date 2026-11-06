@@ -1,48 +1,70 @@
 # Thread workspace
 
-Open **Workspace** in a started conversation, choose it from the panel launcher, or
-search for **Open workspace** in the command palette. The panel keeps questions,
-action items, design notes, and a summary with each conversation and environment.
-All four sections are available even before the agent adds anything.
+Open **Workspace** in a started conversation or search for **Open workspace** in
+the command palette. It keeps questions, action items, design explanations, and
+catch-up notes beside the conversation. Groups can nest, and an item's short
+reference stays the same when it moves.
 
-## Questions
+Ask the agent to **workspace this for later** when you want something saved.
+The agent can organize and update the board without stopping its other work.
+Ordinary chat does not populate the board automatically.
 
-Ask your agent to create a
-review with its questions and recommendations, or choose **Create review** to
-start one yourself. Questions stay with their conversation and environment.
+## Questions and action items
 
-Choose answers and add your own notes. Recommendations are never selected for
-you. Select text and choose **Add note on selection** to attach a note to that
-quotation. Use the outline to move between sections, or maximize the panel for
-more room.
+Questions can offer one choice, several choices, or a written answer. A recommended
+choice shows the agent's advice. It is never selected on your behalf.
 
-Answers and notes save as you work, including when you switch or close the panel.
-They stay private from the agent until you choose **Send review to chat**. Sending
-waits for the latest save and queues the response in the original conversation.
-If saving or sending fails, your draft remains available to retry. When another
-device changes the review, choose which saved answers to keep before sending.
+Your answers and action notes save as you work and stay private from the agent
+until you choose **Add to chat**. Add one response or all ready responses. The
+message includes readable answers and a reference back to the workspace item.
+If saving or sending fails, your draft remains available to retry. A conflicting
+edit from another device needs resolving before you send.
 
-**Defer this question** keeps its answer and notes for later. A sent response
-marks that question as deferred rather than approving its selected option.
-Clear the checkbox to resume it. **Remind me later** schedules a reminder for
-the review without snoozing the conversation. You can change or cancel the
-reminder. Sending the current revision completes its reminder.
+Action items hold outstanding needs and future work. Mark one done or reopen it
+without starting an agent run. Add it to chat when you want the agent to act on
+its status or your notes.
 
-Reminders appear while T3 Code is open and connected to the review's environment.
-If the app was closed when a reminder became due, it appears after you reopen and
-connect. Opening the reminder returns to its conversation and review.
+## Design and summary
 
-Reviews are available in web and desktop builds that include review support.
-Connect to an environment running a build with review support to use them.
+Design holds the agent's explanations, context, diagrams, and documents. Ask for
+changes in chat. Summary covers the whole conversation so you can catch up on
+what happened, what changed, and the current state. Future work belongs in Action
+items.
 
-## Action items and notes
+## Marks and related threads
 
-Ask the agent to track what it needs from you in **Action items**, keep design
-decisions in **Design notes**, and maintain the current state and next steps in
-**Summary**. These sections persist outside the chat history, so you can find
-them without asking the agent to repeat itself.
+Marks collects links from chat, keeping each URL's first appearance. Search,
+filter, sort, and choose columns before copying. **Copy all** produces plain-text
+rows using your visible columns and current results. The agent can add a link
+description when useful.
 
-Mark an action item done, defer it, or reopen it when you are ready. Status changes
-save directly without starting an agent run or posting a chat message. Design
-notes and summaries are maintained by the agent. Ask for a correction in chat
-when either needs updating.
+Threads shows related conversations and why they matter. The clock in the chat
+header opens **Recent Threads**. Back and Forward follow your navigation path.
+
+## Personal notes
+
+Personal notes are yours. Choose a notes directory for each environment to save
+thread notes as Markdown files. Notes remain private until you select text and
+add it to chat. You can include the T3 thread ID in the file. The note includes a
+terminal resume command when the provider has a resumable session.
+
+Workspace is available in web and desktop builds with workspace support. An
+older connected environment needs a build with support before it can serve the
+panel.
+
+## Loads and token usage
+
+Loads shows file reads, skill loads, and related tool activity observed in the
+conversation. Use Refresh to update these views while an agent is working. Reported events and events inferred from command text are labeled
+separately. A command mentioning a file does not prove every byte reached the
+model, and an unavailable tool result has no invented token count.
+
+Tokens shows the usage the provider reported for each turn, including cache
+accounting when available. Instruction sizes are a separate estimate from the
+actual application payload prepared for a turn. They break down T3 instructions
+by section, application context, and custom prompt additions. Estimates use
+UTF-8 bytes divided by four. They are not billed token counts, and they should
+not be added to the provider's totals.
+
+Hidden provider harness instructions remain unknown. Earlier turns without an
+instruction snapshot stay unavailable rather than inheriting today's prompt.

@@ -1,0 +1,49 @@
+import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
+import type { ThreadNotesSaveInput, ThreadNotesSendSelectionInput } from "@t3tools/contracts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+
+export const threadNoteGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadNotes:get",
+  tag: WS_METHODS.threadNotesGet,
+  staleTimeMs: 5_000,
+  refreshIntervalMs: 5_000,
+  idleTtlMs: 0,
+});
+export const threadNotesSettings = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadNotes:settings",
+  tag: WS_METHODS.threadNotesSettings,
+  staleTimeMs: 30_000,
+  idleTtlMs: 0,
+});
+const save = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "threadNotes:save",
+  tag: WS_METHODS.threadNotesSave,
+});
+export const updateThreadNotesSettings = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "threadNotes:updateSettings",
+  tag: WS_METHODS.threadNotesUpdateSettings,
+});
+const send = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "threadNotes:sendSelection",
+  tag: WS_METHODS.threadNotesSendSelection,
+});
+export async function persistThreadNote(environmentId: EnvironmentId, input: ThreadNotesSaveInput) {
+  const result = await runAtomCommand(appAtomRegistry, save, { environmentId, input });
+  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+  return result.value;
+}
+export async function sendThreadNoteSelection(
+  environmentId: EnvironmentId,
+  input: ThreadNotesSendSelectionInput,
+) {
+  const result = await runAtomCommand(appAtomRegistry, send, { environmentId, input });
+  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+  return result.value;
+}

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./workspaceMarks": {
+      "types": "./src/workspaceMarks.ts",
+      "import": "./src/workspaceMarks.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

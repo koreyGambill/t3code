@@ -33,6 +33,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as InstructionFootprints from "../threadInsights/InstructionFootprints.ts";
 import { normalizeModelMetricLabel } from "../observability/Attributes.ts";
 import {
   providerSessionsTotal,
@@ -334,6 +335,9 @@ export const layerWithOptions = (
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+      const instructionFootprints = yield* Effect.serviceOption(
+        InstructionFootprints.InstructionFootprints,
+      );
       const fileSystem = yield* FileSystem.FileSystem;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -1859,7 +1863,42 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    runtime
+                      .startTurn(
+                        Option.isNone(instructionFootprints)
+                          ? input
+                          : {
+                              ...input,
+                              onContextPrepared: Effect.fn(
+                                "ProviderSessionManagerV2.capturePreparedContext",
+                              )(function* (prepared: InstructionFootprints.PreparedContext) {
+                                if (input.onContextPrepared)
+                                  yield* input.onContextPrepared(prepared);
+                                if (Option.isNone(instructionFootprints)) return;
+                                yield* instructionFootprints.value
+                                  .record({
+                                    ...prepared,
+                                    threadId: input.threadId,
+                                    runId: input.runId,
+                                    providerInstanceId: runtime.instanceId,
+                                    driver: runtime.driver,
+                                    model: input.modelSelection.model,
+                                    providerTurnOrdinal: input.providerTurnOrdinal,
+                                    attemptId: input.attemptId,
+                                  })
+                                  .pipe(
+                                    Effect.catch((cause) =>
+                                      Effect.logWarning("Instruction footprint capture failed", {
+                                        threadId: input.threadId,
+                                        runId: input.runId,
+                                        cause,
+                                      }),
+                                    ),
+                                  );
+                              }),
+                            },
+                      )
+                      .pipe(turnMetrics("send", input.modelSelection.model)),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(

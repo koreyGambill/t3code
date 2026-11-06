@@ -6,6 +6,7 @@ export function useReviewSupport(environmentId: EnvironmentId | null): boolean {
   const configs = useServerConfigs();
   return (
     environmentId !== null &&
-    configs.get(environmentId)?.environment.capabilities.reviewArtifacts === true
+    configs.get(environmentId)?.environment.capabilities.reviewArtifacts === true &&
+    configs.get(environmentId)?.environment.capabilities.workspaceVersion === 2
   );
 }
