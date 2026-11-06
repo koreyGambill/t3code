@@ -62,7 +62,12 @@ function EnvironmentReviewReminders({
     return (
       panel?.isOpen &&
       panel.activeSurfaceId === "reviews" &&
-      panel.surfaces.some((surface) => surface.kind === "reviews" && surface.reviewId === review.id)
+      panel.surfaces.some(
+        (surface) =>
+          surface.kind === "reviews" &&
+          surface.reviewId === review.id &&
+          (surface.workspaceSection ?? "questions") === "questions",
+      )
     );
   })?.id;
 
@@ -71,9 +76,9 @@ function EnvironmentReviewReminders({
     let active = true;
     const sync = () => {
       if (!active) return;
-      gate.sync(due, shownReviewId, (review) => {
+      const looking = document.visibilityState === "visible" && document.hasFocus();
+      gate.sync(due, looking ? shownReviewId : undefined, (review) => {
         const { notificationMode, inAppNotificationsEnabled } = settings;
-        const looking = document.visibilityState === "visible" && document.hasFocus();
         const open = () => {
           void navigate({
             to: "/$environmentId/$threadId",

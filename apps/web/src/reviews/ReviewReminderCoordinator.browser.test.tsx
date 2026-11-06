@@ -7,6 +7,7 @@ import { act, render, stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   due: [] as ReadonlyArray<ReviewSummary>,
+  active: {} as { environmentId?: string; threadId?: string },
   readable: true,
   supported: true,
   mode: "notifications",
@@ -15,6 +16,14 @@ const state = vi.hoisted(() => ({
   close: vi.fn(),
   query: vi.fn(),
 }));
+vi.mock(
+  import("@tanstack/react-router"),
+  async (original) =>
+    ({
+      ...(await original<typeof import("@tanstack/react-router")>()),
+      useParams: () => state.active,
+    }) as never,
+);
 vi.mock(
   import("@effect/atom-react"),
   async (original) =>
@@ -86,6 +95,7 @@ const review: ReviewSummary = {
 };
 
 function setup() {
+  state.active = {};
   state.due = [review];
   state.readable = true;
   state.supported = true;
@@ -97,31 +107,43 @@ function setup() {
   useRightPanelStore.setState({ byThreadKey: {} });
 }
 
-it("announces due reviews without changing threads, and opens the owning environment only on click", async () => {
-  setup();
-  using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
-  using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  await using screen = await render(<ReviewReminderCoordinator />, { router: "/existing/thread" });
-  await vi.waitFor(() => expect(state.add).toHaveBeenCalledTimes(1));
-  expect(screen.router?.state.location.pathname).toBe("/existing/thread");
-  expect(useRightPanelStore.getState().byThreadKey).toEqual({});
-  state.due = [{ ...review, revision: 2 }];
-  await screen.rerender(<ReviewReminderCoordinator />);
-  expect(state.add).toHaveBeenCalledTimes(1);
-  await act(() => state.add.mock.calls[0]?.[0].actionProps?.onClick?.());
-  await vi.waitFor(() =>
-    expect(screen.router?.state.location.pathname).toBe("/remote-environment/review-thread"),
-  );
-  expect(
-    useRightPanelStore.getState().byThreadKey[
-      scopedThreadKey(scopeThreadRef(environmentId, review.threadId))
-    ],
-  ).toMatchObject({
-    isOpen: true,
-    activeSurfaceId: "reviews",
-    surfaces: [{ kind: "reviews", reviewId: review.id }],
-  });
-});
+it.each(["other-thread", "action-items"])(
+  "announces due reviews while viewing %s and opens Questions only on click",
+  async (view) => {
+    setup();
+    using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const ref = scopeThreadRef(environmentId, review.threadId);
+    if (view === "action-items") {
+      state.active = { environmentId, threadId: review.threadId };
+      useRightPanelStore.getState().openReviews(ref, review.id);
+      useRightPanelStore.getState().setWorkspaceSection(ref, "action-items");
+    }
+    const route =
+      view === "action-items" ? "/remote-environment/review-thread" : "/existing/thread";
+    const initialPanels = useRightPanelStore.getState().byThreadKey;
+    await using screen = await render(<ReviewReminderCoordinator />, { router: route });
+    await vi.waitFor(() => expect(state.add).toHaveBeenCalledTimes(1));
+    expect(screen.router?.state.location.pathname).toBe(route);
+    expect(useRightPanelStore.getState().byThreadKey).toEqual(initialPanels);
+    state.due = [{ ...review, revision: 2 }];
+    await screen.rerender(<ReviewReminderCoordinator />);
+    expect(state.add).toHaveBeenCalledTimes(1);
+    await act(() => state.add.mock.calls[0]?.[0].actionProps?.onClick?.());
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe("/remote-environment/review-thread"),
+    );
+    expect(
+      useRightPanelStore.getState().byThreadKey[
+        scopedThreadKey(scopeThreadRef(environmentId, review.threadId))
+      ],
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: "reviews",
+      surfaces: [{ kind: "reviews", reviewId: review.id }],
+    });
+  },
+);
 
 it("respects notification permission and never asks for it", async () => {
   setup();
@@ -170,9 +192,15 @@ it("opens the review from a desktop notification without starting work", async (
   using _notification = stubGlobal("Notification", TestNotification);
   using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
   using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-  await using screen = await render(<ReviewReminderCoordinator />, { router: "/existing/thread" });
+  state.active = { environmentId, threadId: review.threadId };
+  useRightPanelStore
+    .getState()
+    .openReviews(scopeThreadRef(environmentId, review.threadId), review.id);
+  await using screen = await render(<ReviewReminderCoordinator />, {
+    router: "/remote-environment/review-thread",
+  });
   await vi.waitFor(() => expect(created).toHaveLength(1));
-  expect(screen.router?.state.location.pathname).toBe("/existing/thread");
+  expect(screen.router?.state.location.pathname).toBe("/remote-environment/review-thread");
   await act(() => created[0]?.dispatchEvent(new Event("click")));
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/remote-environment/review-thread"),
