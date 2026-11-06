@@ -54,6 +54,34 @@ describe("load event projection", () => {
       }),
     ).toMatchObject({ kind: "instructions", evidence: "inferred", paths: ["/repo/AGENTS.md"] });
     expect(projectLoadEvent({ ...read, toolName: "write_file" })).toBeNull();
+    for (const [input, path] of [
+      ["/usr/bin/zsh -lc 'cat /repo/AGENTS.md'", "/repo/AGENTS.md"],
+      ['/bin/bash -lc "cat /repo/AGENTS.md"', "/repo/AGENTS.md"],
+      ["/usr/bin/zsh -lc 'sed -n '\\''1,20p'\\'' /repo/AGENTS.md'", "/repo/AGENTS.md"],
+      ['/bin/bash -c "cat \\"/repo/a b/AGENTS.md\\""', "/repo/a b/AGENTS.md"],
+      ["cat AGENTS.md", "AGENTS.md"],
+    ] as const) {
+      expect(
+        projectLoadEvent({ ...base, type: "command_execution", input, output: "instructions" }),
+      ).toMatchObject({
+        kind: "instructions",
+        evidence: "inferred",
+        paths: [path],
+      });
+    }
+    expect(
+      projectLoadEvent({
+        ...base,
+        type: "command_execution",
+        input: "/usr/bin/zsh -lc 'cat /skills/review/SKILL.md /repo/MEMORY.md'",
+        output: "No such file or directory",
+        exitCode: 1,
+      }),
+    ).toMatchObject({
+      kind: "skill",
+      paths: ["/skills/review/SKILL.md", "/repo/MEMORY.md"],
+      status: "failed",
+    });
     expect(
       projectLoadEvent({ ...read, toolName: "Skill", input: { skill: "code-review" } }),
     ).toMatchObject({ kind: "skill", label: "code-review", paths: [] });
