@@ -26,13 +26,16 @@ of the selected theme.
 Web and desktop threads have a colored outline glyph for quick recognition. Click the glyph beside
 the conversation header, or choose **Reroll glyph** from the thread menu, to pick another. The glyph
 stays the same when you rename the thread or reopen it on another connected client. While an agent
-works, a contrasting stroke retraces the outline.
+works, two contrasting embers orbit the glyph.
 
 ## Tiled workspace
 
 On wider web and desktop windows, each thread remembers its own tiles and tab groups. Use a tile's
-**Add area** menu for a browser, terminal, files, Workspace, or Inspect. Drag a tab into another
-tile to group it, or to an edge to split it. The conversation can move between tiles too.
+**Add area** menu for a browser, terminal, files, Notes, Workspace, or Inspect. Drag a tab into another
+tile’s tab bar to group it, or to an edge to split it. Drag the empty title bar to move a whole
+tile group; drop on a tab bar to join groups, in the center to swap them, or at an edge to dock.
+New tiles start with an area chooser. Middle-click an area tab to close it. Each group keeps its color.
+The conversation can move between tiles too.
 
 Use **Ctrl+Alt+arrows** to focus a neighboring tile, add **Shift** to split the selected tab, and use
 **Ctrl+Alt+Enter** to maximize or restore a tile. **Ctrl+Alt+[** and **Ctrl+Alt+]** select tabs.

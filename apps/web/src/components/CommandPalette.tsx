@@ -1639,6 +1639,18 @@ function OpenCommandPaletteDialog(props: {
           .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "reviews");
       },
     });
+    actionItems.push({
+      kind: "action",
+      value: "action:notes",
+      title: "Open notes",
+      searchTerms: ["notes", "markdown", "personal notes"],
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore
+          .getState()
+          .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "notes");
+      },
+    });
   }
 
   actionItems.push({

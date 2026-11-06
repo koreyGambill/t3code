@@ -89,6 +89,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 :root {
+  --tile-border-width: 2px;
+  --tile-titlebar-height: 32px;
+  --tile-accent-0: #087da3;
+  --tile-accent-1: #b75c17;
+  --tile-accent-2: #7442bd;
+  --tile-accent-3: #087c59;
+  --tile-accent-4: #b1267d;
+  --tile-accent-5: #8a7010;
+  --tile-accent-6: #b4343a;
+  --tile-accent-7: #3555b1;
   --weavewing-blue: #087da3;
   --weavewing-orange: #b75c17;
   --app-scrollbar-width: 6px;
@@ -145,6 +155,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @variant dark {
+    --tile-accent-0: #70dcff;
+    --tile-accent-1: #fdba74;
+    --tile-accent-2: #c6a5ff;
+    --tile-accent-3: #70f0bf;
+    --tile-accent-4: #ff94d7;
+    --tile-accent-5: #f5df79;
+    --tile-accent-6: #ff8188;
+    --tile-accent-7: #92baff;
     --weavewing-blue: #70dcff;
     --weavewing-orange: #fdba74;
     --appearance-contrast-target: white;
@@ -2578,27 +2596,68 @@ code {
   outline-offset: -2px;
 }
 
-.thread-glyph-trace {
-  --thread-glyph-trace-duration: 2.4s;
-  stroke: light-dark(var(--thread-glyph-trace-light), var(--thread-glyph-trace-dark));
-  stroke-dasharray: 100 100;
-  animation: thread-glyph-retrace var(--thread-glyph-trace-duration) steps(30) infinite;
-  animation-play-state: var(--visible-animation-state, paused);
+.thread-glyph-working {
+  overflow: visible;
 }
-
-@keyframes thread-glyph-retrace {
+.thread-glyph-ember {
+  --thread-glyph-orbit-duration: 2.4s;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: thread-glyph-orbit var(--thread-glyph-orbit-duration) steps(36) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+}
+.thread-glyph-ember-primary {
+  color: light-dark(var(--thread-glyph-trace-light), var(--thread-glyph-trace-dark));
+}
+.thread-glyph-ember-secondary {
+  animation-name: thread-glyph-counter-orbit;
+  transform: rotate(180deg);
+}
+.thread-glyph-ember circle {
+  filter: drop-shadow(0 0 1px currentColor);
+}
+@keyframes thread-glyph-orbit {
   from {
-    stroke-dashoffset: 100;
+    transform: rotate(0deg);
   }
   to {
-    stroke-dashoffset: -100;
+    transform: rotate(360deg);
+  }
+}
+@keyframes thread-glyph-counter-orbit {
+  from {
+    transform: rotate(180deg);
+  }
+  to {
+    transform: rotate(-180deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-glyph-ember {
+    animation: none;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .thread-glyph-trace {
-    animation: none;
-    stroke-dasharray: 25 75;
-    stroke-dashoffset: 0;
-  }
+.workspace-tile-frame {
+  border: var(--tile-border-width) solid
+    color-mix(in srgb, var(--tile-group-accent) 78%, var(--background));
+  box-shadow: inset 0 0 7px color-mix(in srgb, var(--tile-group-accent) 12%, transparent);
+}
+.workspace-tile-frame[data-focused="true"] {
+  border-color: var(--tile-group-accent);
+  box-shadow: inset 0 0 9px color-mix(in srgb, var(--tile-group-accent) 22%, transparent);
+}
+.workspace-tile-titlebar {
+  height: calc(var(--tile-titlebar-height) - var(--tile-border-width));
+  border-bottom: 1px solid color-mix(in srgb, var(--tile-group-accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--tile-group-accent) 7%, var(--background));
+}
+.workspace-tile-grip {
+  color: var(--tile-group-accent);
+}
+.workspace-tile-tab[data-active="true"] {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--tile-group-accent) 15%, var(--background));
+  box-shadow: inset 0 -2px var(--tile-group-accent);
 }

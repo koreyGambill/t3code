@@ -71,6 +71,7 @@ interface ChatHeaderProps {
     | ((input: { sourceThreadId: ThreadId; runId: RunId }) => Promise<void>)
     | undefined;
   forkDisabled?: boolean | undefined;
+  showForkControl?: boolean;
 }
 
 function resolveRenameCommit(input: {
@@ -101,6 +102,7 @@ export const ChatHeader = memo(function ChatHeader({
   forkSource,
   onForkFromRun,
   forkDisabled,
+  showForkControl = true,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -490,7 +492,7 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       {isServerThread ? (
         <>
-          {forkSource && onForkFromRun ? (
+          {showForkControl && forkSource && onForkFromRun ? (
             <ForkConversationButton
               key={`${activeThreadEnvironmentId}:${activeThreadId}`}
               environmentId={activeThreadEnvironmentId}

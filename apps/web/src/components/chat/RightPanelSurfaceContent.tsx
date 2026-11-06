@@ -39,6 +39,9 @@ const ThreadInspectPanel = lazy(() =>
     default: module.ThreadInspectPanel,
   })),
 );
+const NotesPanel = lazy(() =>
+  import("../notes/NotesPanel").then((module) => ({ default: module.NotesPanel })),
+);
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -105,6 +108,18 @@ export function RightPanelSurfaceContent(props: {
             visible={visible}
             startedThread={props.startedThread}
           />
+        </Suspense>
+      );
+    case "notes":
+      return (
+        <Suspense fallback={null}>
+          {props.startedThread ? (
+            <NotesPanel
+              key={scopedThreadKey(threadRef)}
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+            />
+          ) : null}
         </Suspense>
       );
     case "inspect":

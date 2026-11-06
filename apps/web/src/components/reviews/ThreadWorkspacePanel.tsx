@@ -48,7 +48,6 @@ const sections = [
   ["summary", "Summary"],
   ["marks", "Marks"],
   ["threads", "Threads"],
-  ["notes", "Notes"],
 ] as const;
 const emptyAnswer: WorkspaceQuestionAnswer = { selectedOptionIds: [], notes: "" };
 interface LocalDraft {

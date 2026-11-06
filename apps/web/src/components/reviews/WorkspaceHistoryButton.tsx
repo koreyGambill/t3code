@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { ArrowLeftIcon, ArrowRightIcon, Clock3Icon } from "lucide-react";
+import { Clock3Icon } from "lucide-react";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
@@ -24,30 +24,8 @@ export function WorkspaceHistoryButton({
   const open = (ref: ScopedThreadRef) => {
     void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
   };
-  const move = (direction: -1 | 1) => {
-    const target = useWorkspaceNavigation.getState().move(direction);
-    if (target) open(target.ref);
-  };
   return (
     <div className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
-      <Button
-        size="icon-sm"
-        variant="ghost-muted"
-        aria-label="Previous thread"
-        disabled={state.cursor <= 0}
-        onClick={() => move(-1)}
-      >
-        <ArrowLeftIcon className="size-3.5" />
-      </Button>
-      <Button
-        size="icon-sm"
-        variant="ghost-muted"
-        aria-label="Next thread"
-        disabled={state.cursor >= state.stack.length - 1}
-        onClick={() => move(1)}
-      >
-        <ArrowRightIcon className="size-3.5" />
-      </Button>
       <Popover>
         <PopoverTrigger
           render={

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -19,9 +20,9 @@ import {
   MessagesSquare,
   Plus,
   CircleHelp,
+  GripVertical,
   X,
 } from "lucide-react";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   useRightPanelStore,
@@ -44,6 +45,10 @@ import { PanelTabCloseButton } from "../ui/panel-tab-close-button";
 import { cn, randomUUID } from "../../lib/utils";
 
 const TAB_DRAG_TYPE = "application/x-weavewing-tab";
+const GROUP_DRAG_TYPE = "application/x-weavewing-group";
+type DropZone = "tabs" | "center" | "left" | "right" | "top" | "bottom";
+type TileDrop = { groupId: string; zone: DropZone };
+type TileDrag = { kind: "tab" | "group"; id: string };
 type PanelActions = Omit<RightPanelTabsProps, "children" | "mode" | "inlineSize">;
 const rectStyle = (rect: TileRect): CSSProperties => ({
   left: `${rect.x * 100}%`,
@@ -56,6 +61,8 @@ export function ThreadTileWorkspace(props: {
   threadRef: ScopedThreadRef;
   header: ReactNode;
   conversation: ReactNode;
+  conversationControls?: ReactNode;
+  conversationHeaderRef?: (node: HTMLDivElement | null) => void;
   panels: PanelActions;
   renderSurface: (
     surface: RightPanelSurface,
@@ -64,12 +71,13 @@ export function ThreadTileWorkspace(props: {
     focused: boolean,
   ) => ReactNode;
 }) {
-  const threadKey = scopedThreadKey(props.threadRef);
   const savedLayout = useRightPanelStore((state) =>
     selectThreadTileLayout(state.byThreadKey, props.threadRef),
   );
   const rootRef = useRef<HTMLDivElement>(null);
-  const [draggingTab, setDraggingTab] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<TileDrag | null>(null);
+  const [dropTarget, setDropTarget] = useState<TileDrop | null>(null);
+  const headerDragBlocked = useRef(false);
   const [resizing, setResizing] = useState(false);
   const [resizeOverride, setResizeOverride] = useState<{ splitId: string; ratio: number } | null>(
     null,
@@ -94,7 +102,7 @@ export function ThreadTileWorkspace(props: {
   const mounted = [
     ...new Set([
       ...mountedTabIds.filter((id) => validIds.has(id)),
-      ...visibleTabIds.filter((id) => id !== CONVERSATION_TAB_ID),
+      ...visibleTabIds.filter((id) => id && id !== CONVERSATION_TAB_ID),
     ]),
   ];
   if (
@@ -111,7 +119,7 @@ export function ThreadTileWorkspace(props: {
     const surface = props.panels.surfaces.find((entry) => entry.id === id);
     return surface
       ? surfaceTitle(surface, props.panels.previewSessions, props.panels.terminalLabelsById)
-      : "Area";
+      : "Choose area";
   };
   const activate = (group: TileGroup, tabId: string) => {
     apply({ type: "activate", groupId: group.id, tabId });
@@ -119,21 +127,8 @@ export function ThreadTileWorkspace(props: {
     if (surface) props.panels.onActivate(surface);
   };
   const split = (group: TileGroup, axis: "horizontal" | "vertical") => {
-    let tabId = group.activeTabId;
-    if (group.tabs.length < 2) {
-      const before = new Set(props.panels.surfaces.map((surface) => surface.id));
-      apply({ type: "focus", groupId: group.id });
-      if (props.panels.terminalAvailable) props.panels.onAddTerminal();
-      else if (props.panels.filesAvailable) props.panels.onAddFiles();
-      else return;
-      const current = useRightPanelStore.getState().byThreadKey[threadKey];
-      const added = current?.surfaces.find((surface) => !before.has(surface.id));
-      if (!added) return;
-      tabId = added.id;
-    }
     apply({
-      type: "split",
-      tabId,
+      type: "new-group",
       targetGroupId: group.id,
       axis,
       side: "after",
@@ -148,6 +143,10 @@ export function ThreadTileWorkspace(props: {
     );
     const group = getTileGroups(current).find((entry) => entry.id === groupId);
     if (!group) return;
+    if (group.tabs.length === 0) {
+      apply({ type: "focus", groupId });
+      return;
+    }
     activate(group, group.activeTabId);
     const surface = props.panels.surfaces.find((entry) => entry.id === group.activeTabId);
     if (surface?.kind === "terminal") return;
@@ -194,7 +193,7 @@ export function ThreadTileWorkspace(props: {
     };
     const nextTab = (offset: number) => {
       const group = currentGroup();
-      if (group)
+      if (group && group.tabs.length > 0)
         activate(
           group,
           group.tabs[
@@ -308,6 +307,7 @@ export function ThreadTileWorkspace(props: {
       enabled: Boolean(props.panels.onAddInspect),
       run: props.panels.onAddInspect,
     },
+    { label: "Notes", enabled: Boolean(props.panels.onAddNotes), run: props.panels.onAddNotes },
     { label: "Diff", enabled: props.panels.diffAvailable, run: props.panels.onAddDiff },
     {
       label: "Pull request",
@@ -326,28 +326,171 @@ export function ThreadTileWorkspace(props: {
       run: props.panels.onAddSideChat,
     },
   ];
+  const locateDrop = (event: ReactDragEvent): TileDrop | null => {
+    const bounds = rootRef.current?.getBoundingClientRect();
+    if (!bounds || !bounds.width || !bounds.height) return null;
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+    const hovered = visibleGroups.find(
+      ({ rect }) =>
+        x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height,
+    );
+    if (!hovered) return null;
+    const localX = (x - hovered.rect.x) / hovered.rect.width;
+    const localY = (y - hovered.rect.y) / hovered.rect.height;
+    if ((y - hovered.rect.y) * bounds.height <= 32) return { groupId: hovered.id, zone: "tabs" };
+    const edges = [
+      { zone: "left" as const, distance: localX },
+      { zone: "right" as const, distance: 1 - localX },
+      { zone: "top" as const, distance: localY },
+      { zone: "bottom" as const, distance: 1 - localY },
+    ];
+    const nearest = edges.reduce((a, b) => (a.distance < b.distance ? a : b));
+    return { groupId: hovered.id, zone: nearest.distance < 0.22 ? nearest.zone : "center" };
+  };
+  const dropRect = dropTarget
+    ? visibleGroups.find((group) => group.id === dropTarget.groupId)?.rect
+    : undefined;
+  const dropStyle: CSSProperties | undefined =
+    dropRect && dropTarget
+      ? {
+          ...rectStyle({
+            x: dropRect.x + (dropTarget.zone === "right" ? dropRect.width / 2 : 0),
+            y: dropRect.y + (dropTarget.zone === "bottom" ? dropRect.height / 2 : 0),
+            width:
+              dropRect.width *
+              (dropTarget.zone === "left" || dropTarget.zone === "right" ? 0.5 : 1),
+            height:
+              dropRect.height *
+              (dropTarget.zone === "top" || dropTarget.zone === "bottom" ? 0.5 : 1),
+          }),
+          ...(dropTarget.zone === "tabs" ? { height: "var(--tile-titlebar-height)" } : {}),
+        }
+      : undefined;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-thread-tiling>
       {props.header}
-      <div ref={rootRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-border/40">
+      <div
+        ref={rootRef}
+        className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-border/40"
+        onDragOverCapture={(event) => {
+          if (!dragging) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = "move";
+          const next = locateDrop(event);
+          setDropTarget((current) =>
+            current?.groupId === next?.groupId && current?.zone === next?.zone ? current : next,
+          );
+        }}
+        onDragLeave={(event) => {
+          if (
+            !(event.relatedTarget instanceof Node) ||
+            !event.currentTarget.contains(event.relatedTarget)
+          )
+            setDropTarget(null);
+        }}
+        onDropCapture={(event) => {
+          if (!dragging) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const target = locateDrop(event);
+          if (target) {
+            const { groupId: targetGroupId, zone } = target;
+            const edge = zone !== "center" && zone !== "tabs";
+            if (dragging.kind === "group") {
+              if (edge)
+                apply({
+                  type: "dock-group",
+                  groupId: dragging.id,
+                  targetGroupId,
+                  axis: zone === "left" || zone === "right" ? "horizontal" : "vertical",
+                  side: zone === "left" || zone === "top" ? "before" : "after",
+                  splitId: randomUUID(),
+                });
+              else if (zone === "tabs")
+                apply({ type: "merge-groups", groupId: dragging.id, targetGroupId });
+              else
+                apply({
+                  type: "swap-groups",
+                  firstGroupId: dragging.id,
+                  secondGroupId: targetGroupId,
+                });
+            } else if (edge)
+              apply({
+                type: "split",
+                tabId: dragging.id,
+                targetGroupId,
+                axis: zone === "left" || zone === "right" ? "horizontal" : "vertical",
+                side: zone === "left" || zone === "top" ? "before" : "after",
+                groupId: randomUUID(),
+                splitId: randomUUID(),
+              });
+            else {
+              const tabElement =
+                event.target instanceof Element
+                  ? event.target.closest<HTMLElement>("[data-tab-id]")
+                  : null;
+              const targetGroup = groups.find((group) => group.id === targetGroupId);
+              const index = tabElement?.dataset.tabId
+                ? targetGroup?.tabs.indexOf(tabElement.dataset.tabId)
+                : undefined;
+              apply({
+                type: "move",
+                tabId: dragging.id,
+                targetGroupId,
+                ...(index !== undefined ? { index } : {}),
+              });
+            }
+          }
+          setDragging(null);
+          setDropTarget(null);
+        }}
+      >
         {visibleGroups.map(({ id, rect }) => {
           const group = groups.find((entry) => entry.id === id)!;
-          const canSplit =
-            group.tabs.length > 1 || props.panels.terminalAvailable || props.panels.filesAvailable;
           return (
             <section
               key={id}
-              style={rectStyle(rect)}
-              className={cn(
-                "absolute overflow-hidden border bg-background",
-                layout.focusedGroupId === id ? "border-ring/60" : "border-border",
-              )}
+              style={
+                {
+                  ...rectStyle(rect),
+                  "--tile-group-accent": `var(--tile-accent-${group.colorIndex ?? 0})`,
+                } as CSSProperties
+              }
+              className="workspace-tile-frame absolute overflow-hidden bg-background"
+              data-focused={layout.focusedGroupId === id}
               aria-label={`Tile: ${title(group.activeTabId)}`}
             >
               <div
-                className="flex h-8 min-w-0 items-center gap-0.5 border-b border-border bg-muted/30 px-1"
+                className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center gap-0.5 px-1 active:cursor-grabbing"
+                ref={
+                  group.tabs.includes(CONVERSATION_TAB_ID) ? props.conversationHeaderRef : undefined
+                }
+                role="toolbar"
+                aria-label={`Move tile: ${title(group.activeTabId)}`}
+                draggable
+                onPointerDownCapture={(event) => {
+                  headerDragBlocked.current =
+                    event.target instanceof Element &&
+                    Boolean(event.target.closest("button, a, input, [role=tab]"));
+                }}
                 onPointerDown={() => apply({ type: "focus", groupId: id })}
+                onDragStart={(event) => {
+                  if (headerDragBlocked.current) {
+                    event.preventDefault();
+                    return;
+                  }
+                  event.dataTransfer.setData(GROUP_DRAG_TYPE, id);
+                  event.dataTransfer.effectAllowed = "move";
+                  setDragging({ kind: "group", id });
+                }}
+                onDragEnd={() => {
+                  setDragging(null);
+                  setDropTarget(null);
+                }}
               >
+                <GripVertical aria-hidden className="workspace-tile-grip size-3 shrink-0" />
                 <div
                   className="flex min-w-0 flex-1 items-center overflow-x-auto"
                   role="tablist"
@@ -364,40 +507,36 @@ export function ThreadTileWorkspace(props: {
                     return (
                       <div
                         key={tabId}
-                        className={cn(
-                          "flex shrink-0 items-center rounded-sm",
-                          group.activeTabId === tabId && "bg-accent text-accent-foreground",
-                        )}
+                        className="workspace-tile-tab flex shrink-0 items-center rounded-sm"
+                        data-active={group.activeTabId === tabId}
                       >
                         <button
                           type="button"
                           role="tab"
+                          data-tab-id={tabId}
                           aria-selected={group.activeTabId === tabId}
                           aria-label={title(tabId)}
                           className="flex max-w-44 min-w-0 cursor-pointer items-center gap-1.5 px-2 py-1 text-xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                           draggable
                           onDragStart={(event) => {
+                            event.stopPropagation();
                             event.dataTransfer.setData(TAB_DRAG_TYPE, tabId);
                             event.dataTransfer.effectAllowed = "move";
-                            setDraggingTab(tabId);
+                            setDragging({ kind: "tab", id: tabId });
                           }}
-                          onDragOver={(event) => {
-                            if (event.dataTransfer.types.includes(TAB_DRAG_TYPE))
-                              event.preventDefault();
+                          onDragEnd={() => {
+                            setDragging(null);
+                            setDropTarget(null);
                           }}
-                          onDrop={(event) => {
+                          onMouseDown={(event) => {
+                            if (event.button === 1) event.preventDefault();
+                          }}
+                          onAuxClick={(event) => {
+                            if (event.button !== 1) return;
                             event.preventDefault();
-                            const movedId = event.dataTransfer.getData(TAB_DRAG_TYPE);
-                            if (groups.some((entry) => entry.tabs.includes(movedId)))
-                              apply({
-                                type: "move",
-                                tabId: movedId,
-                                targetGroupId: id,
-                                index: group.tabs.indexOf(tabId),
-                              });
-                            setDraggingTab(null);
+                            event.stopPropagation();
+                            if (surface) props.panels.onCloseSurface(surface);
                           }}
-                          onDragEnd={() => setDraggingTab(null)}
                           onClick={() => activate(group, tabId)}
                         >
                           {surface ? (
@@ -426,22 +565,52 @@ export function ThreadTileWorkspace(props: {
                     );
                   })}
                 </div>
+                {group.activeTabId === CONVERSATION_TAB_ID ? props.conversationControls : null}
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="micro"
+                        variant={maximized ? "secondary" : "ghost-muted"}
+                        aria-label={`Switch tile, ${groups.length} tiles${maximized ? ", maximized" : ""}`}
+                      />
+                    }
+                  >
+                    <Columns2 className="size-3" />
+                    {maximized
+                      ? `${groups.findIndex((entry) => entry.id === id) + 1}/${groups.length} · Maximized`
+                      : `${groups.length} ${groups.length === 1 ? "tile" : "tiles"}`}
+                  </MenuTrigger>
+                  <MenuPopup align="end">
+                    {groups.map((entry, index) => (
+                      <MenuItem
+                        key={entry.id}
+                        onClick={() => {
+                          focus(entry.id);
+                          if (maximized) apply({ type: "maximize", groupId: entry.id });
+                        }}
+                      >
+                        <span
+                          className="size-2 shrink-0 rounded-full"
+                          style={{ background: `var(--tile-accent-${entry.colorIndex ?? 0})` }}
+                        />
+                        {index + 1}. {title(entry.activeTabId)}
+                      </MenuItem>
+                    ))}
+                    {maximized && (
+                      <MenuItem onClick={() => apply({ type: "maximize", groupId: null })}>
+                        Restore all tiles
+                      </MenuItem>
+                    )}
+                  </MenuPopup>
+                </Menu>
                 <TileControl
-                  label={
-                    group.tabs.length > 1 ? "Split tab right" : "Split right with a new terminal"
-                  }
-                  disabled={!canSplit}
+                  label="New tile to the right"
                   onClick={() => split(group, "horizontal")}
                 >
                   <Columns2 />
                 </TileControl>
-                <TileControl
-                  label={
-                    group.tabs.length > 1 ? "Split tab below" : "Split below with a new terminal"
-                  }
-                  disabled={!canSplit}
-                  onClick={() => split(group, "vertical")}
-                >
+                <TileControl label="New tile below" onClick={() => split(group, "vertical")}>
                   <Rows2 />
                 </TileControl>
                 <TileControl
@@ -452,6 +621,14 @@ export function ThreadTileWorkspace(props: {
                 >
                   {maximized ? <Minimize2 /> : <Maximize2 />}
                 </TileControl>
+                {group.tabs.length === 0 && (
+                  <TileControl
+                    label="Close empty tile"
+                    onClick={() => apply({ type: "close-group", groupId: id })}
+                  >
+                    <X />
+                  </TileControl>
+                )}
                 <Menu>
                   <MenuTrigger
                     render={<Button size="icon-micro" variant="ghost" aria-label="Add area" />}
@@ -485,6 +662,31 @@ export function ThreadTileWorkspace(props: {
                   </MenuPopup>
                 </Menu>
               </div>
+              {group.tabs.length === 0 && (
+                <div
+                  className="flex h-full flex-col items-center justify-center gap-4 p-6"
+                  onPointerDown={() => apply({ type: "focus", groupId: id })}
+                >
+                  <p className="text-sm font-medium">Choose an area</p>
+                  <div className="flex max-w-sm flex-wrap justify-center gap-2">
+                    {addChoices
+                      .filter((choice) => choice.enabled)
+                      .map((choice) => (
+                        <Button
+                          key={choice.label}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            apply({ type: "focus", groupId: id });
+                            choice.run?.();
+                          }}
+                        >
+                          {choice.label}
+                        </Button>
+                      ))}
+                  </div>
+                </div>
+              )}
             </section>
           );
         })}
@@ -500,7 +702,7 @@ export function ThreadTileWorkspace(props: {
           const rect = placed?.rect ?? { x: 0, y: 0, width: 1, height: 1 };
           const surface = props.panels.surfaces.find((entry) => entry.id === tabId);
           const contentVisible =
-            visible && !(surface?.kind === "preview" && (draggingTab !== null || resizing));
+            visible && !(surface?.kind === "preview" && (dragging !== null || resizing));
           return (
             <div
               key={tabId}
@@ -511,8 +713,10 @@ export function ThreadTileWorkspace(props: {
               hidden={!visible}
               style={{
                 ...rectStyle(rect),
-                top: `calc(${rect.y * 100}% + 32px)`,
-                height: `calc(${rect.height * 100}% - 32px)`,
+                left: `calc(${rect.x * 100}% + var(--tile-border-width))`,
+                width: `calc(${rect.width * 100}% - 2 * var(--tile-border-width))`,
+                top: `calc(${rect.y * 100}% + var(--tile-titlebar-height))`,
+                height: `calc(${rect.height * 100}% - var(--tile-titlebar-height) - var(--tile-border-width))`,
                 display: visible ? undefined : "none",
               }}
               onFocusCapture={() => {
@@ -582,54 +786,13 @@ export function ThreadTileWorkspace(props: {
               }}
             />
           ))}
-        {draggingTab &&
-          visibleGroups.map(({ id, rect }) => (
-            <div
-              key={id}
-              className="absolute z-30 grid grid-cols-[24%_1fr_24%] grid-rows-[24%_1fr_24%] gap-1 p-2"
-              style={{
-                ...rectStyle(rect),
-                top: `calc(${rect.y * 100}% + 32px)`,
-                height: `calc(${rect.height * 100}% - 32px)`,
-              }}
-            >
-              {(["top", "left", "center", "right", "bottom"] as const).map((zone) => (
-                <div
-                  key={zone}
-                  className="flex items-center justify-center rounded border border-ring/50 bg-accent/80 text-xs text-accent-foreground"
-                  style={{
-                    gridColumn: zone === "left" ? 1 : zone === "right" ? 3 : 2,
-                    gridRow: zone === "top" ? 1 : zone === "bottom" ? 3 : 2,
-                  }}
-                  onDragOver={(event) => {
-                    if (event.dataTransfer.types.includes(TAB_DRAG_TYPE)) {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                    }
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const tabId = event.dataTransfer.getData(TAB_DRAG_TYPE);
-                    if (!groups.some((group) => group.tabs.includes(tabId))) return;
-                    if (zone === "center") apply({ type: "move", tabId, targetGroupId: id });
-                    else
-                      apply({
-                        type: "split",
-                        tabId,
-                        targetGroupId: id,
-                        axis: zone === "left" || zone === "right" ? "horizontal" : "vertical",
-                        side: zone === "left" || zone === "top" ? "before" : "after",
-                        groupId: randomUUID(),
-                        splitId: randomUUID(),
-                      });
-                    setDraggingTab(null);
-                  }}
-                >
-                  {zone === "center" ? "Group tabs" : "Split"}
-                </div>
-              ))}
-            </div>
-          ))}
+        {dragging && dropTarget && dropStyle && (
+          <div
+            className="pointer-events-none absolute z-30 rounded-sm border-2 border-ring bg-ring/15"
+            style={dropStyle}
+            aria-hidden="true"
+          />
+        )}
       </div>
       <div className="pointer-events-none absolute right-1 bottom-1 z-20">
         <Tooltip>
@@ -646,7 +809,8 @@ export function ThreadTileWorkspace(props: {
           </TooltipTrigger>
           <TooltipPopup>
             Ctrl+Alt+arrows: focus tile. Add Shift: split tab. Ctrl+Alt+Enter: maximize. Ctrl+Alt+[
-            or ]: switch tab. Drag a tab to group it or split at an edge.
+            or ]: switch tab. Drag a tab to group it or split at an edge. Drag the title bar to move
+            the whole tile.
           </TooltipPopup>
         </Tooltip>
       </div>

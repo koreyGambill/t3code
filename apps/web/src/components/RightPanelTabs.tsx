@@ -37,6 +37,7 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
+  NotebookPen,
   ScanSearch,
   ChevronDown,
   ChevronLeft,
@@ -141,6 +142,7 @@ export interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddReviews?: (() => void) | undefined;
+  onAddNotes?: (() => void) | undefined;
   onAddInspect?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -324,6 +326,7 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddReviews?: (() => void) | undefined;
+  onAddNotes?: (() => void) | undefined;
   onAddInspect?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -409,6 +412,18 @@ function RightPanelEmptyState(props: {
             available: true,
             disabledReason: "",
             onClick: props.onAddReviews,
+          },
+        ]
+      : []),
+    ...(props.onAddNotes
+      ? [
+          {
+            label: "Notes",
+            icon: NotebookPen,
+            shortcut: "N",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddNotes,
           },
         ]
       : []),
@@ -626,6 +641,8 @@ export function surfaceTitle(
       return "Side chat";
     case "reviews":
       return "Workspace";
+    case "notes":
+      return "Notes";
     case "inspect":
       return "Inspect";
     case "preview": {
@@ -720,6 +737,8 @@ export function SurfaceIcon({
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "reviews":
       return <Zap className="size-3 shrink-0" />;
+    case "notes":
+      return <NotebookPen className="size-3 shrink-0" />;
     case "inspect":
       return <ScanSearch className="size-3 shrink-0" />;
     case "device":
@@ -1197,6 +1216,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...(props.onAddNotes
+      ? [
+          {
+            label: "Notes",
+            icon: NotebookPen,
+            shortcut: "N",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddNotes,
+          },
+        ]
+      : []),
     ...(props.onAddInspect
       ? [
           {
@@ -1593,6 +1624,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddReviews={props.onAddReviews}
+            onAddNotes={props.onAddNotes}
             onAddInspect={props.onAddInspect}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}

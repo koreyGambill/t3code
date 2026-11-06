@@ -123,7 +123,7 @@ describe("rightPanelStore", () => {
     ).toBe("file:existing.ts");
   });
 
-  it("keeps Inspect separate from Workspace and restores its selected section", async () => {
+  it("keeps Inspect and Notes separate from Workspace and restores their state", async () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "reviews");
     store.setWorkspaceSection(refA, "marks");
@@ -147,6 +147,35 @@ describe("rightPanelStore", () => {
       id: "inspect",
       kind: "inspect",
       inspectSection: "tokens",
+    });
+    store.open(refA, "notes");
+    store.open(refA, "notes");
+    await reloadRightPanelStore();
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "notes",
+      kind: "notes",
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.filter(
+        (surface) => surface.kind === "notes",
+      ),
+    ).toHaveLength(1);
+    store.closeSurface(refA, "notes");
+    await useClosedViewStore.persist.rehydrate();
+    const closedNote = useClosedViewStore.getState().entries[0]!;
+    expect(closedNote).toMatchObject({
+      kind: "panel-tab",
+      surface: { id: "notes", kind: "notes" },
+    });
+    await reopenClosedView(closedNote, {
+      workspaceAvailable: false,
+      openPreview: async () => {
+        throw new Error("Unexpected browser open");
+      },
+    });
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "notes",
+      kind: "notes",
     });
     store.open(refA, "reviews");
     expect(

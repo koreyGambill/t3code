@@ -5,6 +5,7 @@ export type TileGroup = {
   id: string;
   tabs: string[];
   activeTabId: string;
+  colorIndex?: number;
 };
 export type TileSplit = {
   kind: "split";
@@ -33,6 +34,25 @@ export type TileAction =
       groupId: string;
       splitId: string;
     }
+  | {
+      type: "new-group";
+      targetGroupId: string;
+      axis: "horizontal" | "vertical";
+      side: "before" | "after";
+      groupId: string;
+      splitId: string;
+    }
+  | { type: "close-group"; groupId: string }
+  | { type: "merge-groups"; groupId: string; targetGroupId: string }
+  | { type: "swap-groups"; firstGroupId: string; secondGroupId: string }
+  | {
+      type: "dock-group";
+      groupId: string;
+      targetGroupId: string;
+      axis: "horizontal" | "vertical";
+      side: "before" | "after";
+      splitId: string;
+    }
   | { type: "resize"; splitId: string; ratio: number }
   | { type: "maximize"; groupId: string | null };
 
@@ -51,30 +71,55 @@ function mapNode(node: TileNode, transform: (node: TileNode) => TileNode): TileN
   );
 }
 
-function prune(node: TileNode, valid: Set<string>, seen = new Set<string>()): TileNode | null {
+function removeGroup(node: TileNode, groupId: string): TileNode | null {
+  if (node.kind === "group") return node.id === groupId ? null : node;
+  const first = removeGroup(node.first, groupId);
+  const second = removeGroup(node.second, groupId);
+  return first && second ? { ...node, first, second } : (first ?? second);
+}
+
+function prune(
+  node: TileNode,
+  valid: Set<string>,
+  emptyGroupIds: Set<string>,
+  seen = new Set<string>(),
+): TileNode | null {
   if (node.kind === "group") {
     const tabs = node.tabs.filter((id) => {
       if (!valid.has(id) || seen.has(id)) return false;
       seen.add(id);
       return true;
     });
-    return tabs.length
+    return tabs.length || emptyGroupIds.has(node.id)
       ? {
           ...node,
           tabs,
-          activeTabId: tabs.includes(node.activeTabId) ? node.activeTabId : tabs[0]!,
+          activeTabId: tabs.includes(node.activeTabId) ? node.activeTabId : (tabs[0] ?? ""),
         }
       : null;
   }
-  const first = prune(node.first, valid, seen);
-  const second = prune(node.second, valid, seen);
+  const first = prune(node.first, valid, emptyGroupIds, seen);
+  const second = prune(node.second, valid, emptyGroupIds, seen);
   return first && second ? { ...node, first, second } : (first ?? second);
 }
 
 function settle(layout: ThreadTileLayout): ThreadTileLayout {
   const groups = getTileGroups(layout);
+  const occupiedColors = new Set(
+    groups.flatMap((group) => (group.colorIndex !== undefined ? [group.colorIndex] : [])),
+  );
+  let recycledColor = 0;
+  const root = mapNode(layout.root, (node) => {
+    if (node.kind !== "group" || node.colorIndex !== undefined) return node;
+    const colorIndex =
+      Array.from({ length: 8 }, (_, index) => index).find((index) => !occupiedColors.has(index)) ??
+      recycledColor++ % 8;
+    occupiedColors.add(colorIndex);
+    return { ...node, colorIndex };
+  });
   return {
     ...layout,
+    root,
     focusedGroupId: groups.some((group) => group.id === layout.focusedGroupId)
       ? layout.focusedGroupId
       : groups[0]!.id,
@@ -95,6 +140,7 @@ export function syncTileLayout(
     const conversation: TileGroup = {
       kind: "group",
       id: "conversation-group",
+      colorIndex: 0,
       tabs: [CONVERSATION_TAB_ID],
       activeTabId: CONVERSATION_TAB_ID,
     };
@@ -103,6 +149,7 @@ export function syncTileLayout(
     const panels: TileGroup = {
       kind: "group",
       id: "panels-group",
+      colorIndex: 1,
       tabs: [...surfaceIds],
       activeTabId: surfaceIds.includes(activeSurfaceId ?? "") ? activeSurfaceId! : surfaceIds[0]!,
     };
@@ -120,9 +167,26 @@ export function syncTileLayout(
     };
   }
   const valid = new Set([CONVERSATION_TAB_ID, ...surfaceIds]);
-  const root = prune(layout.root, valid);
+  const emptyGroupIds = new Set(
+    getTileGroups(layout)
+      .filter((group) => !group.tabs.length)
+      .map((group) => group.id),
+  );
+  const root = prune(layout.root, valid, emptyGroupIds);
   if (!root) return syncTileLayout(undefined, [], surfaceIds, activeSurfaceId, activate);
   let next = settle({ ...layout, root });
+  if (
+    activate &&
+    activeSurfaceId &&
+    surfaceIds.includes(activeSurfaceId) &&
+    getTileGroups(next).some((group) => group.id === next.focusedGroupId && !group.tabs.length)
+  ) {
+    next = applyTileAction(next, {
+      type: "move",
+      tabId: activeSurfaceId,
+      targetGroupId: next.focusedGroupId,
+    });
+  }
   const present = new Set(getTileGroups(next).flatMap((group) => group.tabs));
   const missing = [...valid].filter((id) => !present.has(id));
   if (missing.length) {
@@ -182,6 +246,102 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
           : layout.root,
     };
   }
+  if (action.type === "close-group") {
+    const group = groups.find((entry) => entry.id === action.groupId);
+    if (!group || group.tabs.length) return layout;
+    const root = removeGroup(layout.root, group.id);
+    return root ? settle({ ...layout, root }) : layout;
+  }
+  if (action.type === "new-group") {
+    if (
+      !groups.some((group) => group.id === action.targetGroupId) ||
+      !action.groupId ||
+      !action.splitId ||
+      action.groupId === action.splitId
+    )
+      return layout;
+    let conflictingId = false;
+    mapNode(layout.root, (node) => {
+      if (node.id === action.groupId || node.id === action.splitId) conflictingId = true;
+      return node;
+    });
+    if (conflictingId) return layout;
+    const added: TileGroup = { kind: "group", id: action.groupId, tabs: [], activeTabId: "" };
+    return settle({
+      ...layout,
+      root: mapNode(layout.root, (node) =>
+        node.id === action.targetGroupId
+          ? {
+              kind: "split",
+              id: action.splitId,
+              axis: action.axis,
+              ratio: 0.5,
+              first: action.side === "before" ? added : node,
+              second: action.side === "before" ? node : added,
+            }
+          : node,
+      ),
+      focusedGroupId: added.id,
+      maximizedGroupId: null,
+    });
+  }
+  if (action.type === "merge-groups") {
+    const source = groups.find((group) => group.id === action.groupId);
+    const target = groups.find((group) => group.id === action.targetGroupId);
+    if (!source?.tabs.length || !target || source.id === target.id) return layout;
+    return {
+      ...layout,
+      root: mapNode(removeGroup(layout.root, source.id)!, (node) =>
+        node.kind === "group" && node.id === target.id
+          ? { ...node, tabs: [...node.tabs, ...source.tabs], activeTabId: source.activeTabId }
+          : node,
+      ),
+      focusedGroupId: target.id,
+      maximizedGroupId: null,
+    };
+  }
+  if (action.type === "swap-groups") {
+    const first = groups.find((group) => group.id === action.firstGroupId);
+    const second = groups.find((group) => group.id === action.secondGroupId);
+    if (!first || !second || first.id === second.id) return layout;
+    return {
+      ...layout,
+      root: mapNode(layout.root, (node) =>
+        node.id === first.id ? second : node.id === second.id ? first : node,
+      ),
+      focusedGroupId: first.id,
+      maximizedGroupId: null,
+    };
+  }
+  if (action.type === "dock-group") {
+    const source = groups.find((group) => group.id === action.groupId);
+    const target = groups.find((group) => group.id === action.targetGroupId);
+    if (!source || !target || source.id === target.id || !action.splitId) return layout;
+    let conflictingId = false;
+    mapNode(layout.root, (node) => {
+      if (node.id === action.splitId) conflictingId = true;
+      return node;
+    });
+    if (conflictingId) return layout;
+    const remaining = removeGroup(layout.root, source.id)!;
+    return {
+      ...layout,
+      root: mapNode(remaining, (node) =>
+        node.id === target.id
+          ? {
+              kind: "split",
+              id: action.splitId,
+              axis: action.axis,
+              ratio: 0.5,
+              first: action.side === "before" ? source : node,
+              second: action.side === "before" ? node : source,
+            }
+          : node,
+      ),
+      focusedGroupId: source.id,
+      maximizedGroupId: null,
+    };
+  }
   const source = groups.find((group) => group.tabs.includes(action.tabId));
   const target = groups.find((group) => group.id === action.targetGroupId);
   if (!source || !target) return layout;
@@ -226,7 +386,11 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       second: action.side === "before" ? group : added,
     };
   });
-  root = prune(root, new Set(groups.flatMap((group) => group.tabs)))!;
+  root = prune(
+    root,
+    new Set(groups.flatMap((group) => group.tabs)),
+    new Set(groups.filter((group) => !group.tabs.length).map((group) => group.id)),
+  )!;
   return settle({
     ...layout,
     root,
@@ -264,14 +428,26 @@ export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
       if (
         !("tabs" in raw) ||
         !Array.isArray(raw.tabs) ||
-        !raw.tabs.length ||
         raw.tabs.length > 1024 ||
         !raw.tabs.every((id): id is string => typeof id === "string") ||
         !("activeTabId" in raw) ||
-        typeof raw.activeTabId !== "string"
+        typeof raw.activeTabId !== "string" ||
+        (!raw.tabs.length && raw.activeTabId !== "")
       )
         return null;
-      return { kind: "group", id: raw.id, tabs: raw.tabs, activeTabId: raw.activeTabId };
+      return {
+        kind: "group",
+        id: raw.id,
+        tabs: raw.tabs,
+        activeTabId: raw.activeTabId,
+        ...("colorIndex" in raw &&
+        typeof raw.colorIndex === "number" &&
+        Number.isInteger(raw.colorIndex) &&
+        raw.colorIndex >= 0 &&
+        raw.colorIndex < 8
+          ? { colorIndex: raw.colorIndex }
+          : {}),
+      };
     }
     if (
       raw.kind !== "split" ||

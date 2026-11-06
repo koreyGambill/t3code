@@ -32,6 +32,7 @@ const RIGHT_PANEL_KINDS = [
   "side-chat",
   "reviews",
   "inspect",
+  "notes",
 ] as const;
 export type ThreadWorkspaceSection =
   | "unified"
@@ -103,6 +104,7 @@ export type RightPanelSurface =
       reviewId: string | null;
       workspaceSection?: ThreadWorkspaceSection;
     }
+  | { id: "notes"; kind: "notes" }
   | { id: "inspect"; kind: "inspect"; inspectSection?: ThreadInspectSection }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
@@ -255,6 +257,8 @@ const singletonSurface = (
       return { id: "device", kind };
     case "reviews":
       return { id: "reviews", kind, reviewId: null };
+    case "notes":
+      return { id: "notes", kind };
     case "inspect":
       return { id: "inspect", kind, inspectSection: "loads" };
   }
@@ -540,6 +544,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
+                    if (surface.kind === "notes") return surface.id === "notes" ? [surface] : [];
                     if (surface.kind === "inspect") {
                       return surface.id === "inspect"
                         ? [

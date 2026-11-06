@@ -70,6 +70,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
           onAddTerminal: () => store.openTerminal(threadRef, "new-terminal"),
           onAddDiff: noop,
           onAddFiles: noop,
+          onAddNotes: () => store.open(threadRef, "notes"),
           onAddPullRequest: noop,
           onAddPullRequests: noop,
           onAddDevice: noop,
@@ -134,10 +135,37 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   await expect
     .element(screen.getByRole("textbox", { name: "Editor files" }))
     .toHaveValue("unsaved editor contents");
-  store.applyTileAction(threadRef, { type: "maximize", groupId: null });
+  await userEvent.click(
+    screen.getByRole("button", { name: "Switch tile, 3 tiles, maximized", exact: true }),
+  );
+  await userEvent.click(screen.getByRole("menuitem", { name: "1. Conversation", exact: true }));
+  expect(layout().maximizedGroupId).toBe(conversation.id);
   await expect
     .element(screen.getByRole("textbox", { name: "Conversation draft" }))
     .toHaveValue("unfinished conversation");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Switch tile, 3 tiles, maximized", exact: true }),
+  );
+  await userEvent.click(screen.getByRole("menuitem", { name: "Restore all tiles", exact: true }));
+  expect(layout().maximizedGroupId).toBeNull();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Conversation draft" }))
+    .toHaveValue("unfinished conversation");
+  await userEvent.click(
+    screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
+  );
+  await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
+  const chooser = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    ).surfaces.filter((surface) => surface.kind === "terminal"),
+  ).toHaveLength(0);
+  await userEvent.click(screen.getByRole("button", { name: "Terminal", exact: true }));
+  expect(getTileGroups(layout()).find((group) => group.id === chooser.id)?.tabs).toContain(
+    "terminal:new-terminal",
+  );
   await userEvent.click(screen.getByRole("button", { name: "Add area", exact: true }).nth(0));
   await expect
     .element(screen.getByRole("menuitem", { name: "Terminal", exact: true }))
@@ -158,4 +186,64 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.tabs.includes("files"))?.tabs).toContain(
     "inspect",
   );
+  await userEvent.click(
+    screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
+  );
+  await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
+  const empty = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
+  expect(empty).toBeDefined();
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    ).surfaces.filter((surface) => surface.kind === "terminal"),
+  ).toHaveLength(1);
+  await userEvent.click(screen.getByRole("button", { name: "Close empty tile", exact: true }));
+  expect(getTileGroups(layout()).some((group) => group.id === empty.id)).toBe(false);
+  await userEvent.click(screen.getByRole("tab", { name: "Conversation", exact: true }));
+  const movedGroup = getTileGroups(layout()).find((group) => group.tabs.includes("files"))!;
+  const targetGroup = getTileGroups(layout()).find((group) => group.tabs.includes("conversation"))!;
+  await userEvent.dragAndDrop(
+    screen.getByRole("toolbar", { name: "Move tile: files", exact: true }),
+    screen.getByRole("region", { name: "Tile: Conversation", exact: true }),
+    { sourcePosition: { x: 5, y: 12 }, force: true },
+  );
+  expect(getTileGroups(layout()).findIndex((group) => group.id === movedGroup.id)).toBeLessThan(
+    getTileGroups(layout()).findIndex((group) => group.id === targetGroup.id),
+  );
+  expect(getTileGroups(layout()).find((group) => group.id === movedGroup.id)?.colorIndex).toBe(
+    movedGroup.colorIndex,
+  );
+  await expect
+    .element(screen.getByRole("textbox", { name: "Editor files" }))
+    .toHaveValue("unsaved editor contents");
+  await userEvent.dragAndDrop(
+    screen.getByRole("toolbar", { name: "Move tile: files", exact: true }),
+    screen.getByRole("toolbar", { name: "Move tile: Conversation", exact: true }),
+    { sourcePosition: { x: 5, y: 12 }, force: true },
+  );
+  expect(getTileGroups(layout()).find((group) => group.tabs.includes("files"))?.tabs).toContain(
+    "conversation",
+  );
+  expect(getTileGroups(layout()).some((group) => group.id === movedGroup.id)).toBe(false);
+  await userEvent.click(screen.getByRole("tab", { name: "files", exact: true }), {
+    button: "middle",
+  });
+  await expect
+    .element(screen.getByRole("tab", { name: "files", exact: true }))
+    .not.toBeInTheDocument();
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces.some(
+      (surface) => surface.id === "files",
+    ),
+  ).toBe(false);
+  await userEvent.click(
+    screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
+  );
+  const notesChooser = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
+  await userEvent.click(screen.getByRole("button", { name: "Notes", exact: true }));
+  await expect.element(screen.getByRole("tab", { name: "notes", exact: true })).toBeVisible();
+  expect(getTileGroups(layout()).find((group) => group.id === notesChooser.id)?.tabs).toEqual([
+    "notes",
+  ]);
 });

@@ -1,3 +1,4 @@
+import { ForkConversationButton } from "./chat/ForkConversationButton";
 import type { RightPanelSurface } from "../rightPanelStore";
 import { ThreadTileWorkspace } from "./chat/ThreadTileWorkspace";
 import { LegacyTerminalTileBridge } from "./chat/LegacyTerminalTileBridge";
@@ -3308,7 +3309,7 @@ export default function ChatView(props: ChatViewProps) {
       {...panelToggleControlProps}
       showTerminalControl={!tiledWorkspace}
       showRightPanelControl={!tiledWorkspace}
-      showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
+      showThreadPanelControl={!tiledWorkspace && !inlineRightPanelOwnsTitleBar}
     />
   );
   const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
@@ -3331,7 +3332,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const conversationHeader = embedded ? null : (
     <header
-      ref={threadPanelPopoverAnchorRef}
+      ref={tiledWorkspace ? undefined : threadPanelPopoverAnchorRef}
       data-chat-header
       className={cn(
         "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
@@ -3353,8 +3354,9 @@ export default function ChatView(props: ChatViewProps) {
         />
       ) : null}
       {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-      {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
+      {inlineRightPanelOwnsTitleBar && !tiledWorkspace ? threadPanelHeaderControl : null}
       <ChatHeader
+        showForkControl={!tiledWorkspace}
         activeThreadEnvironmentId={activeThread.environmentId}
         activeThreadId={activeThread.id}
         isServerThread={isServerThread}
@@ -4012,6 +4014,10 @@ export default function ChatView(props: ChatViewProps) {
     onAddTerminal: addTerminalSurfaceStable,
     onAddDiff: addDiffSurfaceStable,
     onAddFiles: addFilesSurfaceStable,
+    onAddNotes:
+      isServerThread && activeThreadRef && reviewsSupported
+        ? () => useRightPanelStore.getState().open(activeThreadRef, "notes")
+        : undefined,
     onAddInspect:
       isServerThread && activeThreadRef
         ? () => useRightPanelStore.getState().open(activeThreadRef, "inspect")
@@ -4054,6 +4060,34 @@ export default function ChatView(props: ChatViewProps) {
             key={activeThreadKey}
             threadRef={activeThreadRef}
             header={conversationHeader}
+            conversationHeaderRef={(node) => {
+              threadPanelPopoverAnchorRef.current = node;
+            }}
+            conversationControls={
+              <>
+                {isServerThread &&
+                  activeThread.lineage.sideChat !== true &&
+                  (() => {
+                    const source = serverVisibleTurnItems.findLast((item) =>
+                      canForkProjectedAssistantItem({ projectedItem: item }),
+                    );
+                    return source ? (
+                      <ForkConversationButton
+                        key={activeThreadKey}
+                        environmentId={activeThread.environmentId}
+                        source={source}
+                        disabled={!canOperateThread || activeEnvironmentUnavailable}
+                        onFork={onForkFromRunStable}
+                      />
+                    ) : null;
+                  })()}
+                <PanelLayoutControls
+                  {...panelToggleControlProps}
+                  showTerminalControl={false}
+                  showRightPanelControl={false}
+                />
+              </>
+            }
             conversation={conversationColumn}
             panels={tiledPanels}
             renderSurface={renderPanelSurface}
@@ -4109,6 +4143,11 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
+          onAddNotes={
+            isServerThread && activeThreadRef && reviewsSupported
+              ? () => useRightPanelStore.getState().open(activeThreadRef, "notes")
+              : undefined
+          }
           onAddInspect={
             isServerThread && activeThreadRef
               ? () => useRightPanelStore.getState().open(activeThreadRef, "inspect")

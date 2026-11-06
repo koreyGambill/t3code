@@ -39,7 +39,7 @@ export function ThreadGlyph({
       strokeWidth="1.6"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={`shrink-0 ${className ?? ""}`}
+      className={`shrink-0 ${working ? "thread-glyph-working" : ""} ${className ?? ""}`}
       style={colors}
     >
       <title>{label}</title>
@@ -47,9 +47,19 @@ export function ThreadGlyph({
         <path key={path} d={path} />
       ))}
       {working ? (
-        <g aria-hidden="true" className="thread-glyph-trace">
-          {glyph.paths.map((path) => (
-            <path key={path} d={path} pathLength="100" />
+        <g aria-hidden="true">
+          {["primary", "secondary"].map((ember) => (
+            <g
+              key={ember}
+              className={`thread-glyph-ember thread-glyph-ember-${ember}`}
+              stroke="currentColor"
+              strokeWidth="1"
+            >
+              <path d="M1.6 6A12 12 0 0 1 3.5 3.5" opacity="0.18" />
+              <path d="M3.5 3.5A12 12 0 0 1 7.4 0.9" opacity="0.42" />
+              <path d="M7.4 0.9A12 12 0 0 1 12 0" opacity="0.8" />
+              <circle cx="12" cy="0" r="1.35" fill="currentColor" stroke="none" />
+            </g>
           ))}
         </g>
       ) : null}
