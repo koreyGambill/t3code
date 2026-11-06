@@ -62,27 +62,30 @@ const message = (id: string, text: string, date: string): OrchestrationV2Convers
 const getMarks = (deleted: boolean) =>
   ThreadMarks.ThreadMarks.pipe(
     Effect.flatMap((service) => service.get({ threadId })),
-    Effect.provide(ThreadMarks.layer),
     Effect.provide(
-      Layer.mock(Orchestrator.OrchestratorV2)({
-        getThreadRecords: () =>
-          Effect.succeed({
-            ...projection,
-            thread: { ...projection.thread, deletedAt: deleted ? at : null },
-            messages: [
-              message(
-                "latest",
-                "https://notion.so/repeated https://github.com/new",
-                "2026-11-06T12:00:00Z",
-              ),
-              message(
-                "old",
-                "https://notion.so/old https://notion.so/repeated",
-                "2026-10-01T12:00:00Z",
-              ),
-            ],
+      ThreadMarks.layer.pipe(
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () =>
+              Effect.succeed({
+                ...projection,
+                thread: { ...projection.thread, deletedAt: deleted ? at : null },
+                messages: [
+                  message(
+                    "latest",
+                    "https://notion.so/repeated https://github.com/new",
+                    "2026-11-06T12:00:00Z",
+                  ),
+                  message(
+                    "old",
+                    "https://notion.so/old https://notion.so/repeated",
+                    "2026-10-01T12:00:00Z",
+                  ),
+                ],
+              }),
           }),
-      }),
+        ),
+      ),
     ),
   );
 
