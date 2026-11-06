@@ -17,6 +17,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadInsightsGet } from "../../state/threadInsights";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { filterLoadEvents, reportedUsageTotals } from "./insightDisplay";
@@ -71,33 +72,42 @@ export function ThreadInsightsPanel({
         <h2 className="font-semibold">
           {mode === "loads" ? "Files & skills" : "Tokens & context"}
         </h2>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Refresh activity"
-          disabled={!canRead || query.isPending}
-          onClick={() => query.refresh()}
-        >
-          <RefreshCwIcon className="size-4" />
-        </Button>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          Run
-          <select
-            aria-label="Inspect run"
-            value={effectiveSelection}
-            onChange={(event) => setSelectedRun(event.target.value)}
-            className="max-w-52 rounded-md border bg-background px-2 py-1 text-foreground"
-          >
-            <option value="">Latest run</option>
-            {mode === "tokens" && <option value="all">All runs</option>}
-            {data?.runs.toReversed().map((run) => (
-              <option key={run.id} value={run.id}>
-                Run {run.ordinal}
-                {run.startedAt ? ` · ${date(run.startedAt)}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            Run
+            <select
+              aria-label="Inspect run"
+              value={effectiveSelection}
+              onChange={(event) => setSelectedRun(event.target.value)}
+              className="min-w-0 max-w-52 rounded-md border bg-background px-2 py-1 text-foreground"
+            >
+              <option value="">Latest run</option>
+              {mode === "tokens" && <option value="all">All runs</option>}
+              {data?.runs.toReversed().map((run) => (
+                <option key={run.id} value={run.id}>
+                  Run {run.ordinal}
+                  {run.startedAt ? ` · ${date(run.startedAt)}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Refresh activity"
+                  disabled={!canRead || query.isPending}
+                  onClick={() => query.refresh()}
+                >
+                  <RefreshCwIcon className="size-4" />
+                </Button>
+              }
+            />
+            <TooltipPopup>Refresh activity</TooltipPopup>
+          </Tooltip>
+        </div>
       </header>
       {!canRead ? (
         <p className="p-4 text-sm text-muted-foreground">
