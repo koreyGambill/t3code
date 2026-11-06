@@ -100,6 +100,8 @@ interface Props {
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  shortcutsEnabled?: boolean | undefined;
+  layoutVersion?: string | undefined;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -144,6 +146,8 @@ export function PreviewView({
   tabId: requestedTabId,
   configuredUrls,
   visible,
+  shortcutsEnabled = visible,
+  layoutVersion,
   onSendAnnotation,
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
@@ -859,7 +863,7 @@ export function PreviewView({
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !shortcutsEnabled) return;
     const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
     const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
       if (action === "preview.focusUrl") onPreviewAction("focus-url");
@@ -868,7 +872,7 @@ export function PreviewView({
       unsubscribeAction();
       unsubscribeMenu?.();
     };
-  }, [visible]);
+  }, [visible, shortcutsEnabled]);
 
   return (
     <div
@@ -995,6 +999,7 @@ export function PreviewView({
             <BrowserSurfaceSlot
               key={runtimeTabId}
               tabId={runtimeTabId}
+              {...(layoutVersion === undefined ? {} : { layoutVersion })}
               visible={visible && !isUnreachable}
               className="absolute inset-0 h-full w-full"
             />

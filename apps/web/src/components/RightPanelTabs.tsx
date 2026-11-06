@@ -597,7 +597,7 @@ function RightPanelEmptyState(props: {
   );
 }
 
-function surfaceTitle(
+export function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
@@ -673,7 +673,7 @@ function previewFaviconOf(
   return { url, capturedUrl };
 }
 
-function SurfaceIcon({
+export function SurfaceIcon({
   surface,
   previewUrl,
   previewCapturedUrl,

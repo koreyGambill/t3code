@@ -4,7 +4,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { WORKSPACE_TILE_KEYBINDING_COMMANDS, type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -44,6 +44,7 @@ import {
 import { toastManager } from "./ui/toast";
 
 const PREVIEW_FORWARDED_COMMANDS = [
+  ...WORKSPACE_TILE_KEYBINDING_COMMANDS,
   "workspace.focusNext",
   "workspace.focusPrevious",
   "sidebar.toggle",

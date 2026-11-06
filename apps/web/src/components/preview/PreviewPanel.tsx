@@ -17,6 +17,8 @@ interface Props {
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  shortcutsEnabled?: boolean | undefined;
+  layoutVersion?: string | undefined;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -29,6 +31,8 @@ export function PreviewPanel({
   tabId,
   configuredUrls,
   visible,
+  shortcutsEnabled = visible,
+  layoutVersion,
   onSendAnnotation,
 }: Props) {
   const available = usePreviewAvailable(threadRef.environmentId);
@@ -54,6 +58,8 @@ export function PreviewPanel({
         {...(tabId !== undefined ? { tabId } : {})}
         configuredUrls={configuredUrls}
         visible={visible}
+        shortcutsEnabled={shortcutsEnabled}
+        layoutVersion={layoutVersion}
         {...(onSendAnnotation ? { onSendAnnotation } : {})}
       />
     </PreviewPanelShell>

@@ -7,6 +7,14 @@ import { EnvironmentId, RunId, ThreadId, type ScopedThreadRef } from "@t3tools/c
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import {
+  applyTileAction as reduceTileAction,
+  parseTileLayout,
+  syncTileLayout,
+  type ThreadTileLayout,
+  type TileAction,
+} from "./threadTileLayout";
+
 import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
@@ -109,6 +117,7 @@ export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
 const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-requests-panel");
 
 export interface ThreadRightPanelState {
+  tileLayout?: ThreadTileLayout;
   isOpen: boolean;
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
@@ -123,6 +132,7 @@ export interface ThreadPanelVisibility {
 }
 
 interface RightPanelStoreState {
+  applyTileAction: (ref: ScopedThreadRef, action: TileAction) => void;
   byThreadKey: Record<string, ThreadRightPanelState>;
   pendingMaximizeThreadKey: string | null;
   requestMaximize: (ref: ScopedThreadRef) => void;
@@ -325,14 +335,16 @@ const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
   activate = true,
-): ThreadRightPanelState => ({
-  ...current,
-  isOpen: true,
-  surfaces: current.surfaces.some((entry) => entry.id === surface.id)
-    ? current.surfaces
-    : [...current.surfaces, surface],
-  activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
-});
+): ThreadRightPanelState => {
+  const next = {
+    ...current,
+    isOpen: true,
+    surfaces: current.surfaces.some((entry) => entry.id === surface.id)
+      ? current.surfaces
+      : [...current.surfaces, surface],
+  };
+  return activate ? activated(next, surface.id) : next;
+};
 
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
@@ -340,19 +352,18 @@ const updateThreadStateMap = (
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const next = updater(current);
-  if (
-    !next.isOpen &&
-    next.activeSurfaceId === null &&
-    next.surfaces.length === 0 &&
-    !next.dismissedDeviceSurfaceIds?.length &&
-    next.proactiveDiffTurnId === undefined
-  ) {
-    if (!(threadKey in byThreadKey)) return byThreadKey;
-    const { [threadKey]: _removed, ...rest } = byThreadKey;
-    return rest;
-  }
-  if (next === current) return byThreadKey;
+  const updated = updater(current);
+  if (updated === current) return byThreadKey;
+  const next = {
+    ...updated,
+    tileLayout: syncTileLayout(
+      updated.tileLayout ?? current.tileLayout,
+      current.surfaces.map((surface) => surface.id),
+      updated.surfaces.map((surface) => surface.id),
+      updated.activeSurfaceId,
+      updated.isOpen && (updated.activeSurfaceId !== current.activeSurfaceId || !current.isOpen),
+    ),
+  };
   return { ...byThreadKey, [threadKey]: next };
 };
 
@@ -483,7 +494,18 @@ const userActionOnThread = (
 
 const activated = (current: ThreadRightPanelState, surfaceId: string): ThreadRightPanelState =>
   current.surfaces.some((surface) => surface.id === surfaceId)
-    ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
+    ? {
+        ...current,
+        isOpen: true,
+        activeSurfaceId: surfaceId,
+        tileLayout: syncTileLayout(
+          current.tileLayout,
+          current.surfaces.map((surface) => surface.id),
+          current.surfaces.map((surface) => surface.id),
+          surfaceId,
+          true,
+        ),
+      }
     : current;
 
 const closeAction = (
@@ -639,12 +661,24 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const activeSurfaceId =
                 persistedActiveSurfaceId ??
                 (isOpen || rawActiveSurfaceId === "agents" ? (surfaces[0]?.id ?? null) : null);
+              const tileLayout = parseTileLayout(validThreadState?.tileLayout);
               return [
                 threadKey,
                 {
                   isOpen,
                   surfaces,
                   activeSurfaceId,
+                  ...(tileLayout
+                    ? {
+                        tileLayout: syncTileLayout(
+                          tileLayout,
+                          [],
+                          surfaces.map((surface) => surface.id),
+                          activeSurfaceId,
+                          false,
+                        ),
+                      }
+                    : {}),
                   ...(typeof validThreadState?.proactiveDiffTurnId === "string"
                     ? { proactiveDiffTurnId: RunId.make(validThreadState.proactiveDiffTurnId) }
                     : {}),
@@ -691,6 +725,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set({ pendingMaximizeThreadKey: null });
         return true;
       },
+      applyTileAction: (ref, action) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            tileLayout: reduceTileAction(
+              syncTileLayout(
+                current.tileLayout,
+                [],
+                current.surfaces.map((surface) => surface.id),
+                current.activeSurfaceId,
+                false,
+              ),
+              action,
+            ),
+          })),
+        ),
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
       closeRevisionByThreadKey: {},
@@ -908,16 +958,17 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
             );
-            return {
-              ...current,
-              isOpen: true,
-              activeSurfaceId: surface.id,
-              surfaces: existing
-                ? withoutStandaloneExplorer.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
-                  )
-                : [...withoutStandaloneExplorer, surface],
-            };
+            return activated(
+              {
+                ...current,
+                surfaces: existing
+                  ? withoutStandaloneExplorer.map((entry) =>
+                      entry.id === surface.id ? surface : entry,
+                    )
+                  : [...withoutStandaloneExplorer, surface],
+              },
+              surface.id,
+            );
           }),
         ),
       navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
@@ -943,7 +994,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 ? []
                 : [surface];
             });
-            return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
+            return activated({ ...current, surfaces }, target.id);
           }),
         ),
       openAttachment: (ref, attachment) =>
@@ -1280,6 +1331,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
+      merge: (persisted, current) => ({
+        ...current,
+        ...migratePersistedRightPanelState(persisted),
+      }),
     },
   ),
 );
@@ -1359,4 +1414,25 @@ export function selectSelectedRightPanelSurface(
 ): RightPanelSurface | null {
   const state = selectThreadRightPanelState(byThreadKey, ref);
   return state.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
+}
+
+const derivedTileLayouts = new WeakMap<ThreadRightPanelState, ThreadTileLayout>();
+
+export function selectThreadTileLayout(
+  byThreadKey: Record<string, ThreadRightPanelState>,
+  ref: ScopedThreadRef | null | undefined,
+): ThreadTileLayout {
+  const state = selectThreadRightPanelState(byThreadKey, ref);
+  if (state.tileLayout) return state.tileLayout;
+  const cached = derivedTileLayouts.get(state);
+  if (cached) return cached;
+  const layout = syncTileLayout(
+    undefined,
+    [],
+    state.surfaces.map((surface) => surface.id),
+    state.activeSurfaceId,
+    state.isOpen,
+  );
+  derivedTileLayouts.set(state, layout);
+  return layout;
 }

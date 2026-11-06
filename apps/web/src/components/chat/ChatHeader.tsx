@@ -27,7 +27,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { isTrailingDoubleClick } from "../Sidebar.logic";
+import { isTrailingDoubleClick, resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -108,7 +108,10 @@ export const ChatHeader = memo(function ChatHeader({
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
-  const glyphSeed = useThreadShell(activeThreadRef)?.glyphSeed;
+  const activeThread = useThreadShell(activeThreadRef);
+  const glyphSeed = activeThread?.glyphSeed;
+  const glyphStatus = activeThread ? resolveSidebarThreadStatus(activeThread) : "ready";
+  const glyphWorking = glyphStatus === "preparing" || glyphStatus === "working";
   const glyph = resolveThreadGlyph(activeThreadId, glyphSeed);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
@@ -332,7 +335,12 @@ export const ChatHeader = memo(function ChatHeader({
             />
           }
         >
-          <ThreadGlyph threadId={activeThreadId} seed={glyphSeed} className="size-6" />
+          <ThreadGlyph
+            threadId={activeThreadId}
+            seed={glyphSeed}
+            working={glyphWorking}
+            className="size-6"
+          />
         </TooltipTrigger>
         <TooltipPopup>
           {glyph.colorName} {glyph.name} · Reroll glyph

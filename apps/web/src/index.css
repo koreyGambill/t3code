@@ -2577,3 +2577,28 @@ code {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+.thread-glyph-trace {
+  --thread-glyph-trace-duration: 2.4s;
+  stroke: light-dark(var(--thread-glyph-trace-light), var(--thread-glyph-trace-dark));
+  stroke-dasharray: 100 100;
+  animation: thread-glyph-retrace var(--thread-glyph-trace-duration) steps(30) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+}
+
+@keyframes thread-glyph-retrace {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-glyph-trace {
+    animation: none;
+    stroke-dasharray: 25 75;
+    stroke-dashoffset: 0;
+  }
+}

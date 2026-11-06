@@ -370,6 +370,17 @@ export function buildKeybindingCommandOptions(
 export function commandLabel(command: KeybindingCommand): string {
   if (command === "workspace.focusNext") return "Focus Next Workspace Area";
   if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
+  if (command === "workspace.tile.focusLeft") return "Focus Tile Left";
+  if (command === "workspace.tile.focusRight") return "Focus Tile Right";
+  if (command === "workspace.tile.focusUp") return "Focus Tile Up";
+  if (command === "workspace.tile.focusDown") return "Focus Tile Down";
+  if (command === "workspace.tile.splitLeft") return "Split Tile Left";
+  if (command === "workspace.tile.splitRight") return "Split Tile Right";
+  if (command === "workspace.tile.splitUp") return "Split Tile Up";
+  if (command === "workspace.tile.splitDown") return "Split Tile Down";
+  if (command === "workspace.tile.maximize") return "Maximize Tile";
+  if (command === "workspace.tile.previousTab") return "Previous Tab in Tile";
+  if (command === "workspace.tile.nextTab") return "Next Tab in Tile";
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
   if (command === "composer.sendBackground") return "Composer: Start in Background";
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";

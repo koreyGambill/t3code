@@ -89,12 +89,16 @@ function normalizeSeed(seed: number | undefined) {
 export function resolveThreadGlyph(threadId: string, seed?: number) {
   const reroll = normalizeSeed(seed);
   const glyph = THREAD_GLYPHS[(hashThreadId(threadId) + reroll) % THREAD_GLYPHS.length]!;
-  const palette = NEON_COLORS[(hashThreadId(`color:${threadId}`) + reroll) % NEON_COLORS.length]!;
+  const paletteIndex = (hashThreadId(`color:${threadId}`) + reroll) % NEON_COLORS.length;
+  const palette = NEON_COLORS[paletteIndex]!;
+  const tracePalette = NEON_COLORS[paletteIndex ^ 1]!;
   return {
     ...glyph,
     colorName: palette.name,
     color: palette.dark,
     lightColor: palette.light,
+    traceColor: tracePalette.dark,
+    lightTraceColor: tracePalette.light,
   };
 }
 

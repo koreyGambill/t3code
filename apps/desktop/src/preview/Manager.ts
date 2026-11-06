@@ -1444,39 +1444,50 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         syncMenuShortcuts(window.webContents, input);
       });
     };
+    const focused = (): void => {
+      const host = wc.hostWebContents;
+      if (host && !host.isDestroyed()) {
+        host.send(MENU_ACTION_CHANNEL, `workspace.tile.browserFocused:${tabId}`);
+      }
+    };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       syncMenuShortcuts(wc, input);
       const host = wc.hostWebContents;
+      const ambiguousAltGraph =
+        hostPlatform !== "darwin" &&
+        input.control &&
+        input.alt &&
+        /^(?:[^a-zA-Z0-9]|Dead)$/u.test(input.key);
+      const literalBracket =
+        (input.key === "[" && input.code === "BracketLeft") ||
+        (input.key === "]" && input.code === "BracketRight");
       const forwarded =
         input.type === "keyDown" &&
         !input.isComposing &&
         host &&
         !host.isDestroyed() &&
         holdsKeyboardFocus(wc) &&
-        !(
-          hostPlatform !== "darwin" &&
-          input.control &&
-          input.alt &&
-          /^(?:[^a-zA-Z0-9]|Dead)$/u.test(input.key)
-        ) &&
-        forwardedShortcuts.find(({ shortcut }) =>
-          matchesKeybindingShortcut(
-            {
-              key: input.key,
-              code: input.code,
-              metaKey: input.meta,
-              ctrlKey: input.control,
-              shiftKey: input.shift,
-              altKey: input.alt,
-            },
-            shortcut,
-            hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
-          ),
+        forwardedShortcuts.find(
+          ({ command, shortcut }) =>
+            (!ambiguousAltGraph || (literalBracket && command.startsWith("workspace.tile."))) &&
+            matchesKeybindingShortcut(
+              {
+                key: input.key,
+                code: input.code,
+                metaKey: input.meta,
+                ctrlKey: input.control,
+                shiftKey: input.shift,
+                altKey: input.alt,
+              },
+              shortcut,
+              hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
+            ),
         );
       if (forwarded && host) {
         event.preventDefault();
         if (!input.isAutoRepeat) {
           if (
+            forwarded.command.startsWith("workspace.tile.") ||
             forwarded.command === "workspace.focusNext" ||
             forwarded.command === "workspace.focusPrevious" ||
             forwarded.command === "preview.focusUrl"
@@ -1514,6 +1525,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("audio-state-changed", audioStateChanged);
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
+        wc.off("focus", focused);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
@@ -1562,6 +1574,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
         wc.on("did-create-window", windowCreated);
         wc.on("before-input-event", beforeInput);
+        wc.on("focus", focused);
       });
       yield* Ref.update(attachedRef, (attached) =>
         replaceMap(attached, (copy) => {

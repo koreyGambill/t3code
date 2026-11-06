@@ -54,9 +54,24 @@ const MODEL_PICKER_KEYBINDING_COMMANDS = [
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 
+export const WORKSPACE_TILE_KEYBINDING_COMMANDS = [
+  "workspace.tile.focusLeft",
+  "workspace.tile.focusRight",
+  "workspace.tile.focusUp",
+  "workspace.tile.focusDown",
+  "workspace.tile.splitLeft",
+  "workspace.tile.splitRight",
+  "workspace.tile.splitUp",
+  "workspace.tile.splitDown",
+  "workspace.tile.maximize",
+  "workspace.tile.previousTab",
+  "workspace.tile.nextTab",
+] as const;
+
 export const STATIC_KEYBINDING_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
+  ...WORKSPACE_TILE_KEYBINDING_COMMANDS,
   "sidebar.toggle",
   "navigation.back",
   "navigation.forward",

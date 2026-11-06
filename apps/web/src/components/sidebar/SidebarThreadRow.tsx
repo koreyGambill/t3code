@@ -1248,6 +1248,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <ThreadGlyph
                 threadId={thread.id}
                 seed={thread.glyphSeed}
+                working={status === "preparing" || status === "working"}
                 className="size-5 shrink-0"
               />
               {draftIndicator}
@@ -1583,6 +1584,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <ThreadGlyph
                 threadId={thread.id}
                 seed={thread.glyphSeed}
+                working={status === "preparing" || status === "working"}
                 className="size-5 shrink-0"
               />
               {title}

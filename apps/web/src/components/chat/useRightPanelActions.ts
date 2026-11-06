@@ -17,6 +17,8 @@ import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
   selectActiveRightPanel,
   selectThreadPanelOpen,
+  selectThreadRightPanelState,
+  selectThreadTileLayout,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
@@ -36,6 +38,7 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 interface RightPanelActionsInput {
+  readonly tiled?: boolean;
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
@@ -70,6 +73,7 @@ interface RightPanelActionsInput {
  */
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
+    tiled = false,
     closeRightPanelSurface,
     activeThreadRef,
     activeProject,
@@ -106,7 +110,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       onDiffPanelOpen?.();
     }
     if (activeThreadRef) {
-      useRightPanelStore.getState().toggle(activeThreadRef, "diff");
+      const store = useRightPanelStore.getState();
+      if (tiled) store.open(activeThreadRef, "diff");
+      else store.toggle(activeThreadRef, "diff");
     }
   };
   const onToggleDiffStable = useStableCallback(onToggleDiff);
@@ -166,6 +172,25 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
   };
   const openFileSurfaceStable = useStableCallback(openFileSurface);
+  const activateRightPanelSurface = (surface: RightPanelSurface) => {
+    if (!activeThreadRef) return;
+    explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
+      surfaceKind: surface.kind,
+      diffOpen,
+      activeThreadRef,
+    });
+    useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
+    if (surface.kind === "preview" && surface.resourceId) {
+      setActivePreviewTab(activeThreadRef, surface.resourceId);
+    }
+    if (surface.kind === "terminal") {
+      focusTerminal(activeThreadRef, surface.activeTerminalId);
+    }
+    if (surface.kind === "diff" && !diffOpen) {
+      onDiffPanelOpen?.();
+    }
+  };
+  const activateRightPanelSurfaceStable = useStableCallback(activateRightPanelSurface);
   const closePreviewPanel = () => {
     if (activeThreadRef) {
       if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
@@ -186,9 +211,21 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
     if (!activeThreadRef || !browserAvailable) return;
-    if (previewPanelOpen) {
+    if (previewPanelOpen && !tiled) {
       closePreviewPanel();
       return;
+    }
+    if (tiled) {
+      const store = useRightPanelStore.getState();
+      const panel = selectThreadRightPanelState(store.byThreadKey, activeThreadRef);
+      const browser =
+        panel.surfaces.find(
+          (surface) => surface.kind === "preview" && surface.id === panel.activeSurfaceId,
+        ) ?? panel.surfaces.find((surface) => surface.kind === "preview");
+      if (browser) {
+        activateRightPanelSurface(browser);
+        return;
+      }
     }
     if (!canOperatePreview) return;
     const activeTabId = activePreviewState.activeTabId;
@@ -199,27 +236,17 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const togglePreviewPanelStable = useStableCallback(togglePreviewPanel);
-  const activateRightPanelSurface = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
-      surfaceKind: surface.kind,
-      diffOpen,
-      activeThreadRef,
-    });
-    useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
-    if (surface.kind === "preview" && surface.resourceId) {
-      setActivePreviewTab(activeThreadRef, surface.resourceId);
-    }
-    if (surface.kind === "terminal") {
-      focusTerminal(activeThreadRef, surface.activeTerminalId);
-    }
-    if (surface.kind === "diff" && !diffOpen) {
-      onDiffPanelOpen?.();
-    }
-  };
-  const activateRightPanelSurfaceStable = useStableCallback(activateRightPanelSurface);
   const toggleRightPanel = () => {
     if (!activeThreadRef) return;
+    if (tiled) {
+      const store = useRightPanelStore.getState();
+      const panel = selectThreadRightPanelState(store.byThreadKey, activeThreadRef);
+      const surface =
+        panel.surfaces.find((entry) => entry.id === panel.activeSurfaceId) ?? panel.surfaces[0];
+      if (surface) activateRightPanelSurface(surface);
+      else togglePreviewPanel();
+      return;
+    }
     if (rightPanelOpen) {
       closePreviewPanel();
       return;
@@ -245,7 +272,17 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   const toggleRightPanelMaximized = () => {
-    if (!canMaximizeRightPanel || !activeThreadRef) return;
+    if (!activeThreadRef) return;
+    if (tiled) {
+      const store = useRightPanelStore.getState();
+      const layout = selectThreadTileLayout(store.byThreadKey, activeThreadRef);
+      store.applyTileAction(activeThreadRef, {
+        type: "maximize",
+        groupId: layout.maximizedGroupId ? null : layout.focusedGroupId,
+      });
+      return;
+    }
+    if (!canMaximizeRightPanel) return;
     if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };

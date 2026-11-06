@@ -644,6 +644,50 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it.each(["Win32", "Linux", "MacIntel"])(
+    "routes tiled workspace chords while editing or using a terminal on %s",
+    (platform) => {
+      const chords = [
+        ["ArrowLeft", false, "workspace.tile.focusLeft"],
+        ["ArrowRight", false, "workspace.tile.focusRight"],
+        ["ArrowUp", false, "workspace.tile.focusUp"],
+        ["ArrowDown", false, "workspace.tile.focusDown"],
+        ["ArrowLeft", true, "workspace.tile.splitLeft"],
+        ["ArrowRight", true, "workspace.tile.splitRight"],
+        ["ArrowUp", true, "workspace.tile.splitUp"],
+        ["ArrowDown", true, "workspace.tile.splitDown"],
+        ["Enter", false, "workspace.tile.maximize"],
+        ["[", false, "workspace.tile.previousTab"],
+        ["]", false, "workspace.tile.nextTab"],
+      ] as const;
+      for (const [key, shiftKey, command] of chords) {
+        const input = event({ key, ctrlKey: true, altKey: true, shiftKey });
+        for (const terminalFocus of [false, true]) {
+          assert.strictEqual(
+            resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+              platform,
+              context: { terminalFocus, editableFocus: !terminalFocus },
+            }),
+            command,
+          );
+        }
+      }
+      assert.isNull(
+        resolveShortcutCommand(
+          event({
+            key: "[",
+            code: "Digit8",
+            ctrlKey: true,
+            altKey: true,
+            getModifierState: () => true,
+          }),
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform: "Win32" },
+        ),
+      );
+    },
+  );
+
   it("navigates history with mod+[ and mod+] outside the terminal", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });

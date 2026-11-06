@@ -712,6 +712,92 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "forwards tiled workspace controls from Windows guests after releasing native focus",
+    () =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const send = vi.fn();
+            const focus = vi.fn();
+            const host = { isDestroyed: () => false, send, focus };
+            const guest = makeFaviconWebContents();
+            Object.assign(guest.webContents, { hostWebContents: host });
+            getFocusedWebContents.mockReturnValue(guest.webContents as never);
+            fromId.mockReturnValue(guest.webContents);
+            yield* manager.createTab("tab_tiles");
+            yield* manager.registerWebview("tab_tiles", 42);
+            guest.listeners.get("focus")!();
+            expect(send).toHaveBeenCalledExactlyOnceWith(
+              "desktop:menu-action",
+              "workspace.tile.browserFocused:tab_tiles",
+            );
+            expect(focus).not.toHaveBeenCalled();
+            const chords = [
+              ["ArrowLeft", "ArrowLeft", false, "workspace.tile.focusLeft"],
+              ["ArrowRight", "ArrowRight", false, "workspace.tile.focusRight"],
+              ["ArrowUp", "ArrowUp", false, "workspace.tile.focusUp"],
+              ["ArrowDown", "ArrowDown", false, "workspace.tile.focusDown"],
+              ["ArrowLeft", "ArrowLeft", true, "workspace.tile.splitLeft"],
+              ["ArrowRight", "ArrowRight", true, "workspace.tile.splitRight"],
+              ["ArrowUp", "ArrowUp", true, "workspace.tile.splitUp"],
+              ["ArrowDown", "ArrowDown", true, "workspace.tile.splitDown"],
+              ["Enter", "Enter", false, "workspace.tile.maximize"],
+              ["[", "BracketLeft", false, "workspace.tile.previousTab"],
+              ["]", "BracketRight", false, "workspace.tile.nextTab"],
+            ] as const;
+            yield* manager.setForwardedShortcuts(
+              chords.map(([key, _code, shift, command]) => ({
+                command,
+                shortcut: parseKeybindingShortcut(
+                  `ctrl+alt+${shift ? "shift+" : ""}${key.toLowerCase()}`,
+                )!,
+              })),
+            );
+            const beforeInput = guest.listeners.get("before-input-event")!;
+            for (const [key, code, shift, command] of chords) {
+              send.mockClear();
+              focus.mockClear();
+              const preventDefault = vi.fn();
+              const input = {
+                type: "keyDown",
+                key,
+                code,
+                shift,
+                meta: false,
+                control: true,
+                alt: true,
+              };
+              beforeInput({ preventDefault } as never, input as never);
+              expect(preventDefault).toHaveBeenCalledOnce();
+              expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", command);
+              expect(focus).toHaveBeenCalledOnce();
+              expect(focus.mock.invocationCallOrder[0]).toBeLessThan(
+                send.mock.invocationCallOrder[0]!,
+              );
+              beforeInput({ preventDefault } as never, { ...input, isAutoRepeat: true } as never);
+              expect(send).toHaveBeenCalledOnce();
+              expect(focus).toHaveBeenCalledOnce();
+            }
+            send.mockClear();
+            beforeInput(
+              { preventDefault: vi.fn() } as never,
+              {
+                type: "keyDown",
+                key: "[",
+                code: "Digit8",
+                shift: false,
+                meta: false,
+                control: true,
+                alt: true,
+              } as never,
+            );
+            expect(send).not.toHaveBeenCalled();
+          }),
+        "win32",
+      ),
+  );
+
   effectIt.effect("isolates failed state listeners and continues delivery", () => {
     const loggedErrors: Array<unknown> = [];
     const logger = Logger.make(({ message }) => {
