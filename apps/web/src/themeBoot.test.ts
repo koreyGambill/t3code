@@ -265,22 +265,22 @@ describe("index.html boot script", () => {
     expect(boot.isDark).toBe(runtimeResolvedAppearance(storage, prefersDark) === "dark");
   });
 
-  it("defaults new clients to Cyber and preserves saved preferences", () => {
+  it("defaults new clients to System and preserves saved preferences", () => {
     const storage: Record<string, string> = {};
     vi.stubGlobal("window", {
       localStorage: { getItem: (key: string) => storage[key] ?? null },
     });
     try {
-      expect(readThemePreference()).toBe("cyber");
+      expect(readThemePreference()).toBe("system");
       for (const preference of ["system", "light", "dark", "grove", "cyber"]) {
         storage[THEME_STORAGE_KEY] = preference;
         expect(readThemePreference()).toBe(preference);
       }
       delete storage[THEME_STORAGE_KEY];
       const boot = runBootScript({ storage, prefersDark: false });
-      expect(boot.themeId).toBe("cyber");
-      expect(boot.isDark).toBe(true);
-      expect(boot.bootVariables["--boot-accent"]).toBe(CYBER_THEME.colors.accent);
+      expect(boot.themeId).toBeUndefined();
+      expect(boot.isDark).toBe(false);
+      expect(boot.bootVariables["--boot-accent"]).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
     }

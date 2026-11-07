@@ -26,7 +26,7 @@ export function StandalonePageHeader({
         <span className="flex items-center gap-1.5" role="img" aria-label="Weavewing">
           <WeavewingMark className="size-6 shrink-0" aria-hidden />
           <span className="text-lg font-medium tracking-tight">
-            weave<span className="text-(--weavewing-green)">wing</span>
+            weave<span className="text-(--weavewing-orange)">wing</span>
           </span>
         </span>
         {context ? <span className="text-sm">{context}</span> : null}

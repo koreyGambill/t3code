@@ -228,7 +228,7 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme") ?? "cyber";
+          const storedTheme = window.localStorage.getItem("t3code:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const LEGACY_THEME_IDS = {
             "t3-chat-dark": "t3-chat",

@@ -41,11 +41,11 @@ type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
-  theme: "cyber",
-  resolvedTheme: "dark",
+  theme: "system",
+  resolvedTheme: "light",
   systemDark: false,
-  followSystem: false,
-  appearanceMode: "dark",
+  followSystem: true,
+  appearanceMode: "system",
   themeHalves: null,
 };
 
@@ -199,7 +199,7 @@ export function readThemePreference(): Theme {
   if (raw !== null && isKnownThemePreference(raw)) {
     return canonicalThemePreference(raw);
   }
-  return raw === null ? DEFAULT_THEME_SNAPSHOT.theme : "system";
+  return DEFAULT_THEME_SNAPSHOT.theme;
 }
 
 function writeThemePreference(theme: Theme): void {
