@@ -1607,8 +1607,22 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push({
     kind: "action",
     value: "action:setup",
-    searchTerms: ["import", "projects", "history", "setup", "welcome", "onboarding", "wsl"],
-    title: "Import projects",
+    searchTerms: [
+      "import",
+      "projects",
+      "conversations",
+      "sessions",
+      "claude",
+      "codex",
+      "terminal",
+      "wezterm",
+      "history",
+      "setup",
+      "welcome",
+      "onboarding",
+      "wsl",
+    ],
+    title: "Import conversations",
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/welcome" });

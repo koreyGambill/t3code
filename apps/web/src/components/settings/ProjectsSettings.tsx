@@ -40,7 +40,7 @@ export function ProjectsSettings() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex justify-end px-4 pt-4 sm:px-6">
         <Button variant="outline" size="sm" onClick={() => void navigate({ to: "/welcome" })}>
-          Import projects
+          Import conversations and projects
         </Button>
       </div>
       {value.project && projectScope ? (

@@ -99,11 +99,11 @@ vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
 
-it("opens project import from the command palette", async () => {
+it("opens conversation import from the command palette", async () => {
   await using screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette());
-  await page.getByRole("combobox").fill("import projects");
-  await page.getByText("Import projects", { exact: true }).click();
+  await page.getByRole("combobox").fill("claude sessions");
+  await page.getByText("Import conversations", { exact: true }).click();
   await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/welcome"));
   await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
 });
