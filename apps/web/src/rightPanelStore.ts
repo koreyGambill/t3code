@@ -634,7 +634,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                               "notes",
                             ].includes(surface.workspaceSection)
                               ? surface
-                              : { ...surface, workspaceSection: "questions" },
+                              : { ...surface, workspaceSection: "agent-work" },
                           ]
                         : [];
                     }

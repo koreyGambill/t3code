@@ -3288,6 +3288,11 @@ export const OrchestrationV2Command = Schema.Union([
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    /** Atomically records the sender's request for this message's terminal reply. */
+    replyRequested: Schema.optional(Schema.Boolean),
+    /** Skip this scheduled check-in unless the main thread is idle with at most one worker. */
+    idleCheckin: Schema.optional(Schema.Boolean),
+    advisoryOnly: Schema.optional(Schema.Boolean),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),

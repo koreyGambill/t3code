@@ -26,6 +26,21 @@ describe("scheduled task schedule calculation", () => {
     expect(parts?.minute).toBe(0);
   });
 
+  it("distinguishes conditional check-ins from ordinary intervals", () => {
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 1_800_000, idleCheckin: true },
+        { type: "interval", everyMs: 1_800_000 },
+      ),
+    ).toBe(false);
+    const from = DateTime.makeUnsafe("2026-11-07T12:00:00Z");
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 1_800_000, idleCheckin: true },
+      from,
+    );
+    expect(next && DateTime.formatIso(next)).toBe("2026-11-07T12:30:00.000Z");
+  });
+
   it("compares schedules structurally", () => {
     expect(
       isSameSchedule(

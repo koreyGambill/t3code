@@ -124,9 +124,12 @@ export function WorkRow({
       </div>
       <Meta
         parts={[
-          item.remaining && !finished(item) ? `Left: ${item.remaining}` : "",
+          "Owner: Agent",
+          item.remaining ? `Remaining: ${item.remaining}` : "",
+          item.details,
           item.changed && `Changed: ${item.changed}`,
           item.source ? `From ${item.source}` : "",
+          item.completedAt ? `Completed: ${item.completedAt.slice(0, 16).replace("T", " ")}` : "",
         ]}
       />
       <Meta parts={[item.qaSteps && `QA: ${item.qaSteps}`]} />
@@ -157,6 +160,7 @@ export function WorkRow({
           </Button>
         </form>
       ) : null}
+      {!verifications.length ? <Meta parts={["Verification: no evidence recorded"]} /> : null}
       {verifications.map((verification) => (
         <Meta key={verification.id} parts={evidenceLabel(item, verification)} />
       ))}
@@ -168,14 +172,19 @@ export function AgentWorkList({
   workspace,
   apply,
   disabled,
+  embedded = false,
 }: {
   readonly workspace: ThreadWorkspace;
   readonly apply: Apply;
   readonly disabled: boolean;
+  readonly embedded?: boolean;
 }) {
+  const [workFilter, setWorkFilter] = useState("all");
   const [qaFilter, setQaFilter] = useState("all");
   const items = workspace.agentWork.filter(
-    (item) => qaFilter === "all" || item.userQa === qaFilter,
+    (item) =>
+      (qaFilter === "all" || item.userQa === qaFilter) &&
+      (workFilter === "all" || (workFilter === "completed" ? finished(item) : !finished(item))),
   );
   const sorted = items.toSorted(
     (left, right) =>
@@ -183,8 +192,19 @@ export function AgentWorkList({
       (right.completedAt ?? "").localeCompare(left.completedAt ?? ""),
   );
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className={embedded ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
       <label className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1 text-2xs text-muted-foreground">
+        Show
+        <select
+          aria-label="Work status filter"
+          value={workFilter}
+          onChange={(event) => setWorkFilter(event.target.value)}
+          className="rounded border border-input bg-background px-1"
+        >
+          <option value="all">All commitments</option>
+          <option value="open">Open</option>
+          <option value="completed">Completed · newest first</option>
+        </select>
         Human QA
         <select
           aria-label="Human QA filter"
@@ -199,7 +219,7 @@ export function AgentWorkList({
         </select>
       </label>
       {sorted.length ? (
-        <ul aria-label="Agent work" className="min-h-0 flex-1 overflow-y-auto">
+        <ul aria-label="Agent work" className={embedded ? "" : "min-h-0 flex-1 overflow-y-auto"}>
           {sorted.map((item) => (
             <WorkRow
               key={`${item.id}:${item.userQaNote}`}
@@ -212,8 +232,8 @@ export function AgentWorkList({
         </ul>
       ) : (
         <p className="p-3 text-sm text-muted-foreground">
-          {qaFilter !== "all"
-            ? "No work matches this QA status."
+          {qaFilter !== "all" || workFilter !== "all"
+            ? "No work matches these filters."
             : "Work the agent takes on for this thread appears here and stays after it finishes."}
         </p>
       )}

@@ -480,7 +480,7 @@ describe("OrchestratorMcpService", () => {
         }),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({ progress: () => Effect.succeed(null) }),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -546,6 +546,7 @@ describe("OrchestratorMcpService", () => {
         pendingRequest = true;
         const questionProgress = yield* service.taskProgress(scope, taskId);
         assert.equal(questionProgress.status, "question");
+        assert.equal(questionProgress.pendingRequestCount, 1);
         const heldAsking = yield* service.taskStatus(scope, taskId);
         assert.isTrue(heldAsking.hasPendingQuestion);
         assert.notProperty(heldAsking, "next");
@@ -579,6 +580,7 @@ describe("OrchestratorMcpService", () => {
         assert.equal(remoteProgress.status, "done");
         assert.equal(remoteProgress.originalTaskId, "node:original-task");
         assert.isFalse(remoteProgress.progressAvailable);
+        assert.isNull(remoteProgress.pendingRequestCount);
         assert.isNull(remoteProgress.pendingBackgroundWorkCount);
         assert.equal(remoteProgress.lastAssistantReply?.text, "done");
         assert.equal(yield* Ref.get(dispatched), acknowledgements);

@@ -48,7 +48,8 @@ export interface ThreadReplyRequest {
 export class ThreadReplies extends Context.Service<
   ThreadReplies,
   {
-    readonly request: (input: ThreadReplyRequest) => Effect.Effect<void>;
+    /** Starts following the reply request committed with its message. */
+    readonly followCommitted: (messageId: MessageId) => Effect.Effect<boolean>;
     /** Whether `threadId` still owes `to` a reply; a send from it to `to` then answers, not asks. */
     readonly owes: (input: {
       readonly threadId: ThreadId;
@@ -203,17 +204,27 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const request: ThreadReplies["Service"]["request"] = Effect.fn("ThreadReplies.request")(
-    function* (input) {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
-        INSERT INTO thread_reply_requests (message_id, sender_thread_id, target_thread_id, created_at)
-        VALUES (${input.messageId}, ${input.senderThreadId}, ${input.targetThreadId}, ${now})
-        ON CONFLICT (message_id) DO NOTHING
+  const followCommitted: ThreadReplies["Service"]["followCommitted"] = Effect.fn(
+    "ThreadReplies.followCommitted",
+  )(function* (messageId) {
+    const pending = yield* sql<{
+      readonly sender_thread_id: string;
+      readonly target_thread_id: string;
+      readonly delivered_at: string | null;
+    }>`
+        SELECT sender_thread_id, target_thread_id, delivered_at FROM thread_reply_requests
+        WHERE message_id = ${messageId}
       `.pipe(Effect.orDie);
-      yield* followOne(input);
-    },
-  );
+    const recorded = pending[0];
+    if (recorded === undefined) return false;
+    if (recorded.delivered_at === null)
+      yield* followOne({
+        messageId,
+        senderThreadId: ThreadId.make(recorded.sender_thread_id),
+        targetThreadId: ThreadId.make(recorded.target_thread_id),
+      });
+    return true;
+  });
 
   const owes: ThreadReplies["Service"]["owes"] = (input) =>
     sql<{ readonly owed: number }>`
@@ -253,7 +264,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  return ThreadReplies.of({ request, owes, start });
+  return ThreadReplies.of({ followCommitted, owes, start });
 });
 
 export const layer = Layer.effect(ThreadReplies, make);

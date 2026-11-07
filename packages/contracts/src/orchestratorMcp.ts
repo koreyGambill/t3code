@@ -212,7 +212,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   context: Schema.optional(
     OrchestratorMcpTaskContextSource.annotate({
       description:
-        "Omit for a fresh child (default; keep reviews fresh). Otherwise the child continues that thread's conversation at its latest finished turn, or the given runId, checkpointId or mark. Files are not rewound; the child is told what changed since. Reuse the returned context.runId so several children share one point.",
+        "Omit for a fresh child (default). Otherwise the child continues that thread's conversation at its latest finished turn, or the given runId, checkpointId or mark. Files are not rewound; the child is told what changed since. Reuse the returned context.runId so several children share one point.",
     }),
   ),
 });
@@ -288,6 +288,7 @@ export const OrchestratorMcpTaskProgressResult = Schema.Struct({
   childThreadId: Schema.NullOr(ThreadId),
   link: Schema.optional(Schema.String),
   pendingApproval: OrchestratorMcpDelegateTaskResult.fields.pendingApproval,
+  pendingRequestCount: Schema.NullOr(NonNegativeInt),
   pendingBackgroundWorkCount: Schema.NullOr(Schema.Number).annotate({
     description:
       "Pending background tasks and children. Null when remote live progress is unavailable.",
@@ -465,6 +466,7 @@ const clampedPositiveInt = (maximum: number) =>
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
+  progressOnly: Schema.optional(Schema.Boolean),
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
@@ -550,7 +552,16 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
 });
 export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;
 
+export const OrchestratorMcpThreadProgress = Schema.Struct({
+  status: OrchestratorMcpTaskProgressResult.fields.status,
+  pendingRequestCount: NonNegativeInt,
+  pendingBackgroundWorkCount: NonNegativeInt,
+  lastAssistantReply: OrchestratorMcpTaskProgressResult.fields.lastAssistantReply,
+});
+export type OrchestratorMcpThreadProgress = typeof OrchestratorMcpThreadProgress.Type;
+
 export const OrchestratorMcpThreadReadResult = Schema.Struct({
+  progress: Schema.optional(OrchestratorMcpThreadProgress),
   thread: OrchestratorMcpThreadDetail,
   recentRuns: Schema.Array(OrchestratorMcpThreadRun),
   items: Schema.Array(OrchestratorMcpThreadTimelineItem),

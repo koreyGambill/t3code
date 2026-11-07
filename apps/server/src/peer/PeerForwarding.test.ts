@@ -1,3 +1,4 @@
+import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -236,7 +237,12 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       ),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+      Layer.provide(
+        Layer.merge(
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(MonitoringDialogue.MonitoringDialogue)({}),
+        ),
+      ),
       Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       Layer.provide(ServerSettings.layerTest()),
@@ -320,6 +326,7 @@ const makeLaptop = Effect.gen(function* () {
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(MonitoringDialogue.MonitoringDialogue)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),

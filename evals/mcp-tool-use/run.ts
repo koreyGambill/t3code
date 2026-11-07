@@ -5,6 +5,10 @@
  * harness capture supplies the prompt and native tools; a cheap model plays the shell. See
  * README.md for how to run it and add cases.
  */
+import { monitoringAdvisory } from "../../apps/server/src/monitoring/MonitoringDelivery.ts";
+import { MonitoringProfile, MonitoringFinding } from "@t3tools/contracts";
+import { idleCheckinPrompt } from "../../apps/server/src/scheduledTasks/IdleCheckin.ts";
+import { ScheduledTaskId } from "@t3tools/contracts";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
@@ -315,6 +319,10 @@ export const McpToolUseCase = Schema.Struct({
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
+  idleCheckinTaskId: Schema.optional(Schema.String),
+  monitoringAdvisory: Schema.optional(
+    Schema.Struct({ profile: MonitoringProfile, finding: MonitoringFinding }),
+  ),
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
@@ -2334,7 +2342,24 @@ const main = Effect.gen(function* () {
       .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase)))
+    .flat()
+    .map((item) =>
+      item.monitoringAdvisory === undefined
+        ? item
+        : {
+            ...item,
+            prompt: monitoringAdvisory(
+              item.monitoringAdvisory.profile,
+              item.monitoringAdvisory.finding,
+            ),
+          },
+    )
+    .map((item) =>
+      item.idleCheckinTaskId === undefined
+        ? item
+        : { ...item, prompt: idleCheckinPrompt(ScheduledTaskId.make(item.idleCheckinTaskId)) },
+    );
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";

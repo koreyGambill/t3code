@@ -55,11 +55,15 @@ export function CreateEnvironmentForm({
   projectId,
   onOpen,
   onCancel,
+  allowOpenPartial = true,
+  onPendingChange,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly projectId: ProjectId;
-  readonly onOpen: (id: XwingEnvironmentId) => void;
+  readonly onOpen: (id: XwingEnvironmentId, name: string) => void;
   readonly onCancel: () => void;
+  readonly allowOpenPartial?: boolean;
+  readonly onPendingChange?: (pending: boolean) => void;
 }) {
   const environmentId = threadRef.environmentId;
   const create = useAtomCommand(createDevelopmentEnvironment, "Create Xwing environment");
@@ -73,7 +77,12 @@ export function CreateEnvironmentForm({
   const effectiveBranch = branch ?? suggestedBranch(name);
 
   const submit = async () => {
+    if (partial?.failure === null) {
+      onOpen(partial.xwingEnvironmentId, name.trim());
+      return;
+    }
     setPending(true);
+    onPendingChange?.(true);
     const input = {
       projectId,
       branch: effectiveBranch,
@@ -86,9 +95,10 @@ export function CreateEnvironmentForm({
           input: { ...input, xwingEnvironmentId: partial.xwingEnvironmentId },
         }));
     setPending(false);
+    onPendingChange?.(false);
     if (result._tag !== "Success") return;
-    if (result.value.failure === null) onOpen(result.value.xwingEnvironmentId);
-    else setPartial(result.value);
+    setPartial(result.value);
+    if (result.value.failure === null) onOpen(result.value.xwingEnvironmentId, name.trim());
   };
 
   if (!canCreate) {
@@ -118,7 +128,7 @@ export function CreateEnvironmentForm({
         <Input
           size="compact"
           value={effectiveBranch}
-          disabled={pending}
+          disabled={pending || partial?.failure === null}
           onChange={(event) => setBranch(event.target.value)}
           placeholder="feature/checkout-redesign"
         />
@@ -128,7 +138,7 @@ export function CreateEnvironmentForm({
         <Input
           size="compact"
           value={base}
-          disabled={pending}
+          disabled={pending || partial?.failure === null}
           onChange={(event) => setBase(event.target.value)}
           placeholder="main"
         />
@@ -151,15 +161,19 @@ export function CreateEnvironmentForm({
           size="compact"
           disabled={pending || effectiveBranch === "" || (partial === null && name.trim() === "")}
         >
-          {partial === null ? "Create" : "Retry checkout"}
+          {partial === null
+            ? "Create"
+            : partial.failure === null
+              ? "Use environment"
+              : "Retry checkout"}
         </Button>
-        {partial !== null ? (
+        {partial !== null && allowOpenPartial ? (
           <Button
             type="button"
             size="compact"
             variant="outline"
             disabled={pending}
-            onClick={() => onOpen(partial.xwingEnvironmentId)}
+            onClick={() => onOpen(partial.xwingEnvironmentId, name.trim())}
           >
             Open environment
           </Button>

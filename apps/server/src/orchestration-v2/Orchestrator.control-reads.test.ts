@@ -3,6 +3,7 @@ import {
   CommandId,
   MessageId,
   EventId,
+  EnvironmentId,
   NodeId,
   type OrchestrationV2DomainEvent,
   PlanId,
@@ -1665,5 +1666,599 @@ it.effect("dispatch records the command outcome and its duration", () =>
 
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("commits a reply request with its accepted send and deduplicates retries", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:reply-admission");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-reply-admission"),
+      threadId,
+      projectId: ProjectId.make("project:reply-admission"),
+      title: "Reply target",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const command = {
+      type: "message.dispatch" as const,
+      commandId: CommandId.make("send-reply-admission"),
+      threadId,
+      senderThreadId: ThreadId.make("thread:reply-sender"),
+      replyRequested: true,
+      messageId: MessageId.make("message:reply-admission"),
+      text: "Please reply",
+      attachments: [],
+      dispatchMode: { type: "defer_start" as const },
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+    };
+    yield* sql`CREATE TRIGGER fail_reply_admission BEFORE INSERT ON thread_reply_requests
+      BEGIN SELECT RAISE(ABORT, 'simulated admission failure'); END`;
+    const failed = yield* orchestrator.dispatch(command).pipe(Effect.result);
+    assert.isTrue(Result.isFailure(failed));
+    assert.equal((yield* sql`SELECT * FROM thread_reply_requests`).length, 0);
+    assert.equal(
+      (yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(threadId)).messages
+        .length,
+      0,
+    );
+    yield* sql`DROP TRIGGER fail_reply_admission`;
+    yield* orchestrator.dispatch(command);
+    // No caller-side follower registration runs before the server goes away.
+    assert.deepEqual(
+      yield* sql`SELECT message_id, sender_thread_id, target_thread_id FROM thread_reply_requests`,
+      [
+        {
+          message_id: command.messageId,
+          sender_thread_id: command.senderThreadId,
+          target_thread_id: threadId,
+        },
+      ],
+    );
+    yield* orchestrator.dispatch(command);
+    assert.equal((yield* sql`SELECT * FROM thread_reply_requests`).length, 1);
+    yield* orchestrator.dispatch({
+      ...command,
+      commandId: CommandId.make("send-no-reply"),
+      messageId: MessageId.make("message:no-reply"),
+      replyRequested: false,
+    });
+    assert.equal((yield* sql`SELECT * FROM thread_reply_requests`).length, 1);
+    const refused = yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("send-refused-reply"),
+        messageId: MessageId.make("message:refused-reply"),
+        threadId: ThreadId.make("thread:missing"),
+      })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(refused));
+    assert.equal((yield* sql`SELECT * FROM thread_reply_requests`).length, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("admits idle check-ins only for an idle main with at most one working agent", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    for (const scenario of [
+      { name: "idle-zero", workers: 0, admitted: true },
+      { name: "idle-one", workers: 1, admitted: true },
+      { name: "idle-two", workers: 2, admitted: false },
+      { name: "mirrored-one", workers: 1, admitted: true, runStatus: "completed", mirror: true },
+      {
+        name: "remote-mirror",
+        workers: 1,
+        admitted: true,
+        runStatus: "completed",
+        mirror: true,
+        remote: true,
+      },
+      { name: "remote-duplicate", workers: 2, admitted: true, remote: true },
+      { name: "app-owned-one", workers: 2, admitted: true, appOwned: true, sameChild: true },
+      { name: "app-owned-two", workers: 2, admitted: false, appOwned: true },
+      {
+        name: "background-command",
+        workers: 0,
+        admitted: false,
+        runStatus: "completed",
+        background: "awaited-command",
+      },
+      {
+        name: "passive-monitor",
+        workers: 0,
+        admitted: true,
+        runStatus: "completed",
+        background: "passive-monitor",
+      },
+      {
+        name: "detached-command",
+        workers: 0,
+        admitted: true,
+        runStatus: "completed",
+        background: "detached-command",
+      },
+      { name: "queued", workers: 0, admitted: false, runStatus: "queued" },
+      { name: "running", workers: 0, admitted: false, runStatus: "running" },
+      { name: "checkpointing", workers: 0, admitted: false, runStatus: "waiting" },
+      { name: "completed", workers: 0, admitted: true, runStatus: "completed" },
+      { name: "human-input", workers: 0, admitted: false, human: true },
+      { name: "child", workers: 0, admitted: false, child: true },
+      { name: "side-chat", workers: 0, admitted: false, sideChat: true },
+      { name: "archived", workers: 0, admitted: false, archived: true },
+      { name: "settled", workers: 0, admitted: false, settled: true },
+      { name: "deleted", workers: 0, admitted: false, deleted: true },
+    ] as const) {
+      const threadId = ThreadId.make(`thread:idle-checkin:${scenario.name}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:idle-checkin"),
+        title: scenario.name,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const thread = (yield* projections.getThreadRecords(threadId, [])).thread;
+      if (
+        "child" in scenario ||
+        "sideChat" in scenario ||
+        "archived" in scenario ||
+        "settled" in scenario ||
+        "deleted" in scenario
+      ) {
+        yield* projections.apply({
+          id: EventId.make(`metadata:${threadId}`),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            ...("child" in scenario
+              ? {
+                  lineage: {
+                    ...thread.lineage,
+                    parentThreadId: ThreadId.make("parent:idle"),
+                    relationshipToParent: "subagent" as const,
+                  },
+                }
+              : {}),
+            ...("sideChat" in scenario ? { lineage: { ...thread.lineage, sideChat: true } } : {}),
+            ...("archived" in scenario ? { archivedAt: now } : {}),
+            ...("deleted" in scenario ? { deletedAt: now } : {}),
+            ...("settled" in scenario
+              ? { settledOverride: "settled" as const, settledAt: now }
+              : {}),
+          },
+        });
+      }
+      if ("runStatus" in scenario) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`seed:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`seed:${threadId}`),
+          text: "Earlier turn",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+        yield* projections.apply({
+          id: EventId.make(`run:${threadId}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            ...run,
+            status: scenario.runStatus,
+            completedAt: scenario.runStatus === "completed" ? now : null,
+          },
+        });
+        if (scenario.runStatus === "completed") {
+          for (const item of (yield* projections.getThreadRecords(threadId, ["turnItems"]))
+            .turnItems) {
+            yield* projections.apply({
+              id: EventId.make(`finish:${item.id}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...item, status: "completed", completedAt: now },
+            });
+          }
+        }
+      }
+      for (let index = 0; index < scenario.workers; index++) {
+        const childThreadId =
+          "appOwned" in scenario
+            ? ThreadId.make(`child:${threadId}:${"sameChild" in scenario ? 0 : index}`)
+            : null;
+        if (childThreadId !== null && !("sameChild" in scenario && index > 0)) {
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create:${childThreadId}`),
+            threadId: childThreadId,
+            projectId: thread.projectId,
+            title: "Worker",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`seed:${childThreadId}`),
+            threadId: childThreadId,
+            messageId: MessageId.make(`seed:${childThreadId}`),
+            text: "Work",
+            attachments: [],
+            dispatchMode: { type: "defer_start" },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+        }
+        yield* projections.apply({
+          id: EventId.make(`worker:${threadId}:${index}`),
+          type: "subagent.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: NodeId.make(`worker:${threadId}:${index}`),
+            threadId,
+            runId: null,
+            parentNodeId: NodeId.make(`root:${threadId}`),
+            origin:
+              "appOwned" in scenario || "remote" in scenario ? "app_owned" : "provider_native",
+            createdBy: "agent",
+            driver: adapter.driver,
+            providerInstanceId: instanceId,
+            providerThreadId: null,
+            childThreadId,
+            nativeTaskRef:
+              "remote" in scenario
+                ? null
+                : {
+                    driver: adapter.driver,
+                    nativeId: `native:${index}`,
+                    strength: "strong",
+                  },
+            ...("remote" in scenario
+              ? {
+                  remoteChild: {
+                    environmentId: EnvironmentId.make("remote:idle"),
+                    threadId: ThreadId.make("remote:worker"),
+                    label: "Remote",
+                  },
+                }
+              : {}),
+            prompt: "Work",
+            title: null,
+            model: null,
+            status: "appOwned" in scenario ? "completed" : "running",
+            result: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          },
+        });
+      }
+      if ("mirror" in scenario || "background" in scenario) {
+        const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+        const base = {
+          id: TurnItemId.make(`background:${threadId}`),
+          threadId,
+          runId: run.id,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: {
+            driver: adapter.driver,
+            nativeId: "native:0",
+            strength: "strong" as const,
+          },
+          parentItemId: null,
+          ordinal: 1,
+          status: "running" as const,
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        yield* projections.apply({
+          id: EventId.make(`background:${threadId}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload:
+            "background" in scenario
+              ? { ...base, type: "command_execution", input: "work" }
+              : {
+                  ...base,
+                  type: "subagent",
+                  subagentId: NodeId.make(`worker:${threadId}:0`),
+                  origin: "remote" in scenario ? "app_owned" : "provider_native",
+                  ...("remote" in scenario
+                    ? {
+                        nativeItemRef: null,
+                        remoteChild: {
+                          environmentId: EnvironmentId.make("remote:idle"),
+                          threadId: ThreadId.make("remote:worker"),
+                          label: "Remote",
+                        },
+                      }
+                    : {}),
+                  driver: adapter.driver,
+                  providerInstanceId: instanceId,
+                  childThreadId: null,
+                  prompt: "Work",
+                  result: null,
+                },
+        });
+      }
+      if ("background" in scenario) {
+        yield* projections.apply({
+          id: EventId.make(`provider:${threadId}`),
+          type: "provider-thread.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: ProviderThreadId.make(`provider:${threadId}`),
+            driver: adapter.driver,
+            providerInstanceId: instanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            pendingBackgroundTasks: [
+              {
+                taskId: "native:0",
+                kind: scenario.background === "passive-monitor" ? "monitor" : "command",
+                ...(scenario.background === "awaited-command"
+                  ? { awaited: true }
+                  : scenario.background === "detached-command"
+                    ? { awaited: false }
+                    : {}),
+              },
+            ],
+          },
+        });
+      }
+      if ("human" in scenario) {
+        yield* projections.apply({
+          id: EventId.make(`request:${threadId}`),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(`request:${threadId}`),
+            nodeId: NodeId.make(`node:${threadId}`),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+      }
+      const before = yield* projections.getThreadRecords(threadId, ["messages"]);
+      const beforeSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const command = {
+        type: "message.dispatch" as const,
+        commandId: CommandId.make(`checkin:${threadId}`),
+        threadId,
+        idleCheckin: true,
+        messageId: MessageId.make(`checkin:${threadId}`),
+        text: "Check in",
+        attachments: [],
+        dispatchMode: { type: "defer_start" as const },
+        createdBy: "agent" as const,
+        creationSource: "server" as const,
+      };
+      const result = yield* orchestrator.dispatch(command).pipe(Effect.result);
+      assert.equal(
+        Result.isSuccess(result),
+        scenario.admitted,
+        `${scenario.name}: ${Result.isFailure(result) ? JSON.stringify(result.failure) : "accepted"}`,
+      );
+      if (Result.isFailure(result))
+        assert.equal(result.failure._tag, "OrchestratorIdleCheckinSkippedError", scenario.name);
+      const after = yield* projections.getThreadRecords(threadId, ["messages"]);
+      assert.equal(
+        after.messages.length - before.messages.length,
+        scenario.admitted ? 1 : 0,
+        scenario.name,
+      );
+      if (!scenario.admitted)
+        assert.equal(yield* orchestrator.getThreadEventSequence(threadId), beforeSequence);
+      if (scenario.name === "idle-two") {
+        for (const task of (yield* projections.getThreadRecords(threadId, ["subagents"]))
+          .subagents) {
+          yield* projections.apply({
+            id: EventId.make(`finish:${task.id}`),
+            type: "subagent.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...task, status: "completed", completedAt: now },
+          });
+        }
+        yield* orchestrator.dispatch(command);
+        assert.equal(
+          (yield* projections.getThreadRecords(threadId, ["messages"])).messages.length,
+          before.messages.length + 1,
+        );
+      }
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses advisory steering when a turn became idle or requires interrupting tools", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    for (const scenario of ["idle", "completed-turn", "unsupported", "interrupts-tools"] as const) {
+      const threadId = ThreadId.make(`thread:advisory:${scenario}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:advisory"),
+        title: scenario,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`seed:${threadId}`),
+        threadId,
+        messageId: MessageId.make(`seed:${threadId}`),
+        text: "Authorized work",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+      const rootNodeId = NodeId.make(`node:${threadId}`);
+      yield* projections.apply({
+        id: EventId.make(`run:${threadId}`),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, rootNodeId, status: scenario === "idle" ? "completed" : "running" },
+      });
+      const sessionId = ProviderSessionId.make(`session:${threadId}`);
+      const providerThreadId = ProviderThreadId.make(`provider:${threadId}`);
+      yield* projections.apply({
+        id: EventId.make(`session:${threadId}`),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "running",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: {
+            ...CodexProviderCapabilitiesV2,
+            turns: {
+              ...CodexProviderCapabilitiesV2.turns,
+              supportsActiveSteering: scenario !== "unsupported",
+              activeSteeringInterruptsTools: scenario === "interrupts-tools",
+            },
+          },
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`provider:${threadId}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: sessionId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "active",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          pendingBackgroundTasks: [],
+          contextUsage: null,
+          nativeMetadata: null,
+          goal: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`turn:${threadId}`),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make(`turn:${threadId}`),
+          providerThreadId,
+          nodeId: rootNodeId,
+          runAttemptId: run.activeAttemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: scenario === "completed-turn" ? "completed" : "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      const command = {
+        type: "message.dispatch" as const,
+        commandId: CommandId.make(`advisory:${threadId}`),
+        threadId,
+        messageId: MessageId.make(`advisory:${threadId}`),
+        text: "Advisory",
+        attachments: [],
+        advisoryOnly: true,
+        dispatchMode: { type: "steer_active" as const, targetRunId: run.id },
+        createdBy: "system" as const,
+        creationSource: "server" as const,
+      };
+      const result = yield* orchestrator.dispatch(command).pipe(Effect.result);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result))
+        assert.equal(result.failure._tag, "OrchestratorAdvisorySkippedError");
+      const after = yield* projections.getThreadRecords(threadId, ["messages", "runs"]);
+      assert.equal(after.messages.length, 1);
+      assert.equal(after.runs.length, 1);
+      assert.equal(
+        (yield* sql`SELECT * FROM orchestration_v2_command_receipts WHERE command_id = ${command.commandId}`)
+          .length,
+        0,
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );

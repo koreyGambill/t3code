@@ -1,11 +1,25 @@
 export const CONVERSATION_TAB_ID = "conversation";
 
+export type FloatingTileRect = { x: number; y: number; width: number; height: number };
+
+export function boundFloatingTile(rect: FloatingTileRect): FloatingTileRect {
+  const width = Math.max(0.2, Math.min(1, rect.width));
+  const height = Math.max(0.2, Math.min(1, rect.height));
+  return {
+    width,
+    height,
+    x: Math.max(0, Math.min(1 - width, rect.x)),
+    y: Math.max(0, Math.min(1 - height, rect.y)),
+  };
+}
+
 export type TileGroup = {
   kind: "group";
   id: string;
   tabs: string[];
   activeTabId: string;
   colorIndex?: number;
+  floating?: FloatingTileRect;
 };
 export type TileSplit = {
   kind: "split";
@@ -26,6 +40,8 @@ export type ThreadTileLayout = {
   focusPairRatio?: number;
 };
 export type TileAction =
+  | { type: "float-group"; groupId: string; rect: FloatingTileRect }
+  | { type: "restore-group"; groupId: string }
   | { type: "focus-pair"; groupId: string | null }
   | { type: "focus-left"; tabId: string | null }
   | { type: "resize-focus-pair"; ratio: number }
@@ -286,6 +302,24 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
             layout.focusPairLeftTabId === tabId ? null : (layout.focusPairLeftTabId ?? null),
         }
       : {};
+  if (action.type === "float-group" || action.type === "restore-group") {
+    if (!groups.some((group) => group.id === action.groupId)) return layout;
+    if (action.type === "float-group" && !Object.values(action.rect).every(Number.isFinite))
+      return layout;
+    return settle({
+      ...layout,
+      root: mapNode(layout.root, (node) => {
+        if (node.kind !== "group" || node.id !== action.groupId) return node;
+        const { floating: _floating, ...group } = node;
+        return action.type === "float-group"
+          ? { ...group, floating: boundFloatingTile(action.rect) }
+          : group;
+      }),
+      focusedGroupId: action.groupId,
+      focusPairGroupId: null,
+      maximizedGroupId: null,
+    });
+  }
   if (action.type === "focus-pair") {
     const group = groups.find((entry) => entry.id === action.groupId);
     if (action.groupId !== null && !group?.tabs.length) return layout;
@@ -455,6 +489,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     });
     if (conflictingId) return layout;
     const remaining = removeGroup(layout.root, source.id)!;
+    const { floating: _floating, ...dockedSource } = source;
     return settle({
       ...layout,
       root: mapNode(remaining, (node) =>
@@ -464,8 +499,8 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
               id: action.splitId,
               axis: action.axis,
               ratio: 0.5,
-              first: action.side === "before" ? source : node,
-              second: action.side === "before" ? node : source,
+              first: action.side === "before" ? dockedSource : node,
+              second: action.side === "before" ? node : dockedSource,
             }
           : node,
       ),
@@ -570,6 +605,27 @@ export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
       return {
         kind: "group",
         id: raw.id,
+        ...("floating" in raw &&
+        raw.floating &&
+        typeof raw.floating === "object" &&
+        "x" in raw.floating &&
+        typeof raw.floating.x === "number" &&
+        "y" in raw.floating &&
+        typeof raw.floating.y === "number" &&
+        "width" in raw.floating &&
+        typeof raw.floating.width === "number" &&
+        "height" in raw.floating &&
+        typeof raw.floating.height === "number" &&
+        Object.values(raw.floating).every(Number.isFinite)
+          ? {
+              floating: boundFloatingTile({
+                x: raw.floating.x,
+                y: raw.floating.y,
+                width: raw.floating.width,
+                height: raw.floating.height,
+              }),
+            }
+          : {}),
         tabs: raw.tabs,
         activeTabId: raw.activeTabId,
         ...("colorIndex" in raw &&

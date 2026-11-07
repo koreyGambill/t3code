@@ -6,6 +6,7 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpThreadTimelineItem,
+  type OrchestratorMcpThreadProgress,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type ProjectId,
@@ -95,6 +96,10 @@ export class RemoteDelegation extends Context.Service<
      * restart, and a finished one again when a Stop here owes it a stop there.
      */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    readonly progress: (
+      scope: ThreadScope,
+      task: OrchestrationV2Subagent,
+    ) => Effect.Effect<OrchestratorMcpThreadProgress | null>;
   }
 >()("t3/peer/RemoteDelegation") {}
 
@@ -785,7 +790,26 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.ignoreCause({ log: true })),
     );
 
-  return RemoteDelegation.of({ delegate, cancel, start });
+  const progress: RemoteDelegation["Service"]["progress"] = Effect.fn("RemoteDelegation.progress")(
+    function* (scope, task) {
+      const remote = task.remoteChild;
+      if (remote === undefined || task.threadId !== scope.thread.threadId) return null;
+      return yield* forwarding
+        .readThread(scope, remote.environmentId, {
+          threadId: remote.threadId,
+          progressOnly: true,
+          limit: 1,
+          runLimit: 1,
+          maxCharsPerItem: 500,
+        })
+        .pipe(
+          Effect.map((read) => read.progress ?? null),
+          Effect.orElseSucceed(() => null),
+        );
+    },
+  );
+
+  return RemoteDelegation.of({ delegate, cancel, start, progress });
 });
 
 const isTerminal = (status: string) =>

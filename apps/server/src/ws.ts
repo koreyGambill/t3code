@@ -1,3 +1,5 @@
+import * as MonitoringService from "./monitoring/MonitoringService.ts";
+import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
 import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
@@ -1417,6 +1419,8 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const monitoring = yield* MonitoringService.MonitoringService;
+      const monitoringDialogue = yield* MonitoringDialogue.MonitoringDialogue;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2330,6 +2334,14 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
+        [WS_METHODS.monitoringStatus]: () => monitoring.status(),
+        [WS_METHODS.monitoringList]: () => monitoring.list(),
+        [WS_METHODS.monitoringUpsert]: (input) => monitoring.upsert(input),
+        [WS_METHODS.monitoringSetEnabled]: (input) => monitoring.setEnabled(input),
+        [WS_METHODS.monitoringRunNow]: (input) => monitoring.runNow(input),
+        [WS_METHODS.monitoringSetDisposition]: (input) => monitoring.setDisposition(input),
+        [WS_METHODS.monitoringRespond]: (input) =>
+          monitoringDialogue.respond({ ...input, role: "user" }),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(

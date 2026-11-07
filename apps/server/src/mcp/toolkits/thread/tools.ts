@@ -1,10 +1,14 @@
+import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
 import {
   OrchestratorMcpEnvironmentTarget,
+  MonitoringFindingId,
+  MonitoringFinding,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
   OrchestrationThreadSearchMatch,
   OrchestrationV2ThreadForkSourcePoint,
+  OrchestrationV2MergeBackScope,
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
   ModelSelection,
@@ -165,13 +169,14 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project; scope defaults to additional context since the last bring-back, or all to include previously returned context. status: its context transfers.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "status"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
+    scope: Schema.optional(OrchestrationV2MergeBackScope),
     title: Schema.optional(TrimmedNonEmptyString),
   }),
   success: Schema.Union([
@@ -237,7 +242,24 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const MonitoringRespondTool = Tool.make("respond_monitoring_advisory", {
+  ...commandTool,
+  description:
+    "Reply briefly to a cron monitoring advisory for this thread. Accept it or disagree with a reason. Does not change the user's scope or standards. The watcher checks fresh evidence and adds a report for the human; agreement is not proof of a correction. At most two replies per finding. Retry with the same responseId to avoid another review.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    findingId: MonitoringFindingId,
+    responseId: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+    text: TrimmedNonEmptyString.check(Schema.isMaxLength(4000)),
+  }),
+  success: Schema.Struct({ finding: MonitoringFinding }),
+  dependencies: [...commandTool.dependencies, MonitoringDialogue.MonitoringDialogue],
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const ThreadToolkit = Toolkit.make(
+  MonitoringRespondTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,

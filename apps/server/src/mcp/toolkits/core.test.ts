@@ -1,3 +1,4 @@
+import * as MonitoringDialogue from "../../monitoring/MonitoringDialogue.ts";
 import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -80,6 +81,8 @@ const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(MonitoringDialogue.MonitoringDialogue)({})),
+
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
@@ -394,6 +397,58 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
             dispatch: (command) => {
               dispatched.push(command);
               return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
+it.effect("merges all context on request and defaults to additional context", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    for (const transferScope of ["all", "additional", undefined]) {
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_transfer",
+          arguments: {
+            action: "merge_back",
+            targetThreadId: "parent-thread",
+            ...(transferScope === undefined ? {} : { scope: transferScope }),
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).not.toBe(true);
+    }
+    expect(dispatched).toMatchObject(
+      ["all", "additional", "additional"].map((scope) => ({
+        type: "thread.merge_back",
+        sourceThreadId: threadId,
+        targetThreadId: "parent-thread",
+        sourcePoint: { type: "latest_stable" },
+        scope,
+      })),
+    );
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1, storedEvents: [] });
             },
           }),
         ),
@@ -772,7 +827,12 @@ it.effect.each([
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
-        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(
+          Layer.merge(
+            Layer.mock(ThreadSearch.ThreadSearch)({}),
+            Layer.mock(MonitoringDialogue.MonitoringDialogue)({}),
+          ),
+        ),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),

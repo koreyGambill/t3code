@@ -2,6 +2,10 @@ import { EnvironmentId, ThreadId, ScheduledTaskId, type ScheduledTask } from "@t
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({ allowed: true, toggle: vi.fn(), run: vi.fn() }));
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: () => null,
+}));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentScope: () => state.allowed,

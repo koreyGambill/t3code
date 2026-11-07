@@ -76,7 +76,7 @@ to override its environment defaults. Worktree directories keep their original n
 If generation fails, or a custom name is invalid or already taken, the temporary
 branch name remains.
 
-## Scheduled tasks on mobile
+## Scheduled tasks
 
 Open **Settings → Scheduled tasks** to create scheduled tasks or manage existing
 ones across your connected environments. Use the settings filter to narrow the
@@ -93,6 +93,13 @@ in a fresh session that doesn't see earlier runs, so the thread stays readable
 without the agent's context growing. Moving such a task to another project starts
 a new thread there on its next run.
 
+On web and desktop, open a main conversation’s **Automations** panel and
+choose **Enable idle work check-in**. Manage it here in Scheduled tasks. Every
+30 minutes it checks whether that thread is idle with at most one working
+subagent. Busy checks are skipped. The reminder is labeled as an automated cron
+message and asks about ready, authorized work. Turn **Enabled** off here to stop
+it; the agent can also pause it when work is done or waiting for you.
+
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 
@@ -100,6 +107,24 @@ You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
+
+## Standards watchers
+
+On web and desktop, open **Settings → Scheduled tasks → Watchers** to schedule
+read-only reviews of a project's conversations. Choose the model, schedule,
+thread targets and standards to check. A watcher uses the model you select and
+reports a failure if it is unavailable.
+
+Open **Alerts** on the right to read findings and their quoted evidence. A watcher
+sees a bounded snapshot, so missing context can limit its conclusions. You can
+dismiss or snooze a finding, reopen it, or pause its watcher.
+
+A watcher can offer advice to an active agent when its provider supports steering
+without interrupting tools. The agent can agree or explain a disagreement. The
+watcher checks fresh evidence and records a short report: corrected, accepted
+explanation, unresolved or unverified. Agreement alone does not count as a
+verified correction. The report stays available even if the thread is idle and
+cannot receive the advisory.
 
 ## Webhook automations
 

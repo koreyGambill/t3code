@@ -218,6 +218,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
       return {
         ...liveThreadShell(threadId, { runtimeMode: "full-access" }),
         projectId: boxProject,
+        pendingBackgroundTasks: (yield* Ref.get(thread.nested))
+          ? [{ taskId: "nested-task", kind: "subagent" as const }]
+          : [],
         ...(linkOrigin === null ? {} : { linkOrigin }),
       };
     });
@@ -237,9 +240,32 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const shell = yield* shellOf(threadId);
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
+      const reply = yield* Ref.get(thread.reply);
       return shell === null
         ? (null as never)
-        : { ...idleThreadProjection(shell), runs: runless ? [] : [runOf(status)] };
+        : {
+            ...idleThreadProjection(shell),
+            runs: runless ? [] : [runOf(status)],
+            messages:
+              reply === null
+                ? []
+                : [
+                    {
+                      id: MessageId.make("message:item:reply"),
+                      threadId,
+                      runId,
+                      nodeId: null,
+                      role: "assistant" as const,
+                      text: reply,
+                      attachments: [],
+                      streaming: status === "running",
+                      createdBy: "agent" as const,
+                      creationSource: "provider" as const,
+                      createdAt: DateTime.makeUnsafe(0),
+                      updatedAt: DateTime.makeUnsafe(0),
+                    },
+                  ],
+          };
     });
   // One record per command id, as its receipt replays a repeat.
   const recordStop = (commandId: string, kind: "interrupt" | "thread.stop" | "delegated-tasks") =>
@@ -254,6 +280,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     });
   const layerBoxThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
+    delegatedTaskResultPending: () => Effect.succeed(false),
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     waitForThread: (input) =>
@@ -819,6 +846,26 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         childThreadId: null,
         remoteChild: { environmentId: box.environmentId, label: "Box" },
       });
+      const progress = yield* a.call("task_progress", { taskId: delegated.taskId });
+      expect(progress.structuredContent).toMatchObject({
+        progressAvailable: true,
+        pendingRequestCount: 0,
+        status: "working",
+        pendingBackgroundWorkCount: 0,
+        lastAssistantReply: { text: "Working…", isFinal: false },
+      });
+      yield* Ref.set(thread.status, "completed");
+      yield* Ref.set(thread.nested, true);
+      yield* Ref.set(thread.reply, "x".repeat(700));
+      const waitingProgress = yield* a.call("task_progress", { taskId: delegated.taskId });
+      expect(waitingProgress.structuredContent).toMatchObject({
+        status: "waiting",
+        pendingBackgroundWorkCount: 1,
+        lastAssistantReply: { text: "x".repeat(500), truncated: true, isFinal: false },
+      });
+      yield* Ref.set(thread.status, "running");
+      yield* Ref.set(thread.nested, false);
+      yield* Ref.set(thread.reply, "Working…");
       // The box launched it in the project with the same repository.
       expect(yield* Ref.get(thread.launched)).toBe(delegated.remoteChild.threadId);
       // Its link opens the thread there, so the parent can mention it like any other.
@@ -1481,6 +1528,13 @@ it.effect("fails the task when its thread there is gone, or the link here is", (
         })
         .pipe(Effect.map((result) => result.structuredContent as { taskId: NodeId }));
       yield* a.links.unlink(box.environmentId);
+      const unavailable = yield* a.call("task_progress", { taskId: forgotten.taskId });
+      expect(unavailable.structuredContent).toMatchObject({
+        progressAvailable: false,
+        pendingRequestCount: null,
+        pendingBackgroundWorkCount: null,
+        lastAssistantReply: null,
+      });
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
       const unlinked = yield* taskResult(a, forgotten.taskId);

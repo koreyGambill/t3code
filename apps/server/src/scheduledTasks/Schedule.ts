@@ -53,7 +53,7 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
 
 export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
   if (a.type === "interval") {
-    return b.type === "interval" && a.everyMs === b.everyMs;
+    return b.type === "interval" && a.everyMs === b.everyMs && a.idleCheckin === b.idleCheckin;
   }
   if (a.type === "webhook") return b.type === "webhook";
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);

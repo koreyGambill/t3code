@@ -217,6 +217,7 @@ export const make = Effect.gen(function* () {
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
+      monitoring: true,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
@@ -272,6 +273,7 @@ export const make = Effect.gen(function* () {
       oneTimeSchedules: true,
       freshContext: true,
       scheduledTaskThreadModes: true,
+      idleWorkCheckins: true,
       xwingEnvironments: true,
       npmReleaseLookup: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),

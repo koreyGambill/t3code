@@ -280,6 +280,30 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
+export class OrchestratorAdvisorySkippedError extends Schema.TaggedError<OrchestratorAdvisorySkippedError>()(
+  "OrchestratorAdvisorySkippedError",
+  { threadId: ThreadId, reason: Schema.Literals(["idle", "unsupported", "unavailable"]) },
+) {}
+
+export class OrchestratorIdleCheckinSkippedError extends Schema.TaggedError<OrchestratorIdleCheckinSkippedError>()(
+  "OrchestratorIdleCheckinSkippedError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals([
+      "unavailable",
+      "child-thread",
+      "busy",
+      "human-input",
+      "background-work",
+      "worker-count",
+    ]),
+  },
+) {
+  override get message(): string {
+    return "The scheduled check-in no longer meets its idle conditions.";
+  }
+}
+
 export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
   "OrchestratorThreadAboveModeLimitError",
   {
@@ -378,6 +402,8 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorIdleCheckinSkippedError,
+  OrchestratorAdvisorySkippedError,
   OrchestratorThreadAboveModeLimitError,
   OrchestratorRuntimeModeAboveCeilingError,
   OrchestratorWorkspaceSelectionRejectedError,
@@ -13892,6 +13918,186 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
 
+  const assertAdvisory = Effect.fn("Orchestrator.assertAdvisory")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+  ) {
+    const projection = yield* loadProjectionForCommand(command, [
+      "runs",
+      "providerTurns",
+      "providerThreads",
+      "providerSessions",
+      "runtimeRequests",
+    ]);
+    const skip = (reason: OrchestratorAdvisorySkippedError["reason"]) =>
+      new OrchestratorAdvisorySkippedError({ threadId: command.threadId, reason });
+    if (
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null ||
+      projection.thread.snoozedUntil != null ||
+      projection.runtimeRequests.some((request) => request.status === "pending")
+    )
+      return yield* skip("unavailable");
+    if (command.dispatchMode.type !== "steer_active") return yield* skip("idle");
+    const targetRunId = command.dispatchMode.targetRunId;
+    const run = projection.runs.find((candidate) => candidate.id === targetRunId);
+    const turn =
+      run === undefined
+        ? undefined
+        : latestProviderTurnForAttempt(
+            projection.providerTurns.filter((candidate) => candidate.nodeId === run.rootNodeId),
+            run.activeAttemptId,
+          );
+    if (run?.status !== "running" || turn?.status !== "running") return yield* skip("idle");
+    const providerThread = projection.providerThreads.find(
+      (candidate) => candidate.id === turn.providerThreadId,
+    );
+    const session = projection.providerSessions.find(
+      (candidate) => candidate.id === providerThread?.providerSessionId,
+    );
+    if (
+      !session?.capabilities.turns.supportsActiveSteering ||
+      session.capabilities.turns.activeSteeringInterruptsTools === true ||
+      command.attachments.length > 0
+    )
+      return yield* skip("unsupported");
+  });
+
+  const assertIdleCheckin = Effect.fn("Orchestrator.assertIdleCheckin")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+  ) {
+    const projection = yield* loadProjectionForCommand(
+      command,
+      ["runs", "runtimeRequests", "subagents", "turnItems"],
+      {
+        runStatuses: ["preparing", "queued", "starting", "running", "waiting"],
+        turnItemTypes: ["subagent"],
+        turnItemStatuses: ["pending", "running", "waiting"],
+      },
+    );
+    const thread = projection.thread;
+    if (
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null ||
+      thread.settledOverride === "settled" ||
+      thread.settledAt !== null
+    )
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "unavailable",
+      });
+    if (thread.lineage.relationshipToParent === "subagent" || thread.lineage.sideChat === true)
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "child-thread",
+      });
+    if (projection.runtimeRequests.some((request) => request.status === "pending"))
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "human-input",
+      });
+    if (projection.runs.length > 0)
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "busy",
+      });
+    const shell = yield* projectionStore
+      .getThreadShell(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (shell?.pendingRuntimeRequest != null)
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "human-input",
+      });
+    const background = shell?.pendingBackgroundTasks ?? [];
+    if (backgroundWorkHoldsCompletion(background.filter((task) => task.kind !== "subagent")))
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "background-work",
+      });
+    const childIds = [
+      ...new Set(
+        projection.subagents.flatMap((task) =>
+          task.origin === "app_owned" &&
+          task.childThreadId !== null &&
+          task.remoteChild === undefined
+            ? [task.childThreadId]
+            : [],
+        ),
+      ),
+    ];
+    const childShells =
+      childIds.length === 0
+        ? []
+        : (yield* projectionStore
+            .getShellSnapshot({ threadIds: childIds })
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            )).threads;
+    const children = new Map(childShells.map((child) => [child.id, child]));
+    const working = new Set<string>();
+    const key = (
+      childThreadId: ThreadId | null | undefined,
+      providerInstanceId: string | undefined,
+      taskId: string,
+    ) =>
+      childThreadId == null ? `${providerInstanceId ?? ""}:${taskId}` : `child:${childThreadId}`;
+    const taskKey = (task: OrchestrationV2Subagent) =>
+      task.remoteChild === undefined
+        ? key(task.childThreadId, task.providerInstanceId, task.nativeTaskRef?.nativeId ?? task.id)
+        : `remote:${task.remoteChild.environmentId}:${task.remoteChild.threadId}`;
+    const taskByItem = new Map(
+      projection.turnItems.flatMap((item) =>
+        item.type === "subagent" ? [[String(item.id), item.subagentId] as const] : [],
+      ),
+    );
+    for (const task of projection.subagents) {
+      let active = isOrchestrationV2WorkActive(task.status);
+      if (
+        task.origin === "app_owned" &&
+        task.childThreadId !== null &&
+        task.remoteChild === undefined
+      ) {
+        const child = children.get(task.childThreadId);
+        active =
+          child !== undefined &&
+          (child.activeRunId !== null ||
+            child.activityRunStatus != null ||
+            child.status === "queued" ||
+            child.pendingRuntimeRequest !== null ||
+            backgroundWorkHoldsCompletion(child.pendingBackgroundTasks ?? []) ||
+            (active && child.latestRunId === null));
+      }
+      if (active) working.add(taskKey(task));
+    }
+    for (const task of background) {
+      if (task.kind !== "subagent") continue;
+      const mirrored = projection.subagents.find(
+        (candidate) =>
+          candidate.id === taskByItem.get(task.taskId) ||
+          (task.childThreadId != null && candidate.childThreadId === task.childThreadId) ||
+          ((candidate.nativeTaskRef?.nativeId === task.taskId || candidate.id === task.taskId) &&
+            (task.providerInstanceId === undefined ||
+              candidate.providerInstanceId === task.providerInstanceId)),
+      );
+      working.add(
+        mirrored === undefined
+          ? key(task.childThreadId, task.providerInstanceId, task.taskId)
+          : taskKey(mirrored),
+      );
+    }
+    if (working.size > 1)
+      return yield* new OrchestratorIdleCheckinSkippedError({
+        threadId: command.threadId,
+        reason: "worker-count",
+      });
+  });
+
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId>,
@@ -14064,6 +14270,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
       case "message.dispatch": {
+        if (command.advisoryOnly) yield* assertAdvisory(command);
+        if (command.idleCheckin) yield* assertIdleCheckin(command);
         // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
         const thread = yield* projectionStore
           .getThread(command.threadId)
@@ -14416,7 +14624,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Refusals depend on modes the user can change; a recorded rejection would block the retry.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
+            cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
+            cause._tag === "OrchestratorIdleCheckinSkippedError" ||
+            cause._tag === "OrchestratorAdvisorySkippedError"
           ) {
             return yield* cause;
           }
@@ -14505,6 +14715,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         threadId: commandThreadId(command),
         commandType: command.type,
+        ...(command.type === "message.dispatch" &&
+        command.replyRequested &&
+        command.senderThreadId !== undefined
+          ? {
+              replyRequest: {
+                messageId: command.messageId,
+                senderThreadId: command.senderThreadId,
+                targetThreadId: command.threadId,
+              },
+            }
+          : {}),
         acceptedAt,
         events: plan.events,
         effects: plan.effects,

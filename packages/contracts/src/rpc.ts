@@ -1,3 +1,18 @@
+import {
+  MonitoringStatusResult,
+  MonitoringError,
+  MonitoringListInput,
+  MonitoringListResult,
+  MonitoringUpsertInput,
+  MonitoringProfileResult,
+  MonitoringSetEnabledInput,
+  MonitoringRunNowInput,
+  MonitoringRunResult,
+  MonitoringSetDispositionInput,
+  MonitoringFindingResult,
+  MonitoringRespondInput,
+  MonitoringRespondResult,
+} from "./monitoring.ts";
 import { ThreadMark, ThreadMarksGetInput, ThreadMarksError } from "./threadMarks.ts";
 import { ThreadInsights, ThreadInsightsGetInput, ThreadInsightsError } from "./threadInsights.ts";
 import {
@@ -647,6 +662,14 @@ export const WS_METHODS = {
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
+  monitoringStatus: "monitoring.status",
+  monitoringList: "monitoring.list",
+  monitoringUpsert: "monitoring.upsert",
+  monitoringSetEnabled: "monitoring.setEnabled",
+  monitoringRunNow: "monitoring.runNow",
+  monitoringSetDisposition: "monitoring.setDisposition",
+  monitoringRespond: "monitoring.respond",
+
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
   scheduledTasksDelete: "scheduledTasks.delete",
   scheduledTasksRunNow: "scheduledTasks.runNow",
@@ -2209,6 +2232,42 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsMonitoringStatusRpc = Rpc.make(WS_METHODS.monitoringStatus, {
+  payload: MonitoringListInput,
+  success: MonitoringStatusResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+const WsMonitoringListRpc = Rpc.make(WS_METHODS.monitoringList, {
+  payload: MonitoringListInput,
+  success: MonitoringListResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+const WsMonitoringUpsertRpc = Rpc.make(WS_METHODS.monitoringUpsert, {
+  payload: MonitoringUpsertInput,
+  success: MonitoringProfileResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+const WsMonitoringSetEnabledRpc = Rpc.make(WS_METHODS.monitoringSetEnabled, {
+  payload: MonitoringSetEnabledInput,
+  success: MonitoringProfileResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+const WsMonitoringRunNowRpc = Rpc.make(WS_METHODS.monitoringRunNow, {
+  payload: MonitoringRunNowInput,
+  success: MonitoringRunResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+const WsMonitoringSetDispositionRpc = Rpc.make(WS_METHODS.monitoringSetDisposition, {
+  payload: MonitoringSetDispositionInput,
+  success: MonitoringFindingResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+const WsMonitoringRespondRpc = Rpc.make(WS_METHODS.monitoringRespond, {
+  payload: MonitoringRespondInput,
+  success: MonitoringRespondResult,
+  error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2354,6 +2413,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsMonitoringStatusRpc,
+  WsMonitoringListRpc,
+  WsMonitoringUpsertRpc,
+  WsMonitoringSetEnabledRpc,
+  WsMonitoringRunNowRpc,
+  WsMonitoringSetDispositionRpc,
+  WsMonitoringRespondRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

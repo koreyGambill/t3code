@@ -75,6 +75,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 
   // Starts an agent session on this environment that can read its logs and database.
   [WS_METHODS.serverPrepareTriage]: AuthOrchestrationOperateScope,
+  [WS_METHODS.monitoringUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.monitoringSetEnabled]: AuthOrchestrationOperateScope,
+  [WS_METHODS.monitoringRunNow]: AuthOrchestrationOperateScope,
+  [WS_METHODS.monitoringSetDisposition]: AuthOrchestrationOperateScope,
+  [WS_METHODS.monitoringRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,

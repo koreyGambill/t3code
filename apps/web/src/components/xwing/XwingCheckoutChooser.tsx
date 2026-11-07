@@ -6,9 +6,10 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  type XwingEnvironmentId,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { Boxes } from "lucide-react";
+import { Boxes, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -25,6 +26,9 @@ import {
 import { ComposerControl } from "../chat/ComposerControl";
 import { useComposerMenuProps } from "../chat/composerEventScope";
 import { ComposerContextLabel } from "../ComposerContextLabel";
+import { CreateEnvironmentForm } from "./XwingEnvironmentLifecycle";
+import { Button } from "../ui/button";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Badge } from "../ui/badge";
 import {
   Combobox,
@@ -49,11 +53,15 @@ export function XwingCheckoutChooser({
   threadId,
   draftId,
   projectId,
+  createOpen = false,
+  onCreateOpenChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly draftId: DraftId | null | undefined;
   readonly projectId: ProjectId;
+  readonly createOpen?: boolean;
+  readonly onCreateOpenChange?: (open: boolean) => void;
 }) {
   const supported = useXwingEnvironmentsSupport(environmentId);
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
@@ -71,6 +79,14 @@ export function XwingCheckoutChooser({
   );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [localCreateOpen, setLocalCreateOpen] = useState(false);
+  const [createPending, setCreatePending] = useState(false);
+  const creating = createOpen || localCreateOpen;
+  const setCreating = (next: boolean) => {
+    if (!next && createPending) return;
+    setLocalCreateOpen(next);
+    onCreateOpenChange?.(next);
+  };
   const list = useEnvironmentQuery(
     supported && canRead && open
       ? developmentEnvironmentCheckouts({ environmentId, input: { projectId } })
@@ -131,79 +147,132 @@ export function XwingCheckoutChooser({
       projectRef: scopeProjectRef(environmentId, projectId),
     });
   };
+  const selectCreated = async (id: XwingEnvironmentId, name: string) => {
+    if (serverThread !== null) {
+      const selected = await selectCheckout({
+        environmentId,
+        input: {
+          threadId: serverThread.id,
+          commandId: CommandId.make(randomUUID()),
+          expected: {
+            worktreePath: serverThread.worktreePath,
+            xwingEnvironmentId: bound?.xwingEnvironmentId ?? null,
+          },
+          xwingEnvironmentId: id,
+        },
+      });
+      if (selected._tag !== "Success") return;
+    } else {
+      setDraftThreadContext(draftId ?? threadRef, {
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        xwingEnvironment: { id, label: name },
+        projectRef: scopeProjectRef(environmentId, projectId),
+      });
+    }
+    setCreating(false);
+  };
   const byId = new Map(choices.map((choice) => [choice.xwingEnvironmentId as string, choice]));
 
   return (
-    <Combobox
-      items={choices.map((choice) => choice.xwingEnvironmentId as string)}
-      filteredItems={visible.map((choice) => choice.xwingEnvironmentId as string)}
-      autoHighlight
-      open={open}
-      onOpenChange={handleOpenChange}
-      value={selected?.id ?? null}
-      onValueChange={(value) => {
-        const choice = typeof value === "string" ? byId.get(value) : undefined;
-        if (choice) choose(choice);
-      }}
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ComboboxTrigger
-              render={<ComposerControl size="xs" />}
-              className="min-w-0 shrink active:scale-100"
-              aria-label="Xwing environment"
-              data-composer-context-control
-            />
-          }
-        >
-          <Boxes className="size-3 shrink-0" />
-          {selected ? <ComposerContextLabel>{selected.label}</ComposerContextLabel> : null}
-        </TooltipTrigger>
-        <TooltipPopup>
-          {selected
-            ? serverThread !== null
-              ? `Works in ${selected.label}. Choose another environment to move this stopped thread.`
-              : `Starts in ${selected.label}.`
-            : "Work in an Xwing environment"}
-        </TooltipPopup>
-      </Tooltip>
-      <ComboboxPopup
-        align="start"
-        side="top"
-        className="flex w-[min(24rem,calc(100vw-2rem))] flex-col"
-        {...composerFloatingLayerProps}
+    <>
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogPopup showCloseButton={!createPending}>
+          <DialogTitle>New development environment</DialogTitle>
+          <CreateEnvironmentForm
+            threadRef={threadRef}
+            projectId={projectId}
+            onOpen={selectCreated}
+            onCancel={() => setCreating(false)}
+            allowOpenPartial={false}
+            onPendingChange={setCreatePending}
+          />
+        </DialogPopup>
+      </Dialog>
+      <Combobox
+        items={choices.map((choice) => choice.xwingEnvironmentId as string)}
+        filteredItems={visible.map((choice) => choice.xwingEnvironmentId as string)}
+        autoHighlight
+        open={open}
+        onOpenChange={handleOpenChange}
+        value={selected?.id ?? null}
+        onValueChange={(value) => {
+          const choice = typeof value === "string" ? byId.get(value) : undefined;
+          if (choice) choose(choice);
+        }}
       >
-        <ComboboxSearchInput
-          placeholder="Search environments..."
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        {statusText === null ? <ComboboxEmpty>No environment matches.</ComboboxEmpty> : null}
-        <ComboboxList className="max-h-64">
-          {visible.map((choice, index) => (
-            <ComboboxItem
-              key={choice.xwingEnvironmentId}
-              index={index}
-              value={choice.xwingEnvironmentId}
-              hideIndicator
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ComboboxTrigger
+                render={<ComposerControl size="xs" />}
+                className="min-w-0 shrink active:scale-100"
+                aria-label="Xwing environment"
+                data-composer-context-control
+              />
+            }
+          >
+            <Boxes className="size-3 shrink-0" />
+            {selected ? <ComposerContextLabel>{selected.label}</ComposerContextLabel> : null}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {selected
+              ? serverThread !== null
+                ? `Works in ${selected.label}. Choose another environment to move this stopped thread.`
+                : `Starts in ${selected.label}.`
+              : "Work in an Xwing environment"}
+          </TooltipPopup>
+        </Tooltip>
+        <ComboboxPopup
+          align="start"
+          side="top"
+          className="flex w-[min(24rem,calc(100vw-2rem))] flex-col"
+          {...composerFloatingLayerProps}
+        >
+          {canOperate ? (
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => {
+                handleOpenChange(false);
+                setCreating(true);
+              }}
             >
-              <div className="flex w-full min-w-0 items-center gap-2">
-                <span className="shrink-0 font-medium">{xwingEnvironmentLabel(choice)}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                  {choice.branch}
-                </span>
-                {choice.ticket ? (
-                  <Badge size="sm" variant="outline">
-                    {choice.ticket}
-                  </Badge>
-                ) : null}
-              </div>
-            </ComboboxItem>
-          ))}
-        </ComboboxList>
-        {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
-      </ComboboxPopup>
-    </Combobox>
+              <PlusIcon /> New environment
+            </Button>
+          ) : null}
+          <ComboboxSearchInput
+            placeholder="Search environments..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {statusText === null ? <ComboboxEmpty>No environment matches.</ComboboxEmpty> : null}
+          <ComboboxList className="max-h-64">
+            {visible.map((choice, index) => (
+              <ComboboxItem
+                key={choice.xwingEnvironmentId}
+                index={index}
+                value={choice.xwingEnvironmentId}
+                hideIndicator
+              >
+                <div className="flex w-full min-w-0 items-center gap-2">
+                  <span className="shrink-0 font-medium">{xwingEnvironmentLabel(choice)}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+                    {choice.branch}
+                  </span>
+                  {choice.ticket ? (
+                    <Badge size="sm" variant="outline">
+                      {choice.ticket}
+                    </Badge>
+                  ) : null}
+                </div>
+              </ComboboxItem>
+            ))}
+          </ComboboxList>
+          {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
+        </ComboboxPopup>
+      </Combobox>
+    </>
   );
 }

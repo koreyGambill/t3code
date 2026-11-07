@@ -136,6 +136,7 @@ import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import { summarizeThreadProgress } from "../peer/threadProgress.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import {
   describeCheckpointDrift,
@@ -175,6 +176,7 @@ function compactTaskProgress(
   reply: { readonly runId: RunId | null; readonly text: string; readonly isFinal: boolean } | null,
   pendingBackgroundWorkCount: number | null,
   progressAvailable: boolean,
+  pendingRequestCount: number | null = null,
 ): OrchestratorMcpTaskProgressResult {
   const lastReply =
     reply ??
@@ -197,6 +199,7 @@ function compactTaskProgress(
     ...(result.link === undefined ? {} : { link: result.link }),
     pendingApproval: result.pendingApproval,
     pendingBackgroundWorkCount,
+    pendingRequestCount,
     lastAssistantReply:
       lastReply === null
         ? null
@@ -1713,9 +1716,22 @@ const make = Effect.gen(function* () {
     }
     if (task.childThreadId === null) {
       const result = yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);
+      const progress = compactTaskProgress(result, task.title ?? "Remote child", null, null, false);
+      const remoteProgress = compact ? yield* remoteDelegation.progress(scope, task) : null;
       return {
         result,
-        progress: compactTaskProgress(result, task.title ?? "Remote child", null, null, false),
+        progress:
+          remoteProgress === null
+            ? progress
+            : {
+                ...progress,
+                status: task.result === null ? remoteProgress.status : progress.status,
+                pendingBackgroundWorkCount: remoteProgress.pendingBackgroundWorkCount,
+                pendingRequestCount: remoteProgress.pendingRequestCount,
+                lastAssistantReply:
+                  remoteProgress.lastAssistantReply ?? progress.lastAssistantReply,
+                progressAvailable: true,
+              },
       };
     }
     const parentProjection = yield* loadTaskParent(scope.thread.threadId);
@@ -1995,6 +2011,7 @@ const make = Effect.gen(function* () {
             },
         pendingWork.size,
         true,
+        childControls.runtimeRequests.filter((request) => request.status === "pending").length,
       ),
     };
   });
@@ -3416,6 +3433,72 @@ const make = Effect.gen(function* () {
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
       const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
+      if (input.progressOnly === true) {
+        const run = target.runs
+          .filter((candidate) => candidate.status !== "rolled_back")
+          .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+        const records =
+          run === undefined
+            ? { messages: [], turnItems: [] }
+            : yield* threadManagement
+                .getThreadRecords(input.threadId, ["messages", "turnItems"], {
+                  messageRoles: ["assistant"],
+                  messageRunIds: [run.id],
+                  turnItemRunIds: [run.id],
+                  turnItemTypes: ["assistant_message"],
+                })
+                .pipe(Effect.mapError(threadManagementFailure));
+        const reply = run === undefined ? null : subagentResultForRun(records, run);
+        const requests = target.runtimeRequests.filter((request) => request.status === "pending");
+        const children = yield* threadManagement
+          .getThreadRecords(input.threadId, ["subagents"], {
+            omitSettledSubagents: true,
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+        const pendingWork = new Set(
+          (shell.pendingBackgroundTasks ?? []).map((task) => task.taskId),
+        );
+        for (const child of children.subagents) {
+          if (
+            isOrchestrationV2WorkActive(child.status) ||
+            child.completionDelivery?.state === "pending" ||
+            child.completionDelivery?.state === "claimed"
+          ) {
+            pendingWork.add(child.nativeTaskRef?.nativeId ?? child.id);
+          }
+        }
+        return {
+          thread: threadDetail(
+            scope,
+            target,
+            shell.visibleItemCount,
+            shell,
+            yield* Clock.currentTimeMillis,
+          ),
+          recentRuns: run === undefined ? [] : [threadRun(run)],
+          items: [],
+          nextPosition: null,
+          hasMore: false,
+          progress: summarizeThreadProgress({
+            run,
+            continuationPending: yield* threadManagement
+              .delegatedTaskResultPending(input.threadId)
+              .pipe(Effect.mapError(threadManagementFailure)),
+            reply:
+              run === undefined ||
+              reply === null ||
+              (reply.messageId === null && reply.turnItemId === null)
+                ? null
+                : { text: reply.text, runId: run.id },
+            pendingRequestCount: requests.length,
+            hasPendingQuestion: requests.some(
+              (request) =>
+                request.kind === "user_input" && request.responseCapability.type === "live",
+            ),
+            pendingBackgroundWorkCount: pendingWork.size,
+          }),
+        };
+      }
       const view = input.view ?? "messages";
       const afterPosition = input.afterPosition ?? -1;
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
@@ -3560,6 +3643,7 @@ const make = Effect.gen(function* () {
           }),
           threadId: input.threadId,
           ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+          ...(asksReply ? { replyRequested: true } : {}),
           messageId,
           text: input.message,
           attachments: [],
@@ -3578,12 +3662,9 @@ const make = Effect.gen(function* () {
                 ),
           ),
         );
-      if (asksReply)
-        yield* replies.value.request({
-          messageId,
-          senderThreadId: sender,
-          targetThreadId: input.threadId,
-        });
+      const reply = Option.isSome(replies)
+        ? yield* replies.value.followCommitted(messageId)
+        : false;
       return {
         threadId: input.threadId,
         link: threadLinkFor(scope, input.threadId),
@@ -3592,7 +3673,7 @@ const make = Effect.gen(function* () {
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,
         delivery: result.delivery,
-        reply: asksReply,
+        reply,
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {

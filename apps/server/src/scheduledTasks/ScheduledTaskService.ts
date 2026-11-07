@@ -1,3 +1,5 @@
+import * as MonitoringRunner from "../monitoring/MonitoringRunner.ts";
+import { idleCheckinPrompt } from "./IdleCheckin.ts";
 import {
   CommandId,
   MessageId,
@@ -457,6 +459,7 @@ export const layer = Layer.effect(
     const random = yield* SecureRandom.SecureRandom;
     const digest = yield* Digest.Digest;
     const mac = yield* Mac.Mac;
+    const monitor = yield* Effect.serviceOption(MonitoringRunner.MonitoringRunner);
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -931,7 +934,11 @@ export const layer = Layer.effect(
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
-        const prompt = webhook?.prompt ?? active.prompt;
+        const idleCheckin =
+          active.schedule.type === "interval" && active.schedule.idleCheckin === true;
+        const prompt = idleCheckin
+          ? idleCheckinPrompt(active.id)
+          : (webhook?.prompt ?? active.prompt);
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
@@ -948,12 +955,13 @@ export const layer = Layer.effect(
               threadId,
               messageId,
               scheduledTaskId: active.id,
+              ...(idleCheckin ? { idleCheckin: true } : {}),
               text: prompt,
               attachments: [],
               mode: "queue",
               ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
-              createdBy: active.createdBy,
-              creationSource: active.creationSource,
+              createdBy: idleCheckin ? "system" : active.createdBy,
+              creationSource: idleCheckin ? "server" : active.creationSource,
             })
             .pipe(
               Effect.catchTags({
@@ -972,8 +980,24 @@ export const layer = Layer.effect(
             );
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
-        const result =
-          active.threadId === null
+        const result = active.id.startsWith("monitoring:")
+          ? yield* Effect.exit(
+              (Option.isSome(monitor)
+                ? monitor.value
+                    .runTask(active.id)
+                    .pipe(
+                      Effect.flatMap((run) =>
+                        run.status === "failed"
+                          ? Effect.fail(
+                              taskError("Monitoring review failed.", { taskId: active.id }),
+                            )
+                          : Effect.void,
+                      ),
+                    )
+                : Effect.fail(taskError("Monitoring executor unavailable.", { taskId: active.id }))
+              ).pipe(Effect.as(null)),
+            )
+          : active.threadId === null
             ? yield* Effect.exit(
                 threadLaunch
                   .launch({
@@ -1007,6 +1031,49 @@ export const layer = Layer.effect(
                   Effect.as(ThreadId.make(active.threadId)),
                 ),
               );
+
+        if (
+          idleCheckin &&
+          result._tag === "Failure" &&
+          result.cause.reasons.some(
+            (reason) =>
+              reason._tag === "Fail" &&
+              typeof reason.error === "object" &&
+              reason.error !== null &&
+              "_tag" in reason.error &&
+              reason.error._tag === "OrchestratorIdleCheckinSkippedError",
+          )
+        ) {
+          const skippedAt = yield* localNow;
+          const skippedOrigin = yield* readWebhookOrigin;
+          const skipped = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const [row] = yield* getRows(active.id);
+                if (row === undefined) return active;
+                const current = yield* decodeRow(row, skippedOrigin);
+                const next = nextRunAt(current, skippedAt);
+                yield* sql`UPDATE scheduled_tasks SET next_run_at = ${next},
+              last_run_status = ${active.lastRunStatus}, last_run_at = ${active.lastRunAt},
+              last_run_error = ${active.lastRunError}
+              WHERE task_id = ${active.id} AND last_run_at = ${startedAtIso}`;
+                return {
+                  ...current,
+                  nextRunAt: next,
+                  lastRunStatus: active.lastRunStatus,
+                  lastRunAt: active.lastRunAt,
+                  lastRunError: active.lastRunError,
+                };
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                taskError("Could not skip idle check-in.", { taskId: active.id, cause }),
+              ),
+            );
+          yield* notifyChanged;
+          return { task: skipped, threadId: null, dispatchFailed: false };
+        }
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1237,7 +1304,9 @@ export const layer = Layer.effect(
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
-        Effect.map((tasks) => ({ tasks })),
+        Effect.map((tasks) => ({
+          tasks: tasks.filter((task) => !task.id.startsWith("monitoring:")),
+        })),
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
 
@@ -1291,6 +1360,16 @@ export const layer = Layer.effect(
         existingTask.projectId !== input.projectId &&
         keptThreadId === existingTask.threadId;
       const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+      if (
+        input.schedule.type === "interval" &&
+        input.schedule.idleCheckin &&
+        (input.schedule.everyMs !== 1_800_000 || threadId === null || threadMode !== "continue")
+      ) {
+        return yield* taskError(
+          "Idle check-ins require an existing main thread, continue mode, and a 30-minute interval.",
+          { taskId: id },
+        );
+      }
       // Refused on save rather than at run time; a disabled task can still be saved, so one
       // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
       // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
@@ -1384,7 +1463,10 @@ export const layer = Layer.effect(
       const task: ScheduledTask = {
         id,
         title: input.title,
-        prompt: input.prompt,
+        prompt:
+          schedule.type === "interval" && schedule.idleCheckin
+            ? idleCheckinPrompt(id)
+            : input.prompt,
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,

@@ -1,3 +1,6 @@
+import { useEnvironment } from "../../state/environments";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useThreadShell } from "../../state/entities";
 import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
@@ -6,6 +9,7 @@ import { useState } from "react";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  ScheduledTaskId,
   type ScheduledTask,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -73,6 +77,16 @@ export function ThreadAutomationsPanel(props: {
   const runTaskNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
     label: "thread automation run now",
   });
+  const environment = useEnvironment(props.environmentId);
+  const supportsCheckins =
+    environment?.serverConfig?.environment.capabilities.idleWorkCheckins === true;
+  const shell = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const createCheckin = useAtomCommand(serverEnvironment.upsertScheduledTask, {
+    label: "idle work check-in",
+  });
+  const canCreate = useAtomValue(
+    serverEnvironment.upsertScheduledTask.permissionAtom(props.environmentId),
+  );
   const navigate = useNavigate();
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
@@ -80,7 +94,39 @@ export function ThreadAutomationsPanel(props: {
     (task) => task.threadId === props.threadId,
   );
 
-  if (tasksQuery.error === null && boundTasks.length === 0) return null;
+  const canOfferCheckin =
+    supportsCheckins &&
+    shell !== null &&
+    shell.lineage.relationshipToParent !== "subagent" &&
+    !shell.lineage.sideChat;
+  if (tasksQuery.error === null && boundTasks.length === 0 && !canOfferCheckin) return null;
+
+  const enableCheckin = async () => {
+    if (!shell || !supportsCheckins || busyTaskId !== null || !canCreate) return;
+    const id = ScheduledTaskId.make(`idle-checkin:${props.threadId}`);
+    setBusyTaskId(id);
+    const result = await createCheckin({
+      environmentId: props.environmentId,
+      input: {
+        id,
+        title: "Idle work check-in",
+        prompt: "Check whether authorized work is ready to continue.",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 1_800_000, idleCheckin: true },
+        projectId: shell.projectId,
+        threadId: props.threadId,
+        threadMode: "continue",
+        workspaceStrategy: { type: "root" },
+        modelSelection: shell.modelSelection,
+        runtimeMode: shell.runtimeMode,
+        interactionMode: shell.interactionMode,
+      },
+    });
+    setBusyTaskId(null);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      reportFailure("Could not enable idle check-in", squashAtomCommandFailure(result));
+    }
+  };
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -155,6 +201,17 @@ export function ThreadAutomationsPanel(props: {
         </Tooltip>
       }
     >
+      {canOfferCheckin &&
+      !boundTasks.some((task) => task.schedule.type === "interval" && task.schedule.idleCheckin) ? (
+        <ThreadDetailsControl
+          size="sm"
+          variant="ghost"
+          disabled={!canCreate || !shell || busyTaskId !== null}
+          onClick={() => void enableCheckin()}
+        >
+          Enable idle work check-in · every 30 min
+        </ThreadDetailsControl>
+      ) : null}
       <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">
         {boundTasks.map((task) => (
           <li

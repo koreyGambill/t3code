@@ -4,6 +4,8 @@ import type {
   ModelSelection,
   PullRequestReviewGuide,
   TextGenerationError,
+  MonitoringReviewOutput,
+  MonitoringAssessment,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
@@ -98,6 +100,17 @@ export type ReviewGuideGenerationResult = Omit<
 >;
 
 export interface ProviderTextGeneration {
+  readonly generateMonitoringAssessment?: (input: {
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<MonitoringAssessment, TextGenerationError>;
+  readonly generateMonitoringReview?: (input: {
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<MonitoringReviewOutput, TextGenerationError>;
+
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

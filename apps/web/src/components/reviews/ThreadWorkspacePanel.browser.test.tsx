@@ -443,17 +443,23 @@ it("adds a completed action without notes to the composer without sending it", a
   expect(state.command.mock.calls.some(([name]) => name === "submit")).toBe(false);
 });
 
-it("lists agent work apart from the user's actions and records human QA without changing agent status", async () => {
+it("integrates user responses below agent commitments and records QA without changing agent status", async () => {
   await using _viewport = await wideViewport();
   const fixture = setup();
   await using _screen = await render(<Panel />);
-  await page.getByRole("tab", { name: "Agent work", exact: true }).click();
+  await page.getByRole("tab", { name: /Work record/ }).click();
   await expect.element(page.getByText("Field-level merge", { exact: true })).toBeVisible();
   await expect.element(page.getByText(/pass · independent run · root · at abc123/)).toBeVisible();
-  await expect.element(page.getByText("Share a config", { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText("Share a config", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Pass", exact: true }).click();
   await expect.element(page.getByText("QA passed", { exact: true })).toBeVisible();
   expect(fixture.getWorkspace().agentWork[0]).toMatchObject({ status: "landed", userQa: "passed" });
+  await page.getByRole("combobox", { name: "Work status filter" }).selectOptions("open");
+  await expect
+    .element(page.getByText("Field-level merge", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect.element(page.getByText("Share a config", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Work status filter" }).selectOptions("completed");
   await page.getByRole("button", { name: "Back to pending", exact: true }).click();
   await expect.element(page.getByText("QA pending", { exact: true })).toBeVisible();
 });

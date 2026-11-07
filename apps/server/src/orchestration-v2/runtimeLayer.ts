@@ -1,3 +1,10 @@
+import * as MonitoringStore from "../monitoring/MonitoringStore.ts";
+import * as MonitoringSnapshot from "../monitoring/MonitoringSnapshot.ts";
+import * as MonitoringRunner from "../monitoring/MonitoringRunner.ts";
+import * as MonitoringService from "../monitoring/MonitoringService.ts";
+import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
+import * as MonitoringDelivery from "../monitoring/MonitoringDelivery.ts";
+import * as MonitoringFollowup from "../monitoring/MonitoringFollowup.ts";
 import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "../threadInsights/ThreadInsights.ts";
 import * as InstructionFootprints from "../threadInsights/InstructionFootprints.ts";
@@ -288,7 +295,32 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerMonitoringDeliveryProvided = MonitoringDelivery.layer.pipe(
+  Layer.provide(layerThreadManagementProvided),
+);
+const layerMonitoringRunnerProvided = MonitoringRunner.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      MonitoringStore.layer,
+      MonitoringSnapshot.layer,
+      layerMonitoringDeliveryProvided,
+    ),
+  ),
+);
+const layerMonitoringFollowupProvided = MonitoringFollowup.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerMonitoringRunnerProvided, MonitoringSnapshot.layer)),
+);
+const layerMonitoringDialogueProvided = MonitoringDialogue.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      MonitoringStore.layer,
+      layerMonitoringFollowupProvided,
+      layerMonitoringDeliveryProvided,
+    ),
+  ),
+);
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
+  Layer.provide(layerMonitoringRunnerProvided),
   Layer.provide(
     Layer.mergeAll(
       layerThreadLaunchProvided,
@@ -376,6 +408,16 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  layerMonitoringDialogueProvided,
+  MonitoringService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        MonitoringStore.layer,
+        layerMonitoringRunnerProvided,
+        layerScheduledTaskProvided,
+      ),
+    ),
+  ),
   WorktreeBranchSync.layer.pipe(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
   ),

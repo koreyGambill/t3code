@@ -9,6 +9,34 @@ import {
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
 
+describe("T3 delegation instructions", () => {
+  it("exposes the same delegation context reference through each provider transport", () => {
+    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+    const instructions = [
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      t3OrchestrationSystemPrompt(true, false),
+      t3OrchestrationPrompt({
+        prompt: "Research and fan out.",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        orchestrationDelivered: false,
+        deviceInstructionsDelivered: false,
+      }),
+      t3AcpPromptWithInstructions({ prompt: "Research and fan out.", state }),
+    ];
+    for (const text of instructions) {
+      assert.include(text, "run_in_background:true");
+      assert.include(text, "context.runId");
+      assert.include(text, "context.mark");
+      assert.include(text, "childPreamble");
+      assert.notMatch(
+        text!,
+        /Ordinary coding tasks need no|run_in_background:false|children start no agents|keep reviews fresh/i,
+      );
+    }
+  });
+});
+
 describe("T3 device instructions", () => {
   it("route device work through device_open and give Claude the line that loads the tools", () => {
     for (const intent of ["`device_list`", "`device_open`", "`agent-device`", "ssh", "`hostId`"]) {

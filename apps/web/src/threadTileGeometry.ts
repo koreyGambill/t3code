@@ -7,6 +7,15 @@ export interface TileRect {
   height: number;
 }
 
+export function tileDropOrder<T extends { id: string }>(
+  groups: readonly T[],
+  focusedFloatingId: string | null,
+): T[] {
+  return groups
+    .toReversed()
+    .sort((a, b) => Number(b.id === focusedFloatingId) - Number(a.id === focusedFloatingId));
+}
+
 export function isFocusOverviewGroup(id: string) {
   return id.startsWith("focus-overview:");
 }

@@ -94,7 +94,16 @@ export function withCreationProvenance(
       const { workspaceChange: _workspaceChange, ...rest } = command;
       return rest;
     }
-    case "message.dispatch":
+    case "message.dispatch": {
+      // Reply admission comes only from the scoped server send path.
+      const {
+        replyRequested: _replyRequested,
+        idleCheckin: _idleCheckin,
+        advisoryOnly: _advisoryOnly,
+        ...rest
+      } = command;
+      return { ...rest, ...provenance };
+    }
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
@@ -152,6 +161,9 @@ export interface ThreadManagementSendInput {
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly replyRequested?: boolean;
+  readonly idleCheckin?: boolean;
+  readonly advisoryOnly?: boolean;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext;
@@ -854,7 +866,7 @@ const make = Effect.gen(function* () {
     "ThreadManagementService.sendToThread",
   )(function* (input) {
     const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
-    if (target.thread.archivedAt !== null) {
+    if (target.thread.archivedAt !== null && !input.idleCheckin) {
       return yield* new ThreadManagementThreadArchivedError({
         threadId: input.threadId,
       });
@@ -869,7 +881,12 @@ const make = Effect.gen(function* () {
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (mode === "steer" && steerableRun === undefined && (yield* owesFollowUp(input))) {
+    if (
+      mode === "steer" &&
+      steerableRun === undefined &&
+      !input.advisoryOnly &&
+      (yield* owesFollowUp(input))
+    ) {
       // Between turns, with work still due to wake the thread, the steer becomes its next turn.
       dispatchMode = { type: "queue_after_active" };
     } else if (mode === "steer" || mode === "restart") {
@@ -898,6 +915,9 @@ const make = Effect.gen(function* () {
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...(input.replyRequested ? { replyRequested: true } : {}),
+      ...(input.idleCheckin ? { idleCheckin: true } : {}),
+      ...(input.advisoryOnly ? { advisoryOnly: true } : {}),
       text: input.text,
       attachments: input.attachments,
       ...(input.context === undefined ? {} : { context: input.context }),

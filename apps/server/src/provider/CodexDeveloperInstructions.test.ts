@@ -66,6 +66,13 @@ describe("Codex orchestration context", () => {
     NodeAssert.ok(orchestration.includes("`run_in_background:true`"));
     NodeAssert.ok(!orchestration.includes("run_in_background:false"));
     NodeAssert.ok(!orchestration.includes("never a background"));
+    NodeAssert.doesNotMatch(
+      orchestration,
+      /Ordinary coding tasks need no|children start no agents|keep reviews fresh/i,
+    );
+    for (const field of ["context.runId", "context.mark", "childPreamble"]) {
+      NodeAssert.ok(orchestration.includes(field));
+    }
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
     NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
   });

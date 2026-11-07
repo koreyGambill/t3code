@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type ModelSelection,
+  TextGenerationError,
+  MonitoringReviewOutput,
+  MonitoringAssessment,
+} from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -168,6 +174,26 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   });
 
   return {
+    generateMonitoringAssessment: Effect.fn(`${name}.generateMonitoringAssessment`)(
+      function (input) {
+        return run({
+          operation: "generateMonitoringAssessment",
+          cwd: input.cwd,
+          prompt: input.prompt,
+          modelSelection: input.modelSelection,
+          outputSchema: MonitoringAssessment,
+        });
+      },
+    ),
+    generateMonitoringReview: Effect.fn(`${name}.generateMonitoringReview`)(function (input) {
+      return run({
+        operation: "generateMonitoringReview",
+        cwd: input.cwd,
+        prompt: input.prompt,
+        modelSelection: input.modelSelection,
+        outputSchema: MonitoringReviewOutput,
+      });
+    }),
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

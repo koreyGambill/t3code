@@ -3,6 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { ThreadAttentionOverlay } from "./components/ThreadAttentionOverlay";
+import { MonitoringRail } from "./components/monitoring/MonitoringRail";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
 
@@ -12,6 +13,17 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
     <AppAtomRegistryProvider>
       <RouterProvider router={router} />
       <ElectronBrowserHost />
+      <MonitoringRail
+        onOpenThread={(environmentId, threadId) => {
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId, threadId },
+          });
+        }}
+        onConfigure={(environmentId) => {
+          void router.navigate({ to: "/settings/scheduled-tasks", search: { environmentId } });
+        }}
+      />
       <QuitHoldOverlay />
       <ThreadAttentionOverlay />
     </AppAtomRegistryProvider>

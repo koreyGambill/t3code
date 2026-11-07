@@ -35,6 +35,8 @@ interface BranchToolbarEnvModeSelectorProps {
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
+  onNewEnvironment?: (() => void) | undefined;
+  selectedWorkspaceLabel?: string | undefined;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -46,6 +48,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
+  onNewEnvironment,
+  selectedWorkspaceLabel,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
@@ -58,7 +62,11 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       value: "local",
       label: resolveCurrentWorkspaceLabel(activeWorktreePath),
     },
-    { value: "worktree", label: resolveEnvModeLabel("worktree") },
+    ...(onNewEnvironment ? [{ value: "new-environment", label: "New environment" }] : []),
+    {
+      value: "worktree",
+      label: onNewEnvironment ? "Native worktree" : resolveEnvModeLabel("worktree"),
+    },
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
       : []),
@@ -106,8 +114,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   return (
     <Select
       modal={false}
-      value={effectiveEnvMode}
+      value={selectedWorkspaceLabel ? "xwing-environment" : effectiveEnvMode}
       onValueChange={(value: string | null) => {
+        if (value === "new-environment") {
+          onNewEnvironment?.();
+          return;
+        }
         if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
           onUsePreviousWorktree?.();
           return;
@@ -136,9 +148,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           ) : (
             <FolderIcon className="size-3" />
           )}
-          <ComposerContextLabel>
-            <SelectValue />
-          </ComposerContextLabel>
+          <ComposerContextLabel>{selectedWorkspaceLabel ?? <SelectValue />}</ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
           {effectiveEnvMode === "worktree"
@@ -164,10 +174,17 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {resolveCurrentWorkspaceLabel(activeWorktreePath)}
             </span>
           </SelectItem>
+          {onNewEnvironment ? (
+            <SelectItem value="new-environment">
+              <span className="inline-flex items-center gap-1.5">
+                <FolderGit2Icon className="size-3" /> New environment
+              </span>
+            </SelectItem>
+          ) : null}
           <SelectItem value="worktree">
             <span className="inline-flex items-center gap-1.5">
               <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
+              {onNewEnvironment ? "Native worktree" : resolveEnvModeLabel("worktree")}
             </span>
           </SelectItem>
           {showPreviousWorktree && previousWorktreeLabel ? (

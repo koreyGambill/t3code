@@ -54,7 +54,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
+export type ScheduleMode = "fixed" | "once" | "interval" | "webhook" | "idle_checkin";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -224,6 +224,8 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         : {}),
     };
   }
+  if (draft.scheduleMode === "idle_checkin")
+    return { type: "interval", everyMs: 1_800_000, idleCheckin: true };
   if (draft.scheduleMode === "interval") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
@@ -248,7 +250,12 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
-    scheduleMode: schedule.type === "fixed_time" ? "fixed" : schedule.type,
+    scheduleMode:
+      schedule.type === "interval" && schedule.idleCheckin
+        ? "idle_checkin"
+        : schedule.type === "fixed_time"
+          ? "fixed"
+          : schedule.type,
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",

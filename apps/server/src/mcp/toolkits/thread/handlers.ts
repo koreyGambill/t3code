@@ -1,3 +1,4 @@
+import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -91,6 +92,22 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  respond_monitoring_advisory: McpToolAccess.writesThreads(
+    () => [undefined],
+    (input) =>
+      Effect.gen(function* () {
+        const { caller } = yield* readCaller();
+        if (!caller)
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "Monitoring replies require a thread-scoped caller.",
+          });
+        const dialogue = yield* MonitoringDialogue.MonitoringDialogue;
+        return yield* dialogue
+          .respond({ ...input, role: "agent", callerThreadId: caller.id })
+          .pipe(Effect.mapError(unavailable));
+      }),
+  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
@@ -173,6 +190,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
                 sourceThreadId: projection.thread.id,
                 targetThreadId,
                 sourcePoint,
+                scope: input.scope ?? "additional",
                 createdBy: "agent",
                 creationSource: "mcp",
               })

@@ -217,6 +217,13 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "watchers",
+    title: "Watchers and alerts",
+    to: "/settings/scheduled-tasks",
+    scope: "environment-defaults",
+    searchTerms: ["monitoring cron standards Haiku findings rules alerts snooze schedule advisory"],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",

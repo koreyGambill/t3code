@@ -83,3 +83,5 @@ export * from "./xwingEnvironments.ts";
 export * from "./xwingOperations.ts";
 export * from "./developmentEnvironments.ts";
 export * from "./developmentEnvironmentLifecycle.ts";
+
+export * from "./monitoring.ts";

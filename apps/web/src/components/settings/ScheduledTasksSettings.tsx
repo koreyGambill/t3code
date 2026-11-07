@@ -102,6 +102,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { MonitoringSettings } from "../monitoring/MonitoringSettings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -305,6 +306,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
+    if (schedule.idleCheckin) return "Idle work check-in · every 30 min";
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
       ? `Every ${minutes} min`
@@ -482,6 +484,9 @@ export function ScheduledTasksSettings(target: {
           </div>
         )}
       </SettingsSection>
+      {linkedEnvironmentId !== undefined && (
+        <MonitoringSettings key={linkedEnvironmentId} environmentId={linkedEnvironmentId} />
+      )}
       {editor ? (
         <ScheduledTaskEditorDialog
           key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}
@@ -1339,6 +1344,16 @@ function ScheduledTaskEditorForm({
       reportFailure("Invalid filter", parsedFilters.error);
       return;
     }
+    if (
+      draft.scheduleMode === "idle_checkin" &&
+      (!draft.threadId || draft.threadMode !== "continue")
+    ) {
+      reportFailure(
+        "Select a main thread",
+        "Idle check-ins continue an existing main conversation. Enable it from that thread’s Automations panel and keep continue mode.",
+      );
+      return;
+    }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
       for (const error of scheduleDraftErrors(draft)) reportFailure(error.title, error.description);
@@ -1623,6 +1638,7 @@ function ScheduledTaskEditorForm({
               className="max-h-64 overflow-y-auto"
               placeholder="What should the agent do each time this runs?"
               value={draft.prompt}
+              readOnly={draft.scheduleMode === "idle_checkin"}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, prompt: event.target.value }))
               }
@@ -1665,6 +1681,7 @@ function ScheduledTaskEditorForm({
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
                   if (
+                    mode === "idle_checkin" ||
                     mode === "fixed" ||
                     mode === "once" ||
                     mode === "interval" ||
@@ -1678,6 +1695,12 @@ function ScheduledTaskEditorForm({
                       return {
                         ...current,
                         scheduleMode: mode,
+                        ...(mode === "idle_checkin"
+                          ? {
+                              title: "Idle work check-in",
+                              threadMode: "continue" as const,
+                            }
+                          : {}),
                         // Keep the instant too, so an hour that repeats when clocks go back stays exact.
                         ...(suggested === null
                           ? {}
@@ -1698,6 +1721,15 @@ function ScheduledTaskEditorForm({
                   <Toggle value="once">Once</Toggle>
                 ) : null}
                 <Toggle value="interval">Every interval</Toggle>
+                <Toggle
+                  value="idle_checkin"
+                  disabled={
+                    !draft.threadId ||
+                    environment?.serverConfig?.environment.capabilities.idleWorkCheckins !== true
+                  }
+                >
+                  Idle check-in
+                </Toggle>
                 <Toggle
                   value="webhook"
                   disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
@@ -1940,6 +1972,11 @@ function ScheduledTaskEditorForm({
                   ))}
                 </ToggleGroup>
               </div>
+            ) : draft.scheduleMode === "idle_checkin" ? (
+              <p className="text-xs text-muted-foreground">
+                Every 30 minutes, asks this main thread about ready work when it is idle and at most
+                one subagent is working. Turn Enabled off to stop.
+              </p>
             ) : (
               <div className="flex items-center gap-2">
                 <Label htmlFor="scheduled-task-interval">Run every</Label>

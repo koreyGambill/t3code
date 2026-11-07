@@ -8,6 +8,43 @@ import {
 } from "./threadTileLayout";
 
 describe("thread tile layout", () => {
+  it("floats, bounds, persists and docks groups without changing tab ownership", () => {
+    const initial = syncTileLayout(undefined, [], ["a", "b"], "a", true);
+    const floating = applyTileAction(initial, {
+      type: "float-group",
+      groupId: "panels-group",
+      rect: { x: 0.8, y: -0.2, width: 0.6, height: 0.5 },
+    });
+    expect(getTileGroups(floating)[1]?.floating).toEqual({ x: 0.4, y: 0, width: 0.6, height: 0.5 });
+    expect(getTileGroups(floating).flatMap((group) => group.tabs)).toEqual([
+      CONVERSATION_TAB_ID,
+      "a",
+      "b",
+    ]);
+    expect(parseTileLayout(JSON.parse(JSON.stringify(floating)))).toEqual(floating);
+    const synced = syncTileLayout(floating, ["a", "b"], ["a", "b", "c"], "c", true);
+    expect(getTileGroups(synced)[1]?.floating).toEqual(getTileGroups(floating)[1]?.floating);
+    const docked = applyTileAction(floating, { type: "restore-group", groupId: "panels-group" });
+    expect(getTileGroups(docked)).toEqual(getTileGroups(initial));
+    const moved = applyTileAction(floating, {
+      type: "dock-group",
+      groupId: "panels-group",
+      targetGroupId: "conversation-group",
+      axis: "vertical",
+      side: "after",
+      splitId: "dock-split",
+    });
+    expect(getTileGroups(moved)[1]?.floating).toBeUndefined();
+    const merged = applyTileAction(floating, {
+      type: "merge-groups",
+      groupId: "panels-group",
+      targetGroupId: "conversation-group",
+    });
+    expect(getTileGroups(merged).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, "a", "b"],
+    ]);
+  });
+
   it("moves tabs and splits conversation without losing or duplicating any tab", () => {
     let layout = syncTileLayout(undefined, [], ["a", "b"], "b", true);
     layout = applyTileAction(layout, {

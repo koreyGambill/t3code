@@ -224,6 +224,9 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, {
         envMode: mode,
+        ...(draftThread?.xwingEnvironment
+          ? { xwingEnvironment: null, worktreePath: null, branch: null }
+          : {}),
         startFromOrigin: resolveNewDraftStartFromOrigin({
           envMode: mode,
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,

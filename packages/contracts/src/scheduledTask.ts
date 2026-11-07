@@ -29,6 +29,7 @@ const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0));
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval"),
   everyMs: ScheduledTaskIntervalMs,
+  idleCheckin: Schema.optional(Schema.Literal(true)),
 });
 
 const ScheduledTaskFixedTimeSchedule = Schema.Struct({
@@ -202,6 +203,7 @@ export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 export const ScheduledTaskUpsertSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval"),
+    idleCheckin: Schema.optional(Schema.Literal(true)),
     everyMs: ScheduledTaskIntervalMs.check(
       Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS),
     ).annotate({

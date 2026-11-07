@@ -1,3 +1,4 @@
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 
@@ -814,6 +815,109 @@ it.effect("a run interrupted right after it reserves the task does not block the
       const second = yield* service.runNow({ id: task.id });
       assert.equal(second.threadId, ThreadId.make("thread:launched"));
       assert.equal(yield* Ref.get(launches), 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("idle check-ins persist their cadence, skip busy ticks, and pause without catch-up", () =>
+  Effect.gen(function* () {
+    const ticks = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const sends = yield* Ref.make<Array<ThreadManagementService.ThreadManagementSendInput>>([]);
+    const busy = yield* Ref.make(false);
+    const scheduler: Scheduler.Scheduler["Service"] = {
+      register: <E, R>(name: string, run: Effect.Effect<void, E, R>) =>
+        Effect.gen(function* () {
+          const context = yield* Effect.context<R>();
+          if (name === "scheduled-tasks")
+            yield* Ref.set(ticks, run.pipe(Effect.provideContext(context), Effect.orDie));
+        }),
+    };
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Ref.get(busy).pipe(
+                Effect.flatMap((blocked) =>
+                  blocked
+                    ? Effect.fail(
+                        new Orchestrator.OrchestratorIdleCheckinSkippedError({
+                          threadId: input.threadId,
+                          reason: "busy",
+                        }),
+                      )
+                    : Ref.update(sends, (all) => [...all, input]).pipe(Effect.as({} as never)),
+                ),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, scheduler),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:idle-checkin"),
+        title: "Idle work check-in",
+        prompt: "Check ready work",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 1_800_000, idleCheckin: true },
+        projectId: ProjectId.make("project:test"),
+        threadId: ThreadId.make("thread:main"),
+        threadMode: "continue",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const tick = yield* Ref.get(ticks);
+      yield* TestClock.adjust("29 minutes");
+      yield* tick;
+      assert.equal((yield* Ref.get(sends)).length, 0);
+      yield* TestClock.adjust("1 minute");
+      yield* tick;
+      const [sent] = yield* Ref.get(sends);
+      assert.equal(sent?.idleCheckin, true);
+      assert.equal(sent?.scheduledTaskId, task.id);
+      assert.equal(sent?.createdBy, "system");
+      assert.equal(sent?.creationSource, "server");
+      assert.match(sent?.text ?? "", /Automated cron/);
+      assert.match(sent?.text ?? "", /Settings → Scheduled tasks/);
+      assert.equal(sent?.threadId, "thread:main");
+      yield* Ref.set(busy, true);
+      yield* TestClock.adjust("30 minutes");
+      yield* tick;
+      assert.equal((yield* Ref.get(sends)).length, 1);
+      const skipped = (yield* service.list()).tasks[0];
+      assert.equal(skipped?.runCount, 1);
+      assert.equal(skipped?.lastRunStatus, "succeeded");
+      yield* Ref.set(busy, false);
+      yield* tick;
+      assert.equal((yield* Ref.get(sends)).length, 1);
+      yield* service.setEnabled({ id: task.id, enabled: false });
+      yield* TestClock.adjust("2 hours");
+      yield* tick;
+      assert.equal((yield* Ref.get(sends)).length, 1);
+      yield* service.setEnabled({ id: task.id, enabled: true });
+      yield* tick;
+      assert.equal((yield* Ref.get(sends)).length, 1);
+      yield* TestClock.adjust("30 minutes");
+      yield* tick;
+      assert.equal((yield* Ref.get(sends)).length, 2);
+    }).pipe(Effect.provide(layer));
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      assert.equal((yield* service.list()).tasks[0]?.runCount, 2);
+      yield* yield* Ref.get(ticks);
+      assert.equal((yield* Ref.get(sends)).length, 2);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

@@ -84,6 +84,25 @@ it("stamps authoritative provenance on commands that create threads or messages"
   expect(
     ThreadManagementService.withCreationProvenance(
       {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:forged-reply"),
+        threadId: command.threadId,
+        messageId: MessageId.make("message:forged-reply"),
+        senderThreadId: ThreadId.make("thread:forged-sender"),
+        replyRequested: true,
+        idleCheckin: true,
+        text: "forged reply",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      },
+      { createdBy: "user", creationSource: "web" },
+    ),
+  ).not.toHaveProperty("replyRequested");
+  expect(
+    ThreadManagementService.withCreationProvenance(
+      {
         type: "thread.metadata.update",
         commandId: CommandId.make("command:thread-management:metadata"),
         threadId: ThreadId.make("thread:thread-management:create"),

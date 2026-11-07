@@ -39,22 +39,26 @@ import { WorkspaceMarksPanel } from "./WorkspaceMarksPanel";
 import { WorkspaceThreadsPanel } from "./WorkspaceThreadsPanel";
 import { WorkspaceDocument } from "./WorkspaceDocument";
 import { WorkspaceQuestionCard } from "./WorkspaceQuestionCard";
-import { AgentWorkList, WorkspaceRecordList } from "./WorkspaceRecordViews";
+import { WorkspaceRecordList } from "./WorkspaceRecordViews";
+import { WorkspaceWorkRecord } from "./WorkspaceWorkRecord";
 import { WorkspaceAllWork } from "./WorkspaceAllWork";
 import { WorkspaceChildPreamble } from "./WorkspaceChildPreamble";
 
 const sections = [
+  ["agent-work", "Work record"],
   ["unified", "Unified"],
   ["questions", "Questions"],
   ["action-items", "Action items"],
   ["design-notes", "Design"],
-  ["agent-work", "Agent work"],
-  ["record", "Record"],
+  ["record", "Decisions & context"],
   ["summary", "Summary"],
   ["marks", "Marks"],
   ["threads", "Threads"],
 ] as const;
-const emptyAnswer: WorkspaceQuestionAnswer = { selectedOptionIds: [], notes: "" };
+const emptyAnswer: WorkspaceQuestionAnswer = {
+  selectedOptionIds: [],
+  notes: "",
+};
 const noDraft: WorkspaceUserDraft = { questionAnswers: {}, actionNotes: {} };
 // Only entries the user edited are kept and sent, so the server merges them per entry.
 interface LocalDraft {
@@ -79,7 +83,10 @@ const useLocalDrafts = create<{
           ...state.entries,
           [key]: {
             pending: {
-              questionAnswers: { ...pending.questionAnswers, ...change.questionAnswers },
+              questionAnswers: {
+                ...pending.questionAnswers,
+                ...change.questionAnswers,
+              },
               actionNotes: { ...pending.actionNotes, ...change.actionNotes },
             },
             baseRevision: current && !isEmptyDraft(pending) ? current.baseRevision : revision,
@@ -190,7 +197,7 @@ export function ThreadWorkspacePanel({
         <label className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1 text-xs">
           Scope
           <select
-            aria-label="Agent work scope"
+            aria-label="Work record scope"
             value={workScope}
             onChange={(event) => setWorkScope(event.target.value)}
             className="rounded border border-input bg-background px-1"
@@ -244,7 +251,9 @@ function WorkspaceContent({
         })
       : null,
   );
-  const save = useAtomCommand(threadWorkspaceSaveDraft, { reportFailure: false });
+  const save = useAtomCommand(threadWorkspaceSaveDraft, {
+    reportFailure: false,
+  });
   const patch = useAtomCommand(threadWorkspacePatch, { reportFailure: false });
   const canWrite = useAtomValue(threadWorkspacePatch.permissionAtom(threadRef.environmentId));
   const [saved, setSaved] = useState<ThreadWorkspace | null>(null);
@@ -260,7 +269,10 @@ function WorkspaceContent({
       ...workspace.userDraft.questionAnswers,
       ...local?.pending.questionAnswers,
     },
-    actionNotes: { ...workspace.userDraft.actionNotes, ...local?.pending.actionNotes },
+    actionNotes: {
+      ...workspace.userDraft.actionNotes,
+      ...local?.pending.actionNotes,
+    },
   };
   const saveLatestDraft = useStableCallback(async (): Promise<ThreadWorkspace | null> => {
     const entry = useLocalDrafts.getState().entries[key];
@@ -333,7 +345,9 @@ function WorkspaceContent({
       const feedback = formatWorkspaceFeedback(threadRef, current, ids);
       const composer = useComposerDraftStore.getState();
       const existing = composer.draftsByThreadKey[scopedThreadKey(threadRef)]?.prompt ?? "";
-      composer.addThreadContexts(threadRef, feedback.records, { appendReference: false });
+      composer.addThreadContexts(threadRef, feedback.records, {
+        appendReference: false,
+      });
       const additions = ids
         .map((id) => formatWorkspaceFeedback(threadRef, current, [id]).markdown)
         .filter((markdown) => markdown && !existing.includes(markdown));
@@ -376,16 +390,6 @@ function WorkspaceContent({
     return <WorkspaceMarksPanel threadRef={threadRef} annotations={workspace.markAnnotations} />;
   if (section === "threads")
     return <WorkspaceThreadsPanel threadRef={threadRef} related={workspace.relatedThreads} />;
-  if (section === "agent-work")
-    return (
-      <AgentWorkList
-        workspace={workspace}
-        disabled={!canWrite || busy}
-        apply={(changes) => {
-          void apply(changes);
-        }}
-      />
-    );
   const recordView =
     section === "record" ? (
       <>
@@ -405,6 +409,82 @@ function WorkspaceContent({
         />
       </>
     ) : null;
+  const feedbackRenderers: Pick<
+    React.ComponentProps<typeof WorkspaceDocument>,
+    "renderQuestion" | "renderAction"
+  > = {
+    renderQuestion: (question) => (
+      <WorkspaceQuestionCard
+        key={question.id}
+        question={question}
+        threadRef={threadRef}
+        answer={draft.questionAnswers[question.id] ?? emptyAnswer}
+        disabled={!canWrite || busy}
+        sent={sent.includes(question.id)}
+        onChange={(answer) => edit({ questionAnswers: { [question.id]: answer } })}
+        onSend={() => {
+          void send([question.id]);
+        }}
+      />
+    ),
+    renderAction: (action) => (
+      <details
+        key={action.id}
+        id={`workspace-item-${action.id}`}
+        className="group rounded border border-border p-2"
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
+          <ChevronRightIcon className="size-3 shrink-0 group-open:rotate-90" />
+          <span className="text-3xs text-muted-foreground">{action.ref}</span>
+          <span className={action.status === "done" ? "line-through text-muted-foreground" : ""}>
+            {action.title}
+          </span>
+          {action.status === "done" ? <CheckIcon className="ml-auto size-3 text-primary" /> : null}
+        </summary>
+        <div className="mt-3 space-y-3">
+          {action.details ? (
+            <ChatMarkdown text={action.details} cwd={undefined} threadRef={threadRef} />
+          ) : null}
+          <Textarea
+            aria-label={`Notes for ${action.title}`}
+            placeholder="Your notes…"
+            value={draft.actionNotes[action.id] ?? ""}
+            disabled={!canWrite}
+            onChange={(event) => edit({ actionNotes: { [action.id]: event.target.value } })}
+          />
+          <div className="flex gap-2">
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite || busy}
+              onClick={() => {
+                void apply([
+                  {
+                    kind: "action",
+                    id: action.id,
+                    status: action.status === "done" ? "open" : "done",
+                  },
+                ]);
+              }}
+            >
+              {action.status === "done" ? "Reopen" : "Mark done"}
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={!canWrite || busy}
+              onClick={() => {
+                void send([action.id]);
+              }}
+            >
+              <SendIcon className="size-3" />
+              Add to chat
+            </Button>
+          </div>
+        </div>
+      </details>
+    ),
+  };
   const ready = readyWorkspaceFeedbackIds({ ...workspace, userDraft: draft }).length > 0;
   return (
     <>
@@ -437,89 +517,30 @@ function WorkspaceContent({
           </Button>
         </div>
       ) : null}
-      {recordView ?? (
-        <WorkspaceDocument
+      {section === "agent-work" ? (
+        <WorkspaceWorkRecord
           threadRef={threadRef}
-          section={section}
           workspace={workspace}
-          renderQuestion={(question) => (
-            <WorkspaceQuestionCard
-              key={question.id}
-              question={question}
-              threadRef={threadRef}
-              answer={draft.questionAnswers[question.id] ?? emptyAnswer}
-              disabled={!canWrite || busy}
-              sent={sent.includes(question.id)}
-              onChange={(answer) => edit({ questionAnswers: { [question.id]: answer } })}
-              onSend={() => {
-                void send([question.id]);
-              }}
-            />
-          )}
-          renderAction={(action) => (
-            <details
-              key={action.id}
-              id={`workspace-item-${action.id}`}
-              className="group rounded border border-border p-2"
-            >
-              <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
-                <ChevronRightIcon className="size-3 shrink-0 group-open:rotate-90" />
-                <span className="text-3xs text-muted-foreground">{action.ref}</span>
-                <span
-                  className={action.status === "done" ? "line-through text-muted-foreground" : ""}
-                >
-                  {action.title}
-                </span>
-                {action.status === "done" ? (
-                  <CheckIcon className="ml-auto size-3 text-primary" />
-                ) : null}
-              </summary>
-              <div className="mt-3 space-y-3">
-                {action.details ? (
-                  <ChatMarkdown text={action.details} cwd={undefined} threadRef={threadRef} />
-                ) : null}
-                <Textarea
-                  aria-label={`Notes for ${action.title}`}
-                  placeholder="Your notes…"
-                  value={draft.actionNotes[action.id] ?? ""}
-                  disabled={!canWrite}
-                  onChange={(event) => edit({ actionNotes: { [action.id]: event.target.value } })}
-                />
-                <div className="flex gap-2">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={!canWrite || busy}
-                    onClick={() => {
-                      void apply([
-                        {
-                          kind: "action",
-                          id: action.id,
-                          status: action.status === "done" ? "open" : "done",
-                        },
-                      ]);
-                    }}
-                  >
-                    {action.status === "done" ? "Reopen" : "Mark done"}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={!canWrite || busy}
-                    onClick={() => {
-                      void send([action.id]);
-                    }}
-                  >
-                    <SendIcon className="size-3" />
-                    Add to chat
-                  </Button>
-                </div>
-              </div>
-            </details>
-          )}
+          disabled={!canWrite || busy}
+          apply={(changes) => {
+            void apply(changes);
+          }}
+          {...feedbackRenderers}
         />
+      ) : (
+        (recordView ?? (
+          <WorkspaceDocument
+            threadRef={threadRef}
+            section={section}
+            workspace={workspace}
+            {...feedbackRenderers}
+          />
+        ))
       )}
-      {section === "questions" || section === "action-items" || section === "unified" ? (
+      {section === "agent-work" ||
+      section === "questions" ||
+      section === "action-items" ||
+      section === "unified" ? (
         <div className="absolute right-7 top-0 z-10 flex h-7 items-center bg-background px-1">
           <Tooltip>
             <TooltipTrigger

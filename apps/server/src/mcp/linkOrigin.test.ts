@@ -1,3 +1,4 @@
+import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -189,7 +190,9 @@ const layerTools = Layer.mergeAll(
       Layer.provide(NodeServices.layer),
     ),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(
+    Layer.merge(NodeServices.layer, Layer.mock(MonitoringDialogue.MonitoringDialogue)({})),
+  ),
 );
 
 const mcpClient = McpSchema.McpServerClient.of({

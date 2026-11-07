@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -37,6 +36,9 @@ import {
   applyTileAction as reduceTileAction,
   CONVERSATION_TAB_ID,
   getTileGroups,
+  boundFloatingTile,
+  type TileNode,
+  type FloatingTileRect,
   type TileGroup,
 } from "../../threadTileLayout";
 import {
@@ -44,6 +46,7 @@ import {
   tileGeometry,
   displayTileRoot,
   isFocusOverviewGroup,
+  tileDropOrder,
   type TileRect,
 } from "../../threadTileGeometry";
 import { useTheme } from "../../hooks/useTheme";
@@ -117,17 +120,38 @@ export function ThreadTileWorkspace(props: {
   const { resolvedTheme } = useTheme();
   const groups = getTileGroups(layout);
   const displayRoot = displayTileRoot(layout);
+  const tiled = (node: TileNode): TileNode | null => {
+    if (node.kind === "group") return node.floating ? null : node;
+    const first = tiled(node.first);
+    const second = tiled(node.second);
+    return first && second ? { ...node, first, second } : (first ?? second);
+  };
+  const dockedRoot = layout.focusPairGroupId ? displayRoot : tiled(displayRoot);
+  const floatingGroups = layout.focusPairGroupId ? [] : groups.filter((group) => group.floating);
   const displayGroups = getTileGroups(displayRoot);
-  const geometry = tileGeometry(displayRoot);
+  const dockedGeometry = dockedRoot ? tileGeometry(dockedRoot) : { groups: [], splits: [] };
+  const geometry = {
+    ...dockedGeometry,
+    groups: [
+      ...dockedGeometry.groups,
+      ...floatingGroups.map((group) => ({ id: group.id, rect: group.floating! })),
+    ],
+  };
   const switchGroups = layout.focusPairGroupId
     ? displayGroups.filter((group) => group.tabs.length > 0)
     : groups;
+  const [floatingOverride, setFloatingOverride] = useState<{
+    groupId: string;
+    rect: FloatingTileRect;
+  } | null>(null);
   const maximized = layout.maximizedGroupId;
   const visibleGroups = maximized
     ? geometry.groups
         .filter((group) => group.id === maximized)
         .map((group) => ({ ...group, rect: { x: 0, y: 0, width: 1, height: 1 } }))
-    : geometry.groups;
+    : geometry.groups.map((entry) =>
+        floatingOverride?.groupId === entry.id ? { ...entry, rect: floatingOverride.rect } : entry,
+      );
   const visibleTabIds = displayGroups
     .filter((group) => visibleGroups.some((entry) => entry.id === group.id))
     .map((group) => group.activeTabId);
@@ -434,21 +458,33 @@ export function ThreadTileWorkspace(props: {
       run: props.panels.onAddSideChat,
     },
   ];
-  const locateDrop = (event: ReactDragEvent): TileDrop | null => {
+  const locateDrop = (
+    event: { clientX: number; clientY: number },
+    excludedId?: string,
+  ): TileDrop | null => {
     const bounds = rootRef.current?.getBoundingClientRect();
     if (!bounds || !bounds.width || !bounds.height) return null;
     const x = (event.clientX - bounds.left) / bounds.width;
     const y = (event.clientY - bounds.top) / bounds.height;
-    const hovered = visibleGroups.find(
-      ({ rect }) =>
-        x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height,
+    const hovered = tileDropOrder(
+      visibleGroups,
+      floatingGroups.some((group) => group.id === layout.focusedGroupId)
+        ? layout.focusedGroupId
+        : null,
+    ).find(
+      ({ id, rect }) =>
+        id !== excludedId &&
+        x >= rect.x &&
+        x <= rect.x + rect.width &&
+        y >= rect.y &&
+        y <= rect.y + rect.height,
     );
     if (!hovered) return null;
     const localX = (x - hovered.rect.x) / hovered.rect.width;
     const localY = (y - hovered.rect.y) / hovered.rect.height;
     const titlebarHeight =
       Number.parseFloat(
-        getComputedStyle(event.currentTarget).getPropertyValue("--tile-titlebar-height"),
+        getComputedStyle(rootRef.current!).getPropertyValue("--tile-titlebar-height"),
       ) || 26;
     if ((y - hovered.rect.y) * bounds.height <= titlebarHeight)
       return { groupId: hovered.id, zone: "tabs" };
@@ -460,6 +496,76 @@ export function ThreadTileWorkspace(props: {
     ];
     const nearest = edges.reduce((a, b) => (a.distance < b.distance ? a : b));
     return { groupId: hovered.id, zone: nearest.distance < 0.22 ? nearest.zone : "center" };
+  };
+  const floatGesture = (
+    event: ReactPointerEvent<HTMLElement>,
+    group: TileGroup,
+    resizingTile = false,
+  ) => {
+    if (event.button !== 0 || !group.floating || maximized || layout.focusPairGroupId) return;
+    if (
+      !resizingTile &&
+      event.target instanceof Element &&
+      event.target.closest("button, a, input, [role=tab]")
+    )
+      return;
+    const bounds = rootRef.current?.getBoundingClientRect();
+    if (!bounds?.width || !bounds.height) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    apply({ type: "focus", groupId: group.id });
+    const initial = group.floating;
+    let rect = initial;
+    let target: TileDrop | null = null;
+    setResizing(true);
+    const move = (next: PointerEvent) => {
+      const dx = (next.clientX - event.clientX) / bounds.width;
+      const dy = (next.clientY - event.clientY) / bounds.height;
+      rect = boundFloatingTile(
+        resizingTile
+          ? { ...initial, width: initial.width + dx, height: initial.height + dy }
+          : { ...initial, x: initial.x + dx, y: initial.y + dy },
+      );
+      setFloatingOverride({ groupId: group.id, rect });
+      target = resizingTile ? null : locateDrop(next, group.id);
+      if (target?.zone === "center") target = null;
+      setDropTarget(target);
+    };
+    const stop = (next: PointerEvent) => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", cancel);
+      handle.removeEventListener("lostpointercapture", cancel);
+      if (
+        next.type === "pointerup" &&
+        target &&
+        (target.zone === "tabs" || target.zone !== "center")
+      ) {
+        if (target.zone === "tabs")
+          apply({ type: "merge-groups", groupId: group.id, targetGroupId: target.groupId });
+        else
+          apply({
+            type: "dock-group",
+            groupId: group.id,
+            targetGroupId: target.groupId,
+            axis: target.zone === "left" || target.zone === "right" ? "horizontal" : "vertical",
+            side: target.zone === "left" || target.zone === "top" ? "before" : "after",
+            splitId: randomUUID(),
+          });
+      } else apply({ type: "float-group", groupId: group.id, rect });
+      setFloatingOverride(null);
+      setDropTarget(null);
+      setResizing(false);
+    };
+    const cancel = (next: PointerEvent) => {
+      target = null;
+      stop(next);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop, { once: true });
+    handle.addEventListener("pointercancel", cancel, { once: true });
+    handle.addEventListener("lostpointercapture", cancel, { once: true });
   };
   const dropRect = dropTarget
     ? visibleGroups.find((group) => group.id === dropTarget.groupId)?.rect
@@ -615,6 +721,12 @@ export function ThreadTileWorkspace(props: {
               style={
                 {
                   ...rectStyle(rect),
+                  zIndex:
+                    group.floating && !layout.focusPairGroupId
+                      ? layout.focusedGroupId === id
+                        ? 52
+                        : 50
+                      : undefined,
                   "--tile-group-accent": `var(--tile-accent-${group.colorIndex ?? 0})`,
                 } as CSSProperties
               }
@@ -626,13 +738,16 @@ export function ThreadTileWorkspace(props: {
                 className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center gap-0.5 px-1 active:cursor-grabbing"
                 role="toolbar"
                 aria-label={`Move tile: ${title(group.activeTabId)}`}
-                draggable={!layout.focusPairGroupId}
+                draggable={!layout.focusPairGroupId && !group.floating}
                 onPointerDownCapture={(event) => {
                   headerDragBlocked.current =
                     event.target instanceof Element &&
                     Boolean(event.target.closest("button, a, input, [role=tab]"));
                 }}
-                onPointerDown={() => apply({ type: "focus", groupId: id })}
+                onPointerDown={(event) => {
+                  apply({ type: "focus", groupId: id });
+                  floatGesture(event, group);
+                }}
                 onDragStart={(event) => {
                   if (layout.focusPairGroupId || headerDragBlocked.current) {
                     event.preventDefault();
@@ -769,6 +884,24 @@ export function ThreadTileWorkspace(props: {
                     </MenuPopup>
                   </Menu>
                 </div>
+                {!layout.focusPairGroupId && (
+                  <TileControl
+                    label={group.floating ? "Dock tile" : "Float tile"}
+                    onClick={() =>
+                      apply(
+                        group.floating
+                          ? { type: "restore-group", groupId: id }
+                          : {
+                              type: "float-group",
+                              groupId: id,
+                              rect: { x: 0.15, y: 0.12, width: 0.65, height: 0.7 },
+                            },
+                      )
+                    }
+                  >
+                    {group.floating ? <Minimize2 /> : <Maximize2 />}
+                  </TileControl>
+                )}
                 {maximized && (
                   <Menu>
                     <MenuTrigger
@@ -977,7 +1110,10 @@ export function ThreadTileWorkspace(props: {
               {group.tabs.length === 0 && (
                 <div
                   className="flex h-full flex-col items-center justify-center gap-4 p-6"
-                  onPointerDown={() => apply({ type: "focus", groupId: id })}
+                  onPointerDown={(event) => {
+                    apply({ type: "focus", groupId: id });
+                    floatGesture(event, group);
+                  }}
                 >
                   <p className="text-sm font-medium">Choose an area</p>
                   <div className="flex max-w-sm flex-wrap justify-center gap-2">
@@ -1002,6 +1138,25 @@ export function ThreadTileWorkspace(props: {
             </section>
           );
         })}
+        {!maximized &&
+          floatingGroups.map((group) => {
+            const rect =
+              floatingOverride?.groupId === group.id ? floatingOverride.rect : group.floating!;
+            return (
+              <div
+                key={`resize-${group.id}`}
+                role="separator"
+                aria-label={`Resize floating ${title(group.activeTabId)}`}
+                className="absolute size-4 cursor-se-resize touch-none"
+                style={{
+                  left: `calc(${(rect.x + rect.width) * 100}% - 16px)`,
+                  top: `calc(${(rect.y + rect.height) * 100}% - 16px)`,
+                  zIndex: layout.focusedGroupId === group.id ? 54 : 52,
+                }}
+                onPointerDown={(event) => floatGesture(event, group, true)}
+              />
+            );
+          })}
         {[
           CONVERSATION_TAB_ID,
           ...props.panels.surfaces
@@ -1030,6 +1185,12 @@ export function ThreadTileWorkspace(props: {
               hidden={!visible}
               style={{
                 ...rectStyle(rect),
+                zIndex:
+                  group?.floating && !layout.focusPairGroupId
+                    ? layout.focusedGroupId === group.id
+                      ? 53
+                      : 51
+                    : undefined,
                 left: `calc(${rect.x * 100}% + var(--tile-border-width))`,
                 width: `calc(${rect.width * 100}% - 2 * var(--tile-border-width))`,
                 top: `calc(${rect.y * 100}% + var(--tile-titlebar-height))`,
@@ -1143,9 +1304,9 @@ export function ThreadTileWorkspace(props: {
             </span>
           </div>
         )}
-        {dragging && dropTarget && dropStyle && (
+        {(dragging || floatingOverride) && dropTarget && dropStyle && (
           <div
-            className="pointer-events-none absolute z-30 rounded-sm border-2 border-ring bg-ring/15"
+            className="pointer-events-none absolute z-[60] rounded-sm border-2 border-ring bg-ring/15"
             style={dropStyle}
             aria-hidden="true"
           />

@@ -41,6 +41,9 @@ import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { useXwingEnvironmentsSupport } from "../state/xwingEnvironments";
+import { useAtomValue } from "@effect/atom-react";
+import { createDevelopmentEnvironment } from "../state/developmentEnvironmentLifecycle";
 import { XwingCheckoutChooser } from "./xwing/XwingCheckoutChooser";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
@@ -159,6 +162,8 @@ interface RunContextSelectorProps {
   previousWorktreeLabel: string | null;
   previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
+  onNewEnvironment?: (() => void) | undefined;
+  selectedWorkspaceLabel?: string | undefined;
   addTargets: readonly AddProjectTarget[];
   onAddToMachine: (environmentId: EnvironmentId) => void;
 }
@@ -182,6 +187,8 @@ const RunContextSelector = memo(function RunContextSelector({
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
+  onNewEnvironment,
+  selectedWorkspaceLabel,
   addTargets,
   onAddToMachine,
 }: RunContextSelectorProps) {
@@ -194,17 +201,21 @@ const RunContextSelector = memo(function RunContextSelector({
       : activeWorktreePath
         ? FolderGitIcon
         : FolderIcon;
-  const workspaceLabel = forceNewWorktree
-    ? resolveEnvModeLabel("worktree")
-    : envModeLocked
-      ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
-      : effectiveEnvMode === "worktree"
-        ? resolveEnvModeLabel("worktree")
-        : resolveCurrentWorkspaceLabel(activeWorktreePath);
+  const workspaceLabel =
+    selectedWorkspaceLabel ??
+    (forceNewWorktree
+      ? resolveEnvModeLabel("worktree")
+      : envModeLocked
+        ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
+        : effectiveEnvMode === "worktree"
+          ? resolveEnvModeLabel("worktree")
+          : resolveCurrentWorkspaceLabel(activeWorktreePath));
   const isPanel = displayMode === "panel";
   const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
   const workspacePath =
-    forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
+    selectedWorkspaceLabel ||
+    forceNewWorktree ||
+    (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
       : (activeWorktreePath ?? workspaceRoot);
   const handleContextMenu = (event: ReactMouseEvent) => {
@@ -395,8 +406,12 @@ const RunContextSelector = memo(function RunContextSelector({
         <MenuGroup>
           <MenuGroupLabel>Workspace</MenuGroupLabel>
           <MenuRadioGroup
-            value={effectiveEnvMode}
+            value={selectedWorkspaceLabel ? "xwing-environment" : effectiveEnvMode}
             onValueChange={(value) => {
+              if (value === "new-environment") {
+                onNewEnvironment?.();
+                return;
+              }
               if (value === "previous-worktree") {
                 onUsePreviousWorktree();
                 return;
@@ -414,10 +429,19 @@ const RunContextSelector = memo(function RunContextSelector({
                 <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
               </span>
             </MenuRadioItem>
+            {onNewEnvironment ? (
+              <MenuRadioItem disabled={envModeLocked} value="new-environment" closeOnClick>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <FolderGit2Icon className="size-3" /> New environment
+                </span>
+              </MenuRadioItem>
+            ) : null}
             <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
               <span className="flex min-w-0 items-center gap-1.5">
                 <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+                <span className="min-w-0 truncate">
+                  {onNewEnvironment ? "Native worktree" : resolveEnvModeLabel("worktree")}
+                </span>
               </span>
             </MenuRadioItem>
             {previousWorktreeLabel ? (
@@ -621,14 +645,28 @@ export const BranchToolbar = memo(function BranchToolbar({
   trailing,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
+  const [createEnvironmentOpen, setCreateEnvironmentOpen] = useState(false);
+  const supportsXwing = useXwingEnvironmentsSupport(environmentId);
+  const canCreateEnvironment = useAtomValue(
+    createDevelopmentEnvironment.permissionAtom(environmentId),
+  );
   const threadRef = scopeThreadRef(environmentId, threadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const draftXwingEnvironment = useComposerDraftStore(
+    (store) =>
+      (draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef))
+        ?.xwingEnvironment,
+  );
   // The composer retains resolved thread details while bootstrap cleanup can remove its shell.
   const activeProjectRef = scopeProjectRef(environmentId, projectId);
   const activeProject = useProject(activeProjectRef);
   const activeWorktreePath = forceNewWorktree ? null : worktreePath;
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (isServerThread && activeWorktreePath !== null);
+  const onNewEnvironment =
+    supportsXwing && canCreateEnvironment && !forceNewWorktree && !envModeLocked
+      ? () => setCreateEnvironmentOpen(true)
+      : undefined;
 
   const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forceNewWorktree;
   const projectRefsForWorktreeLookup = canUsePreviousWorktree ? [activeProjectRef] : [];
@@ -695,6 +733,16 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (layout === "panel") {
     return (
       <div className="flex w-full flex-col" data-thread-panel-run-context>
+        {showGitControls && showXwingChooser && panelSection !== "branch" ? (
+          <XwingCheckoutChooser
+            environmentId={environmentId}
+            threadId={threadId}
+            draftId={draftId}
+            projectId={projectId}
+            createOpen={createEnvironmentOpen}
+            onCreateOpenChange={setCreateEnvironmentOpen}
+          />
+        ) : null}
         {panelSection !== "branch" ? (
           <RunContextSelector
             displayMode="panel"
@@ -715,6 +763,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            onNewEnvironment={onNewEnvironment}
+            selectedWorkspaceLabel={!isServerThread ? draftXwingEnvironment?.label : undefined}
             addTargets={addTargets}
             onAddToMachine={onAddToMachine}
           />
@@ -765,6 +815,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            onNewEnvironment={onNewEnvironment}
+            selectedWorkspaceLabel={!isServerThread ? draftXwingEnvironment?.label : undefined}
             addTargets={addTargets}
             onAddToMachine={onAddToMachine}
           />
@@ -808,6 +860,8 @@ export const BranchToolbar = memo(function BranchToolbar({
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
+              onNewEnvironment={onNewEnvironment}
+              selectedWorkspaceLabel={!isServerThread ? draftXwingEnvironment?.label : undefined}
             />
           ) : null}
         </div>
@@ -819,6 +873,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           threadId={threadId}
           draftId={draftId}
           projectId={projectId}
+          createOpen={createEnvironmentOpen}
+          onCreateOpenChange={setCreateEnvironmentOpen}
         />
       ) : null}
       {showGitControls ? (

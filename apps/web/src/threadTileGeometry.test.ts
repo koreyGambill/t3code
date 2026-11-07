@@ -5,10 +5,24 @@ import {
   tileGeometry,
   resizeTileSplits,
   resizeTileRatio,
+  tileDropOrder,
 } from "./threadTileGeometry";
 import { syncTileLayout, applyTileAction, getTileGroups, type TileNode } from "./threadTileLayout";
 
 describe("tile geometry", () => {
+  it("hit-tests the focused floating tile above later overlapping tiles", () => {
+    const groups = [{ id: "docked" }, { id: "front" }, { id: "back" }];
+    expect(tileDropOrder(groups, "front").map((group) => group.id)).toEqual([
+      "front",
+      "back",
+      "docked",
+    ]);
+    expect(tileDropOrder(groups, null).map((group) => group.id)).toEqual([
+      "back",
+      "front",
+      "docked",
+    ]);
+  });
   it("covers nested splits and navigates to the nearest tile in each direction", () => {
     const group = (id: string): TileNode => ({ kind: "group", id, tabs: [id], activeTabId: id });
     const root: TileNode = {

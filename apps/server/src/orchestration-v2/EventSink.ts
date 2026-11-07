@@ -1,5 +1,6 @@
 import {
   CommandId,
+  MessageId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -139,6 +140,11 @@ export interface EventSinkV2Shape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly commandType: string;
+    readonly replyRequest?: {
+      readonly messageId: MessageId;
+      readonly senderThreadId: ThreadId;
+      readonly targetThreadId: ThreadId;
+    };
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -683,6 +689,14 @@ const layerBase: Layer.Layer<
             status: "accepted",
             error: null,
           };
+          if (input.replyRequest !== undefined) {
+            const request = input.replyRequest;
+            yield* sql`
+              INSERT INTO thread_reply_requests (message_id, sender_thread_id, target_thread_id, created_at)
+              VALUES (${request.messageId}, ${request.senderThreadId}, ${request.targetThreadId}, ${DateTime.formatIso(input.acceptedAt)})
+              ON CONFLICT (message_id) DO NOTHING
+            `;
+          }
           yield* commandReceipts.upsert(receipt);
           const cancelledEffectIds =
             input.cancelUnsettledEffects === undefined

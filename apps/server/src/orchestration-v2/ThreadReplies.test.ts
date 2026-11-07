@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -41,12 +42,14 @@ interface World {
   readonly waits: Array<{ readonly ends: OrchestrationV2Run }>;
   messageRunId: RunId;
   targetDeleted: boolean;
+  crashAfterReplyCommit?: boolean;
 }
 
 const threadsFor = (
   world: World,
   waited: Ref.Ref<ReadonlyArray<RunId | undefined>>,
   delivered: Deferred.Deferred<Dispatch>,
+  sql: SqlClient.SqlClient,
 ) =>
   Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadRecords: ((
@@ -96,7 +99,16 @@ const threadsFor = (
         }),
       ),
     dispatch: (command) =>
-      Deferred.succeed(delivered, command as Dispatch).pipe(Effect.as({ sequence: 1 } as never)),
+      Effect.gen(function* () {
+        if (world.crashAfterReplyCommit !== undefined) {
+          yield* sql`INSERT INTO test_reply_deliveries (message_id) VALUES (${(command as Dispatch).messageId}) ON CONFLICT DO NOTHING`.pipe(
+            Effect.orDie,
+          );
+        }
+        yield* Deferred.succeed(delivered, command as Dispatch);
+        if (world.crashAfterReplyCommit) return yield* Effect.never;
+        return { sequence: 1 } as never;
+      }),
   });
 
 const environment = Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -110,15 +122,16 @@ const serve = <A, E>(
     replies: ThreadReplies.ThreadReplies["Service"],
     delivered: Deferred.Deferred<Dispatch>,
     waited: Ref.Ref<ReadonlyArray<RunId | undefined>>,
-  ) => Effect.Effect<A, E, Scope.Scope>,
+  ) => Effect.Effect<A, E, Scope.Scope | SqlClient.SqlClient>,
 ) =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
     const delivered = yield* Deferred.make<Dispatch>();
     const waited = yield* Ref.make<ReadonlyArray<RunId | undefined>>([]);
     const scope = yield* Scope.make();
     const context = yield* Layer.buildWithScope(
       ThreadReplies.layer.pipe(
-        Layer.provide(Layer.mergeAll(threadsFor(world, waited, delivered), environment)),
+        Layer.provide(Layer.mergeAll(threadsFor(world, waited, delivered, sql), environment)),
       ),
       scope,
     );
@@ -127,6 +140,14 @@ const serve = <A, E>(
       Effect.ensuring(Scope.close(scope, Exit.void)),
     );
   }).pipe(Effect.provideService(ThreadReplies.ReplyRetrySchedule, Schedule.recurs(0)));
+
+const admit = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    INSERT INTO thread_reply_requests (message_id, sender_thread_id, target_thread_id, created_at)
+    VALUES (${request.messageId}, ${sender}, ${target}, '2026-11-07T00:00:00Z')
+  `;
+});
 
 describe("ThreadReplies", () => {
   it.effect("replies once the run that took a moved message ends", () =>
@@ -149,7 +170,11 @@ describe("ThreadReplies", () => {
       yield* serve(world, (replies, delivered, waited) =>
         Effect.gen(function* () {
           expect(yield* replies.owes({ threadId: target, to: sender })).toBe(false);
-          yield* replies.request(request);
+          expect(yield* replies.followCommitted(request.messageId)).toBe(false);
+          expect(yield* Deferred.isDone(delivered)).toBe(false);
+          expect(yield* Ref.get(waited)).toEqual([]);
+          yield* admit;
+          expect(yield* replies.followCommitted(request.messageId)).toBe(true);
           expect(yield* replies.owes({ threadId: target, to: sender })).toBe(true);
           expect(yield* replies.owes({ threadId: sender, to: target })).toBe(false);
           const reply = yield* Deferred.await(delivered);
@@ -183,8 +208,9 @@ describe("ThreadReplies", () => {
         messageRunId: RunId.make("run:replies:steered"),
         targetDeleted: false,
       };
-      // The first lifetime records the request and stops while its thread still works.
-      yield* serve(world, (replies) => replies.request(request));
+      // The send commits, then the server stops before its caller starts the follower.
+      yield* admit;
+      yield* serve(world, () => Effect.void);
       world.waits.push({ ends: run("run:replies:steered", "failed") });
       const reply = yield* serve(world, (replies, delivered) =>
         replies.start().pipe(Effect.andThen(Deferred.await(delivered))),
@@ -195,6 +221,30 @@ describe("ThreadReplies", () => {
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 
+  it.effect("retries a reply committed before acknowledgement with the same message id", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE test_reply_deliveries (message_id TEXT PRIMARY KEY)`;
+      const world: World = {
+        waits: [{ ends: run("run:replies:steered", "completed") }],
+        messageRunId: RunId.make("run:replies:steered"),
+        targetDeleted: false,
+        crashAfterReplyCommit: true,
+      };
+      yield* admit;
+      yield* serve(world, (replies, delivered) =>
+        replies.followCommitted(request.messageId).pipe(Effect.andThen(Deferred.await(delivered))),
+      );
+      world.crashAfterReplyCommit = false;
+      yield* serve(world, (replies, delivered) =>
+        replies.start().pipe(Effect.andThen(Deferred.await(delivered))),
+      );
+      expect(yield* sql`SELECT message_id FROM test_reply_deliveries`).toEqual([
+        { message_id: ThreadReplies.replyMessageId(request.messageId) },
+      ]);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
+
   it.effect("tells the sender when the thread is deleted before it replies", () =>
     Effect.gen(function* () {
       const world: World = {
@@ -202,8 +252,9 @@ describe("ThreadReplies", () => {
         messageRunId: RunId.make("run:replies:steered"),
         targetDeleted: true,
       };
+      yield* admit;
       const reply = yield* serve(world, (replies, delivered) =>
-        replies.request(request).pipe(Effect.andThen(Deferred.await(delivered))),
+        replies.followCommitted(request.messageId).pipe(Effect.andThen(Deferred.await(delivered))),
       );
       expect(reply.notification?.outcome).toBe("failed");
       expect(reply.text).toContain("was deleted before it replied");
