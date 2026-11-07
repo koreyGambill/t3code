@@ -2727,17 +2727,22 @@ code {
   opacity: 0;
   animation: thread-attention-flash var(--thread-attention-duration) ease-out both;
 }
+.thread-attention-flash > svg {
+  stroke-width: 0.3;
+  filter: drop-shadow(0 0 2px var(--thread-glyph-dark))
+    drop-shadow(0 0 10px var(--thread-glyph-dark));
+}
 @keyframes thread-attention-flash {
   0% {
     opacity: 0;
     transform: scale(0.88);
   }
   12% {
-    opacity: 0.7;
+    opacity: 0.95;
     transform: scale(1);
   }
   45% {
-    opacity: 0.6;
+    opacity: 0.8;
   }
   100% {
     opacity: 0;
@@ -2747,6 +2752,6 @@ code {
 @media (prefers-reduced-motion: reduce) {
   .thread-attention-flash {
     animation: none;
-    opacity: 0.45;
+    opacity: 0.7;
   }
 }
