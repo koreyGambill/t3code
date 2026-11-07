@@ -100,8 +100,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --tile-accent-5: #8a7010;
   --tile-accent-6: #b4343a;
   --tile-accent-7: #3555b1;
-  --weavewing-blue: #087da3;
-  --weavewing-orange: #b75c17;
+  --weavewing-green: #087b56;
+  --weavewing-yellow: #916500;
   --app-scrollbar-width: 6px;
   --appearance-contrast-base: 100%;
   --appearance-contrast-boost: 0%;
@@ -165,8 +165,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --tile-accent-5: #f5df79;
     --tile-accent-6: #ff8188;
     --tile-accent-7: #92baff;
-    --weavewing-blue: #70dcff;
-    --weavewing-orange: #fdba74;
+    --weavewing-green: #20e99b;
+    --weavewing-yellow: #ffd84a;
     --appearance-contrast-target: white;
     --app-scrollbar-thumb: rgb(255 255 255 / 8%);
     --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);

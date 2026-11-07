@@ -251,7 +251,7 @@ export function WelcomeWizard({
             <div className="flex items-center gap-1.5" role="img" aria-label="Weavewing">
               <WeavewingMark className="size-8 shrink-0" aria-hidden />
               <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                weave<span className="text-(--weavewing-orange)">wing</span>
+                weave<span className="text-(--weavewing-yellow)">wing</span>
               </span>
             </div>
           }
