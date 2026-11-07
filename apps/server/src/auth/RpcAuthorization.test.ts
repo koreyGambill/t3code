@@ -39,6 +39,7 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.threadWorkspaceGet,
       WS_METHODS.threadWorkspaceCounts,
+      WS_METHODS.threadWorkspaceListWork,
       WS_METHODS.reviewsGet,
       WS_METHODS.reviewsList,
       WS_METHODS.reviewsDue,
@@ -51,6 +52,19 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.reviewsSubmit,
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+  });
+
+  it("lets read-only connections discover Xwing environments but not move threads into one", () => {
+    for (const method of [
+      WS_METHODS.xwingEnvironmentsList,
+      WS_METHODS.xwingEnvironmentsInspect,
+      WS_METHODS.developmentEnvironmentsListCheckouts,
+      WS_METHODS.developmentEnvironmentsListUsage,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.developmentEnvironmentsSelectCheckout)).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 
   it("allows imported transcript observation with read scope", () => {

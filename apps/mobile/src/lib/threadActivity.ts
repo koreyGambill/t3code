@@ -498,6 +498,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
         return "command";
       case "monitor":
         return "eye";
+      case "thread_reply":
       case "background_task":
       case "system":
         return "zap";

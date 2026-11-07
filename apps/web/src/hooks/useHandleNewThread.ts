@@ -3,7 +3,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
@@ -37,6 +42,7 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { usePreferredEnvironmentId } from "../state/preferredEnvironment";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -423,12 +429,16 @@ export function createNewThreadHandler(router: AnyRouter) {
   };
 }
 
+/** The first project in sidebar order, taken from the preferred machine when it has any. */
 export function resolveDefaultProjectRef(
   projects: ReadonlyArray<EnvironmentProject>,
   projectOrder: readonly string[],
+  preferredEnvironmentId: EnvironmentId | null = null,
 ): ScopedProjectRef | null {
+  const active = projects.filter((project) => project.archivedAt == null);
+  const onPreferred = active.filter((project) => project.environmentId === preferredEnvironmentId);
   const [defaultProject] = orderItemsByPreferredIds({
-    items: projects.filter((project) => project.archivedAt == null),
+    items: onPreferred.length > 0 ? onPreferred : active,
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
     getPreferenceIds: (project) => [
@@ -455,7 +465,12 @@ export function useHandleNewThread() {
   );
   const projects = useProjects();
   const handleNewThread = useNewThreadHandler();
-  const defaultProjectRef = resolveDefaultProjectRef(projects, projectOrder);
+  const preferredEnvironmentId = usePreferredEnvironmentId();
+  const defaultProjectRef = resolveDefaultProjectRef(
+    projects,
+    projectOrder,
+    preferredEnvironmentId,
+  );
 
   return {
     activeDraftThread,

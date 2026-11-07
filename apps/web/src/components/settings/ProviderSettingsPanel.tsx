@@ -52,11 +52,8 @@ import { ensureLocalApi } from "../../localApi";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
-import {
-  useEnvironments,
-  usePrimaryEnvironmentId,
-  type EnvironmentPresentation,
-} from "../../state/environments";
+import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import { useDefaultEnvironmentId } from "../../state/preferredEnvironment";
 import {
   EMPTY_SERVER_PROVIDERS,
   providersIgnoringCheckedAtAtom,
@@ -103,7 +100,6 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
-import { CompactIdleThreadsRow } from "./SettingsPanels";
 import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
@@ -319,15 +315,15 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
 
 function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const { environments, isReady } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const defaultEnvironmentId = useDefaultEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
   const options = buildProviderEnvironmentOptions(
     environments,
-    primaryEnvironmentId,
+    defaultEnvironmentId,
     target.environmentIds,
   );
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
-    target.environmentId ?? primaryEnvironmentId,
+    target.environmentId ?? defaultEnvironmentId,
   );
   const targetEnvironmentMissing =
     target.environmentId !== undefined &&
@@ -336,7 +332,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const effectiveEnvironmentId =
     target.scoped || targetEnvironmentMissing
       ? target.environmentId
-      : resolveSelectedProviderEnvironmentId(options, selectedEnvironmentId, primaryEnvironmentId);
+      : resolveSelectedProviderEnvironmentId(options, selectedEnvironmentId, defaultEnvironmentId);
   const selectedEnvironment =
     options.find((environment) => environment.environmentId === effectiveEnvironmentId) ?? null;
   const selectedEnvironmentCanRenderSettings =
@@ -1173,7 +1169,6 @@ export function EnvironmentProviderSettings({
             </div>
           }
         />
-        <CompactIdleThreadsRow />
       </SettingsSection>
 
       {isAddInstanceDialogOpen && !readOnly ? (

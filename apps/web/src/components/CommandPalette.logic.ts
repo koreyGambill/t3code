@@ -9,6 +9,7 @@ import {
   type SearchRange,
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
+import { chooseWorkEnvironment, chosenEnvironmentId } from "@t3tools/client-runtime/environment";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
@@ -168,10 +169,10 @@ export type AddProjectEntry =
   | { readonly kind: "choose-source"; readonly environmentId: EnvironmentId };
 
 export function resolveAddProjectEntry(
-  options: ReadonlyArray<Pick<AddProjectEnvironmentOption, "environmentId">>,
+  options: ReadonlyArray<Pick<AddProjectEnvironmentOption, "environmentId" | "isConnected">>,
   defaultEnvironmentId: EnvironmentId | null,
 ): AddProjectEntry {
-  if (options.length === 0) return { kind: "connect-environment" };
+  if (!options.some((option) => option.isConnected)) return { kind: "connect-environment" };
   if (options.length > 1 || defaultEnvironmentId === null) return { kind: "choose-environment" };
   return { kind: "choose-source", environmentId: defaultEnvironmentId };
 }
@@ -809,8 +810,41 @@ export interface AddProjectEnvironmentOption {
   readonly label: string;
   readonly machine: EnvironmentMachineKind;
   readonly isPrimary: boolean;
+  readonly isPreferred: boolean;
   readonly isConnected: boolean;
   readonly status: string;
+}
+
+/**
+ * Machines a new project can go to, preferred first and then primary. An unreachable
+ * preferred machine stays listed, disabled, so the user sees why it was not picked.
+ */
+export function buildEnvironmentChoice(
+  environments: ReadonlyArray<Omit<AddProjectEnvironmentOption, "isPreferred">>,
+  preferredEnvironmentId: EnvironmentId | null,
+): {
+  readonly options: ReadonlyArray<AddProjectEnvironmentOption>;
+  readonly defaultEnvironmentId: EnvironmentId | null;
+} {
+  const options = environments
+    .map((environment) => ({
+      ...environment,
+      isPreferred: environment.environmentId === preferredEnvironmentId,
+    }))
+    .filter((option) => option.isConnected || option.isPreferred)
+    .toSorted(
+      (left, right) =>
+        Number(right.isPreferred) - Number(left.isPreferred) ||
+        Number(right.isPrimary) - Number(left.isPrimary) ||
+        left.label.localeCompare(right.label),
+    );
+  const choice = chooseWorkEnvironment({
+    preferred: preferredEnvironmentId,
+    isKnown: (id) => options.some((option) => option.environmentId === id),
+    isUsable: (id) => options.some((option) => option.environmentId === id && option.isConnected),
+    fallback: () => options.find((option) => option.isConnected)?.environmentId ?? null,
+  });
+  return { options, defaultEnvironmentId: chosenEnvironmentId(choice) };
 }
 
 export type AddProjectCloneFlow =

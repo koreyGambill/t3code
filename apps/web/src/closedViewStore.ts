@@ -65,6 +65,11 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     case "notes":
     case "pull-requests":
       return surface.id === surface.kind || surface.id.startsWith(`${surface.kind}:`);
+    case "environments":
+      return (
+        (surface.id === "environments" || surface.id.startsWith("environments:")) &&
+        (surface.xwingEnvironmentId === undefined || typeof surface.xwingEnvironmentId === "string")
+      );
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";
     case "file":

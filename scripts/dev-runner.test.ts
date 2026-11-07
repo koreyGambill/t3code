@@ -62,6 +62,7 @@ const devServerInput = {
   logWebSocketEvents: undefined,
   host: undefined,
   port: 13_773,
+  webPort: undefined,
   devUrl: undefined,
   dryRun: false,
   share: false,
@@ -166,8 +167,33 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           assert.equal(env.VITE_HTTP_URL, undefined);
           assert.equal(env.VITE_WS_URL, undefined);
           assert.equal(env.T3CODE_PORT, "13773");
+          assert.equal(env.PORT, "5733");
           assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
         }),
+    );
+
+    it.effect("serves Vite and the dev URL on an explicit web port", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: { PORT: "3000" },
+          serverOffset: 7,
+          webOffset: 7,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: 41_001,
+          webPort: 41_000,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.PORT, "41000");
+        assert.equal(env.T3CODE_PORT, "41001");
+        assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:41000");
+        assert.equal(env.VITE_HTTP_URL, undefined);
+      }),
     );
 
     it.effect.each(["dev", "dev:web"] as const)("drops an inherited HOST in %s mode", (mode) =>
@@ -280,7 +306,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         yield* resolveModePortOffsets({
           mode: "dev",
           startOffset: 0,
-          hasExplicitServerPort: false,
           hasExplicitDevUrl: false,
           checkPortAvailability: (port, role) => {
             probed.push({ port, role });
@@ -303,7 +328,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const offsets = yield* resolveModePortOffsets({
           mode: "dev",
           startOffset: 0,
-          hasExplicitServerPort: false,
           hasExplicitDevUrl: false,
           checkPortAvailability: (port) => Effect.succeed(!taken.has(port)),
         });
@@ -318,7 +342,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const offsets = yield* resolveModePortOffsets({
           mode: "dev:web",
           startOffset: 0,
-          hasExplicitServerPort: false,
           hasExplicitDevUrl: false,
           checkPortAvailability: (port) => Effect.succeed(!taken.has(port)),
         });
@@ -333,7 +356,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const offsets = yield* resolveModePortOffsets({
           mode: "dev:server",
           startOffset: 0,
-          hasExplicitServerPort: false,
           hasExplicitDevUrl: false,
           checkPortAvailability: (port) => Effect.succeed(!taken.has(port)),
         });
@@ -342,12 +364,92 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect.each([
+      {
+        mode: "dev",
+        serverPort: undefined,
+        probed: [
+          { port: 41_000, role: "web" },
+          { port: 13_773, role: "server" },
+        ],
+      },
+      {
+        mode: "dev",
+        serverPort: 41_001,
+        probed: [
+          { port: 41_001, role: "server" },
+          { port: 41_000, role: "web" },
+        ],
+      },
+      // dev:web proxies to a backend another process owns.
+      { mode: "dev:web", serverPort: 41_001, probed: [{ port: 41_000, role: "web" }] },
+      { mode: "dev:server", serverPort: 41_001, probed: [{ port: 41_001, role: "server" }] },
+    ] as const)(
+      "binds explicit ports exactly in $mode with server port $serverPort",
+      ({ mode, serverPort, probed }) =>
+        Effect.gen(function* () {
+          const seen: Array<{ port: number; role: string | undefined }> = [];
+          const offsets = yield* resolveModePortOffsets({
+            mode,
+            startOffset: 0,
+            serverPort,
+            webPort: 41_000,
+            hasExplicitDevUrl: false,
+            checkPortAvailability: (port, role) => {
+              seen.push({ port, role });
+              return Effect.succeed(true);
+            },
+          });
+
+          assert.deepStrictEqual(offsets, { serverOffset: 0, webOffset: 0 });
+          assert.deepStrictEqual(seen, [...probed]);
+        }),
+    );
+
+    it.effect.each([
+      { mode: "dev", role: "server", serverPort: 41_001, webPort: undefined, occupied: 41_001 },
+      {
+        mode: "dev:server",
+        role: "server",
+        serverPort: 41_001,
+        webPort: undefined,
+        occupied: 41_001,
+      },
+      { mode: "dev", role: "web", serverPort: undefined, webPort: 41_000, occupied: 41_000 },
+      { mode: "dev:web", role: "web", serverPort: undefined, webPort: 41_000, occupied: 41_000 },
+      {
+        mode: "dev:desktop",
+        role: "web",
+        serverPort: undefined,
+        webPort: 41_000,
+        occupied: 41_000,
+      },
+    ] as const)(
+      "refuses an occupied explicit $role port in $mode instead of moving it",
+      ({ mode, role, serverPort, webPort, occupied }) =>
+        Effect.gen(function* () {
+          const error = yield* resolveModePortOffsets({
+            mode,
+            startOffset: 0,
+            serverPort,
+            webPort,
+            hasExplicitDevUrl: false,
+            checkPortAvailability: (port) => Effect.succeed(port !== occupied),
+          }).pipe(Effect.flip);
+
+          if (error._tag !== "DevRunnerPortUnavailableError") {
+            assert.fail(`Unexpected error: ${error._tag}`);
+          }
+          assert.equal(error.role, role);
+          assert.equal(error.port, occupied);
+        }),
+    );
+
     it.effect("respects explicit dev-url override for dev:web", () =>
       Effect.gen(function* () {
         const offsets = yield* resolveModePortOffsets({
           mode: "dev:web",
           startOffset: 0,
-          hasExplicitServerPort: false,
           hasExplicitDevUrl: true,
           checkPortAvailability: () => Effect.succeed(false),
         });
@@ -480,6 +582,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         readonly ambientBundledDev?: string | undefined;
         readonly built?: boolean;
         readonly host?: string;
+        readonly webPort?: number;
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -530,6 +633,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             share: true,
             built: input.built ?? false,
             host: input.host,
+            webPort: input.webPort,
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcess.Platform, "linux"),
@@ -582,6 +686,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           assert.equal(env?.T3CODE_BUNDLED_DEV, "1");
           const serve = tailscaleCalls.find((args) => args.includes("--bg"));
           assert.equal(serve?.at(-1), `http://localhost:${env?.PORT}`);
+        }),
+      );
+
+      it.effect("shares an explicit web port", () =>
+        Effect.gen(function* () {
+          const { env, tailscaleCalls } = yield* shareSpawned({ webPort: 41_000 });
+          assert.equal(env?.PORT, "41000");
+          const serve = tailscaleCalls.find((args) => args.includes("--bg"));
+          assert.deepEqual(serve?.slice(-2), ["--https=41000", "http://localhost:41000"]);
         }),
       );
     });

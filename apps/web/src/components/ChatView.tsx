@@ -69,12 +69,10 @@ import {
   type MessageId,
   type ModelSelection,
   type PreviewAnnotationPayload,
-  ProviderInstanceId,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
-  resolveIdleCompaction,
   RuntimeMode,
 } from "@t3tools/contracts";
 import {
@@ -280,6 +278,7 @@ import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ImportedSessionProgress } from "./chat/ImportedSessionProgress";
 import { useReviewSupport } from "./reviews/useReviewSupport";
+import { useXwingEnvironmentsSupport } from "../state/xwingEnvironments";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
@@ -325,9 +324,7 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/ContextWindowMeter.logic";
 import {
   deriveLatestContextWindowSnapshot,
-  hasDismissedResumeCompaction,
   latestProviderTurnTokenUsage,
-  shouldOfferResumeCompaction,
 } from "@t3tools/client-runtime/state/context-window";
 import {
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
@@ -698,7 +695,7 @@ export default function ChatView(props: ChatViewProps) {
   const prefersPlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
-  const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
+  const threadPanelPopoverAnchorRef = useRef<HTMLDivElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   // Overrides chosen before a server thread's first turn; they belong to that thread only.
@@ -984,6 +981,9 @@ export default function ChatView(props: ChatViewProps) {
   })();
   const activeThreadRef = useActiveThreadRef(activeThread);
   const reviewsSupported = useReviewSupport(activeThreadRef?.environmentId ?? null);
+  const xwingEnvironmentsSupported = useXwingEnvironmentsSupport(
+    activeThreadRef?.environmentId ?? null,
+  );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
@@ -1666,30 +1666,6 @@ export default function ChatView(props: ChatViewProps) {
       ? (activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId ?? null)
       : null,
   });
-  const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
-    useLocalStorage(
-      `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
-      false,
-      Schema.Boolean,
-    );
-  const nativeResumeCompactionDismissed = hasDismissedResumeCompaction(
-    (serverProjection?.runtimeRequests ?? [])
-      .filter((request) => request.kind === "user_input" && request.status === "resolved")
-      .map((request) => ({
-        kind: "user-input.resolved",
-        payload: { answers: request.answers },
-      })),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the server-reported resume compaction dismissal to localStorage
-  useEffect(() => {
-    if (nativeResumeCompactionDismissed && !resumeCompactionPermanentlyDismissed) {
-      setResumeCompactionPermanentlyDismissed(true);
-    }
-  }, [
-    nativeResumeCompactionDismissed,
-    resumeCompactionPermanentlyDismissed,
-    setResumeCompactionPermanentlyDismissed,
-  ]);
   const [dismissedFallbackWindow, setDismissedFallbackWindow] = useLocalStorage(
     `t3code:fallback-notice-dismissed:${environmentId}`,
     null,
@@ -2494,47 +2470,12 @@ export default function ChatView(props: ChatViewProps) {
           ? "Compaction is unavailable for this provider"
           : "Compacting is unavailable right now"
     : null;
-  const resumeCompactionTokens =
-    activeContextWindow &&
-    resolveIdleCompaction(
-      settings,
-      activeProviderInstanceId ?? ProviderInstanceId.make("claudeAgent"),
-    ) !== "off" &&
-    !resumeCompactionPermanentlyDismissed &&
-    !nativeResumeCompactionDismissed &&
-    !compactDisabled &&
-    !hasHeldQueuedRuns &&
-    multipleModelSelections === null &&
-    shouldOfferResumeCompaction({
-      provider: selectedProvider,
-      usedTokens: activeContextWindow.usedTokens,
-      updatedAt: activeContextWindow.updatedAt,
-      promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
-      now: `${nowMinute}:00.000Z`,
-    })
-      ? activeContextWindow.usedTokens
-      : null;
-  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
-  const setKeepFullHistory = (threadKey: string, keep: boolean) => {
-    setFullHistoryThreadKeys((current) => {
-      if (current.has(threadKey) === keep) return current;
-      const next = new Set(current);
-      if (keep) next.add(threadKey);
-      else next.delete(threadKey);
-      return next;
-    });
-  };
   const freshSessionAvailable =
     activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
   // While a question or approval owns the composer, its text answers that, not the agent.
   const freshSessionCommandAvailable =
     freshSessionAvailable && activePendingApproval === null && pendingUserInputs.length === 0;
   const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
-  const toggleKeepFullHistory = () => setKeepFullHistory(routeThreadKey, !keepFullHistory);
-  const toggleKeepFullHistoryStable = useStableCallback(toggleKeepFullHistory);
   const armFreshSessionStable = useStableCallback(() => armFreshSession(routeThreadKey));
   const handleRestoreThreadBranch = () => {
     if (!canWriteSourceControl) return;
@@ -2668,6 +2609,7 @@ export default function ChatView(props: ChatViewProps) {
     terminalUiLaunchContext !== null &&
     (terminalUiLaunchContext.threadId !== activeThreadId ||
       !terminalUiState.terminalOpen ||
+      (activeThreadWorktreePath ?? null) !== terminalUiLaunchContext.threadWorktreePath ||
       (activeProjectCwd !== null &&
         projectScriptCwd({
           project: { cwd: activeProjectCwd },
@@ -2952,9 +2894,7 @@ export default function ChatView(props: ChatViewProps) {
     isDraftHeroState,
     panelAnimationsActive,
     panelAnimationDurationMs,
-    keepFullHistory,
     freshSessionAvailable: freshSessionCommandAvailable,
-    resumeCompactionTokens,
     showPlanFollowUpPrompt,
     usageLimitsKey,
     usageLimitsOffered,
@@ -2981,7 +2921,6 @@ export default function ChatView(props: ChatViewProps) {
     },
     setFeedbackSubmissionsByThreadKey,
     setThreadError,
-    setKeepFullHistory,
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
     handleInteractionModeChange,
@@ -3563,6 +3502,7 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
               <div
+                ref={threadPanelPopoverAnchorRef}
                 data-chat-composer-stack="true"
                 className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
               >
@@ -3628,12 +3568,7 @@ export default function ChatView(props: ChatViewProps) {
                           <ChatComposer
                             cornerControls={
                               isServerThread ? (
-                                <div
-                                  ref={(node) => {
-                                    threadPanelPopoverAnchorRef.current = node;
-                                  }}
-                                  className="flex flex-col items-center gap-1"
-                                >
+                                <div className="flex flex-col items-center gap-1">
                                   {activeThread.lineage.sideChat !== true &&
                                     (() => {
                                       const source = resolveLatestForkableAssistantItem({
@@ -3719,9 +3654,6 @@ export default function ChatView(props: ChatViewProps) {
                                 ? EMPTY_COMPOSER_BANNER_ITEMS
                                 : composerBannerItems
                             }
-                            resumeCompactionTokens={resumeCompactionTokens}
-                            keepFullHistory={keepFullHistory}
-                            onToggleKeepFullHistory={toggleKeepFullHistoryStable}
                             sideChatAvailable={sideChat.available}
                             sideChatDisabledReason={sideChatDisabledReason}
                             onFreshSession={
@@ -4047,6 +3979,10 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread && activeThreadRef
         ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
         : undefined,
+    onAddEnvironments:
+      activeThreadRef && xwingEnvironmentsSupported
+        ? () => useRightPanelStore.getState().add(activeThreadRef, "environments")
+        : undefined,
     onAddReviews:
       isServerThread && activeThreadRef && reviewsSupported
         ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
@@ -4148,6 +4084,11 @@ export default function ChatView(props: ChatViewProps) {
           onAddInspect={
             isServerThread && activeThreadRef
               ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
+              : undefined
+          }
+          onAddEnvironments={
+            activeThreadRef && xwingEnvironmentsSupported
+              ? () => useRightPanelStore.getState().add(activeThreadRef, "environments")
               : undefined
           }
           onAddReviews={

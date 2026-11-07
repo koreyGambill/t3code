@@ -43,7 +43,7 @@ import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observabil
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
-import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import { removeLinkedWorktree, WorktreeRemovalOwnership } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -948,6 +948,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const hostPlatform = yield* HostProcess.Platform;
+  const worktreeOwnership = yield* WorktreeRemovalOwnership;
   const serviceScope = yield* Effect.scope;
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
   const statusFetchProcesses = yield* Semaphore.make(4);
@@ -4758,6 +4759,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       worktreePath: target,
       force: input.force === true,
       execute,
+      ownership: worktreeOwnership,
       run: (args) =>
         executeGitWithStableDiagnostics("GitVcsDriver.removeWorktree", input.cwd, args, {
           timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS,

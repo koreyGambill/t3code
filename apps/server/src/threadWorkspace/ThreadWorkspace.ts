@@ -7,16 +7,24 @@ import {
   ThreadWorkspace as Workspace,
   ThreadWorkspaceError,
   WORKSPACE_DEFAULT_GROUP_ID,
+  type OrchestrationV2ConversationMessage,
+  type ProjectId,
+  type ThreadId,
+  type WorkspaceSubmittedFeedback,
   type ThreadWorkspaceGetInput,
+  type ThreadWorkspaceListWorkInput,
+  type ThreadWorkspaceWorkEntry,
   type ThreadWorkspaceCounts,
-  type ThreadWorkspacePatchInput,
   type ThreadWorkspaceSaveDraftInput,
   type ThreadWorkspaceSubmitInput,
   type ThreadWorkspaceMutateInput,
+  type WorkspaceActor,
+  type WorkspaceMutation,
   type WorkspaceQuery,
   type WorkspaceQueryResult,
 } from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { formatComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import {
   formatWorkspaceFeedback,
   readyWorkspaceFeedbackIds,
@@ -35,7 +43,17 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { isForkableSourceRunStatus } from "../orchestration-v2/ThreadForkService.ts";
 import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  changedItemIds,
+  changedKeys,
+  conflictingKeys,
+  describeConflict,
+  entityChangedSince,
+  restamp,
+  type WorkspaceStamps,
+} from "./workspaceMerge.ts";
 
 export class ThreadWorkspace extends Context.Service<
   ThreadWorkspace,
@@ -43,11 +61,14 @@ export class ThreadWorkspace extends Context.Service<
     readonly get: (
       input: ThreadWorkspaceGetInput,
     ) => Effect.Effect<Workspace, ThreadWorkspaceError>;
+    readonly listWork: (
+      input: ThreadWorkspaceListWorkInput,
+    ) => Effect.Effect<ReadonlyArray<ThreadWorkspaceWorkEntry>, ThreadWorkspaceError>;
     readonly counts: (
       input: ThreadWorkspaceGetInput,
     ) => Effect.Effect<ThreadWorkspaceCounts, ThreadWorkspaceError>;
     readonly patch: (
-      input: ThreadWorkspacePatchInput,
+      input: ThreadWorkspaceMutateInput,
     ) => Effect.Effect<Workspace, ThreadWorkspaceError>;
     readonly saveDraft: (
       input: ThreadWorkspaceSaveDraftInput,
@@ -58,8 +79,10 @@ export class ThreadWorkspace extends Context.Service<
     readonly query: (
       input: ThreadWorkspaceGetInput & WorkspaceQuery,
     ) => Effect.Effect<WorkspaceQueryResult, ThreadWorkspaceError>;
+    /** `writerThreadId` is the calling agent's thread, used as verification provenance. */
     readonly mutate: (
       input: ThreadWorkspaceMutateInput,
+      writerThreadId?: ThreadId | null,
     ) => Effect.Effect<WorkspaceQueryResult, ThreadWorkspaceError>;
     readonly importReview: (review: ReviewArtifact) => Effect.Effect<void, ThreadWorkspaceError>;
   }
@@ -76,6 +99,7 @@ const LegacyWorkspace = Schema.Struct({
 const PersistedWorkspace = Schema.Struct({
   formatVersion: Schema.Literal(2),
   workspace: Workspace,
+  stamps: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
 });
 const decodeWorkspace = Schema.decodeEffect(Schema.fromJsonString(PersistedWorkspace));
 const decodeLegacy = Schema.decodeEffect(
@@ -104,6 +128,7 @@ function legacyReviewOwner(contents: string) {
 }
 
 const isMissingThread = Schema.is(ProjectionStoreThreadNotFoundError);
+const isWorkspaceError = Schema.is(ThreadWorkspaceError);
 const isProjectionError = Schema.is(Orchestrator.OrchestratorProjectionError);
 const defaultGroup = { id: WORKSPACE_DEFAULT_GROUP_ID, parentId: null, title: "Ungrouped" };
 const shortRef = (kind: string, id: string) =>
@@ -117,8 +142,13 @@ export function emptyWorkspace(threadId: Workspace["threadId"]): Workspace {
     questions: [],
     actionItems: [],
     designDocuments: [],
+    agentWork: [],
+    verifications: [],
+    decisions: [],
+    contextItems: [],
     designNotes: "",
     summaryNotes: "",
+    childPreamble: "",
     relatedThreads: [],
     markAnnotations: [],
     userDraft: { questionAnswers: {}, actionNotes: {} },
@@ -144,12 +174,28 @@ function validationError(workspace: Workspace): string | null {
   }
   if (groups.get(WORKSPACE_DEFAULT_GROUP_ID)?.parentId !== null)
     return "The default group must remain at the root.";
-  const items = [...workspace.questions, ...workspace.actionItems, ...workspace.designDocuments];
+  const items = [
+    ...workspace.questions,
+    ...workspace.actionItems,
+    ...workspace.designDocuments,
+    ...workspace.agentWork,
+    ...workspace.verifications,
+    ...workspace.decisions,
+    ...workspace.contextItems,
+  ];
   if (new Set(items.map((item) => item.id)).size !== items.length)
     return "Workspace item IDs must be unique.";
   const refs = items.map((item) => item.ref).filter((ref) => ref !== undefined);
   if (new Set(refs).size !== refs.length) return "Workspace references must be unique.";
-  if (items.some((item) => !groups.has(item.groupId ?? WORKSPACE_DEFAULT_GROUP_ID)))
+  const workIds = new Set(workspace.agentWork.map((item) => item.id));
+  if (workspace.verifications.some((item) => !workIds.has(item.workId)))
+    return "Remove an agent work item's verifications before removing the item.";
+  if (
+    items.some(
+      (item) =>
+        !groups.has(("groupId" in item ? item.groupId : undefined) ?? WORKSPACE_DEFAULT_GROUP_ID),
+    )
+  )
     return "Every item must belong to an existing group.";
   for (const question of workspace.questions) {
     const options = new Set(question.options.map((option) => option.id));
@@ -169,66 +215,119 @@ function validationError(workspace: Workspace): string | null {
     workspace.markAnnotations.length
   )
     return "Mark URLs must be unique.";
+  const contextMarkNames = workspace.markAnnotations.flatMap((mark) =>
+    mark.contextSource === undefined || mark.name === undefined ? [] : [mark.name],
+  );
+  if (new Set(contextMarkNames).size !== contextMarkNames.length)
+    return "Context mark names must be unique.";
   return null;
 }
-function queryWorkspace(workspace: Workspace, query: WorkspaceQuery): WorkspaceQueryResult {
+type SubmittedFeedback = typeof WorkspaceSubmittedFeedback.Type;
+type IndexEntry = WorkspaceQueryResult["items"][number];
+
+function indexEntries(
+  workspace: Workspace,
+  submitted: ReadonlyMap<string, SubmittedFeedback>,
+): IndexEntry[] {
+  const entry = (
+    kind: string,
+    item: { id: string; ref?: string | undefined; groupId?: string | undefined; title: string },
+    status?: string,
+  ): IndexEntry => ({
+    id: item.id,
+    ref: item.ref ?? "",
+    groupId: item.groupId ?? WORKSPACE_DEFAULT_GROUP_ID,
+    kind,
+    title: item.title,
+    ...(status === undefined ? {} : { status }),
+  });
+  return [
+    ...workspace.questions.map((item) =>
+      entry("question", item, submitted.has(item.id) ? "answered" : "open"),
+    ),
+    ...workspace.actionItems.map((item) => entry("action", item, item.status)),
+    ...workspace.designDocuments.map((item) => entry("design", item)),
+    ...workspace.agentWork.map((item) => entry("work", item, item.status)),
+    ...workspace.verifications.map((item) =>
+      entry("verification", { ...item, title: `${item.method} ${item.result}` }, item.result),
+    ),
+    ...workspace.decisions.map((item) => entry("decision", item, item.status)),
+    ...workspace.contextItems.map((item) => entry("context", item)),
+  ];
+}
+
+function queryWorkspace(
+  workspace: Workspace,
+  query: WorkspaceQuery,
+  submitted: ReadonlyMap<string, SubmittedFeedback> = new Map(),
+): WorkspaceQueryResult {
   const section = query.section ?? "index";
+  const entries = indexEntries(workspace, submitted);
+  const statusOf = new Map(entries.map((item) => [item.id, item.status]));
   const wanted = (item: { id: string; ref?: string | undefined; groupId?: string | undefined }) =>
     (query.groupId === undefined || item.groupId === query.groupId) &&
     (query.itemIds === undefined ||
       query.itemIds.includes(item.id) ||
-      (item.ref !== undefined && query.itemIds.includes(item.ref)));
-  const requestedIds = new Set(
-    [...workspace.questions, ...workspace.actionItems].filter(wanted).map((item) => item.id),
-  );
-  const latestSubmissionKeys = new Set(
-    [...requestedIds].flatMap((id) => {
-      const submission = workspace.submissions.findLast((submission) =>
-        submission.itemIds.includes(id),
-      );
-      return submission ? [submission.key] : [];
-    }),
-  );
-  const submissions = workspace.submissions.filter((submission) =>
-    latestSubmissionKeys.has(submission.key),
-  );
+      (item.ref !== undefined && query.itemIds.includes(item.ref))) &&
+    (query.status === undefined || query.status.includes(statusOf.get(item.id) ?? ""));
+  const wantedWork = (item: Workspace["agentWork"][number]) =>
+    wanted(item) && (query.userQa === undefined || query.userQa.includes(item.userQa));
+  const withSubmitted = <T extends { id: string }>(item: T) => {
+    const feedback = submitted.get(item.id);
+    return feedback === undefined ? item : { ...item, submitted: feedback };
+  };
+  const work = workspace.agentWork.filter(wantedWork);
+  const workIds = new Set(work.map((item) => item.id));
+  const verifications = workspace.verifications.filter((item) => workIds.has(item.workId));
+  if (section === "record")
+    return {
+      threadId: workspace.threadId,
+      revision: workspace.revision,
+      groups: [],
+      items: [],
+      summaryNotes: workspace.summaryNotes,
+      childPreamble: workspace.childPreamble,
+      agentWork: [
+        ...work.filter((item) => item.status !== "done" && item.status !== "landed"),
+        ...work.filter((item) => item.status === "done" || item.status === "landed").slice(-10),
+      ],
+      actionItems: workspace.actionItems
+        .filter((item) => item.status !== "done" && wanted(item))
+        .map(withSubmitted),
+      decisions: workspace.decisions.filter(
+        (decision) => decision.status !== "superseded" && wanted(decision),
+      ),
+      contextItems: workspace.contextItems.filter(wanted),
+    };
   return {
     threadId: workspace.threadId,
     revision: workspace.revision,
     groups: workspace.groups,
-    items: [
-      ...workspace.questions.map((item) => ({
-        id: item.id,
-        ref: item.ref,
-        groupId: item.groupId,
-        kind: "question",
-        title: item.title,
-      })),
-      ...workspace.actionItems.map((item) => ({
-        id: item.id,
-        ref: item.ref ?? "",
-        groupId: item.groupId ?? WORKSPACE_DEFAULT_GROUP_ID,
-        kind: "action",
-        title: item.title,
-      })),
-      ...workspace.designDocuments.map((item) => ({
-        id: item.id,
-        ref: item.ref,
-        groupId: item.groupId,
-        kind: "design",
-        title: item.title,
-      })),
-    ].filter(wanted),
+    items: entries.filter(wanted),
     ...(section === "questions" || section === "all"
-      ? { questions: workspace.questions.filter(wanted), submissions }
+      ? {
+          questions: workspace.questions.filter(wanted).map((item) => ({
+            ...withSubmitted(item),
+            status: submitted.has(item.id) ? ("answered" as const) : ("open" as const),
+          })),
+        }
       : {}),
     ...(section === "actions" || section === "all"
-      ? { actionItems: workspace.actionItems.filter(wanted), submissions }
+      ? { actionItems: workspace.actionItems.filter(wanted).map(withSubmitted) }
       : {}),
     ...(section === "design" || section === "all"
       ? { designDocuments: workspace.designDocuments.filter(wanted) }
       : {}),
-    ...(section === "summary" || section === "all" ? { summaryNotes: workspace.summaryNotes } : {}),
+    ...(section === "work" || section === "all" ? { agentWork: work, verifications } : {}),
+    ...(section === "all"
+      ? {
+          decisions: workspace.decisions.filter(wanted),
+          contextItems: workspace.contextItems.filter(wanted),
+        }
+      : {}),
+    ...(section === "summary" || section === "all"
+      ? { summaryNotes: workspace.summaryNotes, childPreamble: workspace.childPreamble }
+      : {}),
     ...(section === "threads" || section === "all"
       ? { relatedThreads: workspace.relatedThreads }
       : {}),
@@ -237,6 +336,42 @@ function queryWorkspace(workspace: Workspace, query: WorkspaceQuery): WorkspaceQ
       : {}),
   };
 }
+
+// Feedback counts as submitted once a sent user message carries the item's context record.
+function submittedFeedback(
+  threadId: Workspace["threadId"],
+  messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
+): Map<string, SubmittedFeedback> {
+  const result = new Map<string, SubmittedFeedback>();
+  for (const message of messages) {
+    if (message.role !== "user" || message.streaming) continue;
+    for (const record of message.context?.records ?? []) {
+      if (
+        record.kind !== "thread" ||
+        !("threadId" in record) ||
+        record.threadId !== threadId ||
+        !("workspaceItemId" in record) ||
+        !record.workspaceItemId
+      )
+        continue;
+      const href = `(${formatComposerContextHref("thread", record.contextId)})`;
+      const at = message.text.indexOf(href);
+      const start = at < 0 ? 0 : message.text.lastIndexOf("\n", at) + 1;
+      const next = at < 0 ? -1 : message.text.indexOf("\n\n[", at);
+      const text = message.text.slice(start, next < 0 ? undefined : next).trim();
+      const previous = result.get(record.workspaceItemId);
+      const submittedAt = DateTime.formatIso(message.createdAt);
+      if (previous === undefined || previous.submittedAt <= submittedAt)
+        result.set(record.workspaceItemId, {
+          messageId: message.id,
+          submittedAt,
+          text: text.slice(0, 4_000),
+        });
+    }
+  }
+  return result;
+}
+
 function addReview(workspace: Workspace, review: ReviewArtifact): Workspace {
   const groups = [...workspace.groups];
   const questions = [...workspace.questions];
@@ -347,6 +482,303 @@ function addReview(workspace: Workspace, review: ReviewArtifact): Workspace {
   };
 }
 
+type ItemCollection =
+  | "questions"
+  | "actionItems"
+  | "designDocuments"
+  | "agentWork"
+  | "verifications"
+  | "decisions"
+  | "contextItems";
+const itemKinds = {
+  question: ["questions", "Q"],
+  action: ["actionItems", "A"],
+  design: ["designDocuments", "D"],
+  work: ["agentWork", "W"],
+  verification: ["verifications", "V"],
+  decision: ["decisions", "DC"],
+  context: ["contextItems", "CX"],
+} as const satisfies Record<string, readonly [ItemCollection, string]>;
+const actionStatuses: ReadonlyArray<string> = ["open", "deferred", "done"];
+const workStatuses: ReadonlyArray<string> = ["queued", "active", "blocked", "done", "landed"];
+const decisionStatuses: ReadonlyArray<string> = ["proposed", "accepted", "superseded"];
+const invalid = (message: string) => new ThreadWorkspaceError({ code: "invalid", message });
+
+function buildItem(
+  kind: keyof typeof itemKinds,
+  id: string,
+  ref: string,
+  old: Record<string, unknown> | undefined,
+  change: WorkspaceMutation,
+  actor: WorkspaceActor,
+  now: string,
+  writerThreadId: ThreadId | null,
+) {
+  const pick = <K extends keyof WorkspaceMutation>(
+    key: K,
+    fallback: NonNullable<WorkspaceMutation[K]>,
+  ) => change[key] ?? (old?.[key] as WorkspaceMutation[K]) ?? fallback;
+  const groupId = pick("groupId", WORKSPACE_DEFAULT_GROUP_ID);
+  if (kind === "question")
+    return {
+      id,
+      ref,
+      groupId,
+      title: pick("title", "Question"),
+      details: pick("details", ""),
+      options: pick("options", []),
+      recommendedOptionIds: pick("recommendedOptionIds", []),
+      recommendation: pick("recommendation", ""),
+      multiSelect: pick("multiSelect", false),
+    };
+  if (kind === "design")
+    return {
+      id,
+      ref,
+      groupId,
+      title: pick("title", "Design"),
+      markdown: pick("markdown", ""),
+      html:
+        change.html === undefined
+          ? ((old?.html as string | null | undefined) ?? null)
+          : change.html,
+    };
+  if (kind === "action") {
+    const status = pick("status", "open");
+    if (!actionStatuses.includes(status))
+      return invalid("Action status must be open, deferred, or done.");
+    return {
+      id,
+      ref,
+      groupId,
+      title: pick("title", "Action item"),
+      details: pick("details", ""),
+      status: status as "open" | "deferred" | "done",
+    };
+  }
+  if (kind === "work") {
+    const status = pick("status", "queued");
+    if (!workStatuses.includes(status))
+      return invalid("Agent work status must be queued, active, blocked, done, or landed.");
+    const completedAt = (old?.completedAt as string | null | undefined) ?? null;
+    const finished = status === "done" || status === "landed";
+    const userQa = pick("userQa", "none");
+    return {
+      id,
+      ref,
+      title: pick("title", "Work"),
+      status: status as "queued" | "active" | "blocked" | "done" | "landed",
+      remaining: pick("remaining", ""),
+      source: pick("source", ""),
+      details: pick("details", ""),
+      changed: pick("changed", ""),
+      qaSteps: pick("qaSteps", ""),
+      checks: pick("checks", ""),
+      userQa: finished && userQa === "none" ? "pending" : userQa,
+      userQaNote: pick("userQaNote", ""),
+      completedAt: finished ? (completedAt ?? now) : null,
+      recordedByThreadId: old ? (old.recordedByThreadId as ThreadId | null) : writerThreadId,
+    };
+  }
+  if (kind === "verification") {
+    if (!change.workId && !old) return invalid("A verification needs workId.");
+    return {
+      id,
+      ref,
+      workId: (old?.workId as string | undefined) ?? change.workId!,
+      verifier: pick("verifier", ""),
+      method: pick("method", "executed"),
+      details: pick("details", ""),
+      testedRevision: pick("testedRevision", ""),
+      result: pick("result", "pass"),
+      gaps: pick("gaps", ""),
+      evidence: pick("evidence", ""),
+      at: (old?.at as string | undefined) ?? now,
+      recordedBy: (old?.recordedBy as WorkspaceActor | undefined) ?? actor,
+      recordedByThreadId: old ? (old.recordedByThreadId as ThreadId | null) : writerThreadId,
+    };
+  }
+  if (kind === "decision") {
+    const decidedBy = pick("decidedBy", actor);
+    const status = pick("status", decidedBy === "user" ? "accepted" : "proposed");
+    if (!decisionStatuses.includes(status))
+      return invalid("Decision status must be proposed, accepted, or superseded.");
+    return {
+      id,
+      ref,
+      groupId,
+      title: pick("title", "Decision"),
+      rationale: pick("rationale", ""),
+      decidedBy,
+      status: status as "proposed" | "accepted" | "superseded",
+      source: pick("source", ""),
+      recordedBy: (old?.recordedBy as WorkspaceActor | undefined) ?? actor,
+    };
+  }
+  return {
+    id,
+    ref,
+    groupId,
+    category: pick("category", "context"),
+    title: pick("title", "Context"),
+    details: pick("details", ""),
+    source: pick("source", ""),
+    recordedBy: (old?.recordedBy as WorkspaceActor | undefined) ?? actor,
+  };
+}
+
+// Edits replace items in place so concurrent writers keep a stable order; new items append.
+function applyChanges(
+  current: Workspace,
+  input: ThreadWorkspaceMutateInput,
+  actor: WorkspaceActor,
+  stamps: WorkspaceStamps,
+  now: string,
+  writerThreadId: ThreadId | null,
+): Workspace | ThreadWorkspaceError {
+  const next = {
+    ...current,
+    groups: [...current.groups],
+    questions: [...current.questions],
+    actionItems: [...current.actionItems],
+    designDocuments: [...current.designDocuments],
+    agentWork: [...current.agentWork],
+    verifications: [...current.verifications],
+    decisions: [...current.decisions],
+    contextItems: [...current.contextItems],
+    relatedThreads: [...current.relatedThreads],
+    markAnnotations: [...current.markAnnotations],
+    summaryNotes: input.summaryNotes ?? current.summaryNotes,
+    childPreamble: input.childPreamble ?? current.childPreamble,
+  };
+  // A tombstone stamp means the entity existed and was removed; removing it again is a no-op.
+  const missing = (label: string, removedAt: number | undefined, id: string) =>
+    (removedAt ?? 0) > input.expectedRevision
+      ? new ThreadWorkspaceError({
+          code: "conflict",
+          message: `${label} ${id} was removed by another edit after the revision you read.`,
+          currentRevision: current.revision,
+        })
+      : invalid(`Unknown ${label.toLowerCase()} ${id}. Omit id to create one.`);
+  const upsert = <T>(list: T[], index: number, value: T) => {
+    if (index < 0) list.push(value);
+    else list[index] = value;
+  };
+  for (const change of input.changes) {
+    if (change.kind === "group") {
+      const index = change.id ? next.groups.findIndex((group) => group.id === change.id) : -1;
+      const old = next.groups[index];
+      if (change.id && !old) {
+        const removedAt = stamps[`group:${change.id}`];
+        if (change.remove && removedAt !== undefined) continue;
+        return missing("Group", removedAt, change.id);
+      }
+      if (change.remove) {
+        next.groups.splice(index, 1);
+        continue;
+      }
+      upsert(next.groups, index, {
+        id: old?.id ?? NodeCrypto.randomUUID(),
+        parentId: change.parentId === undefined ? (old?.parentId ?? null) : change.parentId,
+        title: change.title ?? old?.title ?? "New group",
+      });
+    } else if (change.kind === "relatedThread" || change.kind === "mark") {
+      if (change.kind === "relatedThread") {
+        if (!change.threadId) return invalid("A related thread needs threadId.");
+        const index = next.relatedThreads.findIndex(
+          (thread) => thread.threadId === change.threadId,
+        );
+        if (change.remove) {
+          if (index >= 0) next.relatedThreads.splice(index, 1);
+        } else
+          upsert(next.relatedThreads, index, {
+            threadId: change.threadId,
+            why: change.why ?? next.relatedThreads[index]?.why ?? "",
+          });
+      } else {
+        const url =
+          change.url ??
+          (change.contextSource === undefined
+            ? undefined
+            : `t3-context-mark:${NodeCrypto.randomUUID()}`);
+        if (!url)
+          return invalid("A mark annotation needs url, or contextSource for a context mark.");
+        const index = next.markAnnotations.findIndex((mark) => mark.url === url);
+        const old = next.markAnnotations[index];
+        if (change.remove) {
+          if (index >= 0) next.markAnnotations.splice(index, 1);
+        } else {
+          const requested = change.contextSource;
+          const point =
+            requested?.threadId === undefined || requested.runId === undefined
+              ? undefined
+              : {
+                  threadId: requested.threadId,
+                  runId: requested.runId,
+                  ...(requested.checkpointId === undefined
+                    ? {}
+                    : { checkpointId: requested.checkpointId }),
+                };
+          if (requested !== undefined && point === undefined)
+            return invalid("A context mark's point could not be resolved.");
+          if (
+            point !== undefined &&
+            old !== undefined &&
+            (old.contextSource?.threadId !== point.threadId ||
+              old.contextSource.runId !== point.runId)
+          )
+            return invalid("A mark's context point is fixed when it is made. Make a new mark.");
+          const contextSource = old?.contextSource ?? point;
+          const name = change.name ?? old?.name;
+          upsert(next.markAnnotations, index, {
+            url,
+            description: change.description ?? old?.description ?? "",
+            ...(name === undefined ? {} : { name }),
+            ...(contextSource === undefined ? {} : { contextSource }),
+          });
+        }
+      }
+    } else {
+      const [collection, prefix] = itemKinds[change.kind];
+      const list: Array<Workspace[ItemCollection][number]> = next[collection];
+      const index = change.id
+        ? list.findIndex((item) => item.id === change.id || item.ref === change.id)
+        : -1;
+      const old = list[index];
+      if (change.id && !old) {
+        const removedAt = stamps[`item:${change.id}`] ?? stamps[`ref:${change.id}`];
+        if (change.remove && removedAt !== undefined) continue;
+        return missing(change.kind[0]!.toUpperCase() + change.kind.slice(1), removedAt, change.id);
+      }
+      if (change.remove) {
+        list.splice(index, 1);
+        continue;
+      }
+      const id = old?.id ?? NodeCrypto.randomUUID();
+      const workId =
+        change.kind === "verification" && change.workId !== undefined
+          ? next.agentWork.find((work) => work.id === change.workId || work.ref === change.workId)
+              ?.id
+          : undefined;
+      if (change.kind === "verification" && change.workId !== undefined && workId === undefined)
+        return invalid(`Unknown agent work ${change.workId} for this verification.`);
+      const item = buildItem(
+        change.kind,
+        id,
+        old?.ref ?? shortRef(prefix, id),
+        old as Record<string, unknown> | undefined,
+        workId === undefined ? change : { ...change, workId },
+        actor,
+        now,
+        writerThreadId,
+      );
+      if (isWorkspaceError(item)) return item;
+      upsert(list, index, item as Workspace[ItemCollection][number]);
+    }
+  }
+  return next;
+}
+
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -397,11 +829,14 @@ const make = Effect.gen(function* () {
       ),
     );
     let workspace = emptyWorkspace(threadId);
+    let stamps: WorkspaceStamps = {};
     let legacy = contents === null;
     if (contents !== null) {
       const decoded = yield* decodeWorkspace(contents).pipe(Effect.result);
-      if (decoded._tag === "Success") workspace = decoded.success.workspace;
-      else {
+      if (decoded._tag === "Success") {
+        workspace = decoded.success.workspace;
+        stamps = decoded.success.stamps ?? {};
+      } else {
         const old = yield* decodeLegacy(contents).pipe(
           Effect.mapError(
             (cause) =>
@@ -501,9 +936,12 @@ const make = Effect.gen(function* () {
         operation: "validate",
         message: invalid ?? "The workspace belongs to another thread.",
       });
-    return legacy ? yield* write(workspace) : workspace;
+    return { workspace: legacy ? yield* write(workspace, stamps) : workspace, stamps };
   });
-  const write = Effect.fn("ThreadWorkspace.write")(function* (workspace: Workspace) {
+  const write = Effect.fn("ThreadWorkspace.write")(function* (
+    workspace: Workspace,
+    stamps: WorkspaceStamps,
+  ) {
     const invalid = validationError(workspace);
     if (invalid !== null)
       return yield* new ThreadWorkspaceError({
@@ -511,7 +949,7 @@ const make = Effect.gen(function* () {
         operation: "validate",
         message: invalid,
       });
-    const contents = yield* encodeWorkspace({ formatVersion: 2, workspace }).pipe(
+    const contents = yield* encodeWorkspace({ formatVersion: 2, workspace, stamps }).pipe(
       Effect.mapError(
         (cause) =>
           new ThreadWorkspaceError({
@@ -537,194 +975,181 @@ const make = Effect.gen(function* () {
     );
     return workspace;
   });
-  const checkRevision = Effect.fn("ThreadWorkspace.checkRevision")(function* (
-    workspace: Workspace,
-    expected: number,
+  // Writers merge at field level: only fields that both this write and a later write changed conflict.
+  const commit = Effect.fn("ThreadWorkspace.commit")(function* (
+    current: Workspace,
+    stamps: WorkspaceStamps,
+    next: Workspace,
+    expectedRevision: number,
   ) {
-    if (workspace.revision !== expected)
+    if (expectedRevision > current.revision)
       return yield* new ThreadWorkspaceError({
         code: "conflict",
         operation: "save",
-        message: "The workspace changed. Reload it before saving again.",
-        currentRevision: workspace.revision,
+        message: "The workspace revision you read is newer than the saved one. Reload it.",
+        currentRevision: current.revision,
       });
+    const keys = changedKeys(current, next);
+    if (!keys.length) return current;
+    const conflicts = conflictingKeys(stamps, keys, expectedRevision);
+    if (conflicts.length)
+      return yield* new ThreadWorkspaceError({
+        code: "conflict",
+        operation: "save",
+        message: describeConflict(current, conflicts),
+        currentRevision: current.revision,
+      });
+    const revision = current.revision + 1;
+    return yield* write(
+      { ...next, revision, updatedAt: DateTime.formatIso(yield* DateTime.now) },
+      restamp(stamps, keys, next, revision),
+    );
   });
-  const patch = Effect.fn("ThreadWorkspace.patch")(function* (input: ThreadWorkspacePatchInput) {
-    yield* requireThread(input.threadId);
-    const current = yield* read(input.threadId);
-    yield* checkRevision(current, input.expectedRevision);
-    const next = {
-      ...current,
-      groups: input.groups ?? current.groups,
-      questions: input.questions ?? current.questions,
-      designDocuments: input.designDocuments ?? current.designDocuments,
-      designNotes: input.designNotes ?? current.designNotes,
-      summaryNotes: input.summaryNotes ?? current.summaryNotes,
-      relatedThreads: input.relatedThreads ?? current.relatedThreads,
-      markAnnotations: input.markAnnotations ?? current.markAnnotations,
-      actionItems: (input.actionItems ?? current.actionItems).map((item) => ({
-        ...item,
-        ref:
-          current.actionItems.find((previous) => previous.id === item.id)?.ref ??
-          item.ref ??
-          shortRef("A", item.id),
-        groupId: item.groupId ?? WORKSPACE_DEFAULT_GROUP_ID,
-      })),
-      revision: current.revision + 1,
-      updatedAt: DateTime.formatIso(yield* DateTime.now),
+  // Marks store a fixed run, so a mark made from "latest" never follows later turns.
+  const resolveContextMarkPoints = Effect.fn("ThreadWorkspace.resolveContextMarkPoints")(function* (
+    owner: { readonly id: ThreadId; readonly projectId: ProjectId },
+    changes: ThreadWorkspaceMutateInput["changes"],
+  ) {
+    return yield* Effect.forEach(changes, (change) =>
+      Effect.gen(function* () {
+        const requested = change.contextSource;
+        if (change.kind !== "mark" || change.remove || requested === undefined) return change;
+        if (requested.runId !== undefined && requested.checkpointId !== undefined)
+          return yield* new ThreadWorkspaceError({
+            code: "invalid",
+            message: "Pass either a runId or checkpointId for a context mark.",
+          });
+        const threadId = requested.threadId ?? owner.id;
+        const unavailable = new ThreadWorkspaceError({
+          code: "invalid",
+          message: `Context thread ${threadId} is not an available thread in this project.`,
+        });
+        const source = yield* orchestrator
+          .getThreadRecords(threadId, ["runs", "checkpoints"])
+          .pipe(Effect.mapError(() => unavailable));
+        if (source.thread.deletedAt !== null || source.thread.projectId !== owner.projectId)
+          return yield* unavailable;
+        const run = Orchestrator.runForSourcePoint(
+          source,
+          requested.runId !== undefined
+            ? { type: "run", runId: requested.runId }
+            : requested.checkpointId !== undefined
+              ? { type: "checkpoint", checkpointId: requested.checkpointId }
+              : { type: "latest_stable" },
+        );
+        if (run === null || !isForkableSourceRunStatus(run.status))
+          return yield* new ThreadWorkspaceError({
+            code: "invalid",
+            message: `Thread ${threadId} has no finished turn at that point to mark.`,
+          });
+        return {
+          ...change,
+          contextSource: {
+            threadId,
+            runId: run.id,
+            ...(run.checkpointId === null ? {} : { checkpointId: run.checkpointId }),
+          },
+        };
+      }),
+    );
+  });
+  const change = Effect.fn("ThreadWorkspace.change")(function* (
+    input: ThreadWorkspaceMutateInput,
+    actor: WorkspaceActor,
+    writerThreadId: ThreadId | null,
+  ) {
+    const owner = yield* requireThread(input.threadId);
+    const changes = yield* resolveContextMarkPoints(owner, input.changes);
+    const { workspace: current, stamps } = yield* read(input.threadId);
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const next = applyChanges(current, { ...input, changes }, actor, stamps, now, writerThreadId);
+    if (isWorkspaceError(next)) return yield* next;
+    return { before: current, after: yield* commit(current, stamps, next, input.expectedRevision) };
+  });
+  const sentFeedback = Effect.fn("ThreadWorkspace.sentFeedback")(function* (
+    threadId: Workspace["threadId"],
+  ) {
+    const records = yield* orchestrator
+      .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadWorkspaceError({
+              code: "thread",
+              operation: "loadMessages",
+              message: "Could not load the thread's sent feedback.",
+              cause,
+            }),
+        ),
+      );
+    return submittedFeedback(threadId, records.messages);
+  });
+  const patch = Effect.fn("ThreadWorkspace.patch")(function* (input: ThreadWorkspaceMutateInput) {
+    return (yield* change(input, "user", null)).after;
+  }, lock.withPermit);
+  // Returns only what this write changed unless the caller asks for the full index.
+  const mutate = Effect.fn("ThreadWorkspace.mutate")(function* (
+    input: ThreadWorkspaceMutateInput,
+    writerThreadId: ThreadId | null = null,
+  ) {
+    const { before, after } = yield* change(input, "agent", writerThreadId);
+    const submitted = yield* sentFeedback(input.threadId);
+    if (input.fullIndex) return queryWorkspace(after, { section: "index" }, submitted);
+    const keys = changedKeys(before, after);
+    const itemIds = changedItemIds(keys);
+    const groupIds = new Set(
+      after.groups
+        .filter((group) => keys.some((key) => key.startsWith(`group:${group.id}`)))
+        .map((group) => group.id),
+    );
+    const present = new Set([
+      ...indexEntries(after, submitted).map((item) => item.id),
+      ...after.groups.map((group) => group.id),
+    ]);
+    const removedIds = [
+      ...itemIds,
+      ...before.groups.filter((group) => !present.has(group.id)).map((group) => group.id),
+    ].filter((id) => !present.has(id));
+    return {
+      threadId: after.threadId,
+      revision: after.revision,
+      groups: after.groups.filter((group) => groupIds.has(group.id)),
+      items: indexEntries(after, submitted).filter((item) => itemIds.has(item.id)),
+      ...(removedIds.length ? { removedIds } : {}),
+      ...(input.summaryNotes !== undefined ? { summaryNotes: after.summaryNotes } : {}),
     };
-    return yield* write(next);
   }, lock.withPermit);
   const get = Effect.fn("ThreadWorkspace.get")(function* (input: ThreadWorkspaceGetInput) {
     yield* requireThread(input.threadId);
-    return yield* read(input.threadId);
+    return (yield* read(input.threadId)).workspace;
   }, lock.withPermit);
   const saveDraft = Effect.fn("ThreadWorkspace.saveDraft")(function* (
     input: ThreadWorkspaceSaveDraftInput,
   ) {
     yield* requireThread(input.threadId);
-    const current = yield* read(input.threadId);
-    yield* checkRevision(current, input.expectedRevision);
+    const { workspace: current, stamps } = yield* read(input.threadId);
     const invalid = workspaceDraftError(current, input.userDraft);
     if (invalid !== null)
       return yield* new ThreadWorkspaceError({ code: "invalid", message: invalid });
-    return yield* write({
-      ...current,
-      userDraft: input.userDraft,
-      revision: current.revision + 1,
-      updatedAt: DateTime.formatIso(yield* DateTime.now),
-    });
-  }, lock.withPermit);
-  const mutate = Effect.fn("ThreadWorkspace.mutate")(function* (input: ThreadWorkspaceMutateInput) {
-    yield* requireThread(input.threadId);
-    const current = yield* read(input.threadId);
-    yield* checkRevision(current, input.expectedRevision);
-    let next = {
-      ...current,
-      groups: [...current.groups],
-      questions: [...current.questions],
-      actionItems: [...current.actionItems],
-      designDocuments: [...current.designDocuments],
-      relatedThreads: [...current.relatedThreads],
-      markAnnotations: [...current.markAnnotations],
-      summaryNotes: input.summaryNotes ?? current.summaryNotes,
-    };
-    for (const change of input.changes) {
-      const id = change.id ?? NodeCrypto.randomUUID();
-      if (change.kind === "group") {
-        const old = next.groups.find((group) => group.id === id);
-        if (change.id && !old)
-          return yield* new ThreadWorkspaceError({
-            code: "invalid",
-            message: `Unknown group ${id}. Omit id to create a group.`,
-          });
-        next.groups = next.groups.filter((group) => group.id !== id);
-        if (!change.remove)
-          next.groups.push({
-            id,
-            parentId: change.parentId === undefined ? (old?.parentId ?? null) : change.parentId,
-            title: change.title ?? old?.title ?? "New group",
-          });
-      } else if (change.kind === "question") {
-        const old = next.questions.find((question) => question.id === id || question.ref === id);
-        if (change.id && !old)
-          return yield* new ThreadWorkspaceError({
-            code: "invalid",
-            message: `Unknown question ${id}. Omit id to create one.`,
-          });
-        const itemId = old?.id ?? id;
-        next.questions = next.questions.filter((question) => question.id !== itemId);
-        if (!change.remove)
-          next.questions.push({
-            id: itemId,
-            ref: old?.ref ?? shortRef("Q", itemId),
-            groupId: change.groupId ?? old?.groupId ?? WORKSPACE_DEFAULT_GROUP_ID,
-            title: change.title ?? old?.title ?? "Question",
-            details: change.details ?? old?.details ?? "",
-            options: change.options ?? old?.options ?? [],
-            recommendedOptionIds: change.recommendedOptionIds ?? old?.recommendedOptionIds ?? [],
-            recommendation: change.recommendation ?? old?.recommendation ?? "",
-            multiSelect: change.multiSelect ?? old?.multiSelect ?? false,
-          });
-      } else if (change.kind === "action") {
-        const old = next.actionItems.find((item) => item.id === id || item.ref === id);
-        if (change.id && !old)
-          return yield* new ThreadWorkspaceError({
-            code: "invalid",
-            message: `Unknown action ${id}. Omit id to create one.`,
-          });
-        const itemId = old?.id ?? id;
-        next.actionItems = next.actionItems.filter((item) => item.id !== itemId);
-        if (!change.remove)
-          next.actionItems.push({
-            id: itemId,
-            ref: old?.ref ?? shortRef("A", itemId),
-            groupId: change.groupId ?? old?.groupId ?? WORKSPACE_DEFAULT_GROUP_ID,
-            title: change.title ?? old?.title ?? "Action item",
-            details: change.details ?? old?.details ?? "",
-            status: change.status ?? old?.status ?? "open",
-          });
-      } else if (change.kind === "design") {
-        const old = next.designDocuments.find(
-          (document) => document.id === id || document.ref === id,
-        );
-        if (change.id && !old)
-          return yield* new ThreadWorkspaceError({
-            code: "invalid",
-            message: `Unknown design ${id}. Omit id to create one.`,
-          });
-        const itemId = old?.id ?? id;
-        next.designDocuments = next.designDocuments.filter((document) => document.id !== itemId);
-        if (!change.remove)
-          next.designDocuments.push({
-            id: itemId,
-            ref: old?.ref ?? shortRef("D", itemId),
-            groupId: change.groupId ?? old?.groupId ?? WORKSPACE_DEFAULT_GROUP_ID,
-            title: change.title ?? old?.title ?? "Design",
-            markdown: change.markdown ?? old?.markdown ?? "",
-            html: change.html === undefined ? (old?.html ?? null) : change.html,
-          });
-      } else if (change.kind === "relatedThread") {
-        if (!change.threadId)
-          return yield* new ThreadWorkspaceError({
-            code: "invalid",
-            message: "A related thread needs threadId.",
-          });
-        const related = next.relatedThreads.find((thread) => thread.threadId === change.threadId);
-        next.relatedThreads = next.relatedThreads.filter(
-          (thread) => thread.threadId !== change.threadId,
-        );
-        if (!change.remove)
-          next.relatedThreads.push({
-            threadId: change.threadId,
-            why: change.why ?? related?.why ?? "",
-          });
-      } else {
-        if (!change.url)
-          return yield* new ThreadWorkspaceError({
-            code: "invalid",
-            message: "A mark annotation needs url.",
-          });
-        const mark = next.markAnnotations.find((mark) => mark.url === change.url);
-        next.markAnnotations = next.markAnnotations.filter((mark) => mark.url !== change.url);
-        if (!change.remove)
-          next.markAnnotations.push({
-            url: change.url,
-            description: change.description ?? mark?.description ?? "",
-          });
-      }
-    }
-    next = {
-      ...next,
-      revision: current.revision + 1,
-      updatedAt: DateTime.formatIso(yield* DateTime.now),
-    };
-    return queryWorkspace(yield* write(next), { section: "index" });
+    return yield* commit(
+      current,
+      stamps,
+      {
+        ...current,
+        userDraft: {
+          questionAnswers: {
+            ...current.userDraft.questionAnswers,
+            ...input.userDraft.questionAnswers,
+          },
+          actionNotes: { ...current.userDraft.actionNotes, ...input.userDraft.actionNotes },
+        },
+      },
+      input.expectedRevision,
+    );
   }, lock.withPermit);
   const submit = Effect.fn("ThreadWorkspace.submit")(function* (input: ThreadWorkspaceSubmitInput) {
     const owner = yield* requireThread(input.threadId);
-    const current = yield* read(input.threadId);
-    yield* checkRevision(current, input.expectedRevision);
+    const { workspace: current, stamps } = yield* read(input.threadId);
     const readyIds = new Set(readyWorkspaceFeedbackIds(current));
     const readyQuestions = current.questions.filter((question) => readyIds.has(question.id));
     const readyActions = current.actionItems.filter(
@@ -736,6 +1161,18 @@ const make = Effect.gen(function* () {
         : [...readyQuestions, ...readyActions].map((item) => item.id),
     );
     const items = [...readyQuestions, ...readyActions].filter((item) => requested.has(item.id));
+    const stale = items.flatMap((item) =>
+      [`item:${item.id}`, `draft.answer:${item.id}`, `draft.note:${item.id}`].filter((key) =>
+        entityChangedSince(stamps, key, input.expectedRevision),
+      ),
+    );
+    if (stale.length || input.expectedRevision > current.revision)
+      return yield* new ThreadWorkspaceError({
+        code: "conflict",
+        operation: "submit",
+        message: describeConflict(current, stale),
+        currentRevision: current.revision,
+      });
     const invalid = workspaceDraftError(current, {
       questionAnswers: Object.fromEntries(
         Object.entries(current.userDraft.questionAnswers).filter(([id]) => requested.has(id)),
@@ -802,22 +1239,99 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    return yield* write({
-      ...current,
-      submissions: [
-        ...current.submissions,
-        {
-          key,
-          itemIds: items.map((item) => item.id),
-          messageId,
-          markdown,
-          submittedAt: DateTime.formatIso(yield* DateTime.now),
-        },
-      ],
-    });
+    return yield* write(
+      {
+        ...current,
+        submissions: [
+          ...current.submissions,
+          {
+            key,
+            itemIds: items.map((item) => item.id),
+            messageId,
+            markdown,
+            submittedAt: DateTime.formatIso(yield* DateTime.now),
+          },
+        ],
+      },
+      stamps,
+    );
   }, lock.withPermit);
   return ThreadWorkspace.of({
     get,
+    listWork: Effect.fn("ThreadWorkspace.listWork")(function* (input) {
+      const files = yield* fs.readDirectory(directory).pipe(
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "NotFound",
+          () => Effect.succeed([]),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new ThreadWorkspaceError({
+              code: "storage",
+              operation: "listWork",
+              message: "Could not list saved agent work.",
+              cause,
+            }),
+        ),
+      );
+      const entries: ThreadWorkspaceWorkEntry[] = [];
+      for (const name of files.filter((name) => /^[a-f0-9]{64}\.json$/.test(name)).toSorted()) {
+        const contents = yield* fs.readFileString(path.join(directory, name)).pipe(
+          Effect.catchIf(
+            (cause) => cause.reason._tag === "NotFound",
+            () => Effect.succeed(null),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new ThreadWorkspaceError({
+                code: "storage",
+                operation: "listWork",
+                message: "Could not read saved agent work.",
+                cause,
+              }),
+          ),
+        );
+        if (contents === null) continue;
+        const decoded = yield* decodeWorkspace(contents).pipe(Effect.result);
+        if (decoded._tag === "Failure") {
+          const legacy = yield* decodeLegacy(contents).pipe(Effect.result);
+          if (legacy._tag === "Success") continue;
+          return yield* new ThreadWorkspaceError({
+            code: "storage",
+            operation: "listWork",
+            message: "A saved thread workspace is malformed.",
+            cause: decoded.failure,
+          });
+        }
+        const workspace = decoded.success.workspace;
+        if (filePath(workspace.threadId) !== path.join(directory, name))
+          return yield* new ThreadWorkspaceError({
+            code: "storage",
+            operation: "listWork",
+            message: "A saved workspace belongs to another thread.",
+          });
+        const thread = yield* requireThread(workspace.threadId).pipe(
+          Effect.catchIf(
+            (cause) => cause.code === "not_found",
+            () => Effect.succeed(null),
+          ),
+        );
+        if (thread === null) continue;
+        for (const item of workspace.agentWork) {
+          if (input.userQa !== undefined && !input.userQa.includes(item.userQa)) continue;
+          entries.push({
+            threadId: workspace.threadId,
+            threadTitle: thread.title,
+            revision: workspace.revision,
+            item,
+            verifications: workspace.verifications.filter((entry) => entry.workId === item.id),
+          });
+        }
+      }
+      return entries.toSorted((a, b) =>
+        (b.item.completedAt ?? "").localeCompare(a.item.completedAt ?? ""),
+      );
+    }),
     counts: Effect.fn("ThreadWorkspace.counts")(function* (input) {
       const workspace = yield* get(input);
       return {
@@ -830,6 +1344,12 @@ const make = Effect.gen(function* () {
         outstandingActions: workspace.actionItems.filter((item) => item.status !== "done").length,
         designs: workspace.designDocuments.length,
         relatedThreads: workspace.relatedThreads.length,
+        agentWork: workspace.agentWork.length,
+        openAgentWork: workspace.agentWork.filter(
+          (item) => item.status !== "done" && item.status !== "landed",
+        ).length,
+        pendingQa: workspace.agentWork.filter((item) => item.userQa === "pending").length,
+        records: workspace.decisions.length + workspace.contextItems.length,
       };
     }),
     patch,
@@ -837,17 +1357,26 @@ const make = Effect.gen(function* () {
     submit,
     mutate,
     query: Effect.fn("ThreadWorkspace.query")(function* (input) {
-      return queryWorkspace(yield* get(input), input);
+      const workspace = yield* get(input);
+      const needsFeedback = ["index", "questions", "actions", "record", "all"].includes(
+        input.section ?? "index",
+      );
+      return queryWorkspace(
+        workspace,
+        input,
+        needsFeedback ? yield* sentFeedback(input.threadId) : new Map(),
+      );
     }),
     importReview: Effect.fn("ThreadWorkspace.importReview")(function* (review) {
       yield* requireThread(review.threadId);
-      const current = yield* read(review.threadId);
-      yield* write({
-        ...addReview(current, review),
-        revision: current.revision + 1,
-        updatedAt: DateTime.formatIso(yield* DateTime.now),
-      });
+      const { workspace: current, stamps } = yield* read(review.threadId);
+      yield* commit(current, stamps, addReview(current, review), current.revision);
     }, lock.withPermit),
   });
 });
 export const layer = Layer.effect(ThreadWorkspace, make);
+
+/** Every thread reads as an empty workspace; for services that only read it. */
+export const layerTest = Layer.mock(ThreadWorkspace)({
+  get: ({ threadId }) => Effect.succeed(emptyWorkspace(threadId)),
+});

@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProjectId,
   TerminalProviderInstanceNotFoundError,
+  TerminalWorkspaceChangedError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
@@ -38,7 +39,9 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as TerminalManager from "./Manager.ts";
+import { threadCheckoutGuard } from "./threadCheckoutGuard.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -767,6 +770,121 @@ it.layer(
         false,
         false,
       ]);
+    }),
+  );
+
+  it.effect("closes and reports only the shells launched for the checkout a thread left", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9001, name: "node" },
+          { pid: 9002, ppid: 1, name: "zsh" },
+          { pid: 9003, ppid: 1, name: "zsh" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ terminalId: "old-idle", worktreePath: "/checkout-a" }));
+      yield* manager.open(openInput({ terminalId: "old-busy", worktreePath: "/checkout-a" }));
+      yield* manager.open(openInput({ terminalId: "new-idle", worktreePath: "/checkout-b" }));
+      yield* manager.open(openInput({ terminalId: "root-idle", worktreePath: null }));
+      ptyAdapter.processes[0]!.emitData("built in checkout a\n");
+
+      assert.isTrue(
+        yield* manager.hasForegroundWork({ threadId: "thread-1", worktreePath: "/checkout-a" }),
+      );
+      assert.isFalse(
+        yield* manager.hasForegroundWork({ threadId: "thread-1", worktreePath: "/checkout-b" }),
+      );
+      yield* manager.closeIdle({ threadId: "thread-1", worktreePath: "/checkout-a" });
+
+      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+        true,
+        false,
+        false,
+        false,
+      ]);
+      const reopened = yield* manager.open(
+        openInput({ terminalId: "old-idle", worktreePath: "/checkout-a" }),
+      );
+      expect(reopened.history).toContain("built in checkout a");
+    }),
+  );
+
+  it.effect("refuses a stale checkout before touching the thread's current terminal", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput({ worktreePath: "/checkout-b" }));
+      const current: TerminalManager.TerminalLaunchGuard = (input) =>
+        input.worktreePath === undefined || input.worktreePath === "/checkout-b"
+          ? Effect.void
+          : Effect.fail(
+              new TerminalWorkspaceChangedError({
+                threadId: input.threadId,
+                terminalId: input.terminalId,
+                worktreePath: "/checkout-b",
+              }),
+            );
+
+      const stale = yield* manager
+        .open(openInput({ worktreePath: "/checkout-a" }), current)
+        .pipe(Effect.flip);
+      const staleAttach = yield* manager
+        .attachOutputStream(
+          { ...openInput({ terminalId: "other", worktreePath: "/checkout-a" }) },
+          "viewer",
+          current,
+        )
+        .pipe(Stream.runHead, Effect.flip);
+
+      assert.instanceOf(stale, TerminalWorkspaceChangedError);
+      assert.instanceOf(staleAttach, TerminalWorkspaceChangedError);
+      assert.equal(stale.worktreePath, "/checkout-b");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.processes[0]!.killed).toBe(false);
+      yield* manager.open(openInput({ worktreePath: "/checkout-b" }), current);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps a shell from a checkout its thread left out of reach of stale launches", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9000, name: "node" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const guard = threadCheckoutGuard({
+        getThreadRecords: () =>
+          Effect.succeed({ thread: { worktreePath: "/checkout-b", deletedAt: null } }),
+      } as unknown as Parameters<typeof threadCheckoutGuard>[0]);
+      yield* manager.open(openInput({ terminalId: "busy-a", worktreePath: "/checkout-a" }));
+      yield* manager.open(openInput({ terminalId: "closed-a", worktreePath: "/checkout-a" }));
+      ptyAdapter.processes[1]!.emitData("built in checkout a\n");
+      yield* manager.closeIdle({ threadId: "thread-1", terminalId: "closed-a" });
+
+      const relabeled = yield* manager
+        .open(openInput({ terminalId: "busy-a", worktreePath: "/checkout-b" }), guard)
+        .pipe(Effect.flip);
+      assert.instanceOf(relabeled, TerminalWorkspaceChangedError);
+      expect(ptyAdapter.processes[0]!.killed).toBe(false);
+
+      const resumedInA = yield* manager
+        .open(openInput({ terminalId: "closed-a", worktreePath: "/checkout-a" }), guard)
+        .pipe(Effect.flip);
+      assert.instanceOf(resumedInA, TerminalWorkspaceChangedError);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+
+      // Reusing the closed shell's id starts it in the current checkout with its history kept.
+      const reopenedInB = yield* manager.open(
+        openInput({ terminalId: "closed-a", worktreePath: "/checkout-b" }),
+        guard,
+      );
+      expect(reopenedInB.worktreePath).toBe("/checkout-b");
+      expect(reopenedInB.history).toContain("built in checkout a");
+      expect(ptyAdapter.processes[0]!.killed).toBe(false);
     }),
   );
 
@@ -2065,6 +2183,41 @@ it.layer(
       yield* manager.open(openInput({ threadId: "new-thread" }));
       expect(yield* Ref.get(leakedLiveEvents)).toBe(0);
     }),
+  );
+
+  it.effect("keeps checkout deletion outside terminal startup", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminal-lease-" }),
+      );
+      const ptyAdapter = new GatedPtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const opening = yield* manager
+        .open(openInput({ cwd: worktreePath, worktreePath }))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.spawning);
+      let deletionEntered = false;
+      const deleting = yield* withWorkspaceLease(
+        worktreePath,
+        Effect.gen(function* () {
+          deletionEntered = true;
+          yield* fileSystem.remove(worktreePath, { recursive: true });
+        }),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      expect(deletionEntered).toBe(false);
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(opening);
+      yield* Fiber.join(deleting);
+      expect(deletionEntered).toBe(true);
+      expect(yield* fileSystem.exists(worktreePath)).toBe(false);
+      expect(ptyAdapter.processes).toHaveLength(1);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("finishes shell startup when its creating attachment is cancelled", () =>

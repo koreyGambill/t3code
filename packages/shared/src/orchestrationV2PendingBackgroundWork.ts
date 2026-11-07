@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2AppThread,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
@@ -88,14 +89,28 @@ export function deriveBlockedOnThreadWait(input: {
 
 export function backgroundWorkHoldsCompletion(
   tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>,
+  options?: { readonly awaitUnmarked?: boolean },
 ): boolean {
   return tasks.some(
-    (task) => task.awaited === true || backgroundWorkKindHoldsCompletion(task.kind),
+    (task) =>
+      task.awaited ??
+      (options?.awaitUnmarked === true || backgroundWorkKindHoldsCompletion(task.kind)),
   );
 }
 
-// Commands and monitors are as often a dev server or its watchdog as a wait, so they hold
-// only when the agent marks them awaited.
+/** Delegated threads wait for provider-reported work unless the agent detached it. */
+export function threadBackgroundWorkHoldsCompletion(thread: {
+  readonly pendingBackgroundTasks?:
+    | ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>
+    | undefined;
+  readonly lineage?: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent"> | undefined;
+}): boolean {
+  return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [], {
+    awaitUnmarked: thread.lineage?.relationshipToParent === "subagent",
+  });
+}
+
+// Main threads leave commands and monitors open without holding their completion.
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
   switch (kind) {
     case "command":

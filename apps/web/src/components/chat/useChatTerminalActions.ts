@@ -58,6 +58,8 @@ export interface TerminalLaunchContext {
   threadId: ThreadId;
   cwd: string;
   worktreePath: string | null;
+  /** The thread's checkout when this was set; once the thread moves, the context is stale. */
+  threadWorktreePath: string | null;
 }
 
 interface ChatTerminalActionsInput {
@@ -329,6 +331,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       threadId: activeThreadId,
       cwd: targetCwd,
       worktreePath: targetWorktreePath,
+      threadWorktreePath: activeThread.worktreePath ?? null,
     });
     if (!activeThreadRef) {
       return;

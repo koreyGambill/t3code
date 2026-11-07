@@ -141,6 +141,19 @@ export class DevRunnerPortExhaustedError extends Schema.TaggedError<DevRunnerPor
   }
 }
 
+export class DevRunnerPortUnavailableError extends Schema.TaggedError<DevRunnerPortUnavailableError>()(
+  "DevRunnerPortUnavailableError",
+  {
+    role: Schema.Literals(["server", "web"]),
+    port: Schema.Number,
+  },
+) {
+  override get message(): string {
+    const flag = this.role === "server" ? "--port/T3CODE_PORT" : "--web-port/T3CODE_WEB_PORT";
+    return `The requested ${this.role} port ${this.port} (${flag}) is in use. Free it or request another port; dev does not move an explicit port.`;
+  }
+}
+
 export class DevRunnerProcessError extends Schema.TaggedError<DevRunnerProcessError>()(
   "DevRunnerProcessError",
   {
@@ -296,6 +309,7 @@ interface CreateDevRunnerEnvInput {
   readonly logWebSocketEvents: boolean | undefined;
   readonly host: string | undefined;
   readonly port: number | undefined;
+  readonly webPort?: number | undefined;
   readonly devUrl: URL | undefined;
 }
 
@@ -310,10 +324,11 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   logWebSocketEvents,
   host,
   port,
+  webPort: explicitWebPort,
   devUrl,
 }: CreateDevRunnerEnvInput): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
-  const webPort = BASE_WEB_PORT + webOffset;
+  const webPort = explicitWebPort ?? BASE_WEB_PORT + webOffset;
   const configuredBaseDir = t3Home?.trim() || undefined;
   const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
   const isDesktopMode = mode === "dev:desktop";
@@ -526,7 +541,8 @@ export const findFirstAvailableOffset = Effect.fn("dev-runner.findFirstAvailable
 interface ResolveModePortOffsetsInput<R = NetService.NetService> {
   readonly mode: DevMode;
   readonly startOffset: number;
-  readonly hasExplicitServerPort: boolean;
+  readonly serverPort?: number | undefined;
+  readonly webPort?: number | undefined;
   readonly hasExplicitDevUrl: boolean;
   readonly checkPortAvailability?: PortAvailabilityCheck<R>;
 }
@@ -536,19 +552,34 @@ export const resolveModePortOffsets = Effect.fn("dev-runner.resolveModePortOffse
 >({
   mode,
   startOffset,
-  hasExplicitServerPort,
+  serverPort,
+  webPort,
   hasExplicitDevUrl,
   checkPortAvailability,
 }: ResolveModePortOffsetsInput<R>): Effect.fn.Return<
   { readonly serverOffset: number; readonly webOffset: number },
-  DevRunnerPortExhaustedError,
+  DevRunnerPortExhaustedError | DevRunnerPortUnavailableError,
   R
 > {
   const checkPort = (checkPortAvailability ??
     defaultCheckPortAvailability) as PortAvailabilityCheck<R>;
 
+  // Explicit ports come from a caller that owns the assignment, such as Xwing.
+  // Moving one to a neighbor would leave that caller's URL pointing elsewhere.
+  const explicitPorts = [
+    { role: "server", port: mode === "dev:web" ? undefined : serverPort },
+    { role: "web", port: mode === "dev:server" ? undefined : webPort },
+  ] as const;
+  for (const { role, port } of explicitPorts) {
+    if (port !== undefined && !(yield* checkPort(port, role))) {
+      return yield* new DevRunnerPortUnavailableError({ role, port });
+    }
+  }
+  const hasExplicitServerPort = serverPort !== undefined;
+  const hasExplicitWebPort = hasExplicitDevUrl || webPort !== undefined;
+
   if (mode === "dev:web") {
-    if (hasExplicitDevUrl) {
+    if (hasExplicitWebPort) {
       return { serverOffset: startOffset, webOffset: startOffset };
     }
 
@@ -578,7 +609,7 @@ export const resolveModePortOffsets = Effect.fn("dev-runner.resolveModePortOffse
   const sharedOffset = yield* findFirstAvailableOffset({
     startOffset,
     requireServerPort: !hasExplicitServerPort,
-    requireWebPort: !hasExplicitDevUrl,
+    requireWebPort: !hasExplicitWebPort,
     checkPortAvailability: checkPort,
   });
 
@@ -678,6 +709,7 @@ interface DevRunnerCliInput {
   readonly logWebSocketEvents: boolean | undefined;
   readonly host: string | undefined;
   readonly port: number | undefined;
+  readonly webPort: number | undefined;
   readonly devUrl: URL | undefined;
   readonly dryRun: boolean;
   readonly share: boolean;
@@ -722,7 +754,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   const { serverOffset, webOffset } = yield* resolveModePortOffsets({
     mode: input.mode,
     startOffset: offset,
-    hasExplicitServerPort: input.port !== undefined,
+    serverPort: input.port,
+    webPort: input.webPort,
     hasExplicitDevUrl: input.devUrl !== undefined,
     checkPortAvailability: makeDefaultCheckPortAvailability(input.host),
   });
@@ -750,6 +783,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     logWebSocketEvents: input.logWebSocketEvents,
     host: input.host,
     port: input.port,
+    webPort: input.webPort,
     devUrl: input.devUrl,
   });
 
@@ -770,7 +804,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     return;
   }
 
-  const sharedWebPort = BASE_WEB_PORT + webOffset;
+  const sharedWebPort = Number(env.PORT);
   let built = false;
   if (input.share) {
     if (input.mode === "dev:server") {
@@ -945,6 +979,13 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
     Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
+  ),
+  webPort: Flag.Int("web-port").pipe(
+    Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
+    Flag.withDescription(
+      "Web dev server port (equivalent to T3CODE_WEB_PORT). Dev refuses an occupied explicit port instead of moving it.",
+    ),
+    Flag.withFallbackConfig(optionalPortConfig("T3CODE_WEB_PORT")),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Columns3Icon, CopyIcon, CheckIcon, RefreshCwIcon } from "lucide-react";
 import type { ScopedThreadRef, WorkspaceMarkAnnotation } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -6,10 +7,13 @@ import { persist } from "zustand/middleware";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadMarksGet } from "../../state/threadMarks";
+import { useRightPanelStore } from "../../rightPanelStore";
 import type { WorkspaceMark } from "@t3tools/shared/workspaceMarks";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
 import { markTimestamp } from "./workspaceMarks";
+import { buildThreadRouteParams } from "../../threadRoutes";
 
 const useMarkPreferences = create(
   persist<{
@@ -54,8 +58,19 @@ export function WorkspaceMarksPanel({
   const [copied, setCopied] = useState<string | null>(null);
   const annotatedMarks = marks.map((mark) => ({
     ...mark,
-    description: annotations.find((annotation) => annotation.url === mark.url)?.description ?? "",
+    description:
+      annotations.find((annotation) => annotation.url === mark.url)?.description ??
+      mark.description,
   }));
+  const contextMarks = annotations.filter(
+    (mark) =>
+      mark.contextSource !== undefined &&
+      (service === "all" || service === "Context") &&
+      [mark.name, mark.url, mark.description, mark.contextSource.threadId, mark.contextSource.runId]
+        .join(" ")
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
   const rows = annotatedMarks
     .filter(
       (mark) =>
@@ -78,6 +93,10 @@ export function WorkspaceMarksPanel({
     onCopy: setCopied,
     onError: (error) => setCopyError(error.message),
   });
+  const openEnvironment = (xwingEnvironmentId: string | undefined) => {
+    if (xwingEnvironmentId !== undefined)
+      useRightPanelStore.getState().openXwingEnvironment(threadRef, xwingEnvironmentId);
+  };
   const sortBy = (field: keyof WorkspaceMark) => {
     setAscending(field === sort ? !ascending : true);
     setSort(field);
@@ -156,7 +175,14 @@ export function WorkspaceMarksPanel({
                   className="rounded border border-border bg-background p-1"
                 >
                   <option value="all">All</option>
-                  {[...new Set(marks.map((mark) => mark.service))].map((name) => (
+                  {[
+                    ...new Set([
+                      ...marks.map((mark) => mark.service),
+                      ...annotations.flatMap((mark) =>
+                        mark.contextSource === undefined ? [] : ["Context"],
+                      ),
+                    ]),
+                  ].map((name) => (
                     <option key={name}>{name}</option>
                   ))}
                 </select>
@@ -167,11 +193,15 @@ export function WorkspaceMarksPanel({
         <Button
           size="micro"
           variant="ghost"
-          disabled={!rows.length}
+          disabled={!rows.length && !contextMarks.length}
           onClick={() => {
             void copy(
-              rows
-                .map((mark) =>
+              [
+                ...contextMarks.map(
+                  (mark) =>
+                    `${mark.name ?? "Context"} ${mark.url} ${mark.contextSource!.runId}${mark.description ? ` ${mark.description}` : ""}`,
+                ),
+                ...rows.map((mark) =>
                   [
                     preferences.local
                       ? markTimestamp(mark.timestamp, false, preferences.hour24)
@@ -183,8 +213,8 @@ export function WorkspaceMarksPanel({
                   ]
                     .filter(Boolean)
                     .join(" "),
-                )
-                .join("\n"),
+                ),
+              ].join("\n"),
               "all",
             );
           }}
@@ -193,6 +223,43 @@ export function WorkspaceMarksPanel({
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
+        {contextMarks.map((mark) => (
+          <div
+            key={mark.url}
+            className="flex items-start gap-2 border-b border-border/50 px-2 py-2 text-xs"
+          >
+            <div className="min-w-0 flex-1">
+              <Link
+                to="/$environmentId/$threadId"
+                params={buildThreadRouteParams({
+                  environmentId: threadRef.environmentId,
+                  threadId: mark.contextSource!.threadId,
+                })}
+                className="text-primary hover:underline"
+              >
+                {mark.name ?? mark.url}
+              </Link>
+              <p className="break-all text-muted-foreground">
+                Context · {mark.contextSource!.runId}
+              </p>
+              {mark.description ? <p>{mark.description}</p> : null}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-micro"
+              aria-label={`Copy ${mark.name ?? mark.url}`}
+              onClick={() => {
+                void copy(mark.url, mark.url);
+              }}
+            >
+              {isCopied && copied === mark.url ? (
+                <CheckIcon className="size-3" />
+              ) : (
+                <CopyIcon className="size-3" />
+              )}
+            </Button>
+          </div>
+        ))}
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-background text-muted-foreground">
             <tr>
@@ -219,15 +286,32 @@ export function WorkspaceMarksPanel({
                 ) : null}
                 {preferences.service ? <td className="px-2 py-1">{mark.service}</td> : null}
                 <td className="max-w-64 truncate px-2 py-1">
-                  <a
-                    href={mark.url}
+                  {mark.link?.type === "xwing_environment" ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="text-primary hover:underline"
+                            onClick={() => openEnvironment(mark.link?.xwingEnvironmentId)}
+                          />
+                        }
+                      >
+                        {mark.url.replace(/^xwing-environment:/, "Xwing ")}
+                      </TooltipTrigger>
+                      <TooltipPopup>Open in Environments</TooltipPopup>
+                    </Tooltip>
+                  ) : (
+                    <a
+                      href={mark.url}
 
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    {mark.url}
-                  </a>
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      {mark.url}
+                    </a>
+                  )}
                 </td>
                 {preferences.description ? <td className="px-2 py-1">{mark.description}</td> : null}
                 <td>
@@ -250,7 +334,7 @@ export function WorkspaceMarksPanel({
             ))}
           </tbody>
         </table>
-        {!rows.length ? (
+        {!rows.length && !contextMarks.length ? (
           <p className="p-5 text-sm text-muted-foreground">
             {query.isPending
               ? "Loading links…"

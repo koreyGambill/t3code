@@ -31,6 +31,8 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as DevelopmentEnvironmentCheckouts from "./developmentEnvironments/DevelopmentEnvironmentCheckouts.ts";
+import { WorktreeRemovalOwnership } from "./vcs/worktreeRemoval.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { describe, expect, it } from "@effect/vitest";
@@ -341,6 +343,7 @@ const cleanupFixture = (
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
     let deletedThreads: OrchestrationV2ThreadShell[] = [];
     let storedWorktreePaths: string[] = [worktree];
+    let developmentEnvironmentCheckouts: string[] = [];
     let projectRoots = [repo];
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
@@ -421,38 +424,44 @@ const cleanupFixture = (
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
+      Effect.provideServiceEffect(
+        WorktreeRemovalOwnership,
+        DevelopmentEnvironmentCheckouts.makeRemovalOwnership,
+      ),
       Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
         Effect.sync(() =>
-          openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
-            ? [
-                {
-                  payload_json: JSON.stringify({
-                    id: "session-1",
-                    driver: "codex",
-                    providerInstanceId: "codex",
-                    status: "ready",
-                    cwd: openSessionCwd,
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: "2026-06-01T12:00:00.000Z",
-                    updatedAt: "2026-06-01T12:00:00.000Z",
-                    lastError: null,
-                  }),
-                },
-              ]
-            : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
-              ? [{ status: outboxStatus }]
-              : strings.join("").includes("deleted_at IS NOT NULL")
-                ? deletedThreads.map((thread) => ({
-                    payload_json: JSON.stringify(thread),
-                    workspaceRoot: repo,
-                  }))
-                : strings.join("").includes('AS "worktreePath"')
-                  ? [
-                      ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                      ...storedWorktreePaths,
-                    ].map((worktreePath) => ({ worktreePath }))
-                  : [],
+          strings.join("").includes("SELECT DISTINCT checkout_path")
+            ? developmentEnvironmentCheckouts.map((checkoutPath) => ({ checkoutPath }))
+            : openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
+              ? [
+                  {
+                    payload_json: JSON.stringify({
+                      id: "session-1",
+                      driver: "codex",
+                      providerInstanceId: "codex",
+                      status: "ready",
+                      cwd: openSessionCwd,
+                      model: null,
+                      capabilities: CodexProviderCapabilitiesV2,
+                      createdAt: "2026-06-01T12:00:00.000Z",
+                      updatedAt: "2026-06-01T12:00:00.000Z",
+                      lastError: null,
+                    }),
+                  },
+                ]
+              : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
+                ? [{ status: outboxStatus }]
+                : strings.join("").includes("deleted_at IS NOT NULL")
+                  ? deletedThreads.map((thread) => ({
+                      payload_json: JSON.stringify(thread),
+                      workspaceRoot: repo,
+                    }))
+                  : strings.join("").includes('AS "worktreePath"')
+                    ? [
+                        ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                        ...storedWorktreePaths,
+                      ].map((worktreePath) => ({ worktreePath }))
+                    : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -523,6 +532,9 @@ const cleanupFixture = (
       },
       setStoredWorktreePaths: (paths: string[]) => {
         storedWorktreePaths = paths;
+      },
+      setDevelopmentEnvironmentCheckouts: (paths: string[]) => {
+        developmentEnvironmentCheckouts = paths;
       },
       setProjectRoots: (roots: string[]) => {
         projectRoots = roots;
@@ -1178,6 +1190,24 @@ describe("deleted thread worktrees", () => {
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
       }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
+  it.effect("keeps a checkout an Xwing environment owns, even after its thread was deleted", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      // Xwing recorded the checkout through a symlinked parent; the thread names its real path.
+      const alias = `${fixture.config.worktreesDir}-alias`;
+      yield* fixture.fs.symlink(fixture.config.worktreesDir, alias);
+      fixture.setDevelopmentEnvironmentCheckouts([`${alias}/feature`]);
+      fixture.setDeletedThreads([parent(fixture.worktree)]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries[0]).toMatchObject({
+        outcome: "kept",
+        reason: "Owned by an Xwing development environment",
+      });
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
   it.effect("applies the remaining subagent's rules when deletion cleanup is off", () =>

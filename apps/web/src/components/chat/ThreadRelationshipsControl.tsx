@@ -560,6 +560,9 @@ export function ThreadRelationshipsPanel(props: {
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
+  const contextFork = projection?.contextTransfers.find(
+    (transfer) => transfer.type === "fork" && transfer.targetThreadId === props.threadId,
+  );
 
   const lineageVisible =
     props.showLineage &&
@@ -568,6 +571,7 @@ export function ThreadRelationshipsPanel(props: {
       previous.length > 0 ||
       runningCount > 0 ||
       remoteSubagents.length > 0 ||
+      contextFork !== undefined ||
       delegatedFrom !== undefined ||
       // Disconnect lives in this heading, so a thread with only side chats still shows it.
       (canDetach && sideChats.length > 0));
@@ -875,9 +879,7 @@ export function ThreadRelationshipsPanel(props: {
               <TooltipPopup side="left">
                 {latestMergeBackRun === null
                   ? "Complete a run in this fork before merging it back"
-                  : parentTitle
-                    ? `Merge this conversation back into ${parentTitle}`
-                    : "Merge this conversation back into its source"}
+                  : `Send this conversation's new turns to ${parentTitle || "its source"}, after its current work`}
               </TooltipPopup>
             </Tooltip>
             <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
@@ -958,6 +960,28 @@ export function ThreadRelationshipsPanel(props: {
             ) : null
           }
         >
+          {contextFork === undefined ? null : (
+            <div className="px-2 py-1 text-xs text-muted-foreground">
+              <button
+                className="text-primary hover:underline"
+                onClick={() => openThread(contextFork.sourceThreadId)}
+              >
+                Context from{" "}
+                {graph.nodes.get(contextFork.sourceThreadId)?.thread?.title ??
+                  contextFork.sourceThreadId}
+              </button>
+              <p className="break-all">{contextFork.sourcePoint.runId}</p>
+              <p>
+                {contextFork.status === "failed"
+                  ? "Context transfer failed"
+                  : contextFork.resolution?.strategy === "native_fork"
+                    ? "Native context fork"
+                    : contextFork.resolution?.strategy === "portable_context"
+                      ? "Portable conversation context"
+                      : "Context fork pending"}
+              </p>
+            </div>
+          )}
           {delegatedFrom === undefined ? null : (
             <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
               <DelegatedFromRow

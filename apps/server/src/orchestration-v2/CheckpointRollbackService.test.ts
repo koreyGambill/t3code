@@ -174,7 +174,8 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: true },
   { order: "rollback-first", restoreFiles: true },
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
-])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false }) =>
+  { order: "cleanup-first", restoreFiles: false, xwing: true },
+])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false, xwing = false }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -205,6 +206,16 @@ it.effect.each([
         projectId,
         worktreePath,
         branch,
+        developmentEnvironment: xwing
+          ? {
+              xwingEnvironmentId: "0123abcd",
+              repositorySource: workspaceRoot,
+              checkoutPath: worktreePath,
+              number: 7,
+              name: "rollback",
+              selectedAt: DateTime.makeUnsafe("2026-11-07T00:00:00.000Z"),
+            }
+          : null,
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId: providerInstanceId, model: "test-model" },
       },
@@ -325,7 +336,7 @@ it.effect.each([
       if (order === "rollback-first") assert.isFalse(cleanupEntered);
       yield* Deferred.succeed(release, undefined);
       if (cleanup !== undefined) yield* Fiber.join(cleanup);
-      if (unmanaged) {
+      if (unmanaged || xwing) {
         const error = yield* Fiber.join(rollback).pipe(Effect.flip);
         assert.equal(error._tag, "CheckpointRollbackExecutionError");
         assert.deepEqual(calls, ["cleanup"]);

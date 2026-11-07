@@ -11,6 +11,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -453,6 +454,11 @@ export const ClientSettingsSchema = Schema.Struct({
   persistComposerContextStrip: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  // Machine for new work that names none; distinct from the primary connection, which
+  // is only how this client reaches its own server. Null keeps primary-first defaults.
+  preferredEnvironmentId: ForwardCompatibleNullable(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 
   favorites: ModelFavorites.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   providerModelPreferences: ProviderModelPreferences.pipe(
@@ -687,7 +693,7 @@ export type CodexSettings = typeof CodexSettings.Type;
 
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
-export const IDLE_COMPACTION_MODES = [
+const IDLE_COMPACTION_MODES = [
   { value: "onReturn", label: "When you return" },
   { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
   { value: "off", label: "Never" },
@@ -760,20 +766,11 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
     idleCompaction: InstanceIdleCompaction.pipe(
       Schema.withDecodingDefault(Effect.succeed("default" as const)),
-      Schema.annotateKey({
-        title: "Compact idle threads",
-        description:
-          "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
-        providerSettingsForm: {
-          control: "select",
-          options: INSTANCE_IDLE_COMPACTION_MODES,
-          clearWhenEmpty: "omit",
-        },
-      }),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1452,7 +1449,7 @@ export const globalIdleCompaction = (settings: IdleCompactionSettings): IdleComp
     ? settings.compactIdleThreads
     : settings.compactIdleThreads
       ? "beforeCacheExpires"
-      : "onReturn");
+      : "off");
 
 /** Sets the mode, and the legacy switch shipped clients still read alongside it. */
 export const withIdleCompaction = <S extends IdleCompactionSettings>(
@@ -1461,7 +1458,7 @@ export const withIdleCompaction = <S extends IdleCompactionSettings>(
 ): S => ({ ...settings, idleCompaction: mode, compactIdleThreads: mode === "beforeCacheExpires" });
 
 /** Whether a server reads modes, rather than only the boolean switch from before them. */
-export const readsIdleCompactionModes = (settings: IdleCompactionSettings) =>
+const readsIdleCompactionModes = (settings: IdleCompactionSettings) =>
   settings.idleCompaction !== undefined || typeof settings.compactIdleThreads === "string";
 
 /**
@@ -1795,6 +1792,7 @@ export const ClientSettingsPatch = Schema.Struct({
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  preferredEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),

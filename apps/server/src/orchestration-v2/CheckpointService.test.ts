@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointService from "./CheckpointService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 it.effect(
@@ -52,6 +53,7 @@ it.effect(
           Layer.provide(
             Layer.mergeAll(
               IdAllocator.layer,
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
               Layer.mock(CheckpointStore.CheckpointStore)({
                 isGitRepository: () => Effect.succeed(true),
                 hasCheckpointRef: () => Effect.succeed(false),

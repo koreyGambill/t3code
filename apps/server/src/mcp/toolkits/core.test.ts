@@ -52,6 +52,7 @@ import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
+import * as ThreadWorkspace from "../../threadWorkspace/ThreadWorkspace.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -63,6 +64,8 @@ import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(ThreadWorkspace.layerTest),
+
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );

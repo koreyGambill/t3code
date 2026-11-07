@@ -4,6 +4,9 @@ import * as Schema from "effect/Schema";
 
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
+import { XwingCommandError, XwingEnvironmentNotFoundError } from "./xwingEnvironments.ts";
+
+const isXwingCommandError = Schema.is(XwingCommandError);
 
 describe("WebSocket RPC contracts", () => {
   it("rejects server-internal commands sent to dispatchCommand", () => {
@@ -35,6 +38,41 @@ describe("WebSocket RPC contracts", () => {
     ).toBe(true);
   });
 
+  it("takes only an Xwing environment id from a launch, never a checkout binding", () => {
+    const launch = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.launchThread);
+    if (launch === undefined) throw new Error("launchThread is not registered");
+    const decode = Schema.decodeUnknownExit(launch.payloadSchema);
+    const request = {
+      commandId: "launch-1",
+      projectId: "project-1",
+      title: "Work",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    };
+    const decoded = decode({
+      ...request,
+      workspaceStrategy: { type: "xwing_environment", xwingEnvironmentId: "0123abcd" },
+      developmentEnvironment: {
+        xwingEnvironmentId: "0123abcd",
+        repositorySource: "/repo",
+        checkoutPath: "/etc",
+        number: 1,
+        name: "forged",
+      },
+    });
+    if (!Exit.isSuccess(decoded)) throw new Error("the Xwing launch was rejected");
+    expect(decoded.value).not.toHaveProperty("developmentEnvironment");
+    expect(
+      Exit.isFailure(
+        decode({
+          ...request,
+          workspaceStrategy: { type: "xwing_environment", xwingEnvironmentId: "../../etc" },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("lets the server pick a new worktree's folder", () => {
     const createWorktree = WsRpcGroup.requests.get(WS_METHODS.vcsCreateWorktree);
     if (createWorktree === undefined) throw new Error("vcs.createWorktree is not registered");
@@ -43,5 +81,32 @@ describe("WebSocket RPC contracts", () => {
 
     expect(Exit.isSuccess(decode({ ...request, path: null }))).toBe(true);
     expect(Exit.isFailure(decode({ ...request, path: "/repo/.git/hooks" }))).toBe(true);
+  });
+
+  it("delivers Xwing failure kinds without server diagnostics", () => {
+    const inspect = WsRpcGroup.requests.get(WS_METHODS.xwingEnvironmentsInspect);
+    if (inspect === undefined) throw new Error("xwingEnvironments.inspect is not registered");
+    const wire = Schema.toCodecJson(inspect.errorSchema);
+    const sent = new XwingCommandError({
+      operation: "inspect",
+      exitCode: 2,
+      cause: new Error("error: git status failed with token=hunter2"),
+    });
+
+    const encoded = JSON.stringify(Schema.encodeUnknownSync(wire)(sent));
+    expect(encoded).not.toContain("hunter2");
+    expect(sent.cause).toBeInstanceOf(Error);
+    const received = Schema.decodeUnknownSync(wire)(JSON.parse(encoded));
+
+    if (!isXwingCommandError(received)) throw new Error(`received ${String(received)}`);
+    expect(received.message).toBe("Xwing inspect exited with code 2.");
+    expect(received.cause).toBeUndefined();
+    expect(
+      Schema.decodeSync(wire)(
+        Schema.encodeSync(wire)(
+          new XwingEnvironmentNotFoundError({ environmentId: "ffffffffffffffff" }),
+        ),
+      ),
+    ).toBeInstanceOf(XwingEnvironmentNotFoundError);
   });
 });

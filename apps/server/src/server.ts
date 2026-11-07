@@ -75,12 +75,19 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
+import * as ThreadReplies from "./orchestration-v2/ThreadReplies.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as XwingEnvironments from "./xwing/XwingEnvironments.ts";
+import * as DevelopmentEnvironmentCheckouts from "./developmentEnvironments/DevelopmentEnvironmentCheckouts.ts";
+import * as DevelopmentEnvironments from "./developmentEnvironments/DevelopmentEnvironments.ts";
+import * as XwingOperations from "./xwing/XwingOperations.ts";
+import * as DevelopmentEnvironmentHolds from "./developmentEnvironments/DevelopmentEnvironmentHolds.ts";
+import * as DevelopmentEnvironmentLifecycle from "./developmentEnvironments/DevelopmentEnvironmentLifecycle.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -197,11 +204,11 @@ import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
-import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
+import * as EffectOutboxV2 from "./orchestration-v2/EffectOutbox.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
@@ -503,6 +510,8 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
+const layerXwingEnvironments = XwingEnvironments.layer.pipe(Layer.provide(ProcessRunner.layer));
+
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
@@ -575,18 +584,38 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   ),
 );
 
-const layerOrchestrationApplication = Layer.merge(
+const layerXwingOperations = XwingOperations.layer.pipe(Layer.provide(ProcessRunner.layer));
+// One instance: binding and cleanup serialize on its per-environment lock.
+const layerDevelopmentEnvironmentHolds = DevelopmentEnvironmentHolds.layer.pipe(
+  Layer.provide(layerXwingOperations),
+);
+
+const layerOrchestrationApplication = Layer.mergeAll(
   CheckpointDiffQuery.layer,
   NativeChildWorkQuery.layer,
-).pipe(Layer.provideMerge(layerCheckpointStore), Layer.provideMerge(layerOrchestrationV2Runtime));
+  DevelopmentEnvironments.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        DevelopmentEnvironmentCheckouts.layerXwing,
+        ProjectionStoreV2.layer,
+        layerXwingOperations,
+      ),
+    ),
+  ),
+  DevelopmentEnvironmentLifecycle.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(ProjectionStoreV2.layer, EffectOutboxV2.layer, layerXwingOperations),
+    ),
+  ),
+).pipe(
+  Layer.provideMerge(layerDevelopmentEnvironmentHolds),
+  Layer.provideMerge(layerCheckpointStore),
+  Layer.provideMerge(layerOrchestrationV2Runtime),
+);
 
 const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));
-
-const layerIdleCompactionWorker = Layer.effectDiscard(
-  IdleCompactionService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(Layer.provide(ProjectionStoreV2.layer));
 
 const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
@@ -628,7 +657,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
-  layerIdleCompactionWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(Layer.provide(ProjectionMaintenance.layer)),
   layerThreadPullRequestWorker,
@@ -672,7 +700,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  Layer.provideMerge(
+    Layer.mergeAll(layerTerminal, layerPreview, layerDevice, layerXwingEnvironments),
+  ),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
@@ -740,6 +770,10 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
+  // Worktree removers read this while they are built, so it sits beneath every one of them.
+  Layer.provideMerge(
+    DevelopmentEnvironmentCheckouts.layerRemovalOwnership.pipe(Layer.provide(layerPersistence)),
+  ),
   // Layers memoize by reference, so this is the same policy the settings layer reads.
   Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),
   Layer.provideMerge(ExternalLauncher.layer),
@@ -787,12 +821,18 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Delivers replies owed between threads, including after a restart.
+  Layer.effectDiscard(
+    ThreadReplies.ThreadReplies.pipe(Effect.flatMap((replies) => replies.start())),
+  ),
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  // t3_thread_send replies, from /mcp and the follower above.
+  Layer.provide(ThreadReplies.layer),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
   Layer.provide(PeerLinkRequests.layer),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.

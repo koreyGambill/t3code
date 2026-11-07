@@ -3,7 +3,6 @@ import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
-import { shouldCompactBeforeSend } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
@@ -691,27 +690,6 @@ export function useThreadComposerState() {
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
     const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
     const metadata = makeQueuedMessageMetadata();
-    // A fresh session drops the context a compaction would summarize.
-    const compactBeforeSend =
-      !freshContext &&
-      followUpDispatchMode === null &&
-      selectedEnvironmentRuntime?.connectionState === "connected" &&
-      selectedThreadProjection !== null &&
-      serverConfig != null &&
-      shouldCompactBeforeSend({
-        projection: selectedThreadProjection.projection,
-        visibleTurnItems: selectedThreadVisibleTurnItems,
-        selection: modelSelection,
-        providers: serverConfig.providers,
-        settings: serverConfig.settings,
-        text,
-        threadIdle:
-          !activeThreadBusy &&
-          !runlessWorkActive &&
-          !isCompacting &&
-          selectedThreadQueuedMessages.length === 0,
-        now: metadata.createdAt,
-      });
     const messageId = MessageId.make(metadata.messageId);
     onWillEnqueue?.();
     clearThreadComposerError(threadKey);
@@ -729,11 +707,7 @@ export function useThreadComposerState() {
         provider,
         draft.interactionMode ?? thread.interactionMode,
       ),
-      ...(compactBeforeSend
-        ? { compactBeforeSend, dispatchMode: "queue" as const }
-        : followUpDispatchMode === null
-          ? {}
-          : { dispatchMode: followUpDispatchMode }),
+      ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
       ...(freshContext ? { freshContext: true } : {}),
       createdAt: metadata.createdAt,
     });

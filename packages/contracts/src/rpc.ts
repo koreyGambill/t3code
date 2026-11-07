@@ -13,9 +13,11 @@ import {
 import {
   ThreadWorkspace,
   ThreadWorkspaceCounts,
+  ThreadWorkspaceListWorkInput,
+  ThreadWorkspaceWorkEntry,
   ThreadWorkspaceError,
   ThreadWorkspaceGetInput,
-  ThreadWorkspacePatchInput,
+  ThreadWorkspaceMutateInput,
   ThreadWorkspaceSaveDraftInput,
   ThreadWorkspaceSubmitInput,
 } from "./threadWorkspace.ts";
@@ -438,6 +440,43 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  XwingApplicationRun,
+  XwingEnvironmentDetail,
+  XwingEnvironmentSummary,
+  XwingEnvironmentsInspectInput,
+  XwingInspectError,
+  XwingListError,
+} from "./xwingEnvironments.ts";
+import {
+  DevelopmentEnvironmentCheckoutChoice,
+  DevelopmentEnvironmentListCheckoutsError,
+  DevelopmentEnvironmentListCheckoutsInput,
+  DevelopmentEnvironmentListUsageInput,
+  DevelopmentEnvironmentPersistenceError,
+  DevelopmentEnvironmentSelectCheckoutInput,
+  DevelopmentEnvironmentSelectCheckoutResult,
+  DevelopmentEnvironmentSelectError,
+  DevelopmentEnvironmentUsageList,
+} from "./developmentEnvironments.ts";
+import {
+  DevelopmentEnvironmentAppCommands,
+  DevelopmentEnvironmentAppCommandsInput,
+  DevelopmentEnvironmentAppLogs,
+  DevelopmentEnvironmentAppLogsInput,
+  DevelopmentEnvironmentAppRuns,
+  DevelopmentEnvironmentAttachInput,
+  DevelopmentEnvironmentCleanUpInput,
+  DevelopmentEnvironmentCleanUpResult,
+  DevelopmentEnvironmentCleanupAssessment,
+  DevelopmentEnvironmentCreateInput,
+  DevelopmentEnvironmentLifecycleError,
+  DevelopmentEnvironmentRef,
+  DevelopmentEnvironmentRepairResult,
+  DevelopmentEnvironmentSetupResult,
+  DevelopmentEnvironmentStartAppInput,
+  DevelopmentEnvironmentStopAppInput,
+} from "./developmentEnvironmentLifecycle.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -464,6 +503,7 @@ export const WS_METHODS = {
   threadNotesSendSelection: "threadNotes.sendSelection",
   threadWorkspaceGet: "threadWorkspace.get",
   threadWorkspaceCounts: "threadWorkspace.counts",
+  threadWorkspaceListWork: "threadWorkspace.listWork",
   threadWorkspacePatch: "threadWorkspace.patch",
   threadWorkspaceSaveDraft: "threadWorkspace.saveDraft",
   threadWorkspaceSubmit: "threadWorkspace.submit",
@@ -473,6 +513,20 @@ export const WS_METHODS = {
   reviewsSave: "reviews.save",
   reviewsSubmit: "reviews.submit",
   reviewsDue: "reviews.due",
+  xwingEnvironmentsList: "xwingEnvironments.list",
+  xwingEnvironmentsInspect: "xwingEnvironments.inspect",
+  developmentEnvironmentsListCheckouts: "developmentEnvironments.listCheckouts",
+  developmentEnvironmentsListUsage: "developmentEnvironments.listUsage",
+  developmentEnvironmentsSelectCheckout: "developmentEnvironments.selectCheckout",
+  developmentEnvironmentsCreate: "developmentEnvironments.create",
+  developmentEnvironmentsAttach: "developmentEnvironments.attach",
+  developmentEnvironmentsRepair: "developmentEnvironments.repair",
+  developmentEnvironmentsListAppCommands: "developmentEnvironments.listAppCommands",
+  developmentEnvironmentsStartApp: "developmentEnvironments.startApp",
+  developmentEnvironmentsStopApp: "developmentEnvironments.stopApp",
+  developmentEnvironmentsReadAppLogs: "developmentEnvironments.readAppLogs",
+  developmentEnvironmentsAssessCleanup: "developmentEnvironments.assessCleanup",
+  developmentEnvironmentsCleanUp: "developmentEnvironments.cleanUp",
   agentSessionsProgress: "agentSessions.progress",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1464,6 +1518,11 @@ const WsThreadNotesSendSelectionRpc = Rpc.make(WS_METHODS.threadNotesSendSelecti
   error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadWorkspaceListWorkRpc = Rpc.make(WS_METHODS.threadWorkspaceListWork, {
+  payload: ThreadWorkspaceListWorkInput,
+  success: Schema.Array(ThreadWorkspaceWorkEntry),
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
 const WsThreadWorkspaceCountsRpc = Rpc.make(WS_METHODS.threadWorkspaceCounts, {
   payload: ThreadWorkspaceGetInput,
   success: ThreadWorkspaceCounts,
@@ -1475,7 +1534,7 @@ const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
 const WsThreadWorkspacePatchRpc = Rpc.make(WS_METHODS.threadWorkspacePatch, {
-  payload: ThreadWorkspacePatchInput,
+  payload: ThreadWorkspaceMutateInput,
   success: ThreadWorkspace,
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
@@ -1520,6 +1579,96 @@ const WsReviewsDueRpc = Rpc.make(WS_METHODS.reviewsDue, {
   payload: ReviewDueInput,
   success: Schema.Array(ReviewSummary),
   error: Schema.Union([ReviewArtifactError, EnvironmentAuthorizationError]),
+});
+
+const WsXwingEnvironmentsListRpc = Rpc.make(WS_METHODS.xwingEnvironmentsList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(XwingEnvironmentSummary),
+  error: Schema.Union([XwingListError, EnvironmentAuthorizationError]),
+});
+const WsXwingEnvironmentsInspectRpc = Rpc.make(WS_METHODS.xwingEnvironmentsInspect, {
+  payload: XwingEnvironmentsInspectInput,
+  success: XwingEnvironmentDetail,
+  error: Schema.Union([XwingInspectError, EnvironmentAuthorizationError]),
+});
+const WsDevelopmentEnvironmentsListCheckoutsRpc = Rpc.make(
+  WS_METHODS.developmentEnvironmentsListCheckouts,
+  {
+    payload: DevelopmentEnvironmentListCheckoutsInput,
+    success: Schema.Array(DevelopmentEnvironmentCheckoutChoice),
+    error: Schema.Union([DevelopmentEnvironmentListCheckoutsError, EnvironmentAuthorizationError]),
+  },
+);
+const WsDevelopmentEnvironmentsListUsageRpc = Rpc.make(
+  WS_METHODS.developmentEnvironmentsListUsage,
+  {
+    payload: DevelopmentEnvironmentListUsageInput,
+    success: DevelopmentEnvironmentUsageList,
+    error: Schema.Union([DevelopmentEnvironmentPersistenceError, EnvironmentAuthorizationError]),
+  },
+);
+const WsDevelopmentEnvironmentsSelectCheckoutRpc = Rpc.make(
+  WS_METHODS.developmentEnvironmentsSelectCheckout,
+  {
+    payload: DevelopmentEnvironmentSelectCheckoutInput,
+    success: DevelopmentEnvironmentSelectCheckoutResult,
+    error: Schema.Union([DevelopmentEnvironmentSelectError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsDevelopmentEnvironmentsCreateRpc = Rpc.make(WS_METHODS.developmentEnvironmentsCreate, {
+  payload: DevelopmentEnvironmentCreateInput,
+  success: DevelopmentEnvironmentSetupResult,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+});
+const WsDevelopmentEnvironmentsAttachRpc = Rpc.make(WS_METHODS.developmentEnvironmentsAttach, {
+  payload: DevelopmentEnvironmentAttachInput,
+  success: DevelopmentEnvironmentSetupResult,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+});
+const WsDevelopmentEnvironmentsRepairRpc = Rpc.make(WS_METHODS.developmentEnvironmentsRepair, {
+  payload: DevelopmentEnvironmentRef,
+  success: DevelopmentEnvironmentRepairResult,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+});
+const WsDevelopmentEnvironmentsListAppCommandsRpc = Rpc.make(
+  WS_METHODS.developmentEnvironmentsListAppCommands,
+  {
+    payload: DevelopmentEnvironmentAppCommandsInput,
+    success: DevelopmentEnvironmentAppCommands,
+    error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+  },
+);
+const WsDevelopmentEnvironmentsStartAppRpc = Rpc.make(WS_METHODS.developmentEnvironmentsStartApp, {
+  payload: DevelopmentEnvironmentStartAppInput,
+  success: DevelopmentEnvironmentAppRuns,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+});
+const WsDevelopmentEnvironmentsStopAppRpc = Rpc.make(WS_METHODS.developmentEnvironmentsStopApp, {
+  payload: DevelopmentEnvironmentStopAppInput,
+  success: XwingApplicationRun,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+});
+const WsDevelopmentEnvironmentsReadAppLogsRpc = Rpc.make(
+  WS_METHODS.developmentEnvironmentsReadAppLogs,
+  {
+    payload: DevelopmentEnvironmentAppLogsInput,
+    success: DevelopmentEnvironmentAppLogs,
+    error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+  },
+);
+const WsDevelopmentEnvironmentsAssessCleanupRpc = Rpc.make(
+  WS_METHODS.developmentEnvironmentsAssessCleanup,
+  {
+    payload: DevelopmentEnvironmentRef,
+    success: DevelopmentEnvironmentCleanupAssessment,
+    error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+  },
+);
+const WsDevelopmentEnvironmentsCleanUpRpc = Rpc.make(WS_METHODS.developmentEnvironmentsCleanUp, {
+  payload: DevelopmentEnvironmentCleanUpInput,
+  success: DevelopmentEnvironmentCleanUpResult,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
 });
 
 const WsAgentSessionsProgressRpc = Rpc.make(WS_METHODS.agentSessionsProgress, {
@@ -2286,6 +2435,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadNotesSendSelectionRpc,
   WsThreadWorkspaceGetRpc,
   WsThreadWorkspaceCountsRpc,
+  WsThreadWorkspaceListWorkRpc,
   WsThreadWorkspacePatchRpc,
   WsThreadWorkspaceSaveDraftRpc,
   WsThreadWorkspaceSubmitRpc,
@@ -2295,6 +2445,20 @@ export const WsRpcGroup = RpcGroup.make(
   WsReviewsSaveRpc,
   WsReviewsSubmitRpc,
   WsReviewsDueRpc,
+  WsXwingEnvironmentsListRpc,
+  WsXwingEnvironmentsInspectRpc,
+  WsDevelopmentEnvironmentsListCheckoutsRpc,
+  WsDevelopmentEnvironmentsListUsageRpc,
+  WsDevelopmentEnvironmentsSelectCheckoutRpc,
+  WsDevelopmentEnvironmentsCreateRpc,
+  WsDevelopmentEnvironmentsAttachRpc,
+  WsDevelopmentEnvironmentsRepairRpc,
+  WsDevelopmentEnvironmentsListAppCommandsRpc,
+  WsDevelopmentEnvironmentsStartAppRpc,
+  WsDevelopmentEnvironmentsStopAppRpc,
+  WsDevelopmentEnvironmentsReadAppLogsRpc,
+  WsDevelopmentEnvironmentsAssessCleanupRpc,
+  WsDevelopmentEnvironmentsCleanUpRpc,
   WsAgentSessionsProgressRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

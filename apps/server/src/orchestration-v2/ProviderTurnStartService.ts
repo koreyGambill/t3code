@@ -634,7 +634,12 @@ export const layer: Layer.Layer<
         }
       }
       const { worktreePath, branch } = projection.thread;
-      if (worktreePath !== null && branch !== null) {
+      // Xwing owns its checkouts; a missing one fails to start instead of being recreated here.
+      if (
+        worktreePath !== null &&
+        branch !== null &&
+        projection.thread.developmentEnvironment == null
+      ) {
         const exists = yield* fileSystem
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));
@@ -1729,9 +1734,14 @@ export const layer: Layer.Layer<
           // Storage cleanup removes worktrees under the same lease. Only startup
           // holds it; the provider turn runs after it is released.
           const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
-          const providerTurn = yield* thread.worktreePath === null
+          const project =
+            thread.worktreePath === null
+              ? Option.getOrNull(yield* projects.getById(thread.projectId))
+              : null;
+          const cwd = thread.worktreePath ?? project?.workspaceRoot;
+          const providerTurn = yield* cwd === undefined
             ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
+            : withWorkspaceLease(path.resolve(cwd), start(input));
           if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>

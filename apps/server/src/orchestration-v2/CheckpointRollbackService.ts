@@ -216,10 +216,11 @@ export const layer: Layer.Layer<
             });
 
       const { worktreePath, branch } = context.thread;
-      // Recreated only where the server would have made it, as turn start does.
+      // Recreated only where the server would have made it, as turn start does. Xwing owns its checkouts.
       if (
         worktreePath != null &&
         branch != null &&
+        context.thread.developmentEnvironment == null &&
         !(yield* fileSystem.exists(worktreePath)) &&
         (yield* isManagedWorktreePath(worktreePath))
       ) {
@@ -374,9 +375,14 @@ export const layer: Layer.Layer<
         function* (input) {
           // Storage cleanup removes worktrees under the same lease.
           const thread = yield* projections.getThread(input.threadId);
-          yield* thread.worktreePath === null
+          const project =
+            thread.worktreePath === null
+              ? Option.getOrNull(yield* projects.get(thread.projectId))
+              : null;
+          const cwd = thread.worktreePath ?? project?.workspaceRoot;
+          yield* cwd === undefined
             ? execute(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), execute(input));
+            : withWorkspaceLease(path.resolve(cwd), execute(input));
         },
         (effect, input) =>
           effect.pipe(

@@ -8,9 +8,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../config.ts";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
+import * as DevelopmentEnvironmentHolds from "../developmentEnvironments/DevelopmentEnvironmentHolds.ts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as XwingOperations from "../xwing/XwingOperations.ts";
+import * as DevelopmentEnvironmentCheckouts from "../developmentEnvironments/DevelopmentEnvironmentCheckouts.ts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  EnvironmentId,
   ChatAttachmentId,
   ComposerContextId,
   type ChatAttachment,
@@ -1009,6 +1016,141 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
     assert.deepEqual(harness.claimed, [launched.threadId]);
   }).pipe(Effect.provide(harness.layer));
 });
+
+it.effect("launches into a resolved Xwing checkout without creating or setting it up", () => {
+  const harness = scratchHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const developmentEnvironment = {
+      xwingEnvironmentId: "0123abcd",
+      repositorySource: "/other-repo",
+      checkoutPath: "/xwing/envs/4/other-repo",
+      number: 4,
+      name: "feature",
+    };
+    const launched = yield* launches.launch({
+      ...launchInput({
+        command: "command:launch:xwing",
+        thread: "thread:launch:xwing",
+        message: "Work in my environment",
+        workspace: {
+          type: "existing_worktree",
+          worktreePath: developmentEnvironment.checkoutPath,
+          branch: "feature/xwing",
+        },
+      }),
+      projectId: otherProjectId,
+      developmentEnvironment,
+    });
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+    assert.equal(projection.thread.worktreePath, developmentEnvironment.checkoutPath);
+    assert.equal(projection.thread.branch, "feature/xwing");
+    const { selectedAt: _selectedAt, ...bound } = projection.thread.developmentEnvironment!;
+    assert.deepEqual(bound, developmentEnvironment);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+
+    const mismatched = yield* launches
+      .launch({
+        ...launchInput({
+          command: "command:launch:xwing-mismatch",
+          thread: "thread:launch:xwing-mismatch",
+          workspace: { type: "existing_worktree", worktreePath: "/somewhere/else" },
+        }),
+        projectId: otherProjectId,
+        developmentEnvironment,
+      })
+      .pipe(Effect.flip);
+    assert.equal(mismatched._tag, "ThreadLaunchError");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect(
+  "launches a request naming an Xwing environment in the checkout this host resolves",
+  () => {
+    const harness = scratchHarness();
+    const resolved: Array<{ readonly xwingEnvironmentId: string; readonly workspaceRoot: string }> =
+      [];
+    const holds: Array<{ readonly id: string; readonly key: string }> = [];
+    const layerEnvironments = DevelopmentEnvironments.layer.pipe(
+      Layer.provide(DevelopmentEnvironmentHolds.layer),
+      Layer.provide(
+        Layer.mergeAll(
+          harness.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+          Layer.mock(ServerEnvironmentIdentity)({
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("server-environment")),
+          }),
+          Layer.mock(XwingOperations.XwingOperations)({
+            registerHold: (hold) =>
+              Effect.sync(() => {
+                holds.push(hold);
+                return {} as never;
+              }),
+          }),
+          Layer.mock(DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckouts)({
+            resolve: (input) =>
+              Effect.sync(() => {
+                resolved.push(input);
+                return {
+                  xwingEnvironmentId: input.xwingEnvironmentId,
+                  repositorySource: "/other-repo",
+                  checkoutPath: "/xwing/envs/4/other-repo",
+                  number: 4,
+                  name: "feature",
+                  branch: "feature/xwing",
+                };
+              }),
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const launched = yield* ThreadMessageIntake.launchThread({
+        ...launchInput({
+          command: "command:launch:xwing-request",
+          thread: "thread:launch:xwing-request",
+          message: "Work in my environment",
+        }),
+        projectId: otherProjectId,
+        workspaceStrategy: { type: "xwing_environment", xwingEnvironmentId: "0123abcd" },
+      });
+      assert.deepEqual(resolved, [
+        { xwingEnvironmentId: "0123abcd", workspaceRoot: otherProject.workspaceRoot },
+      ]);
+      assert.deepEqual(
+        holds.map((hold) => [hold.id, hold.key]),
+        [
+          [
+            "0123abcd",
+            DevelopmentEnvironmentHolds.holdKey({
+              threadId: "thread:launch:xwing-request",
+              period: "command:launch:xwing-request",
+            }),
+          ],
+        ],
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, "/xwing/envs/4/other-repo");
+      assert.equal(projection.thread.branch, "feature/xwing");
+      assert.equal(projection.thread.developmentEnvironment?.xwingEnvironmentId, "0123abcd");
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          harness.layer,
+          layerEnvironments,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-xwing-intake-" }).pipe(
+            Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+          ),
+        ),
+      ),
+    );
+  },
+);
 
 it.effect("stores a Scratch scheduled task at the root and keeps worktrees elsewhere", () => {
   const harness = scratchHarness();
@@ -2208,7 +2350,15 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       assert.isNotNull(path);
       assert.deepEqual(yield* fs.readFile(path), new Uint8Array([1, 2, 3, 4]));
     }
-  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        harness.layer,
+        layerFiles,
+        Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
+      ),
+    ),
+  );
 });
 
 it.effect("cancels tracked setup before provider work is released", () =>
@@ -2490,5 +2640,13 @@ it.effect("replays an accepted send after the project disables the instance", ()
     if (fresh._tag !== "ThreadManagementProviderInstanceDisabledError") {
       assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${fresh._tag}`);
     }
-  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        harness.layer,
+        layerFiles,
+        Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
+      ),
+    ),
+  );
 });

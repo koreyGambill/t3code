@@ -133,18 +133,26 @@ function persistedLink(
 }
 
 describe("isAutoSettlementCandidate", () => {
-  it("settles a thread whose only background work is a command left running", () => {
-    expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
-        shell({
-          pendingBackgroundTasks: [
-            { taskId: "dev", kind: "command", description: "vp run dev --share" },
-          ],
-        }),
-        NOW_MS,
-      ),
-    ).toBe(true);
-  });
+  it.each([
+    [null, undefined, true],
+    ["subagent", undefined, false],
+    ["subagent", false, true],
+  ] as const)(
+    "settles %s with background await %s: %s",
+    (relationshipToParent, awaited, settles) => {
+      expect(
+        ThreadSettlementService.isAutoSettlementCandidate(
+          shell({
+            lineage: { ...shell().lineage, relationshipToParent },
+            pendingBackgroundTasks: [
+              { taskId: "dev", kind: "command", description: "vp run dev --share", awaited },
+            ],
+          }),
+          NOW_MS,
+        ),
+      ).toBe(settles);
+    },
+  );
 
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {
     expect(

@@ -7,6 +7,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -207,9 +208,53 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   );
 });
 
+/**
+ * A launch as a client or agent asks for it: it may name an Xwing environment, never a resolved
+ * binding, so the checkout always comes from this host's Xwing.
+ */
+export type ThreadLaunchRequest = Omit<
+  ThreadLaunch.ThreadLaunchInput,
+  "workspaceStrategy" | "developmentEnvironment"
+> & {
+  readonly workspaceStrategy:
+    | ThreadLaunch.ThreadLaunchWorkspaceStrategy
+    | { readonly type: "xwing_environment"; readonly xwingEnvironmentId: string };
+};
+
 export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(function* (
-  input: ThreadLaunch.ThreadLaunchInput,
+  request: ThreadLaunchRequest,
 ) {
+  const strategy = request.workspaceStrategy;
+  const input: ThreadLaunch.ThreadLaunchInput =
+    strategy.type === "xwing_environment"
+      ? {
+          ...request,
+          ...(yield* DevelopmentEnvironments.DevelopmentEnvironments.pipe(
+            Effect.flatMap((environments) =>
+              environments.resolveLaunchWorkspace({
+                projectId: request.projectId,
+                xwingEnvironmentId: strategy.xwingEnvironmentId,
+              }),
+            ),
+          )),
+        }
+      : { ...request, workspaceStrategy: strategy };
+  const launch = launchResolved(input);
+  if (input.developmentEnvironment === undefined) return yield* launch;
+  const environments = yield* DevelopmentEnvironments.DevelopmentEnvironments;
+  return yield* environments.bindLaunch(
+    {
+      xwingEnvironmentId: input.developmentEnvironment.xwingEnvironmentId,
+      threadId: request.threadId,
+      commandId: request.commandId,
+      title: request.title,
+    },
+    launch,
+  );
+});
+
+// The caller's ThreadMessageIntake.launchThread span already covers this.
+const launchResolved = Effect.fnUntraced(function* (input: ThreadLaunch.ThreadLaunchInput) {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {

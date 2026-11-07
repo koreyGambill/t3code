@@ -1178,13 +1178,15 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/local-worktree",
       envMode: "worktree",
       startFromOrigin: true,
+      xwingEnvironment: { id: "0123abcd", label: "#12 feature" },
     });
 
     store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), remoteProjectRef, draftId, {
       threadId,
     });
 
-    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+    const remapped = useComposerDraftStore.getState().getDraftThread(draftId);
+    expect(remapped).toMatchObject({
       environmentId: OTHER_TEST_ENVIRONMENT_ID,
       projectId,
       branch: null,
@@ -1192,6 +1194,23 @@ describe("composerDraftStore project draft thread mapping", () => {
       envMode: "worktree",
       startFromOrigin: true,
     });
+    expect(remapped?.xwingEnvironment).toBeUndefined();
+  });
+
+  it("keeps an Xwing choice across branch edits and drops it for another checkout", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const xwingEnvironment = { id: "0123abcd", label: "#12 feature" };
+    store.setDraftThreadContext(draftId, {
+      branch: "feature",
+      worktreePath: "/x/envs/12/repo",
+      envMode: "worktree",
+      xwingEnvironment,
+    });
+    store.setDraftThreadContext(draftId, { branch: "feature/renamed" });
+    expect(store.getDraftThread(draftId)?.xwingEnvironment).toEqual(xwingEnvironment);
+    store.setDraftThreadContext(draftId, { worktreePath: "/repo-worktrees/other" });
+    expect(store.getDraftThread(draftId)?.xwingEnvironment).toBeUndefined();
   });
 
   it("clears stale upload metadata when retargeting a draft to another environment", () => {

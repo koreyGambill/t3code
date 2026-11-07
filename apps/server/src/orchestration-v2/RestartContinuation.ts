@@ -86,7 +86,7 @@ function restartContinuationBlocked(
 
 /** App-owned delegations continue in their own threads and report back. */
 function hasOpenAwaitedWork(
-  projection: Pick<ProjectionRuntimeRecoveryState, "runs" | "turnItems">,
+  projection: Pick<ProjectionRuntimeRecoveryState, "thread" | "runs" | "turnItems">,
   providerThread: ProjectionRuntimeRecoveryState["providerThreads"][number],
 ): boolean {
   const openItem = projection.turnItems.some((item) => {
@@ -105,7 +105,11 @@ function hasOpenAwaitedWork(
     openItem ||
     (providerThread.ownerNodeId === null &&
       (providerThread.pendingBackgroundTasks ?? []).some((task) =>
-        isAwaitedWork(cancelledRosterTaskWork(task)),
+        isAwaitedWork(
+          cancelledRosterTaskWork(task, {
+            awaitUnmarked: projection.thread.lineage?.relationshipToParent === "subagent",
+          }),
+        ),
       ))
   );
 }

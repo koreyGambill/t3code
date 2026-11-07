@@ -24,6 +24,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -35,6 +36,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
@@ -205,7 +207,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
   servePeer(
     box,
     Layer.mergeAll(
-      McpHttpServer.layerOrchestratorToolkit,
+      McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
     ).pipe(
@@ -215,7 +217,12 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
       Layer.provide(boxLaunches(seen)),
       Layer.provide(
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mergeAll(
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+          }),
+          Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
+        ),
       ),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provide(boxProjects(seen)),
@@ -260,7 +267,7 @@ const mcpClient = McpSchema.McpServerClient.of({
 const makeLaptop = Effect.gen(function* () {
   const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
   const layerHere = Layer.mergeAll(
-    McpHttpServer.layerOrchestratorToolkit,
+    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
     McpHttpServer.layerProjectRegistration,
     McpHttpServer.layerThreadToolkit,
   ).pipe(
@@ -269,7 +276,10 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mergeAll(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
+      ),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),

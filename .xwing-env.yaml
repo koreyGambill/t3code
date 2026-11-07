@@ -1,0 +1,23 @@
+# Xwing application declaration. Dev state stays in the worktree's .t3; see
+# docs/operations/development.md.
+project: t3code
+profiles: [local]
+variables:
+  T3CODE_PORT: { secret: false }
+  T3CODE_WEB_PORT: { secret: false }
+commands:
+  install:
+    argv: [node, scripts/setup-worktree.ts]
+    description: Install dependencies and link the main checkout's env files
+  build:
+    argv: [vp, run, build]
+  test:
+    argv: [vp, run, check:changed]
+    description: CI's fast checks for changed files; CI runs the full suites
+  run:
+    argv: [vp, run, dev]
+    description: Server and web dev servers with single-origin Vite proxying
+app:
+  ports:
+    server: { preferred: 13773, env: T3CODE_PORT }
+    web: { preferred: 5733, env: T3CODE_WEB_PORT }

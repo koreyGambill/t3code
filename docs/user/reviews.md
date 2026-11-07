@@ -26,12 +26,37 @@ Action items hold outstanding needs and future work. Mark one done or reopen it
 without starting an agent run. Add it to chat when you want the agent to act on
 its status or your notes.
 
+## Agent work and QA
+
+**Agent work** keeps the work an agent takes on, what changed, and how to try it.
+Choose **All threads and machines** to review work across connected environments,
+including archived and settled conversations. Each entry links back to its thread.
+Disconnected machines show that their work could not be loaded.
+
+Filter by pending, passed, or issues. Mark an item passed or record issues and save
+a QA note. You can return it to pending later. QA notes are shared with the agent.
+Finished work waits for your QA separately from the agent's completion status, so
+pending QA does not stop routine work or authorized landing.
+
+Verification entries distinguish a run by another thread from the implementing
+thread's own report. Source review stays labeled as source review, with the tested
+revision, evidence, and remaining gaps when supplied.
+
 ## Design and summary
 
 Design holds the agent's explanations, context, diagrams, and documents. Ask for
 changes in chat. Summary covers the whole conversation so you can catch up on
 what happened, what changed, and the current state. Future work belongs in Action
 items.
+
+## Child preamble
+
+The **Record** tab has a **Child preamble**: standing instructions added to the
+task of every delegate this thread starts, such as which checkout to use or which
+checks to run. The child sees it marked as coming from this Workspace, and the
+delegate's own task wins where they differ. Native subagents and new threads do
+not receive it, and no conversation history is copied. You can also ask the agent
+to set it.
 
 ## Marks and related threads
 
@@ -42,6 +67,20 @@ description when useful.
 
 Threads shows related conversations and why they matter. The clock in the chat
 header opens **Recent Threads**. Back and Forward follow your navigation path.
+
+## Context marks
+
+Ask your agent to save a finished turn as a named context mark in Workspace,
+then start workers from that mark. Each mark keeps its original conversation
+point when the source thread continues. Workers can share that point and still
+use separate checkouts. Reviews start with fresh conversation context unless
+you ask them to inherit a point.
+
+The worker's Lineage shows its context source and whether it received a native
+fork or portable conversation context. A busy source or a different provider
+uses portable context, which can omit older history to fit the context budget.
+Files stay at the worker's checkout state. The worker receives a summary of
+file changes since the marked point when its snapshot is available.
 
 ## Personal notes
 

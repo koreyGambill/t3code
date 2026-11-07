@@ -1,6 +1,7 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
+  type XwingEnvironmentId,
   CommandId,
   CheckpointId,
   CheckpointScopeId,
@@ -13,6 +14,7 @@ import {
   type NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2MergeBackScope,
   type PlanId,
   type ProjectId,
   type ProjectIconOverride,
@@ -155,6 +157,8 @@ interface StartThreadBootstrap {
     readonly interactionMode: ProviderInteractionMode;
     readonly branch: string | null;
     readonly worktreePath: string | null;
+    /** Launch in this Xwing environment's checkout, which the server resolves. */
+    readonly xwingEnvironmentId?: XwingEnvironmentId;
     readonly createdAt: string;
   };
   readonly prepareWorktree?: {
@@ -235,7 +239,9 @@ export interface ForkSideChatInput extends CommandMetadata {
 export interface MergeThreadBackInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
+  /** The source's newest finished turn when the user asked; later turns stay out. */
   readonly runId: RunId;
+  readonly scope?: OrchestrationV2MergeBackScope;
 }
 
 export interface ResumeThreadQueueInput extends ThreadCommandInput {
@@ -702,18 +708,23 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
               ? {}
               : { startFromOrigin: prepareWorktree.startFromOrigin }),
           }
-        : bootstrap?.worktreePath
+        : bootstrap?.xwingEnvironmentId !== undefined
           ? {
-              type: "existing_worktree" as const,
-              worktreePath: bootstrap.worktreePath,
-              ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
+              type: "xwing_environment" as const,
+              xwingEnvironmentId: bootstrap.xwingEnvironmentId,
             }
-          : {
-              type: "root" as const,
-              ...(bootstrap?.branch === null || bootstrap?.branch === undefined
-                ? {}
-                : { branch: bootstrap.branch }),
-            };
+          : bootstrap?.worktreePath
+            ? {
+                type: "existing_worktree" as const,
+                worktreePath: bootstrap.worktreePath,
+                ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
+              }
+            : {
+                type: "root" as const,
+                ...(bootstrap?.branch === null || bootstrap?.branch === undefined
+                  ? {}
+                  : { branch: bootstrap.branch }),
+              };
     return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
       creationSource: input.creationSource ?? "web",
@@ -1026,6 +1037,7 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
     sourcePoint: { type: "run", runId: input.runId },
+    ...(input.scope === undefined ? {} : { scope: input.scope }),
   });
 });
 

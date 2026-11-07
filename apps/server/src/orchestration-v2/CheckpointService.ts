@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
@@ -106,6 +107,7 @@ export interface CheckpointServiceV2Shape {
   readonly prepareRootRunScope: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
+    readonly runOrdinal: number;
     readonly rootNodeId: NodeId;
     readonly providerThreadId: ProviderThreadId;
     readonly cwd: string;
@@ -171,21 +173,54 @@ function checkpointIdForScopeOrdinal(
   });
 }
 
+/**
+ * A root scope covers one checkout period: a run continues the previous run's scope when both
+ * work in the same directory, and otherwise starts a new scope named for itself, so checkpoints
+ * from one checkout are never compared with or restored into another.
+ */
 const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(function* (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+  readonly projections: ProjectionStore.ProjectionStoreV2["Service"];
   readonly threadId: ThreadId;
   readonly runId: RunId;
+  readonly runOrdinal: number;
   readonly rootNodeId: NodeId;
   readonly providerThreadId: ProviderThreadId;
   readonly cwd: string;
   readonly createdAt: DateTime.Utc;
 }) {
-  const scopeId = yield* input.idAllocator.allocate.checkpointScope({
+  const legacyRootScopeId = yield* input.idAllocator.allocate.checkpointScope({
     threadId: input.threadId,
     name: ROOT_CHECKPOINT_SCOPE_NAME,
   });
+  const { previousScope, legacyRootScope } = yield* input.projections.getRootCheckpointScopeContext(
+    input.threadId,
+    {
+      runId: input.runId,
+      legacyRootScopeId,
+    },
+  );
+  const continued = previousScope ?? legacyRootScope;
+  const period =
+    continued === undefined
+      ? { id: legacyRootScopeId }
+      : continued.cwd === input.cwd
+        ? {
+            id: continued.id,
+            ...(continued.baselineOrdinalWithinScope === undefined
+              ? {}
+              : { baselineOrdinalWithinScope: continued.baselineOrdinalWithinScope }),
+          }
+        : {
+            id: yield* input.idAllocator.allocate.checkpointScope({
+              threadId: input.threadId,
+              name: `${ROOT_CHECKPOINT_SCOPE_NAME}:${input.runId}`,
+            }),
+            // Turn start baselines and capture compare against the preceding run ordinal.
+            baselineOrdinalWithinScope: Math.max(0, input.runOrdinal - 1),
+          };
   return {
-    id: scopeId,
+    ...period,
     threadId: input.threadId,
     runId: input.runId,
     nodeId: input.rootNodeId,
@@ -231,7 +266,10 @@ function makeCheckpoint(input: {
 export const layer: Layer.Layer<
   CheckpointServiceV2,
   never,
-  CheckpointStore.CheckpointStore | Digest.Digest | IdAllocator.IdAllocatorV2
+  | CheckpointStore.CheckpointStore
+  | Digest.Digest
+  | IdAllocator.IdAllocatorV2
+  | ProjectionStore.ProjectionStoreV2
 > = Layer.effect(
   CheckpointServiceV2,
   Effect.gen(function* () {
@@ -240,6 +278,7 @@ export const layer: Layer.Layer<
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Digest.Digest, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
@@ -558,7 +597,7 @@ export const layer: Layer.Layer<
 
     return CheckpointServiceV2.of({
       prepareRootRunScope: (input) =>
-        makeRootRunScope({ ...input, idAllocator }).pipe(
+        makeRootRunScope({ ...input, idAllocator, projections }).pipe(
           Effect.mapError(
             (cause) =>
               new CheckpointRootScopePrepareError({

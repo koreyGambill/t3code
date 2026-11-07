@@ -516,6 +516,8 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "terminal.close-idle":
+            return resourceCleanup.closeIdleTerminals(effect.threadId, effect.request.worktreePath);
           case "preview.cleanup":
             return resourceCleanup.cleanupPreviews(effect.threadId).pipe(
               Effect.mapError(

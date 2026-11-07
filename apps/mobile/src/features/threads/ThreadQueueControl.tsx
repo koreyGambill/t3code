@@ -235,12 +235,14 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map(({ run, text, attachments, context, message, bringsBack }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
+          // A Bring back delivers its context only when its own turn starts.
           canPromoteToSteer:
             (workflow?.canPromoteToSteer ?? false) &&
+            !bringsBack &&
             (run.freshContext !== true || workflow?.promoteSkipsCompaction === true),
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,

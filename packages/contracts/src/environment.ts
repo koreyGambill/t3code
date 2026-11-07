@@ -174,6 +174,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   freshContext: Schema.optionalKey(Schema.Boolean),
   /** Server saves and runs scheduled task `threadMode`; older servers ignore it. */
   scheduledTaskThreadModes: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Server answers xwingEnvironments.* and developmentEnvironments.*, and launches accept an
+   * `xwing_environment` workspace strategy. The host may still lack Xwing.
+   */
+  xwingEnvironments: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

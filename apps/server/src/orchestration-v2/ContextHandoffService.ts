@@ -172,12 +172,24 @@ export const readInheritedHandoffItems = Effect.fn(
   const segments: Array<ReadonlyArray<OrchestrationV2TurnItem>> = [];
   const seen = new Set([thread.id]);
   let current = thread;
-  while (
-    current.forkedFrom?.type === "run" &&
-    current.lineage.sideChat !== true &&
-    !seen.has(current.forkedFrom.threadId)
-  ) {
-    const { threadId, runId } = current.forkedFrom;
+  while (current.forkedFrom !== null && current.lineage.sideChat !== true) {
+    let point = current.forkedFrom.type === "run" ? current.forkedFrom : undefined;
+    if (point === undefined) {
+      // Delegates retain their supervising node; their inherited conversation has its own transfer.
+      const records = yield* projectionStore.getThreadRecords(current.id, ["contextTransfers"]);
+      const transfer = records.contextTransfers.find(
+        (candidate) => candidate.type === "fork" && candidate.status === "consumed",
+      );
+      if (transfer?.sourcePoint.runId !== undefined) {
+        point = {
+          type: "run",
+          threadId: transfer.sourceThreadId,
+          runId: transfer.sourcePoint.runId,
+        };
+      }
+    }
+    if (point === undefined || seen.has(point.threadId)) break;
+    const { threadId, runId } = point;
     seen.add(threadId);
     const source = yield* projectionStore
       .getThreadRecords(threadId, ["runs", "attempts"])

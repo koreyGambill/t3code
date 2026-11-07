@@ -332,6 +332,18 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
   t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),
   t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
+  t3_xwing_environment_list: tool(
+    ["List", "Listing", "Listed", "Xwing environments"],
+    "worktree-list",
+  ),
+  t3_xwing_environment_threads: tool(
+    ["List", "Listing", "Listed", "an Xwing environment's threads"],
+    "thread-list",
+  ),
+  t3_xwing_environment_select: tool(
+    ["Move", "Moving", "Moved", "a thread to an Xwing environment"],
+    "worktree-handoff",
+  ),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
   t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),
   t3_environment_read: tool(

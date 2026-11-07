@@ -1,5 +1,6 @@
 import { GitCommandError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -8,6 +9,17 @@ import * as Path from "effect/Path";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+
+export interface WorktreeOwnership {
+  /** Names who owns a checkout T3 must never remove with Git, or null when T3 may. */
+  readonly ownerOf: (worktreePath: string) => Effect.Effect<string | null>;
+}
+
+/** Read once by each remover; the server supplies the checkouts Xwing owns. */
+export class WorktreeRemovalOwnership extends Context.Reference<WorktreeOwnership>(
+  "t3/vcs/WorktreeRemovalOwnership",
+  { defaultValue: () => ({ ownerOf: () => Effect.succeed(null) }) },
+) {}
 
 /**
  * Git for Windows before 2.54 follows NTFS junctions; newer Git leaves them behind.
@@ -25,10 +37,20 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   readonly force: boolean;
   readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<A, E, R>;
+  readonly ownership: WorktreeOwnership;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const worktreePath = input.worktreePath;
+  const owner = yield* input.ownership.ownerOf(worktreePath);
+  if (owner !== null) {
+    return yield* new GitCommandError({
+      operation: input.operation,
+      command: "git worktree remove",
+      cwd: input.cwd,
+      detail: `'${worktreePath}' belongs to ${owner}; remove it there instead.`,
+    });
+  }
   const gitFile = path.join(worktreePath, ".git");
   // Git refuses to remove a worktree with untracked files unless forced, but
   // its check honors `status.showUntrackedFiles=no` and would delete them.

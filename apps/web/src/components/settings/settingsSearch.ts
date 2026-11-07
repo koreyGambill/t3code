@@ -489,13 +489,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
-    id: "compact-idle-threads",
-    title: "Compact idle threads",
-    to: "/settings/providers",
-    scope: "environment-defaults",
-    searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
-  },
-  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",
@@ -1148,6 +1141,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Environments",
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+  },
+  {
+    id: "preferred-environment",
+    title: "Preferred machine",
+    to: "/settings/connections",
+    searchTerms: [
+      "default machine environment new threads work scratch no project new project server",
+    ],
   },
   {
     id: "load-balancing",

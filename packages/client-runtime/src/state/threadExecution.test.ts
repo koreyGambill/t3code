@@ -563,14 +563,28 @@ describe("presentProviderGoal", () => {
 });
 
 describe("presentPendingBackgroundWork", () => {
-  it("names a command by its script, not the shell that wraps it", () => {
-    const presentation = presentPendingBackgroundWork([
-      {
-        taskId: "call_1",
-        kind: "command",
-        description: `/bin/zsh -lc "mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF"`,
-      },
-    ]);
-    expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
-  });
+  it.each([
+    [null, undefined, false],
+    ["subagent", undefined, true],
+    ["subagent", false, false],
+  ] as const)(
+    "presents a command for %s with await %s",
+    (relationshipToParent, awaited, waiting) => {
+      const presentation = presentPendingBackgroundWork(
+        [
+          {
+            taskId: "call_1",
+            kind: "command",
+            description: `/bin/zsh -lc "mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF"`,
+            awaited,
+          },
+        ],
+        { relationshipToParent },
+      );
+      expect(presentation?.waiting).toBe(waiting);
+      expect(presentation?.items[0]?.label).toBe(
+        "mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF",
+      );
+    },
+  );
 });

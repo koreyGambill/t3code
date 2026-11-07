@@ -99,6 +99,7 @@ const layerCleanup = Layer.effect(
     return {
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
+      closeIdleTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
       cleanupAttachments: (attachmentIds) =>
         Effect.forEach(

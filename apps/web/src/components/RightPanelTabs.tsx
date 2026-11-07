@@ -36,6 +36,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Boxes,
   Smartphone,
   NotebookPen,
   ScanSearch,
@@ -144,6 +145,8 @@ export interface RightPanelTabsProps {
   onAddReviews?: (() => void) | undefined;
   onAddNotes?: (() => void) | undefined;
   onAddInspect?: (() => void) | undefined;
+  /** Absent where the environment cannot list Xwing environments. */
+  onAddEnvironments?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -328,6 +331,8 @@ function RightPanelEmptyState(props: {
   onAddReviews?: (() => void) | undefined;
   onAddNotes?: (() => void) | undefined;
   onAddInspect?: (() => void) | undefined;
+  /** Absent where the environment cannot list Xwing environments. */
+  onAddEnvironments?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -436,6 +441,18 @@ function RightPanelEmptyState(props: {
             available: true,
             disabledReason: "",
             onClick: props.onAddInspect,
+          },
+        ]
+      : []),
+    ...(props.onAddEnvironments
+      ? [
+          {
+            label: "Environments",
+            icon: Boxes,
+            shortcut: "E",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddEnvironments,
           },
         ]
       : []),
@@ -645,6 +662,8 @@ export function surfaceTitle(
       return "Notes";
     case "inspect":
       return "Inspect";
+    case "environments":
+      return "Environments";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -741,6 +760,8 @@ export function SurfaceIcon({
       return <NotebookPen className="size-3 shrink-0" />;
     case "inspect":
       return <ScanSearch className="size-3 shrink-0" />;
+    case "environments":
+      return <Boxes className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1240,6 +1261,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...(props.onAddEnvironments
+      ? [
+          {
+            label: "Environments",
+            icon: Boxes,
+            shortcut: "E",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddEnvironments,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -1626,6 +1659,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddReviews={props.onAddReviews}
             onAddNotes={props.onAddNotes}
             onAddInspect={props.onAddInspect}
+            onAddEnvironments={props.onAddEnvironments}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}

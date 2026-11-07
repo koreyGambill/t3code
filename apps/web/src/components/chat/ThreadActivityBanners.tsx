@@ -156,6 +156,7 @@ export function runStopNowItem(input: {
 /** Background commands and subagents, for the end of the timeline. */
 export function backgroundWorkNowItem(input: {
   readonly threadId: ThreadId;
+  readonly lineage: ThreadStructure["thread"]["lineage"];
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
   readonly turnItems: ThreadStructure["turnItems"];
   readonly stopDisabled: boolean;
@@ -164,7 +165,7 @@ export function backgroundWorkNowItem(input: {
   readonly onOpenThread: (threadId: ThreadId) => void;
 }): ThreadNowItem | null {
   const { onOpenThread } = input;
-  const presentation = presentPendingBackgroundWork(input.tasks);
+  const presentation = presentPendingBackgroundWork(input.tasks, input.lineage);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.

@@ -48,6 +48,48 @@ export function forkableSourceRunStatusError(
   return `Fork source run ${run.id} is ${run.status}; in-progress and rolled-back runs cannot be forked.`;
 }
 
+/** A pending fork transfer; the target thread's next turn resolves it natively or portably. */
+export function forkContextTransfer(input: {
+  readonly transferId: ContextTransferId;
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly sourceRun: OrchestrationV2Run | null;
+  readonly sourceProviderThread: OrchestrationV2ProviderThread | undefined;
+  readonly sourceProviderInstanceId: OrchestrationV2ContextTransfer["sourceProviderInstanceId"];
+  readonly sourceTokenUsage?: OrchestrationV2ProviderTurnTokenUsage | undefined;
+  readonly canonicalSourcePoint: OrchestrationV2ContextSourcePoint;
+  readonly createdBy: OrchestrationV2Actor;
+  readonly createdAt: DateTime.Utc;
+}): OrchestrationV2ContextTransfer {
+  const strongNativeSource = input.sourceProviderThread?.nativeThreadRef?.strength === "strong";
+  return {
+    id: input.transferId,
+    type: "fork",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: input.canonicalSourcePoint,
+    basePoint: null,
+    sourceProviderInstanceId: input.sourceProviderInstanceId,
+    // Only native forks retain this context; portable handoffs rebuild it.
+    sourceTokenUsage:
+      (input.sourceRun?.status === "completed" || input.sourceRun?.status === "waiting") &&
+      strongNativeSource
+        ? input.sourceTokenUsage
+        : undefined,
+    targetProviderInstanceId: null,
+    targetRunId: null,
+    status: "pending",
+    resolution: null,
+    createdBy: input.createdBy,
+    error: strongNativeSource
+      ? null
+      : "Source provider thread does not expose a strong native thread ref.",
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    consumedAt: null,
+  };
+}
+
 export interface ThreadForkServiceV2Shape {
   readonly plan: (input: {
     readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread">;
@@ -103,6 +145,14 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
       const { delegatedFrom: _delegatedFrom, ...inherited } = input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
         ...inherited,
+        ...(inherited.developmentEnvironment == null
+          ? {}
+          : {
+              developmentEnvironment: {
+                ...inherited.developmentEnvironment,
+                selectedAt: input.createdAt,
+              },
+            }),
         // PR context follows the conversation; watching remains the source thread's responsibility.
         pullRequests: input.sourceProjection.thread.pullRequests?.map(
           ({ watch: _watch, ...link }) => link,
@@ -143,34 +193,12 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         opens: null,
         deletedAt: null,
       };
-      const transfer: OrchestrationV2ContextTransfer = {
-        id: input.transferId,
-        type: "fork",
+      const transfer = forkContextTransfer({
+        ...input,
         sourceThreadId: input.sourceProjection.thread.id,
-        targetThreadId: input.targetThreadId,
-        sourcePoint: input.canonicalSourcePoint,
-        basePoint: null,
         sourceProviderInstanceId:
           sourceRun?.providerInstanceId ?? input.sourceProjection.thread.providerInstanceId,
-        // Only native forks retain this context; portable handoffs rebuild it.
-        sourceTokenUsage:
-          (sourceRun?.status === "completed" || sourceRun?.status === "waiting") &&
-          input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
-            ? input.sourceTokenUsage
-            : undefined,
-        targetProviderInstanceId: null,
-        targetRunId: null,
-        status: "pending",
-        resolution: null,
-        createdBy: input.createdBy,
-        error:
-          input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
-            ? null
-            : "Source provider thread does not expose a strong native thread ref.",
-        createdAt: input.createdAt,
-        updatedAt: input.createdAt,
-        consumedAt: null,
-      };
+      });
       return { targetThread, transfer };
     }),
   }),

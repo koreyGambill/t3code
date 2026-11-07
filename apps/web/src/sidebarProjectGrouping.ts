@@ -209,6 +209,8 @@ export function buildSidebarProjectSnapshots(input: {
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
+  /** The copy a group targets when the project on screen is not in it. */
+  preferredEnvironmentId?: EnvironmentId | null;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
@@ -231,6 +233,9 @@ export function buildSidebarProjectPickerEntries(input: {
       : null;
     const targetProject =
       preferredProject ??
+      group.memberProjects.find(
+        (project) => project.environmentId === (input.preferredEnvironmentId ?? null),
+      ) ??
       group.memberProjects.find(
         (project) => project.environmentId === group.environmentId && project.id === group.id,
       ) ??

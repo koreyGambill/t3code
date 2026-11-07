@@ -10,6 +10,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
+  type OrchestrationV2DevelopmentEnvironmentCheckout,
   type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
@@ -103,11 +104,16 @@ export interface ThreadLaunchInput {
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
   /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
+  /**
+   * A server-resolved Xwing checkout to bind. Requires an `existing_worktree` strategy at its
+   * `checkoutPath`; Xwing owns that checkout, so launch never creates, sets up or removes it.
+   */
+  readonly developmentEnvironment?: OrchestrationV2DevelopmentEnvironmentCheckout;
 }
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "developmentEnvironment"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -474,6 +480,7 @@ const make = Effect.gen(function* () {
             threadId,
             branch,
             worktreePath,
+            workspaceChange: "preparation",
           })
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
@@ -570,7 +577,9 @@ const make = Effect.gen(function* () {
         );
       }
 
-      if (runId !== null && worktreePath !== null) {
+      // Xwing sets up its own checkouts; the project's setup script is for worktrees T3 creates.
+      const runsSetupScript = worktreePath !== null && input.developmentEnvironment === undefined;
+      if (runId !== null && runsSetupScript) {
         yield* threads
           .dispatch({
             type: "prepared-run.progress",
@@ -583,7 +592,7 @@ const make = Effect.gen(function* () {
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
       const setup =
-        worktreePath === null
+        worktreePath === null || !runsSetupScript
           ? ({ status: "no-script" } as const)
           : yield* setupScripts
               .runForThread({
@@ -717,6 +726,7 @@ const make = Effect.gen(function* () {
                       threadId,
                       worktreePath: null,
                       branch: null,
+                      workspaceChange: "preparation",
                     })
                     .pipe(Effect.ignore),
                 ),
@@ -860,6 +870,17 @@ const make = Effect.gen(function* () {
           "update-thread",
         )("Reusing an existing thread requires a thread id.");
       }
+      const developmentEnvironment = input.developmentEnvironment;
+      if (
+        developmentEnvironment !== undefined &&
+        (input.workspaceStrategy.type !== "existing_worktree" ||
+          input.workspaceStrategy.worktreePath !== developmentEnvironment.checkoutPath)
+      ) {
+        return yield* mapError(
+          input,
+          "provision-worktree",
+        )("A development environment launch must work in that environment's checkout.");
+      }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
       yield* threads.assertProviderInstanceEnabled({
@@ -948,6 +969,7 @@ const make = Effect.gen(function* () {
                 ...(input.delegatedFrom === undefined
                   ? {}
                   : { delegatedFrom: input.delegatedFrom }),
+                ...(developmentEnvironment === undefined ? {} : { developmentEnvironment }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });
@@ -965,6 +987,25 @@ const make = Effect.gen(function* () {
             .threadId ?? candidateThreadId;
         if (project.id !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
+        }
+        if (input.reuseExistingThread === true && developmentEnvironment !== undefined) {
+          const { thread } = yield* threads
+            .getThreadRecords(threadId, [])
+            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+          yield* threads
+            .dispatch({
+              type: "thread.workspace.select",
+              commandId: CommandId.make(`${input.commandId}:development-environment`),
+              threadId,
+              expected: {
+                worktreePath: thread.worktreePath,
+                xwingEnvironmentId: thread.developmentEnvironment?.xwingEnvironmentId ?? null,
+              },
+              worktreePath: developmentEnvironment.checkoutPath,
+              branch: initialBranch,
+              developmentEnvironment,
+            })
+            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
         }
         let runId: RunId | null = null;
         let messageSequence: number | undefined;
@@ -1149,6 +1190,9 @@ const make = Effect.gen(function* () {
         projectId: thread.projectId,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
+        ...(thread.developmentEnvironment == null
+          ? {}
+          : { developmentEnvironment: thread.developmentEnvironment }),
         ...(message === undefined
           ? {}
           : {

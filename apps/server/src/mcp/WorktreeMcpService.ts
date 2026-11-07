@@ -301,6 +301,7 @@ const make = Effect.gen(function* () {
               branch: worktree.worktree.refName,
               worktreePath,
               expectedWorktreePath: null,
+              workspaceChange: "agent-handoff",
             })
             .pipe(
               Effect.catchCause((cause) =>

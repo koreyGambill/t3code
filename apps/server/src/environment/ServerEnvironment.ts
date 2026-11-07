@@ -272,6 +272,7 @@ export const make = Effect.gen(function* () {
       oneTimeSchedules: true,
       freshContext: true,
       scheduledTaskThreadModes: true,
+      xwingEnvironments: true,
       npmReleaseLookup: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),

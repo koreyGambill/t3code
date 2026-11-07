@@ -165,11 +165,24 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   }
 }
 
+/**
+ * Checked under the thread's terminal lock before a request starts or restarts a shell, so a
+ * caller with a stale view of the thread cannot replace its current terminal.
+ */
+export type TerminalLaunchGuard = (input: {
+  readonly threadId: string;
+  readonly terminalId: string;
+  readonly worktreePath?: string | null | undefined;
+  /** The checkout an existing session was launched for; absent when none exists. */
+  readonly existingWorktreePath?: string | null | undefined;
+}) => Effect.Effect<void, TerminalError>;
+
 export class TerminalManager extends Context.Service<
   TerminalManager,
   {
     readonly open: (
       input: TerminalOpenInput,
+      guard?: TerminalLaunchGuard,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     readonly getShell: (input: TerminalObserveInput) => Effect.Effect<string, TerminalError>;
@@ -184,6 +197,7 @@ export class TerminalManager extends Context.Service<
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
       registerCleanup?: (stop: () => void) => void,
       viewerId?: string,
+      guard?: TerminalLaunchGuard,
     ) => Effect.Effect<() => void, TerminalError>;
 
     /**
@@ -193,6 +207,7 @@ export class TerminalManager extends Context.Service<
     readonly attachOutputStream: (
       input: TerminalAttachInput,
       viewerId: string,
+      guard?: TerminalLaunchGuard,
     ) => Stream.Stream<TerminalAttachStreamEvent, TerminalError>;
 
     readonly observeStream: (
@@ -219,10 +234,21 @@ export class TerminalManager extends Context.Service<
     /** Omit terminalId to close all sessions for the thread. */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
+    /**
+     * Closes running shells with no foreground command, keeping their history. `worktreePath`
+     * limits it to shells launched for that checkout (null: the project root).
+     */
     readonly closeIdle: (input: {
       readonly threadId: string;
       readonly terminalId?: string;
+      readonly worktreePath?: string | null;
     }) => Effect.Effect<void>;
+
+    /** Whether a running shell launched for `worktreePath` runs a command, or cannot be checked. */
+    readonly hasForegroundWork: (input: {
+      readonly threadId: string;
+      readonly worktreePath: string | null;
+    }) => Effect.Effect<boolean>;
 
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
@@ -2957,10 +2983,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       openWithWorkspaceLease(input),
     );
 
-  const open: TerminalManager["Service"]["open"] = (input) =>
+  const open: TerminalManager["Service"]["open"] = (input, guard) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+      (guard === undefined
+        ? Effect.void
+        : Effect.flatMap(getSession(input.threadId, input.terminalId), (existing) =>
+            guard(
+              Option.isSome(existing)
+                ? { ...input, existingWorktreePath: existing.value.worktreePath }
+                : input,
+            ),
+          )
+      ).pipe(Effect.andThen(resolveLaunchInputEnvironment(input)), Effect.flatMap(openLocked)),
     );
 
   const getShell = Effect.fn("terminal.getShell")(function* (input: TerminalObserveInput) {
@@ -2971,7 +3006,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return session.shell;
   });
 
-  const openOrAttachForStream = Effect.fnUntraced(function* (requestedInput: TerminalAttachInput) {
+  const openOrAttachForStream = Effect.fnUntraced(function* (
+    requestedInput: TerminalAttachInput,
+    guard: TerminalLaunchGuard | undefined,
+  ) {
     const terminalId = requestedInput.terminalId;
     const input = withSharedGrid(toSessionKey(requestedInput.threadId, terminalId), requestedInput);
     const existing = yield* getSession(input.threadId, terminalId);
@@ -2987,6 +3025,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         });
       }
 
+      if (guard !== undefined) yield* guard(input);
       const resolvedInput = yield* resolveLaunchInputEnvironment({
         ...input,
         terminalId,
@@ -2999,7 +3038,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const targetCols = input.cols ?? session.cols;
     const targetRows = input.rows ?? session.rows;
 
-    if (!input.resume && !session.process && input.cwd && input.restartIfNotRunning === true) {
+    // A shell from a checkout its thread left stays closed; attaching still shows its history.
+    const restartAllowed =
+      guard === undefined ||
+      (yield* guard({ ...input, existingWorktreePath: session.worktreePath }).pipe(
+        Effect.as(true),
+        Effect.catchTags({ TerminalWorkspaceChangedError: () => Effect.succeed(false) }),
+      ));
+    if (
+      restartAllowed &&
+      !input.resume &&
+      !session.process &&
+      input.cwd &&
+      input.restartIfNotRunning === true
+    ) {
       const resolvedInput = yield* resolveLaunchInputEnvironment({
         ...input,
         terminalId,
@@ -3157,6 +3209,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     listener,
     registerCleanup,
     viewerId,
+    guard,
   ) => {
     const viewer = viewerId ?? `stream:${++anonymousViewerCount}`;
     let detach = () => {};
@@ -3168,7 +3221,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ? { cols: input.cols, rows: input.rows }
           : null,
       );
-      return openOrAttachForStream(input);
+      return openOrAttachForStream(input, guard);
     });
     return streamSession(
       input,
@@ -3215,7 +3268,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       registerCleanup,
     );
 
-  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (input, viewerId) =>
+  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (
+    input,
+    viewerId,
+    guard,
+  ) =>
     Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),
@@ -3223,7 +3280,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ).pipe(
         Effect.as(
           terminalOutputStream(
-            (listener, registerCleanup) => attachStream(input, listener, registerCleanup, viewerId),
+            (listener, registerCleanup) =>
+              attachStream(input, listener, registerCleanup, viewerId, guard),
             (listener, registerCleanup) => resyncStream(input, listener, registerCleanup),
           ),
         ),
@@ -3411,16 +3469,48 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
+  const runningSessions = (input: {
+    readonly threadId: string;
+    readonly terminalId?: string;
+    readonly worktreePath?: string | null;
+  }) =>
+    sessionsForThread(input.threadId).pipe(
+      Effect.map((sessions) =>
+        sessions.filter(
+          (session): session is TerminalSessionState & { pid: number } =>
+            session.status === "running" &&
+            Number.isInteger(session.pid) &&
+            (input.terminalId === undefined || session.terminalId === input.terminalId) &&
+            (input.worktreePath === undefined || session.worktreePath === input.worktreePath),
+        ),
+      ),
+    );
+
+  const hasForegroundWork: TerminalManager["Service"]["hasForegroundWork"] = (input) =>
+    withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const running = yield* runningSessions(input);
+        if (running.length === 0) return false;
+        const { inspector: inspectorResult } = yield* acquireSubprocessInspector(
+          platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+        );
+        const inspector = yield* Effect.fromResult(inspectorResult);
+        for (const session of running) {
+          if ((yield* inspector(session.pid)).hasRunningSubprocess) return true;
+        }
+        return false;
+      }),
+    ).pipe(
+      // A failed inspection cannot confirm that the command ended.
+      Effect.orElseSucceed(() => true),
+    );
+
   const closeIdle: TerminalManager["Service"]["closeIdle"] = (input) =>
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
-        const running = (yield* sessionsForThread(input.threadId)).filter(
-          (session): session is TerminalSessionState & { pid: number } =>
-            session.status === "running" &&
-            Number.isInteger(session.pid) &&
-            (input.terminalId === undefined || session.terminalId === input.terminalId),
-        );
+        const running = yield* runningSessions(input);
         if (running.length === 0) return;
         const marks = new Map(
           running.map((session) => [session.terminalId, terminalActivityMark(session)]),
@@ -3465,6 +3555,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     clear,
     close,
     closeIdle,
+    hasForegroundWork,
     subscribe,
     subscribeMetadata,
   });

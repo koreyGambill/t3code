@@ -1,12 +1,12 @@
 import {
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type ScopedThreadRef,
   type ThreadWorkspace,
   type WorkspaceQuestionAnswer,
+  type WorkspaceMutation,
   type WorkspaceUserDraft,
-  type ThreadActionItem,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   formatWorkspaceFeedback,
@@ -39,89 +39,78 @@ import { WorkspaceMarksPanel } from "./WorkspaceMarksPanel";
 import { WorkspaceThreadsPanel } from "./WorkspaceThreadsPanel";
 import { WorkspaceDocument } from "./WorkspaceDocument";
 import { WorkspaceQuestionCard } from "./WorkspaceQuestionCard";
+import { AgentWorkList, WorkspaceRecordList } from "./WorkspaceRecordViews";
+import { WorkspaceAllWork } from "./WorkspaceAllWork";
+import { WorkspaceChildPreamble } from "./WorkspaceChildPreamble";
 
 const sections = [
   ["unified", "Unified"],
   ["questions", "Questions"],
   ["action-items", "Action items"],
   ["design-notes", "Design"],
+  ["agent-work", "Agent work"],
+  ["record", "Record"],
   ["summary", "Summary"],
   ["marks", "Marks"],
   ["threads", "Threads"],
 ] as const;
 const emptyAnswer: WorkspaceQuestionAnswer = { selectedOptionIds: [], notes: "" };
+const noDraft: WorkspaceUserDraft = { questionAnswers: {}, actionNotes: {} };
+// Only entries the user edited are kept and sent, so the server merges them per entry.
 interface LocalDraft {
-  readonly draft: WorkspaceUserDraft;
-  readonly dirty: boolean;
-  readonly generation: number;
+  readonly pending: WorkspaceUserDraft;
   readonly baseRevision: number;
 }
+const isEmptyDraft = (draft: WorkspaceUserDraft) =>
+  !Object.keys(draft.questionAnswers).length && !Object.keys(draft.actionNotes).length;
 const useLocalDrafts = create<{
   entries: Record<string, LocalDraft>;
-  edit: (key: string, draft: WorkspaceUserDraft) => void;
-  receive: (key: string, draft: WorkspaceUserDraft, revision: number) => void;
-  reset: (key: string, draft: WorkspaceUserDraft, revision: number) => void;
-  saved: (key: string, generation: number, revision: number) => void;
-  rebase: (key: string, revision: number) => void;
+  edit: (key: string, change: Partial<WorkspaceUserDraft>, revision: number) => void;
+  reset: (key: string) => void;
+  saved: (key: string, sent: WorkspaceUserDraft) => void;
 }>((set) => ({
   entries: {},
-  edit: (key, draft) =>
-    set((state) => ({
-      entries: {
-        ...state.entries,
-        [key]: {
-          draft,
-          dirty: true,
-          generation: (state.entries[key]?.generation ?? 0) + 1,
-          baseRevision: state.entries[key]?.baseRevision ?? 0,
-        },
-      },
-    })),
-  receive: (key, draft, revision) =>
-    set((state) =>
-      state.entries[key]?.dirty
-        ? state
-        : {
-            entries: {
-              ...state.entries,
-              [key]: {
-                draft,
-                dirty: false,
-                generation: state.entries[key]?.generation ?? 0,
-                baseRevision: revision,
-              },
+  edit: (key, change, revision) =>
+    set((state) => {
+      const current = state.entries[key];
+      const pending = current?.pending ?? noDraft;
+      return {
+        entries: {
+          ...state.entries,
+          [key]: {
+            pending: {
+              questionAnswers: { ...pending.questionAnswers, ...change.questionAnswers },
+              actionNotes: { ...pending.actionNotes, ...change.actionNotes },
             },
+            baseRevision: current && !isEmptyDraft(pending) ? current.baseRevision : revision,
           },
-    ),
-  reset: (key, draft, revision) =>
-    set((state) => ({
-      entries: {
-        ...state.entries,
-        [key]: { draft, dirty: false, generation: 0, baseRevision: revision },
-      },
-    })),
-  rebase: (key, revision) =>
-    set((state) => {
-      const current = state.entries[key];
-      return current
-        ? { entries: { ...state.entries, [key]: { ...current, baseRevision: revision } } }
-        : state;
+        },
+      };
     }),
-  saved: (key, generation, revision) =>
+  reset: (key) =>
+    set((state) => {
+      const { [key]: _removed, ...entries } = state.entries;
+      return { entries };
+    }),
+  saved: (key, sent) =>
     set((state) => {
       const current = state.entries[key];
-      return current
-        ? {
-            entries: {
-              ...state.entries,
-              [key]: {
-                ...current,
-                dirty: current.generation !== generation,
-                baseRevision: revision,
-              },
-            },
-          }
-        : state;
+      if (!current) return state;
+      const unsent = <T,>(pending: Record<string, T>, done: Record<string, T>) =>
+        Object.fromEntries(
+          Object.entries(pending).filter(
+            ([id, value]) => JSON.stringify(done[id]) !== JSON.stringify(value),
+          ),
+        );
+      const pending = {
+        questionAnswers: unsent(current.pending.questionAnswers, sent.questionAnswers),
+        actionNotes: unsent(current.pending.actionNotes, sent.actionNotes),
+      };
+      if (isEmptyDraft(pending)) {
+        const { [key]: _removed, ...entries } = state.entries;
+        return { entries };
+      }
+      return { entries: { ...state.entries, [key]: { ...current, pending } } };
     }),
 }));
 
@@ -139,6 +128,7 @@ export function ThreadWorkspacePanel({
   readonly startedThread: boolean;
   readonly section: ThreadWorkspaceSection;
 }) {
+  const [workScope, setWorkScope] = useState("thread");
   const section = storedSection === "notes" ? "unified" : storedSection;
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
   const supported = useReviewSupport(threadRef.environmentId);
@@ -161,6 +151,8 @@ export function ThreadWorkspacePanel({
   );
   const sectionCounts: Partial<Record<ThreadWorkspaceSection, number | undefined>> = {
     questions: counts.data?.questions,
+    "agent-work": counts.data?.openAgentWork,
+    record: counts.data?.records,
     "action-items": counts.data?.actions,
     "design-notes": counts.data?.designs,
     threads: counts.data?.relatedThreads,
@@ -194,7 +186,23 @@ export function ThreadWorkspacePanel({
           </button>
         ))}
       </div>
-      {!startedThread ? (
+      {section === "agent-work" ? (
+        <label className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1 text-xs">
+          Scope
+          <select
+            aria-label="Agent work scope"
+            value={workScope}
+            onChange={(event) => setWorkScope(event.target.value)}
+            className="rounded border border-input bg-background px-1"
+          >
+            <option value="thread">This thread</option>
+            <option value="all">All threads and machines</option>
+          </select>
+        </label>
+      ) : null}
+      {section === "agent-work" && workScope === "all" ? (
+        <WorkspaceAllWork />
+      ) : !startedThread ? (
         <p className="p-5 text-sm text-muted-foreground">
           Send the first message to start this conversation's workspace.
         </p>
@@ -238,7 +246,7 @@ function WorkspaceContent({
   );
   const save = useAtomCommand(threadWorkspaceSaveDraft, { reportFailure: false });
   const patch = useAtomCommand(threadWorkspacePatch, { reportFailure: false });
-  const canWrite = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const canWrite = useAtomValue(threadWorkspacePatch.permissionAtom(threadRef.environmentId));
   const [saved, setSaved] = useState<ThreadWorkspace | null>(null);
   const workspace =
     saved && (!query.data || saved.revision > query.data.revision) ? saved : query.data;
@@ -247,23 +255,22 @@ function WorkspaceContent({
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<string[]>([]);
   const saveQueue = useRef<Promise<ThreadWorkspace | null>>(Promise.resolve(null));
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Receives server drafts without replacing unsaved local edits during polling.
-  useEffect(() => {
-    if (workspace) {
-      useLocalDrafts.getState().receive(key, workspace.userDraft, workspace.revision);
-    }
-  }, [key, workspace]);
-  const draft = local?.draft ?? workspace?.userDraft;
+  const draft = workspace && {
+    questionAnswers: {
+      ...workspace.userDraft.questionAnswers,
+      ...local?.pending.questionAnswers,
+    },
+    actionNotes: { ...workspace.userDraft.actionNotes, ...local?.pending.actionNotes },
+  };
   const saveLatestDraft = useStableCallback(async (): Promise<ThreadWorkspace | null> => {
     const entry = useLocalDrafts.getState().entries[key];
-    if (!entry?.dirty) return workspace ?? null;
+    if (!entry) return workspace ?? null;
     const result = await save({
       environmentId: threadRef.environmentId,
       input: {
         threadId: threadRef.threadId,
         expectedRevision: entry.baseRevision,
-        userDraft: entry.draft,
+        userDraft: entry.pending,
       },
     });
     if (result._tag !== "Success") {
@@ -277,7 +284,7 @@ function WorkspaceContent({
     }
 
     setSaved(result.value);
-    useLocalDrafts.getState().saved(key, entry.generation, result.value.revision);
+    useLocalDrafts.getState().saved(key, entry.pending);
     return result.value;
   });
   const persistDraft = useStableCallback((): Promise<ThreadWorkspace | null> => {
@@ -287,7 +294,7 @@ function WorkspaceContent({
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounces user-authored drafts; server refreshes never trigger a write.
   useEffect(() => {
-    if (!local?.dirty || !canWrite || busy) return;
+    if (!local || !canWrite || busy) return;
     const timer = setTimeout(() => {
       void persistDraft();
     }, 700);
@@ -300,8 +307,9 @@ function WorkspaceContent({
     },
     [persistDraft],
   );
-  const edit = (next: WorkspaceUserDraft) => {
-    useLocalDrafts.getState().edit(key, next);
+  const edit = (change: Partial<WorkspaceUserDraft>) => {
+    if (!workspace) return;
+    useLocalDrafts.getState().edit(key, change, workspace.revision);
     setSent([]);
   };
   const send = async (itemIds: string[]) => {
@@ -337,33 +345,23 @@ function WorkspaceContent({
     setBusy(false);
     query.refresh();
   };
-  const changeStatus = async (item: ThreadActionItem) => {
+  const apply = async (changes: WorkspaceMutation[], fields: { childPreamble?: string } = {}) => {
     if (!workspace || busy) return;
     setBusy(true);
     setError(null);
-    const current = await persistDraft();
-    if (!current) {
-      setBusy(false);
-      return;
-    }
     const result = await patch({
       environmentId: threadRef.environmentId,
       input: {
         threadId: threadRef.threadId,
-        expectedRevision: current.revision,
-        actionItems: current.actionItems.map((entry) =>
-          entry.id === item.id
-            ? { ...entry, status: item.status === "done" ? "open" : "done" }
-            : entry,
-        ),
+        expectedRevision: workspace.revision,
+        changes,
+        ...fields,
       },
     });
-    if (result._tag === "Success") {
-      setSaved(result.value);
-      useLocalDrafts.getState().rebase(key, result.value.revision);
-    } else {
+    if (result._tag === "Success") setSaved(result.value);
+    else {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not update action.");
+      setError(failure instanceof Error ? failure.message : "Could not update the workspace.");
     }
     setBusy(false);
     query.refresh();
@@ -378,6 +376,35 @@ function WorkspaceContent({
     return <WorkspaceMarksPanel threadRef={threadRef} annotations={workspace.markAnnotations} />;
   if (section === "threads")
     return <WorkspaceThreadsPanel threadRef={threadRef} related={workspace.relatedThreads} />;
+  if (section === "agent-work")
+    return (
+      <AgentWorkList
+        workspace={workspace}
+        disabled={!canWrite || busy}
+        apply={(changes) => {
+          void apply(changes);
+        }}
+      />
+    );
+  const recordView =
+    section === "record" ? (
+      <>
+        <WorkspaceChildPreamble
+          value={workspace.childPreamble}
+          disabled={!canWrite || busy}
+          onSave={(childPreamble) => {
+            void apply([], { childPreamble });
+          }}
+        />
+        <WorkspaceRecordList
+          workspace={workspace}
+          disabled={!canWrite || busy}
+          apply={(changes) => {
+            void apply(changes);
+          }}
+        />
+      </>
+    ) : null;
   const ready = readyWorkspaceFeedbackIds({ ...workspace, userDraft: draft }).length > 0;
   return (
     <>
@@ -401,102 +428,97 @@ function WorkspaceContent({
             size="xs"
             variant="ghost"
             onClick={() => {
-              if (query.data) {
-                useLocalDrafts.getState().reset(key, query.data.userDraft, query.data.revision);
-                setSaved(query.data);
-
-                setError(null);
-              }
+              useLocalDrafts.getState().reset(key);
+              setError(null);
+              query.refresh();
             }}
           >
             Reload saved answers
           </Button>
         </div>
       ) : null}
-      <WorkspaceDocument
-        threadRef={threadRef}
-        section={section}
-        workspace={workspace}
-        renderQuestion={(question) => (
-          <WorkspaceQuestionCard
-            key={question.id}
-            question={question}
-            threadRef={threadRef}
-            answer={draft.questionAnswers[question.id] ?? emptyAnswer}
-            disabled={!canWrite || busy}
-            sent={sent.includes(question.id)}
-            onChange={(answer) =>
-              edit({
-                ...draft,
-                questionAnswers: { ...draft.questionAnswers, [question.id]: answer },
-              })
-            }
-            onSend={() => {
-              void send([question.id]);
-            }}
-          />
-        )}
-        renderAction={(action) => (
-          <details
-            key={action.id}
-            id={`workspace-item-${action.id}`}
-            className="group rounded border border-border p-2"
-          >
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
-              <ChevronRightIcon className="size-3 shrink-0 group-open:rotate-90" />
-              <span className="text-3xs text-muted-foreground">{action.ref}</span>
-              <span
-                className={action.status === "done" ? "line-through text-muted-foreground" : ""}
-              >
-                {action.title}
-              </span>
-              {action.status === "done" ? (
-                <CheckIcon className="ml-auto size-3 text-primary" />
-              ) : null}
-            </summary>
-            <div className="mt-3 space-y-3">
-              {action.details ? (
-                <ChatMarkdown text={action.details} cwd={undefined} threadRef={threadRef} />
-              ) : null}
-              <Textarea
-                aria-label={`Notes for ${action.title}`}
-                placeholder="Your notes…"
-                value={draft.actionNotes[action.id] ?? ""}
-                disabled={!canWrite}
-                onChange={(event) =>
-                  edit({
-                    ...draft,
-                    actionNotes: { ...draft.actionNotes, [action.id]: event.target.value },
-                  })
-                }
-              />
-              <div className="flex gap-2">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={!canWrite || busy}
-                  onClick={() => {
-                    void changeStatus(action);
-                  }}
+      {recordView ?? (
+        <WorkspaceDocument
+          threadRef={threadRef}
+          section={section}
+          workspace={workspace}
+          renderQuestion={(question) => (
+            <WorkspaceQuestionCard
+              key={question.id}
+              question={question}
+              threadRef={threadRef}
+              answer={draft.questionAnswers[question.id] ?? emptyAnswer}
+              disabled={!canWrite || busy}
+              sent={sent.includes(question.id)}
+              onChange={(answer) => edit({ questionAnswers: { [question.id]: answer } })}
+              onSend={() => {
+                void send([question.id]);
+              }}
+            />
+          )}
+          renderAction={(action) => (
+            <details
+              key={action.id}
+              id={`workspace-item-${action.id}`}
+              className="group rounded border border-border p-2"
+            >
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
+                <ChevronRightIcon className="size-3 shrink-0 group-open:rotate-90" />
+                <span className="text-3xs text-muted-foreground">{action.ref}</span>
+                <span
+                  className={action.status === "done" ? "line-through text-muted-foreground" : ""}
                 >
-                  {action.status === "done" ? "Reopen" : "Mark done"}
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={!canWrite || busy}
-                  onClick={() => {
-                    void send([action.id]);
-                  }}
-                >
-                  <SendIcon className="size-3" />
-                  Add to chat
-                </Button>
+                  {action.title}
+                </span>
+                {action.status === "done" ? (
+                  <CheckIcon className="ml-auto size-3 text-primary" />
+                ) : null}
+              </summary>
+              <div className="mt-3 space-y-3">
+                {action.details ? (
+                  <ChatMarkdown text={action.details} cwd={undefined} threadRef={threadRef} />
+                ) : null}
+                <Textarea
+                  aria-label={`Notes for ${action.title}`}
+                  placeholder="Your notes…"
+                  value={draft.actionNotes[action.id] ?? ""}
+                  disabled={!canWrite}
+                  onChange={(event) => edit({ actionNotes: { [action.id]: event.target.value } })}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={!canWrite || busy}
+                    onClick={() => {
+                      void apply([
+                        {
+                          kind: "action",
+                          id: action.id,
+                          status: action.status === "done" ? "open" : "done",
+                        },
+                      ]);
+                    }}
+                  >
+                    {action.status === "done" ? "Reopen" : "Mark done"}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={!canWrite || busy}
+                    onClick={() => {
+                      void send([action.id]);
+                    }}
+                  >
+                    <SendIcon className="size-3" />
+                    Add to chat
+                  </Button>
+                </div>
               </div>
-            </div>
-          </details>
-        )}
-      />
+            </details>
+          )}
+        />
+      )}
       {section === "questions" || section === "action-items" || section === "unified" ? (
         <div className="absolute right-7 top-0 z-10 flex h-7 items-center bg-background px-1">
           <Tooltip>
@@ -515,9 +537,7 @@ function WorkspaceContent({
             >
               <SendIcon />
             </TooltipTrigger>
-            <TooltipPopup>
-              {local?.dirty ? "Saving answers…" : "Add ready responses to chat"}
-            </TooltipPopup>
+            <TooltipPopup>{local ? "Saving answers…" : "Add ready responses to chat"}</TooltipPopup>
           </Tooltip>
         </div>
       ) : null}

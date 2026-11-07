@@ -22,7 +22,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import {
-  backgroundWorkHoldsCompletion,
+  threadBackgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -280,8 +280,9 @@ export function deriveThreadStructureRuntime(
   const liveActivityRun = latestMatchingRun(projection, (run) =>
     ACTIVITY_RUN_STATUSES.has(run.status),
   );
-  const backgroundWorkHoldsRun = backgroundWorkHoldsCompletion(
-    derivePendingBackgroundWork({
+  const backgroundWorkHoldsRun = threadBackgroundWorkHoldsCompletion({
+    lineage: projection.thread.lineage,
+    pendingBackgroundTasks: derivePendingBackgroundWork({
       latestRun: latestRunProjection,
       providerThreads: projection.providerThreads,
       turnItems: projection.turnItems,
@@ -289,7 +290,7 @@ export function deriveThreadStructureRuntime(
       runs: projection.runs,
       pullRequests: projection.thread.pullRequests,
     }),
-  );
+  });
   // A pull request watch can hold a thread that never ran.
   if (
     latestRun === null &&
@@ -431,9 +432,10 @@ export function isBackgroundWorkStopPending(
 
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+  lineage?: Pick<OrchestrationV2ThreadProjection["thread"]["lineage"], "relationshipToParent">,
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
-  const waiting = backgroundWorkHoldsCompletion(tasks);
+  const waiting = threadBackgroundWorkHoldsCompletion({ pendingBackgroundTasks: tasks, lineage });
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
@@ -536,6 +538,8 @@ export function notificationChildThreadId(
     case "subagent":
     case "delegated_task":
       return source.childThreadId;
+    case "thread_reply":
+      return source.threadId;
     case "command":
     case "monitor":
     case "background_task":

@@ -5,6 +5,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
+  type WorkEnvironmentChoice,
 } from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
@@ -55,6 +56,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  BoxesIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -130,6 +132,7 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
+import { usePreferredEnvironmentId } from "../state/preferredEnvironment";
 import {
   useAnyEnvironmentHiding,
   useHiddenThreadKeys,
@@ -204,6 +207,7 @@ import {
   createCommandPaletteSearchState,
   type CommandPaletteGroup,
   resolveAddProjectEntry,
+  buildEnvironmentChoice,
   type AddProjectCloneFlow,
   type AddProjectEnvironmentOption,
   buildPaletteRemoteSourceReadiness,
@@ -440,7 +444,8 @@ function OpenCommandPaletteDialog(props: {
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
-  const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
+  const { scratchEnvironmentChoice, scratchWorkspaceRootFor, startScratchThread } =
+    useScratchProject();
   const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
@@ -461,6 +466,7 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const preferredEnvironmentId = usePreferredEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
@@ -536,6 +542,7 @@ function OpenCommandPaletteDialog(props: {
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: contextualProjectRef,
+    preferredEnvironmentId,
   });
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
     ...targetProject,
@@ -563,36 +570,27 @@ function OpenCommandPaletteDialog(props: {
       : null;
   };
 
-  const addProjectEnvironmentOptions = (() => {
-    const options = environments
-      .filter((environment) => canCreateProjectInEnvironment(environment.connection.phase))
-      .map((environment): AddProjectEnvironmentOption => {
-        const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
-        return {
-          environmentId: environment.environmentId,
-          label: resolveEnvironmentOptionLabel({
-            isPrimary,
-            environmentId: environment.environmentId,
-            runtimeLabel: environment.label,
-          }),
-          isPrimary,
-          machine: resolveEnvironmentMachineKind(environment.serverConfig),
-          isConnected: canCreateProjectInEnvironment(environment.connection.phase),
-          status: connectionStatusText(environment.connection),
-        };
-      });
-
-    options.sort((left, right) => {
-      if (left.isPrimary !== right.isPrimary) {
-        return left.isPrimary ? -1 : 1;
-      }
-      return left.label.localeCompare(right.label);
-    });
-
-    return options;
-  })();
-  const defaultAddProjectEnvironmentId =
-    addProjectEnvironmentOptions.find((option) => option.isConnected)?.environmentId ?? null;
+  const addProjectEnvironmentInputs = environments.map((environment) => {
+    const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
+    return {
+      environmentId: environment.environmentId,
+      label: resolveEnvironmentOptionLabel({
+        isPrimary,
+        environmentId: environment.environmentId,
+        runtimeLabel: environment.label,
+      }),
+      isPrimary,
+      machine: resolveEnvironmentMachineKind(environment.serverConfig),
+      isConnected: canCreateProjectInEnvironment(environment.connection.phase),
+      status: connectionStatusText(environment.connection),
+    };
+  });
+  const addProjectEnvironmentChoice = buildEnvironmentChoice(
+    addProjectEnvironmentInputs,
+    preferredEnvironmentId,
+  );
+  const addProjectEnvironmentOptions = addProjectEnvironmentChoice.options;
+  const defaultAddProjectEnvironmentId = addProjectEnvironmentChoice.defaultEnvironmentId;
   const wslAddProjectEnvironmentOption =
     addProjectEnvironmentOptions.find((option) => {
       if (!option.isConnected) {
@@ -674,7 +672,25 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
-  const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  const scratchChoice = scratchEnvironmentChoice(currentProjectEnvironmentId);
+  // An unreachable preferred machine turns the row into a machine choice instead of
+  // quietly starting the thread somewhere else.
+  const runScratchChoice = (
+    choice: Exclude<WorkEnvironmentChoice<EnvironmentId>, { readonly kind: "none" }>,
+  ) =>
+    choice.kind === "chosen"
+      ? { run: () => startScratchThread(choice.environmentId) }
+      : {
+          description: `${environmentLabelById.get(choice.environmentId) ?? "Preferred machine"} is unavailable`,
+          keepOpen: true,
+          run: async () => openScratchEnvironmentChoice(),
+        };
+  const openScratchEnvironmentChoice = () => {
+    pushPaletteView({
+      addonIcon: <MessageSquareDashedIcon className={ADDON_ICON_CLASS} />,
+      groups: scratchEnvironmentGroups(),
+    });
+  };
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
@@ -844,7 +860,7 @@ function OpenCommandPaletteDialog(props: {
           );
         },
       });
-      if (scratchTargetEnvironmentId === null) return projectItems;
+      if (scratchChoice.kind === "none") return projectItems;
 
       const noProjectIndex = newThreadNoProjectIndex(
         projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
@@ -865,7 +881,7 @@ function OpenCommandPaletteDialog(props: {
           title: "No project",
           icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
           shortcutCommand: "chat.newWithoutProject" as const,
-          run: () => startScratchThread(scratchTargetEnvironmentId),
+          ...runScratchChoice(scratchChoice),
         },
         ...projectItems.slice(noProjectIndex),
       ];
@@ -1131,11 +1147,16 @@ function OpenCommandPaletteDialog(props: {
     value,
     searchTerms: [option.label, option.environmentId, option.isPrimary ? "this device" : ""],
     title: option.label,
-    description: option.isConnected
-      ? option.isPrimary
-        ? "This device"
-        : option.environmentId
-      : option.status,
+    description: [
+      option.isPreferred ? "Preferred" : null,
+      option.isConnected
+        ? option.isPrimary
+          ? "This device"
+          : option.environmentId
+        : option.status,
+    ]
+      .filter((part) => part !== null)
+      .join(" · "),
     disabled: !option.isConnected,
     icon: <EnvironmentMachineIcon kind={option.machine} className={ITEM_ICON_CLASS} />,
     keepOpen: true,
@@ -1159,6 +1180,33 @@ function OpenCommandPaletteDialog(props: {
       value: "environments",
       label: "Environments",
       items: addProjectEnvironmentItems,
+    },
+  ];
+  const scratchEnvironmentGroups = () => [
+    {
+      value: "environments",
+      label: "Environments",
+      items: buildEnvironmentChoice(
+        addProjectEnvironmentInputs.map((environment) => {
+          const offersScratch = scratchWorkspaceRootFor(environment.environmentId) !== null;
+          return {
+            ...environment,
+            isConnected: offersScratch,
+            status:
+              !offersScratch && environment.isConnected
+                ? "Cannot start without a project"
+                : environment.status,
+          };
+        }),
+        preferredEnvironmentId,
+      ).options.map((option) => ({
+        ...buildEnvironmentItem(
+          option,
+          `action:new-thread-without-project:environment:${option.environmentId}`,
+          (environmentId) => void startScratchThread(environmentId),
+        ),
+        keepOpen: false,
+      })),
     },
   ];
 
@@ -1275,7 +1323,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (scratchTargetEnvironmentId !== null) {
+  if (scratchChoice.kind !== "none") {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
@@ -1283,7 +1331,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread without a project",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
-      run: () => startScratchThread(scratchTargetEnvironmentId),
+      ...runScratchChoice(scratchChoice),
     });
   }
 
@@ -1663,6 +1711,24 @@ function OpenCommandPaletteDialog(props: {
         useRightPanelStore
           .getState()
           .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "notes");
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.xwingEnvironments === true
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:development-environments",
+      title: "Open development environments",
+      searchTerms: ["xwing", "environments", "development environments", "checkouts", "apps"],
+      icon: <BoxesIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore
+          .getState()
+          .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "environments");
       },
     });
   }

@@ -4,6 +4,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
+  ContextTransferId,
   EventId,
   MessageId,
   NodeId,
@@ -20,6 +21,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Statement from "effect/sql/Statement";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -1166,18 +1168,6 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
       })
       .pipe(Effect.flip);
     assert.equal(plainOntoExisting._tag, "OrchestratorThreadAlreadyExistsError");
-    const busyMergeBack = yield* orchestrator
-      .dispatch({
-        type: "thread.merge_back",
-        commandId: CommandId.make("side-chat-busy-merge-back"),
-        sourceThreadId: sideChatId,
-        targetThreadId: parentId,
-        sourcePoint: { type: "latest_stable" },
-        createdBy: "user",
-        creationSource: "web",
-      })
-      .pipe(Effect.flip);
-    assert.include(String(busyMergeBack.cause), "active work");
 
     yield* orchestrator.dispatch({
       type: "message.dispatch",
@@ -1223,7 +1213,207 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
-it.effect("merge-back rejects a second fork's context until the first is consumed", () =>
+const setRunStatus = (
+  threadId: ThreadId,
+  runId: RunId,
+  status: "running" | "completed" | "rolled_back",
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+      (candidate) => candidate.id === runId,
+    )!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make(`${runId}:${status}`),
+          type: "run.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: { ...run, status, completedAt: status === "running" ? null : now },
+        },
+      ],
+    });
+  });
+
+const bringBackHarness = (name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make(`${name}-parent`);
+    const sideChatId = ThreadId.make(`${name}-side`);
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make(`${name}-parent-1`),
+      ordinal: 1,
+      status: "completed",
+      text: "Parent work",
+      stable: true,
+    });
+    yield* forkSideChat(`${name}-fork`, parentId, sideChatId);
+    const sideRunId = (ordinal: number) => RunId.make(`${name}-side-${ordinal}`);
+    const sideReply = (ordinal: number, text: string) =>
+      writeParentRun({
+        threadId: sideChatId,
+        runId: sideRunId(ordinal),
+        ordinal,
+        status: "completed",
+        text,
+        stable: true,
+      });
+    const bringBack = (commandId: string, through: number, scope?: "additional" | "all") =>
+      orchestrator.dispatch({
+        type: "thread.merge_back",
+        commandId: CommandId.make(commandId),
+        sourceThreadId: sideChatId,
+        targetThreadId: parentId,
+        sourcePoint: { type: "run", runId: sideRunId(through) },
+        ...(scope === undefined ? {} : { scope }),
+        createdBy: "user",
+        creationSource: "web",
+      });
+    const awaitTransfer = (transferId: ContextTransferId, status: "consumed") =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        yield* eventSink.stream({ afterSequence: 0, eventType: "context-transfer.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "context-transfer.updated" &&
+              stored.event.payload.id === transferId &&
+              stored.event.payload.status === status,
+          ),
+          Stream.runHead,
+        );
+      });
+    const bringBacks = Effect.gen(function* () {
+      const parent = yield* orchestrator.getThreadProjection(parentId);
+      return parent.contextTransfers
+        .filter((transfer) => transfer.type === "merge_back")
+        .map((transfer) => ({
+          transfer,
+          run: parent.runs.find((run) => run.id === transfer.targetRunId),
+          message: parent.messages.find(
+            (message) =>
+              message.id ===
+              parent.runs.find((run) => run.id === transfer.targetRunId)?.userMessageId,
+          ),
+          summary:
+            parent.contextHandoffs.find((handoff) => handoff.transferId === transfer.id)
+              ?.summaryText ?? "",
+        }));
+    });
+    return { parentId, sideChatId, sideRunId, sideReply, bringBack, awaitTransfer, bringBacks };
+  });
+
+it.effect("Bring back queues behind a busy parent and each request carries its own range", () =>
+  Effect.gen(function* () {
+    const h = yield* bringBackHarness("bring-back-queue");
+    const busyRunId = RunId.make("bring-back-queue-parent-2");
+    yield* h.sideReply(1, "SIDE_ONE");
+    yield* writeParentRun({
+      threadId: h.parentId,
+      runId: busyRunId,
+      ordinal: 2,
+      status: "running",
+      text: "Parent busy",
+      stable: true,
+    });
+
+    yield* h.bringBack("bring-back-queue-1", 1);
+    // A reply after the click must not enter the queued request.
+    yield* h.sideReply(2, "SIDE_TWO");
+    yield* h.bringBack("bring-back-queue-2", 2);
+    yield* h.bringBack("bring-back-queue-2", 2);
+
+    const queued = yield* h.bringBacks;
+    assert.deepEqual(
+      queued.map(({ transfer, run, message }) => [
+        transfer.status,
+        transfer.sourcePoint.runId,
+        transfer.mergeBackScope,
+        run?.status,
+        message?.senderThreadId,
+      ]),
+      [
+        ["pending", h.sideRunId(1), "additional", "queued", h.sideChatId],
+        ["pending", h.sideRunId(2), "additional", "queued", h.sideChatId],
+      ],
+    );
+
+    // Each finished parent turn starts the next queued one.
+    yield* setRunStatus(h.parentId, busyRunId, "completed");
+    yield* h.awaitTransfer(queued[0]!.transfer.id, "consumed");
+    yield* setRunStatus(h.parentId, queued[0]!.run!.id, "completed");
+    yield* h.awaitTransfer(queued[1]!.transfer.id, "consumed");
+    yield* setRunStatus(h.parentId, queued[1]!.run!.id, "completed");
+
+    const delivered = yield* h.bringBacks;
+    assert.deepEqual(
+      delivered.map(({ transfer }) => transfer.status),
+      ["consumed", "consumed"],
+    );
+    assert.include(delivered[0]!.summary, "SIDE_ONE");
+    assert.notInclude(delivered[0]!.summary, "SIDE_TWO");
+    assert.include(delivered[1]!.summary, "SIDE_TWO");
+    assert.notInclude(delivered[1]!.summary, "SIDE_ONE");
+
+    const nothingNew = yield* h.bringBack("bring-back-queue-3", 2).pipe(Effect.flip);
+    assert.include(String(nothingNew.cause), "Nothing new");
+
+    yield* h.bringBack("bring-back-queue-all", 2, "all");
+    const all = (yield* h.bringBacks).at(-1)!;
+    assert.equal(all.transfer.mergeBackScope, "all");
+    assert.equal(all.transfer.status, "consumed");
+    assert.equal(all.run?.status, "starting");
+    assert.include(all.summary, "SIDE_ONE");
+    assert.include(all.summary, "SIDE_TWO");
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
+it.effect("a Bring back whose parent turn was cancelled or rolled back is not counted", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const h = yield* bringBackHarness("bring-back-cancel");
+    const busyRunId = RunId.make("bring-back-cancel-parent-2");
+    yield* h.sideReply(1, "SIDE_ONE");
+    yield* writeParentRun({
+      threadId: h.parentId,
+      runId: busyRunId,
+      ordinal: 2,
+      status: "running",
+      text: "Parent busy",
+      stable: true,
+    });
+    yield* h.bringBack("bring-back-cancel-1", 1);
+    const [cancelled] = yield* h.bringBacks;
+    yield* orchestrator.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make("bring-back-cancel-run"),
+      threadId: h.parentId,
+      runId: cancelled!.run!.id,
+    });
+    const [failed] = yield* h.bringBacks;
+    assert.equal(failed!.transfer.status, "failed");
+    assert.include(failed!.transfer.error ?? "", "cancelled");
+
+    yield* setRunStatus(h.parentId, busyRunId, "completed");
+    yield* h.bringBack("bring-back-cancel-2", 1);
+    const retried = (yield* h.bringBacks).at(-1)!;
+    assert.equal(retried.transfer.status, "consumed");
+    assert.include(retried.summary, "SIDE_ONE");
+
+    // Rolling back the parent turn removes the context it delivered.
+    yield* setRunStatus(h.parentId, retried.run!.id, "rolled_back");
+    yield* h.bringBack("bring-back-cancel-3", 1);
+    const afterRollback = (yield* h.bringBacks).at(-1)!;
+    assert.include(afterRollback.summary, "SIDE_ONE");
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
+it.effect("Bring back from sibling side chats queues each behind the parent's work", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const parentId = ThreadId.make("merge-back-guard-parent");
@@ -1235,6 +1425,7 @@ it.effect("merge-back rejects a second fork's context until the first is consume
       ordinal: 1,
       status: "completed",
       text: "Parent work",
+      stable: true,
     });
     const forkAndRun = (name: string) =>
       Effect.gen(function* () {
@@ -1250,7 +1441,14 @@ it.effect("merge-back rejects a second fork's context until the first is consume
           createdBy: "user",
           creationSource: "web",
         });
-        yield* writeParentRun({ threadId, runId, ordinal: 1, status: "completed", text: name });
+        yield* writeParentRun({
+          threadId,
+          runId,
+          ordinal: 1,
+          status: "completed",
+          text: name,
+          stable: true,
+        });
         return { threadId, runId };
       });
     const mergeBack = (commandId: string, fork: { threadId: ThreadId; runId: RunId }) =>
@@ -1267,46 +1465,20 @@ it.effect("merge-back rejects a second fork's context until the first is consume
     const second = yield* forkAndRun("second");
 
     yield* mergeBack("merge-back-guard-first", first);
-    const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);
-    assert.include(String(rejected.cause), "pending context from another side chat or fork");
-    yield* mergeBack("merge-back-guard-first-again", first);
-    // That pending merge-back targets the parent, so it does not block one into `first`.
-    const nested = { threadId: ThreadId.make("merge-back-guard-nested") };
-    const nestedRunId = RunId.make("merge-back-guard-nested-run");
-    yield* orchestrator.dispatch({
-      type: "thread.fork",
-      commandId: CommandId.make("merge-back-guard-fork-nested"),
-      sourceThreadId: first.threadId,
-      targetThreadId: nested.threadId,
-      sourcePoint: { type: "run", runId: first.runId },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    yield* writeParentRun({
-      threadId: nested.threadId,
-      runId: nestedRunId,
-      ordinal: 1,
-      status: "completed",
-      text: "nested",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.merge_back",
-      commandId: CommandId.make("merge-back-guard-nested"),
-      sourceThreadId: nested.threadId,
-      targetThreadId: first.threadId,
-      sourcePoint: { type: "run", runId: nestedRunId },
-      createdBy: "user",
-      creationSource: "web",
-    });
+    yield* mergeBack("merge-back-guard-second", second);
 
     const parent = yield* orchestrator.getThreadProjection(parentId);
     assert.deepEqual(
       parent.contextTransfers
         .filter((transfer) => transfer.type === "merge_back")
-        .map((transfer) => [transfer.sourceThreadId, transfer.status]),
+        .map((transfer) => [
+          transfer.sourceThreadId,
+          transfer.status,
+          parent.runs.find((run) => run.id === transfer.targetRunId)?.status,
+        ]),
       [
-        [first.threadId, "superseded"],
-        [first.threadId, "pending"],
+        [first.threadId, "consumed", "starting"],
+        [second.threadId, "pending", "queued"],
       ],
     );
   }).pipe(Effect.provide(forkCases[0]!.layer)),

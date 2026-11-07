@@ -598,21 +598,65 @@ const devServer = {
 };
 
 it.effect.each([
-  ["completed", scratchProjectId, backgroundSubagent, true],
-  ["waiting", ProjectId.make("restart-project"), backgroundSubagent, true],
-  ["completed", ProjectId.make("restart-project"), devServer, false],
-  ["waiting", scratchProjectId, devServer, false],
+  ["completed", scratchProjectId, backgroundSubagent, true, false],
+  ["waiting", ProjectId.make("restart-project"), backgroundSubagent, true, false],
+  ["completed", ProjectId.make("restart-project"), devServer, false, false],
+  ["waiting", scratchProjectId, devServer, false, false],
+  [
+    "completed",
+    scratchProjectId,
+    {
+      pendingBackgroundTasks: [
+        { taskId: "tests", kind: "command", description: "Run tests" },
+        { taskId: "dev-server", kind: "command", awaited: false },
+      ],
+      work: [
+        { kind: "shell", label: "Run tests (id tests)", id: "tests", awaited: true },
+        { kind: "shell", label: "dev-server", id: "dev-server" },
+      ],
+    },
+    true,
+    true,
+  ],
+  [
+    "completed",
+    scratchProjectId,
+    {
+      pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command", awaited: false }],
+      work: [{ kind: "shell", label: "dev-server", id: "dev-server" }],
+    },
+    false,
+    true,
+  ],
 ] as const)(
   "cleans up background work of a %s run in project %s and wakes it only for awaited work",
-  ([status, projectId, background, wakes]) =>
+  ([status, projectId, background, wakes, delegated]) =>
     Effect.gen(function* () {
       const base = makeProjection();
       const projection = {
         ...base,
-        thread: { ...base.thread, projectId },
+        thread: {
+          ...base.thread,
+          projectId,
+          ...(delegated
+            ? {
+                lineage: {
+                  ...base.thread.lineage,
+                  parentThreadId: ThreadId.make("restart-parent"),
+                  relationshipToParent: "subagent",
+                },
+              }
+            : {}),
+        },
         runs: [{ ...base.runs[0]!, status }],
         providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
-        turnItems: [background.turnItem],
+        turnItems: "turnItem" in background ? [background.turnItem] : [],
+        providerThreads: base.providerThreads.map((thread) => ({
+          ...thread,
+          ...("pendingBackgroundTasks" in background
+            ? { pendingBackgroundTasks: background.pendingBackgroundTasks }
+            : {}),
+        })),
         subagents:
           background === backgroundSubagent
             ? [
@@ -670,14 +714,27 @@ it.effect.each([
         );
         assert.lengthOf(commits, 1);
         const events = commits[0]!.events;
-        assert.isTrue(
-          events.some(
-            (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
-          ),
-        );
+        if ("turnItem" in background) {
+          assert.isTrue(
+            events.some(
+              (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
+            ),
+          );
+        } else {
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "provider-thread.updated" &&
+                event.payload.pendingBackgroundTasks?.length === 0,
+            ),
+          );
+        }
         const note = events.find((event) => event.type === "run.background-work-cancelled");
         assert.equal(note?.runId, runId);
-        assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [background.work]);
+        assert.deepEqual(
+          note?.payload.restartCancelledBackgroundWork,
+          "pendingBackgroundTasks" in background ? background.work : [background.work],
+        );
         if (status === "completed")
           assert.isFalse(events.some((event) => event.type === "run.updated"));
       }

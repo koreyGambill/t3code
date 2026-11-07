@@ -149,6 +149,17 @@ shown there apply only to the route marked **In use**; other routes are not
 checked. Direct pairing and T3 Connect have separate sessions and may grant
 different permissions.
 
+### Choose a preferred machine
+
+On web and desktop, **Settings → Environments → Preferred machine** sets where new
+work starts when you have not picked a machine: threads without a project, the default
+copy of a project that exists on several machines, and the first choice when adding a
+project. **Automatic** keeps the app's own server first. A machine you pick wins, a new
+thread in the current project stays on that project's machine, and existing threads
+never move. If the preferred machine is offline, T3 Code asks you to choose another
+instead of starting the work elsewhere. The choice is saved separately in each client;
+mobile keeps its own selection.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in

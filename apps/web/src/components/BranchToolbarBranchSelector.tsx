@@ -114,7 +114,6 @@ export function BranchToolbarBranchSelector({
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread metadata update",
@@ -178,12 +177,6 @@ export function BranchToolbarBranchSelector({
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
     )
       return;
-    if (serverSession && worktreePath !== activeWorktreePath) {
-      void stopThreadSession({
-        environmentId,
-        input: { threadId: activeThreadId },
-      });
-    }
     if (hasServerThread) {
       void (automatic ? updateEmptyThreadMetadata : updateThreadMetadata)({
         environmentId,

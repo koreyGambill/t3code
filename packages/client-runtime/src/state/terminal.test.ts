@@ -44,6 +44,15 @@ it("reopens an ended terminal on an explicit visit, once until it runs again", (
     "reopen",
     "reopen",
   ]);
+  // A shell from a checkout the thread left stays history; asking again would only fail again.
+  expect(
+    run([
+      status("exited"),
+      { type: "reopen-failed", checkoutChanged: true },
+      status("exited", 2),
+      status("exited", 3),
+    ]),
+  ).toEqual(["reopen"]);
 });
 
 it("keeps a detached terminal from being mistaken for a live exit", () => {

@@ -1,4 +1,9 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  chooseWorkEnvironment,
+  chosenEnvironmentId,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   getAddProjectInitialQuery,
   getCloneDestinationPath,
@@ -34,6 +39,7 @@ import { newProjectId } from "~/lib/utils";
 import { useProjects, useThreadShells, waitForProject } from "~/state/entities";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { usePreferredEnvironmentId } from "~/state/preferredEnvironment";
 import { environmentPresentations } from "~/state/presentation";
 import { allReachableShellsLiveAtom, environmentShell } from "~/state/shell";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -110,7 +116,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const handleNewThread = useNewThreadHandler();
-  const { scratchEnvironmentId, openScratchProject } = useScratchProject();
+  const { scratchEnvironmentChoice, openScratchProject } = useScratchProject();
+  const preferredEnvironmentId = usePreferredEnvironmentId();
+  const preferredUnavailableMessage = (environmentId: EnvironmentId) =>
+    `${environments.find((entry) => entry.environmentId === environmentId)?.label ?? "Your preferred machine"} is unavailable. Reconnect it, or change the preferred machine in Settings.`;
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
@@ -179,12 +188,16 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   };
 
   const openScratchDraft = async () => {
-    const environmentId = scratchEnvironmentId(lastActiveEnvironmentId());
-    const project = environmentId === null ? null : await openScratchProject(environmentId);
+    const choice = scratchEnvironmentChoice(lastActiveEnvironmentId());
+    const project =
+      choice.kind === "chosen" ? await openScratchProject(choice.environmentId) : null;
     if (project === null) {
       setState({
         status: "failed",
-        message: "None of your machines can start a thread without a project right now.",
+        message:
+          choice.kind === "preferred-unavailable"
+            ? preferredUnavailableMessage(choice.environmentId)
+            : "None of your machines can start a thread without a project right now.",
       });
       return;
     }
@@ -200,7 +213,23 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   };
 
   const cloneRepository = async (repository: PromptLinkRepository) => {
-    const environmentId = lastActiveEnvironmentId();
+    const choice = chooseWorkEnvironment({
+      preferred: preferredEnvironmentId,
+      isKnown: (id) => environments.some((entry) => entry.environmentId === id),
+      isUsable: (id) =>
+        environments.some(
+          (entry) =>
+            entry.environmentId === id &&
+            entry.connection.phase === "connected" &&
+            entry.serverConfig?.newProjectsRoot != null,
+        ),
+      fallback: lastActiveEnvironmentId,
+    });
+    if (choice.kind === "preferred-unavailable") {
+      setState({ status: "failed", message: preferredUnavailableMessage(choice.environmentId) });
+      return;
+    }
+    const environmentId = chosenEnvironmentId(choice);
     const environment = environments.find((entry) => entry.environmentId === environmentId);
     const serverConfig = environment?.serverConfig ?? null;
     const newProjectsRoot = serverConfig?.newProjectsRoot ?? null;

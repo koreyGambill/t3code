@@ -1,0 +1,630 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import {
+  DevelopmentEnvironmentLifecycleError,
+  EnvironmentId,
+  type OrchestrationV2DevelopmentEnvironmentUsage,
+  type OrchestrationV2ThreadProjection,
+  ProjectId,
+  type ScheduledTask,
+  ScheduledTaskId,
+  ThreadId,
+  XwingEnvironmentId,
+  XwingEnvironmentNotFoundError,
+  type XwingHold,
+  XwingOperationFailedError,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as XwingEnvironments from "../xwing/XwingEnvironments.ts";
+import * as XwingOperations from "../xwing/XwingOperations.ts";
+import * as DevelopmentEnvironmentHolds from "./DevelopmentEnvironmentHolds.ts";
+import * as DevelopmentEnvironmentLifecycle from "./DevelopmentEnvironmentLifecycle.ts";
+
+const ID = XwingEnvironmentId.make("c838284042dc51de");
+const ROOT = "/home/dev/.xwing/envs/7";
+const SERVER = EnvironmentId.make("server-1");
+const OWNER = DevelopmentEnvironmentHolds.holdOwner(SERVER);
+const PROJECT = ProjectId.make("project-1");
+const SECRET = "token=hunter2";
+const NOW = DateTime.makeUnsafe("2026-11-07T12:00:00Z");
+
+interface ThreadFixture {
+  readonly id: string;
+  readonly worktreePath: string | null;
+  readonly settled?: boolean;
+  readonly archived?: boolean;
+  readonly runStatus?: string;
+  readonly background?: boolean;
+  readonly terminal?: boolean;
+}
+
+/** Xwing's side as the CLI behaves: holds block deletion, dirty work blocks without discard. */
+const makeXwing = (initial: { readonly dirty?: boolean; readonly holds?: Array<XwingHold> }) => {
+  const state = {
+    holds: [...(initial.holds ?? [])],
+    dirty: initial.dirty ?? false,
+    deleted: false,
+    calls: [] as Array<string>,
+    attachFailures: 0,
+    refuseDelete: false,
+  };
+  const blockers = () => [
+    ...state.holds.map(
+      (hold) =>
+        `held by ${hold.owner} ${hold.key} ("${hold.label}"); release with xwing env hold release`,
+    ),
+    ...(state.dirty ? ["app has uncommitted or untracked work; use --discard-work"] : []),
+  ];
+  const failed = (operation: "attachRepository" | "delete", category: "blocked" | "baseNotFound") =>
+    new XwingOperationFailedError({
+      operation,
+      category,
+      environmentId: ID,
+      exitCode: 1,
+      blockers: operation === "delete" ? blockers() : undefined,
+      cause: new Error(`fatal: remote https://user@example.com ${SECRET}`),
+    });
+  const operations = Layer.mock(XwingOperations.XwingOperations)({
+    create: (input) =>
+      Effect.sync(() => {
+        state.calls.push(`create ${input.name}`);
+        return {
+          id: ID,
+          number: 7,
+          name: input.name,
+          rootPath: ROOT,
+          createdAt: "now",
+        };
+      }),
+    attachRepository: (input) =>
+      Effect.suspend(() => {
+        state.calls.push(`attach ${input.sourcePath} ${input.branch}`);
+        if (state.attachFailures > 0) {
+          state.attachFailures -= 1;
+          return Effect.fail(failed("attachRepository", "baseNotFound"));
+        }
+        return Effect.succeed({
+          environmentId: ID,
+          name: "app",
+          path: `${ROOT}/app`,
+          branch: input.branch,
+          created: true,
+          stale: false,
+          dependencies: [],
+          dependencyWarnings: [],
+        });
+      }),
+    previewCleanup: () =>
+      Effect.sync(() => ({
+        environmentId: ID,
+        number: 7,
+        name: "space name",
+        status: "ready",
+        rootPath: ROOT,
+        worktrees: [
+          {
+            name: "app",
+            path: `${ROOT}/app`,
+            dirty: state.dirty,
+            untracked: false,
+            ignored: false,
+          },
+        ],
+        holds: [...state.holds],
+        blockers: blockers(),
+        retainedPaths: [`/home/dev/.xwing/runs/${ID}`],
+        deletable: blockers().length === 0,
+      })),
+    registerHold: (input) =>
+      Effect.sync(() => {
+        state.calls.push(`register ${input.owner} ${input.key}`);
+        const exists = state.holds.some(
+          (hold) => hold.owner === input.owner && hold.key === input.key,
+        );
+        const hold = {
+          environmentId: ID,
+          owner: input.owner,
+          key: input.key,
+          label: input.label,
+          detail: input.detail,
+          createdAt: "now",
+          updatedAt: "now",
+        };
+        if (!exists) state.holds.push(hold);
+        return {
+          hold: { ...hold, environmentStatus: "active" as const },
+          result: exists ? ("unchanged" as const) : ("created" as const),
+        };
+      }),
+    releaseHold: (input) =>
+      Effect.sync(() => {
+        state.calls.push(`release ${input.owner} ${input.key}`);
+        state.holds = state.holds.filter(
+          (hold) => !(hold.owner === input.owner && hold.key === input.key),
+        );
+        return {
+          environmentId: ID,
+          owner: input.owner,
+          key: input.key,
+          environmentStatus: "active" as const,
+          result: "released" as const,
+        };
+      }),
+    delete: () =>
+      Effect.suspend(() => {
+        state.calls.push("delete");
+        if (state.refuseDelete || blockers().length > 0) {
+          return Effect.fail(failed("delete", "blocked"));
+        }
+        state.deleted = true;
+        return Effect.succeed({
+          environmentId: ID,
+          outcome: "deleted" as const,
+          removedWorktrees: [`${ROOT}/app`],
+          retainedPaths: [`/home/dev/.xwing/runs/${ID}`],
+          stoppedApplications: [{ id: "app-1", name: "web", status: "stopped" }],
+        });
+      }),
+  });
+  return { state, operations };
+};
+
+const hold = (owner: string, key: string, label = "work"): XwingHold => ({
+  environmentId: ID,
+  owner,
+  key,
+  label,
+  createdAt: "now",
+  updatedAt: "now",
+});
+
+const bindingHold = (threadId: string, period: string) =>
+  hold(OWNER, DevelopmentEnvironmentHolds.holdKey({ threadId, period }), `T3 Code: ${threadId}`);
+
+const records = (fixture: ThreadFixture) =>
+  ({
+    thread: {
+      id: ThreadId.make(fixture.id),
+      projectId: PROJECT,
+      title: `Thread ${fixture.id}`,
+      worktreePath: fixture.worktreePath,
+      deletedAt: null,
+      archivedAt: fixture.archived ? NOW : null,
+      settledAt: fixture.settled || fixture.archived ? NOW : null,
+    },
+    runs: fixture.runStatus === undefined ? [] : [{ status: fixture.runStatus }],
+    runtimeRequests: [],
+    providerSessions: fixture.background
+      ? [
+          {
+            id: `session-${fixture.id}`,
+            status: "ready",
+            capabilities: {
+              sessions: { supportsMultipleProviderThreadsPerSession: false },
+            },
+          },
+        ]
+      : [],
+    providerThreads: [],
+  }) as unknown as Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "runtimeRequests" | "providerSessions" | "providerThreads"
+  >;
+
+const usage = (threadId: string, current: boolean): OrchestrationV2DevelopmentEnvironmentUsage => ({
+  threadId: ThreadId.make(threadId),
+  projectId: PROJECT,
+  xwingEnvironmentId: ID,
+  repositorySource: "/home/dev/src/app",
+  checkoutPath: `${ROOT}/app`,
+  number: 7,
+  name: "space name",
+  firstSelectedAt: "2026-11-01T00:00:00Z",
+  lastSelectedAt: "2026-11-02T00:00:00Z",
+  threadTitle: `Thread ${threadId}`,
+  archivedAt: null,
+  settledAt: null,
+  current,
+});
+
+const schedule = (id: string, threadId: string | null, enabled: boolean) =>
+  ({
+    id: ScheduledTaskId.make(id),
+    title: `Schedule ${id}`,
+    enabled,
+    threadId: threadId === null ? null : ThreadId.make(threadId),
+    workspaceStrategy:
+      threadId === null
+        ? { type: "existing_worktree", worktreePath: `${ROOT}/app` }
+        : { type: "root" },
+  }) as unknown as ScheduledTask;
+
+const makeLayer = (input: {
+  readonly xwing: ReturnType<typeof makeXwing>;
+  readonly threads?: ReadonlyArray<ThreadFixture>;
+  readonly usage?: ReadonlyArray<OrchestrationV2DevelopmentEnvironmentUsage>;
+  readonly schedules?: ReadonlyArray<ScheduledTask>;
+}) => {
+  const threads = new Map((input.threads ?? []).map((thread) => [thread.id, thread]));
+  const holds = DevelopmentEnvironmentHolds.layer.pipe(
+    Layer.provide(
+      Layer.mock(ServerEnvironmentIdentity)({
+        getEnvironmentId: Effect.succeed(SERVER),
+      }),
+    ),
+  );
+  return DevelopmentEnvironmentLifecycle.layer.pipe(
+    Layer.provideMerge(holds),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          listDevelopmentEnvironmentUsage: () => Effect.succeed(input.usage ?? []),
+          getThreadWorktreePaths: () =>
+            Effect.succeed(
+              (input.threads ?? []).flatMap((thread) =>
+                thread.worktreePath === null
+                  ? []
+                  : [
+                      {
+                        threadId: ThreadId.make(thread.id),
+                        worktreePath: thread.worktreePath,
+                      },
+                    ],
+              ),
+            ),
+          getThreadRecords: (threadId) => Effect.succeed(records(threads.get(threadId)!)) as never,
+        }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({ listByCommandId: () => Effect.succeed([]) }),
+        Layer.mock(ProviderSessionManagerV2)({
+          get: (sessionId) =>
+            Effect.succeed(
+              Option.some({
+                hasPendingBackgroundWork: Effect.succeed(
+                  threads.get(sessionId.replace("session-", ""))?.background === true,
+                ),
+              }) as never,
+            ),
+        }),
+        Layer.mock(TerminalManager.TerminalManager)({
+          hasForegroundWork: ({ threadId }) =>
+            Effect.succeed(threads.get(threadId)?.terminal === true),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: input.schedules ?? [] }),
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(Option.some({ workspaceRoot: "/home/dev/src/app/web" }) as never),
+        }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          execute: () =>
+            Effect.succeed({
+              exitCode: 0,
+              stdout: "/home/dev/src/app\n",
+            } as never),
+        }),
+        Layer.mock(XwingEnvironments.XwingEnvironments)({
+          inspect: () => Effect.fail(new XwingEnvironmentNotFoundError({ environmentId: ID })),
+        }),
+        input.xwing.operations,
+        NodeServices.layer,
+      ),
+    ),
+  );
+};
+
+const lifecycle = DevelopmentEnvironmentLifecycle.DevelopmentEnvironmentLifecycle;
+
+const encodeError = Schema.encodeSync(Schema.fromJsonString(DevelopmentEnvironmentLifecycleError));
+
+describe("DevelopmentEnvironmentLifecycle", () => {
+  it.effect("keeps a created environment when checkout fails and retries into the same id", () => {
+    const xwing = makeXwing({});
+    xwing.state.attachFailures = 1;
+    return Effect.gen(function* () {
+      const service = yield* lifecycle;
+      const input = {
+        projectId: PROJECT,
+        name: "space name",
+        branch: "feature/space",
+      };
+      const partial = yield* service.create(input);
+      const retried = yield* service.attach({
+        ...input,
+        xwingEnvironmentId: partial.xwingEnvironmentId,
+      });
+
+      assert.deepEqual(partial, {
+        xwingEnvironmentId: ID,
+        repository: null,
+        failure: {
+          reason: "baseNotFound",
+          message: "The base ref does not exist in the project's repository.",
+        },
+      });
+      assert.notInclude(JSON.stringify(partial), "hunter2");
+      assert.equal(retried.repository?.branch, "feature/space");
+      assert.deepEqual(xwing.state.calls, [
+        "create space name",
+        "attach /home/dev/src/app feature/space",
+        "attach /home/dev/src/app feature/space",
+      ]);
+    }).pipe(Effect.provide(makeLayer({ xwing })));
+  });
+
+  it.effect("names every thread, schedule and hold that keeps the environment", () => {
+    const xwing = makeXwing({
+      dirty: true,
+      holds: [bindingHold("idle", "select-1"), hold("sparkwing", "job-9", "CI job")],
+    });
+    const threads: ReadonlyArray<ThreadFixture> = [
+      { id: "unsettled", worktreePath: `${ROOT}/app` },
+      {
+        id: "turn",
+        worktreePath: `${ROOT}/app`,
+        settled: true,
+        runStatus: "running",
+      },
+      {
+        id: "queued",
+        worktreePath: `${ROOT}/app`,
+        settled: true,
+        runStatus: "queued",
+      },
+      {
+        id: "subagent",
+        worktreePath: `${ROOT}/app`,
+        settled: true,
+        background: true,
+      },
+      {
+        id: "shell",
+        worktreePath: `${ROOT}/app/web`,
+        settled: true,
+        terminal: true,
+      },
+      { id: "idle", worktreePath: `${ROOT}/app`, settled: true },
+      { id: "archived", worktreePath: `${ROOT}/app`, archived: true },
+      { id: "moved", worktreePath: "/elsewhere", runStatus: "running" },
+    ];
+    return Effect.gen(function* () {
+      const assessment = yield* (yield* lifecycle).assessCleanup({
+        xwingEnvironmentId: ID,
+      });
+
+      assert.isFalse(assessment.canClean);
+      assert.deepEqual(
+        assessment.threads.map((thread) => [thread.threadId, thread.current, thread.block]),
+        [
+          ["moved", false, null],
+          ["unsettled", true, "unsettled"],
+          ["turn", true, "working"],
+          ["queued", true, "working"],
+          ["subagent", true, "background-work"],
+          ["shell", true, "terminal-command"],
+          ["idle", true, null],
+          ["archived", true, null],
+        ],
+      );
+      assert.deepEqual(
+        assessment.schedules.map((task) => task.scheduledTaskId),
+        ["on-idle-thread", "in-checkout"],
+      );
+      assert.deepEqual(
+        assessment.ownHolds.map((own) => own.threadId),
+        [ThreadId.make("idle")],
+      );
+      assert.deepEqual(
+        assessment.foreignHolds.map((foreign) => foreign.owner),
+        ["sparkwing"],
+      );
+      assert.deepEqual(assessment.xwingBlockers, [
+        "app has uncommitted or untracked work; use --discard-work",
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          xwing,
+          threads,
+          usage: [usage("moved", false)],
+          schedules: [
+            schedule("on-idle-thread", "idle", true),
+            schedule("in-checkout", null, true),
+            schedule("disabled", "idle", false),
+            schedule("on-moved-thread", "moved", true),
+          ],
+        }),
+      ),
+    );
+  });
+
+  it.effect("deletes after the last thread settled, releasing only this server's holds", () => {
+    const xwing = makeXwing({
+      holds: [bindingHold("idle", "select-1"), bindingHold("gone", "launch-1")],
+    });
+    return Effect.gen(function* () {
+      const service = yield* lifecycle;
+      const assessment = yield* service.assessCleanup({
+        xwingEnvironmentId: ID,
+      });
+      const result = yield* service.cleanUp({
+        xwingEnvironmentId: ID,
+        fingerprint: assessment.fingerprint,
+      });
+
+      assert.isTrue(assessment.canClean);
+      assert.deepEqual(
+        assessment.threads.map((thread) => thread.threadId),
+        ["moved", "idle"],
+      );
+      assert.deepEqual(result, {
+        xwingEnvironmentId: ID,
+        outcome: "deleted",
+        releasedHolds: assessment.ownHolds.map((own) => own.key),
+        stoppedApplications: ["web"],
+        retainedPaths: [`/home/dev/.xwing/runs/${ID}`],
+      });
+      assert.isTrue(xwing.state.deleted);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          xwing,
+          threads: [
+            { id: "idle", worktreePath: `${ROOT}/app`, settled: true },
+            { id: "moved", worktreePath: "/elsewhere", runStatus: "running" },
+          ],
+          usage: [usage("moved", false)],
+        }),
+      ),
+    );
+  });
+
+  it.effect("refuses a confirmation once a newer binding holds the environment", () => {
+    const xwing = makeXwing({ holds: [bindingHold("idle", "select-1")] });
+    return Effect.gen(function* () {
+      const service = yield* lifecycle;
+      const holds = yield* DevelopmentEnvironmentHolds.DevelopmentEnvironmentHolds;
+      const reviewed = yield* service.assessCleanup({
+        xwingEnvironmentId: ID,
+      });
+      const committing = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const binding = yield* holds
+        .retain(
+          {
+            xwingEnvironmentId: ID,
+            threadId: "idle",
+            period: "select-2",
+            title: "idle",
+          },
+          Deferred.succeed(committing, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(committing);
+      const cleanup = yield* service
+        .cleanUp({
+          xwingEnvironmentId: ID,
+          fingerprint: reviewed.fingerprint,
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(binding);
+      const refused = yield* Fiber.join(cleanup);
+
+      assert.equal(refused.reason, "assessment-changed");
+      assert.isFalse(xwing.state.deleted);
+      assert.deepEqual(
+        xwing.state.holds.map((held) => held.key),
+        [
+          DevelopmentEnvironmentHolds.holdKey({
+            threadId: "idle",
+            period: "select-1",
+          }),
+          DevelopmentEnvironmentHolds.holdKey({
+            threadId: "idle",
+            period: "select-2",
+          }),
+        ],
+      );
+      assert.notInclude(xwing.state.calls.join("\n"), "release");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          xwing,
+          threads: [{ id: "idle", worktreePath: `${ROOT}/app`, settled: true }],
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    { case: "another T3 server's hold", dirty: false, foreign: true, scheduled: false },
+    { case: "unsaved work", dirty: true, foreign: false, scheduled: false },
+    { case: "a schedule for an idle thread", dirty: false, foreign: false, scheduled: true },
+  ])("never releases a hold or deletes while $case remains", ({ dirty, foreign, scheduled }) => {
+    const xwing = makeXwing({
+      dirty,
+      holds: [
+        bindingHold("idle", "select-1"),
+        ...(foreign ? [hold("t3-server-other", "thread-x", "Other T3")] : []),
+      ],
+    });
+    return Effect.gen(function* () {
+      const service = yield* lifecycle;
+      const assessment = yield* service.assessCleanup({
+        xwingEnvironmentId: ID,
+      });
+      const refused = yield* service
+        .cleanUp({
+          xwingEnvironmentId: ID,
+          fingerprint: assessment.fingerprint,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(refused.reason, "cleanup-blocked");
+      assert.deepEqual(xwing.state.calls, []);
+      assert.lengthOf(xwing.state.holds, foreign ? 2 : 1);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          xwing,
+          threads: [{ id: "idle", worktreePath: `${ROOT}/app`, settled: true }],
+          schedules: scheduled ? [schedule("nightly", "idle", true)] : [],
+        }),
+      ),
+    );
+  });
+
+  it.effect("restores released holds when Xwing refuses the deletion and hides its output", () => {
+    const xwing = makeXwing({ holds: [bindingHold("idle", "select-1")] });
+    const key = DevelopmentEnvironmentHolds.holdKey({ threadId: "idle", period: "select-1" });
+    return Effect.gen(function* () {
+      const service = yield* lifecycle;
+      const assessment = yield* service.assessCleanup({ xwingEnvironmentId: ID });
+      xwing.state.refuseDelete = true;
+      const refused = yield* service
+        .cleanUp({ xwingEnvironmentId: ID, fingerprint: assessment.fingerprint })
+        .pipe(Effect.flip);
+
+      const retried = yield* service
+        .cleanUp({ xwingEnvironmentId: ID, fingerprint: assessment.fingerprint })
+        .pipe(Effect.flip);
+      assert.equal(refused.reason, "blocked");
+      assert.equal(retried.reason, "blocked");
+      assert.notInclude(encodeError(refused), "hunter2");
+      assert.notInclude(encodeError(retried), "hunter2");
+      assert.notInclude(refused.message, "hunter2");
+      assert.deepEqual(xwing.state.calls, [
+        `release ${OWNER} ${key}`,
+        "delete",
+        `register ${OWNER} ${key}`,
+        `release ${OWNER} ${key}`,
+        "delete",
+        `register ${OWNER} ${key}`,
+      ]);
+      assert.deepEqual(
+        xwing.state.holds.map((held) => [held.key, held.label]),
+        [[key, "T3 Code: idle"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({ xwing, threads: [{ id: "idle", worktreePath: `${ROOT}/app`, settled: true }] }),
+      ),
+    );
+  });
+});

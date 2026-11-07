@@ -67,6 +67,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import { XwingToolkit } from "./toolkits/xwing/tools.ts";
+import * as XwingHandlers from "./toolkits/xwing/handlers.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
@@ -1142,6 +1144,8 @@ const layerEnvironmentToolkit = toolkitRegistration(
 
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
+const layerXwingToolkit = toolkitRegistration(XwingToolkit, XwingHandlers.layer);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1206,6 +1210,7 @@ export const layerTools = Layer.mergeAll(
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
+  layerXwingToolkit,
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,

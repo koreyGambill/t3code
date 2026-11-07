@@ -28,3 +28,11 @@ export const threadWorkspaceCounts = createEnvironmentRpcQueryAtomFamily(connect
   refreshIntervalMs: 5_000,
   idleTtlMs: 0,
 });
+
+export const threadWorkspaceListWork = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadWorkspace:listWork",
+  tag: WS_METHODS.threadWorkspaceListWork,
+  staleTimeMs: 10_000,
+  refreshIntervalMs: 10_000,
+  idleTtlMs: 0,
+});

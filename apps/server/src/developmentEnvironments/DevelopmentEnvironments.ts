@@ -1,0 +1,321 @@
+import {
+  type CommandId,
+  type DevelopmentEnvironmentCheckoutChoice,
+  DevelopmentEnvironmentPersistenceError,
+  DevelopmentEnvironmentProjectNotFoundError,
+  DevelopmentEnvironmentSelectionRejectedError,
+  type ProjectId,
+  type ThreadId,
+  type OrchestrationV2DevelopmentEnvironmentCheckout,
+  type OrchestrationV2DevelopmentEnvironmentUsage,
+  type OrchestrationV2ThreadDevelopmentEnvironment,
+  type XwingListError,
+} from "@t3tools/contracts";
+
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import * as ProjectService from "../project/ProjectService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as DevelopmentEnvironmentCheckouts from "./DevelopmentEnvironmentCheckouts.ts";
+import * as DevelopmentEnvironmentHolds from "./DevelopmentEnvironmentHolds.ts";
+
+export {
+  DevelopmentEnvironmentPersistenceError,
+  DevelopmentEnvironmentProjectNotFoundError,
+  DevelopmentEnvironmentSelectionRejectedError,
+};
+
+/** Where a stopped thread should work next. `native` leaves Xwing and keeps T3's own checkout rules. */
+export type DevelopmentEnvironmentSelectionTarget =
+  | { readonly type: "xwing"; readonly xwingEnvironmentId: string }
+  | {
+      readonly type: "native";
+      readonly worktreePath: string | null;
+      readonly branch: string | null;
+    };
+
+export interface DevelopmentEnvironmentSelectionInput {
+  readonly threadId: ThreadId;
+  readonly commandId: CommandId;
+  /** The checkout the caller saw; selection is rejected if the thread has moved since. */
+  readonly expected: {
+    readonly worktreePath: string | null;
+    readonly xwingEnvironmentId: string | null;
+  };
+  readonly target: DevelopmentEnvironmentSelectionTarget;
+}
+
+/**
+ * The thread's checkout once the selection committed. When `changed` is true, terminals and
+ * provider sessions from the previous checkout were closed, and clients should drop any launch
+ * context (cwd, terminal sessions) kept for it.
+ */
+export interface DevelopmentEnvironmentSelectionResult {
+  readonly changed: boolean;
+  readonly sequence: number;
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+  readonly developmentEnvironment: OrchestrationV2ThreadDevelopmentEnvironment | null;
+}
+
+export interface DevelopmentEnvironmentLaunchWorkspace {
+  readonly workspaceStrategy: {
+    readonly type: "existing_worktree";
+    readonly worktreePath: string;
+    readonly branch?: string;
+  };
+  readonly developmentEnvironment: OrchestrationV2DevelopmentEnvironmentCheckout;
+}
+
+/**
+ * Binds threads to Xwing checkouts; Xwing owns each environment's lifecycle. Launches spread
+ * `resolveLaunchWorkspace` into `ThreadLaunchService.launch` inside `bindLaunch`; stopped threads
+ * move with `selectCheckout`; `listUsage` reads which threads used which environment.
+ */
+export class DevelopmentEnvironments extends Context.Service<
+  DevelopmentEnvironments,
+  {
+    readonly selectCheckout: (
+      input: DevelopmentEnvironmentSelectionInput,
+    ) => Effect.Effect<
+      DevelopmentEnvironmentSelectionResult,
+      | DevelopmentEnvironmentSelectionRejectedError
+      | DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckoutUnavailableError
+      | DevelopmentEnvironmentPersistenceError
+    >;
+    /**
+     * Runs a launch into an Xwing checkout while holding the environment for it. The hold stays
+     * if the launch fails, since a failed launch may still have created the thread; cleanup
+     * releases it.
+     */
+    readonly bindLaunch: <A, E, R>(
+      binding: {
+        readonly xwingEnvironmentId: string;
+        readonly threadId: ThreadId | undefined;
+        readonly commandId: CommandId;
+        readonly title: string;
+      },
+      launch: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<
+      A,
+      E | DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckoutUnavailableError,
+      R
+    >;
+    /** The `workspaceStrategy` and `developmentEnvironment` to pass to a thread launch. */
+    readonly resolveLaunchWorkspace: (input: {
+      readonly projectId: ProjectId;
+      readonly xwingEnvironmentId: string;
+    }) => Effect.Effect<
+      DevelopmentEnvironmentLaunchWorkspace,
+      | DevelopmentEnvironmentProjectNotFoundError
+      | DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckoutUnavailableError
+    >;
+    /** Checkouts of the project's repository a thread here could launch in or move to. */
+    readonly listCheckouts: (input: {
+      readonly projectId: ProjectId;
+    }) => Effect.Effect<
+      ReadonlyArray<DevelopmentEnvironmentCheckoutChoice>,
+      DevelopmentEnvironmentProjectNotFoundError | XwingListError
+    >;
+    /** Recorded selections, newest first, including archived and settled threads. */
+    readonly listUsage: (filter: {
+      readonly xwingEnvironmentId?: string | undefined;
+      readonly threadId?: ThreadId | undefined;
+    }) => Effect.Effect<
+      ReadonlyArray<OrchestrationV2DevelopmentEnvironmentUsage>,
+      DevelopmentEnvironmentPersistenceError
+    >;
+  }
+>()("t3/developmentEnvironments/DevelopmentEnvironments") {}
+
+const isThreadNotFound = Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError);
+
+const make = Effect.gen(function* () {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const projects = yield* ProjectService.ProjectService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const checkouts = yield* DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckouts;
+  const terminals = yield* TerminalManager.TerminalManager;
+  const holds = yield* DevelopmentEnvironmentHolds.DevelopmentEnvironmentHolds;
+
+  const bindLaunch: DevelopmentEnvironments["Service"]["bindLaunch"] = (binding, launch) =>
+    holds.retain(
+      {
+        xwingEnvironmentId: binding.xwingEnvironmentId,
+        // A launch without a thread id gets one at creation; its hold names the command instead.
+        threadId: binding.threadId ?? binding.commandId,
+        period: binding.commandId,
+        title: binding.title,
+      },
+      launch,
+      { keepOnFailure: true },
+    );
+
+  const projectRoot = (projectId: ProjectId) =>
+    projects.getById(projectId).pipe(
+      Effect.mapError(() => new DevelopmentEnvironmentProjectNotFoundError({ projectId })),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new DevelopmentEnvironmentProjectNotFoundError({ projectId })),
+          onSome: (project) => Effect.succeed(project.workspaceRoot),
+        }),
+      ),
+    );
+
+  const resolveLaunchWorkspace: DevelopmentEnvironments["Service"]["resolveLaunchWorkspace"] =
+    Effect.fn("DevelopmentEnvironments.resolveLaunchWorkspace")(function* (input) {
+      const { branch, ...developmentEnvironment } = yield* checkouts.resolve({
+        xwingEnvironmentId: input.xwingEnvironmentId,
+        workspaceRoot: yield* projectRoot(input.projectId),
+      });
+      return {
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: developmentEnvironment.checkoutPath,
+          ...(branch === null ? {} : { branch }),
+        },
+        developmentEnvironment,
+      };
+    });
+
+  const selectCheckout: DevelopmentEnvironments["Service"]["selectCheckout"] = Effect.fn(
+    "DevelopmentEnvironments.selectCheckout",
+  )(function* (input) {
+    const reject = (reason: DevelopmentEnvironmentSelectionRejectedError["reason"]) =>
+      new DevelopmentEnvironmentSelectionRejectedError({
+        threadId: input.threadId,
+        reason,
+      });
+    const records = yield* threads
+      .getThreadRecords(input.threadId, ["runs", "runtimeRequests"])
+      .pipe(
+        Effect.mapError((cause) =>
+          "cause" in cause && isThreadNotFound(cause.cause)
+            ? reject("thread-not-found")
+            : new DevelopmentEnvironmentPersistenceError({ operation: "read-thread" }),
+        ),
+      );
+    const { thread } = records;
+    if (thread.deletedAt !== null) return yield* reject("deleted");
+    // Checked again under the orchestrator's lock; checking first keeps a rejected move from
+    // leaving a hold behind.
+    if (
+      input.expected.worktreePath !== thread.worktreePath ||
+      input.expected.xwingEnvironmentId !==
+        (thread.developmentEnvironment?.xwingEnvironmentId ?? null)
+    ) {
+      return yield* reject("workspace-changed");
+    }
+    if (Orchestrator.threadHasUnfinishedWork(records)) return yield* reject("work-in-progress");
+    const requested = input.target;
+    const target =
+      requested.type === "native"
+        ? { ...requested, developmentEnvironment: null }
+        : yield* Effect.gen(function* () {
+            const workspaceRoot = yield* projectRoot(thread.projectId).pipe(
+              Effect.mapError(() => reject("project-missing")),
+            );
+            const { branch, ...developmentEnvironment } = yield* checkouts.resolve({
+              xwingEnvironmentId: requested.xwingEnvironmentId,
+              workspaceRoot,
+            });
+            return {
+              worktreePath: developmentEnvironment.checkoutPath,
+              branch,
+              developmentEnvironment,
+            };
+          });
+    // Moving closes the old checkout's idle shells; a running command must finish first.
+    if (
+      target.worktreePath !== thread.worktreePath &&
+      input.expected.worktreePath === thread.worktreePath &&
+      (yield* terminals.hasForegroundWork({
+        threadId: input.threadId,
+        worktreePath: thread.worktreePath,
+      }))
+    ) {
+      return yield* reject("work-in-progress");
+    }
+    const current = thread.developmentEnvironment ?? null;
+    const dispatch = threads
+      .dispatch({
+        type: "thread.workspace.select",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        expected: input.expected,
+        worktreePath: target.worktreePath,
+        branch: target.branch,
+        developmentEnvironment: target.developmentEnvironment,
+      })
+      .pipe(
+        Effect.catchTags({
+          OrchestratorWorkspaceSelectionRejectedError: (cause) => Effect.fail(reject(cause.reason)),
+        }),
+        Effect.mapError((cause) =>
+          cause._tag === "DevelopmentEnvironmentSelectionRejectedError"
+            ? cause
+            : new DevelopmentEnvironmentPersistenceError({ operation: "select-workspace" }),
+        ),
+      );
+    // A new binding commits holding its own period's key; a failed dispatch releases it.
+    const dispatched = yield* target.developmentEnvironment !== null &&
+    (current?.xwingEnvironmentId !== target.developmentEnvironment.xwingEnvironmentId ||
+      current.checkoutPath !== target.developmentEnvironment.checkoutPath)
+      ? holds.retain(
+          {
+            xwingEnvironmentId: target.developmentEnvironment.xwingEnvironmentId,
+            threadId: input.threadId,
+            period: input.commandId,
+            title: thread.title,
+          },
+          dispatch,
+        )
+      : dispatch;
+    const selected = dispatched.storedEvents.findLast(
+      (stored) => stored.event.type === "thread.metadata-updated",
+    );
+    const after =
+      selected?.event.type === "thread.metadata-updated" ? selected.event.payload : thread;
+    return {
+      changed: selected !== undefined,
+      sequence: dispatched.sequence,
+      worktreePath: after.worktreePath,
+      branch: after.branch,
+      developmentEnvironment: after.developmentEnvironment ?? null,
+    };
+  });
+
+  const listCheckouts: DevelopmentEnvironments["Service"]["listCheckouts"] = Effect.fn(
+    "DevelopmentEnvironments.listCheckouts",
+  )(function* (input) {
+    return yield* checkouts.list({ workspaceRoot: yield* projectRoot(input.projectId) });
+  });
+
+  const listUsage: DevelopmentEnvironments["Service"]["listUsage"] = (filter) =>
+    projections.listDevelopmentEnvironmentUsage(filter).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Development environment usage read failed", cause),
+      ),
+      Effect.mapError(
+        () => new DevelopmentEnvironmentPersistenceError({ operation: "list-usage" }),
+      ),
+      Effect.withSpan("DevelopmentEnvironments.listUsage"),
+    );
+
+  return DevelopmentEnvironments.of({
+    bindLaunch,
+    selectCheckout,
+    resolveLaunchWorkspace,
+    listCheckouts,
+    listUsage,
+  });
+});
+
+export const layer = Layer.effect(DevelopmentEnvironments, make);

@@ -43,6 +43,7 @@ import {
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
+import { WorktreeRemovalOwnership } from "./worktreeRemoval.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
 const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
@@ -5136,6 +5137,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             assert.equal(yield* fileSystem.exists(worktreePath), false);
           }
         }),
+    );
+
+    it.effect("refuses to remove, even by force, a checkout another tool owns", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "owned");
+        yield* (yield* GitVcsDriver.GitVcsDriver).createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/owned",
+        });
+        const owned = yield* fileSystem.realPath(worktreePath);
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(WorktreeRemovalOwnership, {
+            ownerOf: (target) =>
+              fileSystem.realPath(target).pipe(
+                Effect.map((real) => (real === owned ? "an Xwing development environment" : null)),
+                Effect.orElseSucceed(() => null),
+              ),
+          }),
+          Effect.provide(layerServerConfig),
+        );
+
+        const result = yield* Effect.result(
+          driver.removeWorktree({ cwd, path: worktreePath, force: true }),
+        );
+
+        assert.isTrue(Result.isFailure(result));
+        assert.isTrue(yield* fileSystem.exists(pathService.join(worktreePath, ".git")));
+      }),
     );
 
     it.effect("keeps a worktree whose untracked files status is configured to hide", () =>

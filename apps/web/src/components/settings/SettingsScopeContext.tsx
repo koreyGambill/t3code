@@ -4,7 +4,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { createContext, type ReactNode, useContext } from "react";
 
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments } from "../../state/environments";
+import { useDefaultEnvironmentId } from "../../state/preferredEnvironment";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
@@ -58,13 +59,13 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
 function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
   const groups = useSettingsProjectGroups();
   const { environments: availableEnvironments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const defaultEnvironmentId = useDefaultEnvironmentId();
   const search = singleEnvironment
     ? selectSingleEnvironmentScope(
         rawSearch,
         resolveSettingsScope(rawSearch, groups, availableEnvironments),
         availableEnvironments,
-        primaryEnvironmentId,
+        defaultEnvironmentId,
       )
     : rawSearch;
   const scope = resolveSettingsScope(search, groups, availableEnvironments);
@@ -72,7 +73,7 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
   const selected = selectScopedSettingsEnvironments(
     scope,
     availableEnvironments,
-    primaryEnvironmentId,
+    defaultEnvironmentId,
   );
   const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments, projectFiles);
   const target =

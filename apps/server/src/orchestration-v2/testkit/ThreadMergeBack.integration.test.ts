@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import { mergeBackMessageText } from "../Orchestrator.ts";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -93,10 +94,18 @@ const CLAUDE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-sonnet-4-6",
 } as const;
-const FIRST_SIBLING_MERGE_USER_TEXT =
-  "Retain the first transferred marker for later. Respond with exactly: first merge delta stored";
-const SECOND_SIBLING_MERGE_USER_TEXT =
-  "Retain the second transferred marker for later. Respond with exactly: second merge delta stored";
+const FIRST_SIBLING_MERGE_USER_TEXT = mergeBackMessageText({
+  sideChat: false,
+  title: "First merge-back sibling",
+  scope: "additional",
+  throughOrdinal: 1,
+});
+const SECOND_SIBLING_MERGE_USER_TEXT = mergeBackMessageText({
+  sideChat: false,
+  title: "Second merge-back sibling",
+  scope: "additional",
+  throughOrdinal: 1,
+});
 
 interface ProviderVariant {
   readonly driver: ProviderDriverKind;
@@ -338,18 +347,6 @@ describe("orchestration V2 merge-back provider replay", () => {
               sourcePoint: { type: "run", runId: firstForkRunId },
             },
             {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* commandId("consume-first"),
-              threadId: sourceThreadId,
-              messageId: MessageId.make(`message-${fixtureName}-consume-first`),
-              text: FIRST_SIBLING_MERGE_USER_TEXT,
-              attachments: [],
-              modelSelection: variant.modelSelection,
-              dispatchMode: { type: "start_immediately" },
-            },
-            {
               type: "thread.merge_back",
               createdBy: "user",
               creationSource: "web",
@@ -357,18 +354,6 @@ describe("orchestration V2 merge-back provider replay", () => {
               sourceThreadId: secondForkThreadId,
               targetThreadId: sourceThreadId,
               sourcePoint: { type: "run", runId: secondForkRunId },
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* commandId("consume-second"),
-              threadId: sourceThreadId,
-              messageId: MessageId.make(`message-${fixtureName}-consume-second`),
-              text: SECOND_SIBLING_MERGE_USER_TEXT,
-              attachments: [],
-              modelSelection: variant.modelSelection,
-              dispatchMode: { type: "start_immediately" },
             },
             {
               type: "message.dispatch",
@@ -438,12 +423,10 @@ describe("orchestration V2 merge-back provider replay", () => {
           { type: "dispatch" as const, command: materialized.commands[5]!, await: true },
           { type: "await_thread_idle" as const, threadId: materialized.secondForkThreadId },
           { type: "dispatch" as const, command: materialized.commands[6]!, await: true },
+          { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
           { type: "dispatch" as const, command: materialized.commands[7]!, await: true },
           { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
           { type: "dispatch" as const, command: materialized.commands[8]!, await: true },
-          { type: "dispatch" as const, command: materialized.commands[9]!, await: true },
-          { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
-          { type: "dispatch" as const, command: materialized.commands[10]!, await: true },
           { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
         ];
         const scenario = {

@@ -1,5 +1,6 @@
 import {
   backgroundWorkHoldsCompletion,
+  threadBackgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -153,7 +154,7 @@ export function isAutoSettlementCandidate(
   // A guest is waiting on the owner; settling would hide the Request.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   if (thread.activityRunStatus != null) return false;
-  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
+  if (threadBackgroundWorkHoldsCompletion(thread)) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);

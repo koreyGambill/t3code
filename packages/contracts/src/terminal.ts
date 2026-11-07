@@ -362,8 +362,23 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+/** The caller's thread checkout is stale; `worktreePath` is the thread's current one. */
+export class TerminalWorkspaceChangedError extends Schema.TaggedError<TerminalWorkspaceChangedError>()(
+  "TerminalWorkspaceChangedError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+    worktreePath: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message() {
+    return "This thread moved to another checkout. Open the terminal in its current checkout.";
+  }
+}
+
 export const TerminalError = Schema.Union([
   TerminalCwdError,
+  TerminalWorkspaceChangedError,
   TerminalHistoryError,
   TerminalSessionLookupError,
   TerminalProviderInstanceNotFoundError,

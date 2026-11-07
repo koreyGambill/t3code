@@ -96,6 +96,7 @@ export type ThreadGitMenuProps = {
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
+  readonly onMergeBackAll?: () => void;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -388,10 +389,21 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           ...(props.onMergeBack
             ? [
                 {
-                  description: "Bring this thread's latest turn into its source",
+                  description: "Send this thread's new turns to its source, after its current work",
                   icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
                   label: "Merge back to source",
                   onPress: props.onMergeBack,
+                  type: "action" as const,
+                },
+              ]
+            : []),
+          ...(props.onMergeBackAll
+            ? [
+                {
+                  description: "Send all of this thread to its source again",
+                  icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
+                  label: "Merge all back to source",
+                  onPress: props.onMergeBackAll,
                   type: "action" as const,
                 },
               ]

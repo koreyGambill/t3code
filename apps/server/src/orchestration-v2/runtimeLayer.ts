@@ -123,7 +123,7 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
 );
 
 const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-  Layer.provide(IdAllocator.layer),
+  Layer.provide(Layer.merge(IdAllocator.layer, ProjectionStore.layer)),
 );
 const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
   Layer.provide(IdAllocator.layer),
@@ -400,7 +400,9 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
-  ThreadMarks.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+  ThreadMarks.layer.pipe(
+    Layer.provide(Layer.merge(layerOrchestratorProvided, ProjectionStore.layer)),
+  ),
   ThreadInsights.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, InstructionFootprints.layer)),
   ),

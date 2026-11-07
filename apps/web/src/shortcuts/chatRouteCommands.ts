@@ -18,6 +18,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
+import { readPreferredEnvironmentId } from "../state/preferredEnvironment";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { readEnvironmentScope } from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -41,6 +42,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         ([environmentId, presentation]) => ({ ...presentation, environmentId }),
       ),
     primaryEnvironmentId: () => appAtomRegistry.get(primaryEnvironmentIdAtom),
+    preferredEnvironmentId: readPreferredEnvironmentId,
     registry: appAtomRegistry,
     handleNewThread,
   });
@@ -73,6 +75,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       defaultProjectRef: resolveDefaultProjectRef(
         readProjects(),
         useUiStateStore.getState().projectOrder,
+        readPreferredEnvironmentId(),
       ),
       handleNewThread,
     };
@@ -115,12 +118,14 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "chat.newLocal": startNewLocal,
       "chat.newWithoutProject": (event) => {
         const { activeThread, activeDraftThread } = readThreadContext();
-        const environmentId = scratch.scratchEnvironmentId(
+        const choice = scratch.scratchEnvironmentChoice(
           activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null,
         );
-        if (environmentId === null) return;
+        if (choice.kind === "none") return;
         claim(event);
-        void scratch.startScratchThread(environmentId);
+        // The palette's No project row lets the user pick another machine.
+        if (choice.kind === "preferred-unavailable") openCommandPalette({ open: "new-thread-in" });
+        else void scratch.startScratchThread(choice.environmentId);
       },
       "chat.new": (event) => {
         const { legacySidebarEnabled } = getClientSettings();

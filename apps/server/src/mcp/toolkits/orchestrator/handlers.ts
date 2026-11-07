@@ -33,6 +33,13 @@ const handlers = {
       return yield* service.taskStatus(scope, taskId);
     }),
   ),
+  task_progress: McpToolAccess.actsAsCaller(({ taskId }) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.taskProgress(scope, taskId);
+    }),
+  ),
   task_cancel: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

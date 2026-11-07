@@ -36,6 +36,7 @@ import {
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
+  type OrchestrationV2DevelopmentEnvironmentCheckout,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
   type OrchestrationV2ContextTransfer,
@@ -62,12 +63,14 @@ import {
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   orchestrationV2WorktreePending,
+  ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
   isRuntimeModeAbove,
   resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
+  type ProviderThreadId,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
@@ -173,6 +176,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
+import { providerSessionHasBackgroundWork } from "./providerBackgroundWork.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -186,6 +190,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   forkableSourceRunStatusError,
+  forkContextTransfer,
   isForkableSourceRunStatus,
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
@@ -343,6 +348,26 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
   }
 }
 
+export class OrchestratorWorkspaceSelectionRejectedError extends Schema.TaggedError<OrchestratorWorkspaceSelectionRejectedError>()(
+  "OrchestratorWorkspaceSelectionRejectedError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literals(["deleted", "workspace-changed", "work-in-progress"]),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "deleted":
+        return "This thread was deleted.";
+      case "workspace-changed":
+        return "This thread's checkout changed. Review the current checkout and try again.";
+      case "work-in-progress":
+        return "This thread still has work in progress: a turn, a request, a rollback, background agents, or a terminal command. Stop it or let it finish before changing checkout.";
+    }
+  }
+}
+
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorThreadAlreadyExistsError,
@@ -355,6 +380,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
   OrchestratorRuntimeModeAboveCeilingError,
+  OrchestratorWorkspaceSelectionRejectedError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -531,6 +557,18 @@ function wakeWorkStartedAt(
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /** Unfinished runs (including queued) or open requests block moving a thread to another project. */
+function sameDevelopmentEnvironmentCheckout(
+  left: OrchestrationV2DevelopmentEnvironmentCheckout | null,
+  right: OrchestrationV2DevelopmentEnvironmentCheckout | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.xwingEnvironmentId === right.xwingEnvironmentId &&
+    left.repositorySource === right.repositorySource &&
+    left.checkoutPath === right.checkoutPath
+  );
+}
+
 export function threadHasUnfinishedWork(records: {
   readonly runs: ReadonlyArray<{ readonly status: string }>;
   readonly runtimeRequests: ReadonlyArray<{ readonly status: string }>;
@@ -580,6 +618,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.project.adopt-folder":
+    case "thread.workspace.select":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
@@ -670,6 +709,36 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+
+/** The running item `prepared-run.release` completes once the run's checkout is ready. */
+function workspacePreparationTurnItem(input: {
+  readonly id: TurnItemId;
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly nodeId: NodeId;
+  readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+  readonly ordinal: number;
+  readonly now: DateTime.Utc;
+}): OrchestrationV2TurnItem {
+  return {
+    id: input.id,
+    threadId: input.threadId,
+    runId: input.runId,
+    nodeId: input.nodeId,
+    providerThreadId: input.providerThreadId,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: input.ordinal,
+    status: "running",
+    title: WORKSPACE_PREPARATION_INPUT,
+    startedAt: input.now,
+    completedAt: null,
+    updatedAt: input.now,
+    type: "command_execution",
+    input: WORKSPACE_PREPARATION_INPUT,
+  };
+}
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
@@ -764,7 +833,12 @@ function delegatedCompletionWakeDetail(
   return taskIds
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+      const title = task?.title == null ? "" : ` (${task.title})`;
+      const status = task === undefined ? " reached a terminal state" : ` [${task.status}]`;
+      const label =
+        task?.originalTaskId === undefined
+          ? `Delegated task ${taskId}${title}${status}`
+          : `Delegated task ${task.originalTaskId}${title}, follow-up ${taskId}${status}`;
       if (task?.result != null) {
         const detail = `${label}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);
@@ -876,7 +950,7 @@ function latestStableRun(
   );
 }
 
-function runForSourcePoint(
+export function runForSourcePoint(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
   sourcePoint: Extract<
     OrchestrationV2Command,
@@ -958,6 +1032,7 @@ function pendingForkTransferForThread(
   );
 }
 
+/** Merge-backs stored before each one queued its own turn; the thread's next message takes them. */
 function pendingMergeBackTransfersForThread(
   projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "thread">,
 ): ReadonlyArray<OrchestrationV2ContextTransfer> {
@@ -965,8 +1040,52 @@ function pendingMergeBackTransfersForThread(
     (transfer) =>
       transfer.type === "merge_back" &&
       transfer.targetThreadId === projection.thread.id &&
+      transfer.targetRunId === null &&
       transfer.status === "pending",
   );
+}
+
+function mergeBackTransferForRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers">,
+  runId: RunId,
+): OrchestrationV2ContextTransfer | undefined {
+  return projection.contextTransfers.find(
+    (transfer) =>
+      transfer.type === "merge_back" &&
+      transfer.targetRunId === runId &&
+      transfer.status === "pending",
+  );
+}
+
+/**
+ * The newest source run that earlier merge-backs put into the target's conversation. A rolled
+ * back target turn took its context with it, so it no longer counts.
+ */
+function mergeBackIncludedThroughOrdinal(input: {
+  readonly target: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "runs" | "thread">;
+  readonly sourceRuns: ReadonlyArray<OrchestrationV2Run>;
+  readonly sourceThreadId: ThreadId;
+  readonly countQueued: boolean;
+}): number {
+  return input.target.contextTransfers.reduce((through, transfer) => {
+    if (
+      transfer.type !== "merge_back" ||
+      transfer.sourceThreadId !== input.sourceThreadId ||
+      transfer.targetThreadId !== input.target.thread.id ||
+      !(
+        transfer.status === "consumed" ||
+        (input.countQueued && transfer.status === "pending" && transfer.targetRunId !== null)
+      ) ||
+      input.target.runs.some(
+        (run) => run.id === transfer.targetRunId && run.status === "rolled_back",
+      )
+    ) {
+      return through;
+    }
+    const ordinal =
+      input.sourceRuns.find((run) => run.id === transfer.sourcePoint.runId)?.ordinal ?? 0;
+    return Math.max(through, ordinal);
+  }, 0);
 }
 
 function latestContextTransfer(
@@ -980,6 +1099,19 @@ function latestContextTransfer(
       ? transfer
       : latest;
   }, undefined);
+}
+
+/** The target's user message for a merge-back; the delivered context arrives just before it. */
+export function mergeBackMessageText(input: {
+  readonly sideChat: boolean;
+  readonly title: string;
+  readonly scope: "additional" | "all";
+  readonly throughOrdinal: number;
+}): string {
+  const source = `${input.sideChat ? "side chat" : "fork"} "${input.title}"`;
+  return input.scope === "all"
+    ? `Brought back all of ${source}, through its turn ${input.throughOrdinal}.`
+    : `Brought back ${source}, through its turn ${input.throughOrdinal}.`;
 }
 
 export function shouldPrepareLegacyImportHandoff(input: {
@@ -1242,32 +1374,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
 
   // Detaching kills background work running inside the provider process.
-  // Probe even with an empty roster: Claude's native subagents never reach
-  // pendingBackgroundTasks. Sessions shared across threads probe per thread.
   const sessionHasBackgroundWork = Effect.fn("Orchestrator.sessionHasBackgroundWork")(function* (
     detaching: OrchestrationV2ThreadProjection["providerSessions"][number],
     providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
   ) {
-    const session = yield* providerSessions
-      .get(detaching.id)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(session)) return false;
-    const runtime = session.value;
-    const probes =
-      !detaching.capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
-      runtime.hasPendingBackgroundWork !== undefined
-        ? [runtime.hasPendingBackgroundWork]
-        : providerThreads.flatMap((providerThread) =>
-            providerThread.providerSessionId === detaching.id &&
-            runtime.hasPendingBackgroundWorkForThread !== undefined
-              ? [runtime.hasPendingBackgroundWorkForThread(providerThread)]
-              : [],
-          );
-    for (const probe of probes) {
-      // A failed probe cannot confirm that the work ended.
-      if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
-    }
-    return false;
+    return yield* providerSessionHasBackgroundWork(providerSessions, detaching, providerThreads);
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
@@ -1595,6 +1706,114 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * The source delta a merge-back delivers into `targetRunId`: through the source run captured
+   * when it was requested, after what earlier merge-backs delivered unless its scope is `all`.
+   * Null when earlier merge-backs already delivered all of it.
+   */
+  const prepareMergeBackHandoff = Effect.fn("Orchestrator.prepareMergeBackHandoff")(function* (
+    input: {
+      readonly transfer: OrchestrationV2ContextTransfer;
+      readonly target: Pick<
+        OrchestrationV2ThreadProjection,
+        "contextTransfers" | "runs" | "thread"
+      >;
+      readonly targetRunId: RunId;
+      readonly toProviderThreadId: ProviderThreadId;
+      readonly toProviderInstanceId: ProviderInstanceId;
+      readonly now: DateTime.Utc;
+    },
+    command: { readonly commandId: CommandId; readonly type: OrchestrationV2ServerCommand["type"] },
+  ) {
+    const fail = (cause: unknown) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    const source = yield* projectionStore
+      .getThreadRecords(input.transfer.sourceThreadId, [
+        "runs",
+        "attempts",
+        "providerThreads",
+        "providerTurns",
+      ])
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({ threadId: input.transfer.sourceThreadId, cause }),
+        ),
+      );
+    const sourceRun = source.runs.find((run) => run.id === input.transfer.sourcePoint.runId);
+    if (sourceRun === undefined) {
+      return yield* fail(`Merge-back transfer ${input.transfer.id} has no resolvable source run.`);
+    }
+    const sourceProviderThread = providerThreadForRun(source, sourceRun);
+    if (sourceProviderThread === undefined) {
+      return yield* fail(
+        `Merge-back transfer ${input.transfer.id} has no resolvable source provider thread.`,
+      );
+    }
+    // Merge-backs stored without a scope delivered everything since the fork.
+    const afterOrdinal =
+      (input.transfer.mergeBackScope ?? "all") === "all"
+        ? 0
+        : mergeBackIncludedThroughOrdinal({
+            target: input.target,
+            sourceRuns: source.runs,
+            sourceThreadId: source.thread.id,
+            countQueued: false,
+          });
+    const deltaItems = visibleConversationItems(
+      source,
+      yield* readHandoffItems(
+        source.thread.id,
+        source.runs
+          .filter((run) => run.ordinal > afterOrdinal && run.ordinal <= sourceRun.ordinal)
+          .map((run) => run.id),
+      ),
+    );
+    if (deltaItems.length === 0) return { sourceRun, handoff: null };
+    const handoff = yield* contextHandoffService
+      .prepareForkDelta({
+        sourceThreadId: source.thread.id,
+        targetThreadId: input.target.thread.id,
+        targetRunId: input.targetRunId,
+        transferId: input.transfer.id,
+        fromProviderThreadIds: [sourceProviderThread.id],
+        toProviderThreadId: input.toProviderThreadId,
+        fromProviderInstanceId: sourceRun.providerInstanceId,
+        toProviderInstanceId: input.toProviderInstanceId,
+        coveredRunOrdinals: visibleDeltaRunOrdinals(source, deltaItems),
+        deltaItems,
+        createdAt: input.now,
+      })
+      .pipe(Effect.mapError(fail));
+    return { sourceRun, handoff };
+  });
+
+  /** A merge-back whose turn will not run reports why, so the user can bring it back again. */
+  const failedMergeBackEvents = (
+    projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers">,
+    run: OrchestrationV2Run,
+    error: string,
+    now: DateTime.Utc,
+  ) => {
+    const transfer = mergeBackTransferForRun(projection, run.id);
+    return transfer === undefined
+      ? []
+      : [
+          {
+            type: "context-transfer.updated" as const,
+            threadId: transfer.targetThreadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...transfer, status: "failed" as const, error, updatedAt: now },
+          },
+        ];
+  };
+
   const failQueuedRunStart = Effect.fn("Orchestrator.failQueuedRunStart")(function* (
     threadId: ThreadId,
     cause: unknown,
@@ -1602,7 +1821,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
-      ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
+      ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages", "contextTransfers"],
       { turnItemTypes: [], messageRoles: ["user"] },
     );
     const queuedRun =
@@ -1703,6 +1922,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: { ...queuedRun, status: "failed", queuePosition: null, completedAt: now },
       },
+      ...failedMergeBackEvents(
+        projection,
+        queuedRun,
+        `The queued turn could not start, so this was not delivered: ${failure.message}`,
+        now,
+      ),
     ]);
   });
 
@@ -2135,6 +2360,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               )
           : null;
       const activeHandoff = handoff ?? legacyImportRecoveryHandoff;
+      const queuedMergeBackTransfer = mergeBackTransferForRun(projection, queuedRun.id);
+      if (queuedMergeBackTransfer !== undefined) {
+        yield* commandPolicy.ensureContextHandoff({
+          commandId,
+          threadId,
+          providerInstanceId: queuedRun.providerInstanceId,
+          capabilities: targetCapabilities,
+          strategy: "fork_delta_context",
+        });
+      }
+      const queuedMergeBack =
+        queuedMergeBackTransfer === undefined
+          ? null
+          : yield* prepareMergeBackHandoff(
+              {
+                transfer: queuedMergeBackTransfer,
+                target: projection,
+                targetRunId: queuedRun.id,
+                toProviderThreadId: queuedProviderThread.id,
+                toProviderInstanceId: queuedRun.providerInstanceId,
+                now,
+              },
+              { commandId, type: "message.dispatch" },
+            );
+      const mergeBackHandoff = queuedMergeBack?.handoff ?? null;
       const checkpointScope =
         storedCheckpointScope ??
         (yield* runtimePolicy
@@ -2144,6 +2394,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               checkpointService.prepareRootRunScope({
                 threadId,
                 runId: queuedRun.id,
+                runOrdinal: queuedRun.ordinal,
                 rootNodeId: rootNode.id,
                 providerThreadId: queuedProviderThread.id,
                 cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
@@ -2189,8 +2440,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? ordinal,
         lastRunOrdinal: ordinal,
         handoffIds: appendContextHandoffId(
-          appendContextHandoffId(queuedProviderThread.handoffIds, handoff?.id ?? null),
-          legacyImportRecoveryHandoff?.id ?? null,
+          appendContextHandoffId(
+            appendContextHandoffId(queuedProviderThread.handoffIds, handoff?.id ?? null),
+            legacyImportRecoveryHandoff?.id ?? null,
+          ),
+          mergeBackHandoff?.id ?? null,
         ),
         updatedAt: now,
       };
@@ -2201,7 +2455,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "starting",
         queuePosition: null,
         startedAt: null,
-        contextHandoffId: activeHandoff?.id ?? null,
+        contextHandoffId: activeHandoff?.id ?? mergeBackHandoff?.id ?? null,
         ...wakeWorkStartedAt(projection.runs, {
           notification: queuedMessage.notification,
           delegatedCompletion: queuedMessage.delegatedCompletion,
@@ -2287,6 +2541,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               toModel: queuedRun.modelSelection.model,
               strategy: activeHandoff.strategy,
               summary: activeHandoff.summaryText,
+            };
+      const mergeBackTurnItem: OrchestrationV2TurnItem | null =
+        mergeBackHandoff === null || queuedMergeBack === null
+          ? null
+          : {
+              id: idAllocator.derive.runSignalTurnItem({
+                runId: queuedRun.id,
+                signal: `context-handoff:${mergeBackHandoff.id}`,
+              }),
+              threadId,
+              runId: queuedRun.id,
+              nodeId: rootNodeId,
+              providerThreadId: queuedProviderThread.id,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: ordinal * 100 - 2,
+              status: "completed",
+              title: "Merge-back context",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "handoff",
+              contextHandoffId: mergeBackHandoff.id,
+              fromProviderThreadIds: mergeBackHandoff.fromProviderThreadIds,
+              toProviderThreadId: mergeBackHandoff.toProviderThreadId,
+              fromProviderInstanceIds: [queuedMergeBack.sourceRun.providerInstanceId],
+              toProviderInstanceId: queuedRun.providerInstanceId,
+              fromModelSelections: [queuedMergeBack.sourceRun.modelSelection],
+              toModel: queuedRun.modelSelection.model,
+              strategy: mergeBackHandoff.strategy,
+              summary: mergeBackHandoff.summaryText,
             };
       const executionIdentityEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
         storedCheckpointScope === undefined ||
@@ -2410,6 +2696,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   occurredAt: now,
                   payload: legacyImportRecoveryHandoff,
                 },
+              ]),
+          ...(queuedMergeBackTransfer === undefined
+            ? []
+            : [
+                ...(mergeBackHandoff === null
+                  ? []
+                  : [
+                      {
+                        type: "context-handoff.updated" as const,
+                        threadId,
+                        runId: queuedRun.id,
+                        providerInstanceId: queuedRun.providerInstanceId,
+                        occurredAt: now,
+                        payload: mergeBackHandoff,
+                      },
+                    ]),
+                {
+                  type: "context-transfer.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload:
+                    mergeBackHandoff === null
+                      ? {
+                          ...queuedMergeBackTransfer,
+                          status: "superseded" as const,
+                          error: "Earlier merge-backs already delivered this.",
+                          updatedAt: now,
+                        }
+                      : {
+                          ...queuedMergeBackTransfer,
+                          targetProviderInstanceId: queuedRun.providerInstanceId,
+                          status: "consumed" as const,
+                          resolution: {
+                            strategy: "fork_delta_context" as const,
+                            contextHandoffId: mergeBackHandoff.id,
+                          },
+                          error: null,
+                          updatedAt: now,
+                          consumedAt: now,
+                        },
+                },
+                ...(mergeBackTurnItem === null
+                  ? []
+                  : [
+                      {
+                        type: "turn-item.updated" as const,
+                        threadId,
+                        runId: queuedRun.id,
+                        nodeId: rootNodeId,
+                        providerInstanceId: queuedRun.providerInstanceId,
+                        occurredAt: now,
+                        payload: mergeBackTurnItem,
+                      },
+                    ]),
               ]),
           ...(handoffTurnItem === null
             ? []
@@ -2955,6 +3297,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.developmentEnvironment === undefined
+        ? {}
+        : { developmentEnvironment: { ...command.developmentEnvironment, selectedAt: now } }),
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
@@ -3244,6 +3589,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.workspace.select"
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
@@ -3269,6 +3615,75 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    // Server preparation and an agent's handoff may move a running thread; clients may not.
+    const clientWorkspaceChange =
+      command.type === "thread.metadata.update" &&
+      command.workspaceChange === undefined &&
+      command.worktreePath !== undefined &&
+      command.worktreePath !== thread.worktreePath;
+    // An empty-thread claim has no work to protect and keeps its own refusal below.
+    if (
+      command.type === "thread.workspace.select" ||
+      (clientWorkspaceChange && command.expectedEmpty !== true)
+    ) {
+      const rejectSelection = (
+        reason: OrchestratorWorkspaceSelectionRejectedError["reason"],
+      ): OrchestratorWorkspaceSelectionRejectedError =>
+        new OrchestratorWorkspaceSelectionRejectedError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          reason,
+        });
+      if (thread.deletedAt !== null) return yield* rejectSelection("deleted");
+      if (
+        command.type === "thread.workspace.select" &&
+        (command.expected.worktreePath !== thread.worktreePath ||
+          command.expected.xwingEnvironmentId !==
+            (thread.developmentEnvironment?.xwingEnvironmentId ?? null))
+      ) {
+        return yield* rejectSelection("workspace-changed");
+      }
+      const records = yield* projectionStore
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "runtimeRequests", "providerSessions", "providerThreads"],
+          { turnItemTypes: [] },
+        )
+        .pipe(mapDispatchError(command));
+      // Restores run in the checkpoint's checkout after the command commits.
+      const rollbackPending =
+        thread.rollbackRequestId !== undefined &&
+        (yield* effectOutbox
+          .listByCommandId(thread.rollbackRequestId)
+          .pipe(mapDispatchError(command))).some(
+          (effect) =>
+            effect.request.type === "provider-thread.rollback" &&
+            (effect.status === "pending" || effect.status === "running"),
+        );
+      if (threadHasUnfinishedWork(records) || rollbackPending) {
+        return yield* rejectSelection("work-in-progress");
+      }
+      // Moving detaches every session, which would end background agents and commands.
+      if (command.worktreePath !== thread.worktreePath) {
+        for (const session of records.providerSessions) {
+          if (session.status === "stopped" || session.status === "error") continue;
+          if (yield* sessionHasBackgroundWork(session, records.providerThreads)) {
+            return yield* rejectSelection("work-in-progress");
+          }
+        }
+      }
+      if (
+        command.type === "thread.workspace.select" &&
+        command.worktreePath === thread.worktreePath &&
+        command.branch === thread.branch &&
+        sameDevelopmentEnvironmentCheckout(
+          command.developmentEnvironment,
+          thread.developmentEnvironment ?? null,
+        )
+      ) {
+        return;
+      }
+    }
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3532,7 +3947,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.settle" ||
       (command.type === "thread.metadata.update" &&
         command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
+        command.worktreePath !== thread.worktreePath) ||
+      (command.type === "thread.workspace.select" && command.worktreePath !== thread.worktreePath);
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -3848,6 +4264,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            // A checkout chosen outside Xwing ends the thread's binding to an Xwing checkout.
+            ...(command.worktreePath === undefined || command.worktreePath === thread.worktreePath
+              ? {}
+              : { developmentEnvironment: null }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -3883,6 +4303,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         }
+        case "thread.workspace.select":
+          return {
+            ...thread,
+            worktreePath: command.worktreePath,
+            branch: command.branch,
+            developmentEnvironment:
+              command.developmentEnvironment === null
+                ? null
+                : { ...command.developmentEnvironment, selectedAt: now },
+            updatedAt: now,
+          };
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
         case "thread.pull-request-link.sync": {
@@ -4172,6 +4603,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
+        case "thread.workspace.select":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
@@ -4316,9 +4748,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+        : (command.type === "thread.metadata.update" &&
+              command.worktreePath !== undefined &&
+              command.worktreePath !== thread.worktreePath) ||
+            (command.type === "thread.workspace.select" &&
+              command.worktreePath !== thread.worktreePath)
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])
@@ -4356,7 +4790,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.settle"
                       ? "Thread settled."
-                      : command.type === "thread.metadata.update"
+                      : command.type === "thread.metadata.update" ||
+                          command.type === "thread.workspace.select"
                         ? "Workspace changed."
                         : command.type === "thread.runtime-mode.set"
                           ? "Runtime mode changed."
@@ -4375,7 +4810,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.settle"
                       ? "Thread settled."
-                      : command.type === "thread.metadata.update"
+                      : command.type === "thread.metadata.update" ||
+                          command.type === "thread.workspace.select"
                         ? "Workspace changed."
                         : command.type === "thread.runtime-mode.set"
                           ? "Runtime mode changed."
@@ -4398,6 +4834,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           threadId: command.threadId,
           request: { type: "terminal.cleanup" },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    }
+    // Shells opened in the new checkout, or still running a command, stay open.
+    if (
+      (command.type === "thread.workspace.select" &&
+        command.worktreePath !== thread.worktreePath) ||
+      clientWorkspaceChange
+    ) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:terminal.close-idle`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "terminal.close-idle", worktreePath: thread.worktreePath },
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
@@ -4689,6 +5141,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchThreadMergeBack = Effect.fn("orchestrationV2.dispatch.threadMergeBack")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.merge_back" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -4697,6 +5150,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.target_thread_id": command.targetThreadId,
       "orchestration_v2.source_point_type": command.sourcePoint.type,
     });
+    const fail = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
 
     const sourceProjection = yield* projectionStore
       .getThreadRecords(command.sourceThreadId, [
@@ -4718,67 +5177,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     // The source is unlocked; validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
-    const targetProjection = yield* projectionStore
-      .getThreadRecords(command.targetThreadId, ["runs", "contextTransfers"])
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.targetThreadId,
-              cause,
-            }),
-        ),
-      );
+    const targetProjection = yield* getProjectionWithPendingEvents(command.targetThreadId, events);
 
     if (
       sourceProjection.thread.lineage.relationshipToParent !== "fork" ||
       sourceProjection.thread.lineage.parentThreadId !== command.targetThreadId
     ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Thread ${command.sourceThreadId} is not a fork of ${command.targetThreadId}.`,
-      });
-    }
-    // Queued runs cannot consume merge-back context. Refuse under the target's
-    // command lock before a pending transfer can block its ordinary messages.
-    if (targetProjection.runs.some((run) => isActiveRun(run) || run.status === "queued")) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause:
-          "Finish or stop the target thread's active work and clear its queue before merging back.",
-      });
-    }
-    const otherPendingMergeBack = targetProjection.contextTransfers.some(
-      (transfer) =>
-        transfer.type === "merge_back" &&
-        transfer.status === "pending" &&
-        transfer.targetThreadId === command.targetThreadId &&
-        transfer.sourceThreadId !== command.sourceThreadId,
-    );
-    if (otherPendingMergeBack) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Thread ${command.targetThreadId} already has pending context from another side chat or fork. Send a message there first.`,
-      });
+      return yield* fail(
+        `Thread ${command.sourceThreadId} is not a fork of ${command.targetThreadId}.`,
+      );
     }
 
+    // Resolved now, so source turns that finish while this waits in the queue stay out of it.
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
     if (sourceRun === null) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `No stable source run was found for merge-back source ${command.sourcePoint.type}.`,
-      });
+      return yield* fail(
+        `No stable source run was found for merge-back source ${command.sourcePoint.type}.`,
+      );
     }
     if (sourceRun.status !== "completed" && sourceRun.status !== "waiting") {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Merge-back source run ${sourceRun.id} is ${sourceRun.status}; only provider-finished runs are supported.`,
-      });
+      return yield* fail(
+        `Merge-back source run ${sourceRun.id} is ${sourceRun.status}; only provider-finished runs are supported.`,
+      );
+    }
+    if (providerThreadForRun(sourceProjection, sourceRun) === undefined) {
+      return yield* fail(`Merge-back source run ${sourceRun.id} has no provider thread.`);
+    }
+    const scope = command.scope ?? "additional";
+    if (
+      scope === "additional" &&
+      sourceRun.ordinal <=
+        mergeBackIncludedThroughOrdinal({
+          target: targetProjection,
+          sourceRuns: sourceProjection.runs,
+          sourceThreadId: command.sourceThreadId,
+          countQueued: true,
+        })
+    ) {
+      return yield* fail(
+        "Nothing new since the last Bring back. Bring back all sends the whole side chat again.",
+      );
     }
 
     const forkTransfer = sourceProjection.contextTransfers.findLast(
@@ -4788,16 +5226,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transfer.targetThreadId === command.sourceThreadId,
     );
     if (forkTransfer === undefined) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `No fork transfer exists between ${command.targetThreadId} and ${command.sourceThreadId}.`,
-      });
+      return yield* fail(
+        `No fork transfer exists between ${command.targetThreadId} and ${command.sourceThreadId}.`,
+      );
     }
 
-    const sourceProviderThread = providerThreadForRun(sourceProjection, sourceRun);
     const now = command.createdAt ?? (yield* DateTime.now);
-    const emitEvent = emit(events, command);
     const transferId = yield* mapDispatchError(command)(
       idAllocator.allocate.contextTransfer({
         sourceThreadId: command.sourceThreadId,
@@ -4805,54 +5239,66 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "merge_back",
       }),
     );
-    const pendingMergeBackTransfersForPair = targetProjection.contextTransfers.filter(
-      (transfer) =>
-        transfer.type === "merge_back" &&
-        transfer.status === "pending" &&
-        transfer.sourceThreadId === command.sourceThreadId &&
-        transfer.targetThreadId === command.targetThreadId,
-    );
-    const transfer: OrchestrationV2ContextTransfer = {
-      id: transferId,
-      type: "merge_back",
-      sourceThreadId: command.sourceThreadId,
-      targetThreadId: command.targetThreadId,
-      sourcePoint: contextSourcePointForRun(sourceProjection, sourceRun),
-      basePoint: forkTransfer.sourcePoint,
-      sourceProviderInstanceId: sourceRun.providerInstanceId,
-      targetProviderInstanceId: targetProjection.thread.modelSelection.instanceId,
-      targetRunId: null,
-      status: "pending",
-      resolution: null,
-      createdBy: command.createdBy,
-      error:
-        sourceProviderThread === undefined ? "Source merge-back run has no provider thread." : null,
-      createdAt: now,
-      updatedAt: now,
-      consumedAt: null,
-    };
-
-    for (const pendingTransfer of pendingMergeBackTransfersForPair) {
-      yield* emitEvent({
-        type: "context-transfer.updated",
-        threadId: command.targetThreadId,
-        providerInstanceId: sourceRun.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...pendingTransfer,
-          status: "superseded",
-          error: `Superseded by merge-back transfer ${transferId}.`,
-          updatedAt: now,
-        },
-      });
-    }
-    yield* emitEvent({
+    // dispatchMessage gives its turn this id whether it starts now or queues.
+    const targetRunId = idAllocator.derive.run({
+      threadId: command.targetThreadId,
+      ordinal: nextRunOrdinal(targetProjection),
+    });
+    yield* emit(
+      events,
+      command,
+    )({
       type: "context-transfer.created",
       threadId: command.targetThreadId,
       providerInstanceId: sourceRun.providerInstanceId,
       occurredAt: now,
-      payload: transfer,
+      payload: {
+        id: transferId,
+        type: "merge_back",
+        sourceThreadId: command.sourceThreadId,
+        targetThreadId: command.targetThreadId,
+        sourcePoint: contextSourcePointForRun(sourceProjection, sourceRun),
+        basePoint: forkTransfer.sourcePoint,
+        sourceProviderInstanceId: sourceRun.providerInstanceId,
+        mergeBackScope: scope,
+        targetProviderInstanceId: targetProjection.thread.modelSelection.instanceId,
+        targetRunId,
+        status: "pending",
+        resolution: null,
+        createdBy: command.createdBy,
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: null,
+      },
     });
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.targetThreadId,
+        messageId: MessageId.make(`${command.commandId}:merge-back`),
+        text: mergeBackMessageText({
+          sideChat: sourceProjection.thread.lineage.sideChat === true,
+          title: sourceProjection.thread.title,
+          scope,
+          throughOrdinal: sourceRun.ordinal,
+        }),
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
+        senderThreadId: command.sourceThreadId,
+      },
+      events,
+      effects,
+    );
+    const createdRun = (yield* Ref.get(events)).some(
+      (event) => event.type === "run.created" && event.runId === targetRunId,
+    );
+    if (!createdRun) {
+      return yield* fail(`Thread ${command.targetThreadId} did not accept the merge-back message.`);
+    }
   });
 
   const dispatchSteerIntoRun = Effect.fn("Orchestrator.dispatchSteerIntoRun")(function* (input: {
@@ -5396,6 +5842,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .prepareRootRunScope({
         threadId: input.command.threadId,
         runId: targetRun.id,
+        runOrdinal: targetRun.ordinal,
         rootNodeId: nextRootNodeId,
         providerThreadId: restartProviderThread.id,
         cwd:
@@ -5723,9 +6170,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
-    const continuedTaskId = projection.runs.find(
+    const automaticWake =
+      command.notification !== undefined || command.delegatedCompletion !== undefined;
+    let continuedTaskId = projection.runs.find(
       (run) => run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
+    if (
+      continuedTaskId === undefined &&
+      automaticWake &&
+      projection.thread.lineage.relationshipToParent === "subagent" &&
+      projection.thread.lineage.parentThreadId !== null
+    ) {
+      const taskId =
+        latestExecutedRun(projection.runs)?.delegatedTaskId ??
+        (projection.thread.forkedFrom?.type === "node"
+          ? projection.thread.forkedFrom.nodeId
+          : undefined);
+      if (taskId !== undefined) {
+        const parent = yield* projectionStore
+          .getThreadRecords(projection.thread.lineage.parentThreadId, ["subagents"], {
+            subagentIds: [taskId],
+          })
+          .pipe(mapDispatchError(command));
+        if (
+          parent.subagents.some(
+            (task) =>
+              task.id === taskId &&
+              task.origin === "app_owned" &&
+              task.childThreadId === projection.thread.id &&
+              task.result === null,
+          )
+        ) {
+          continuedTaskId = taskId;
+        }
+      }
+    }
 
     if (projection.thread.settledOverride !== null) {
       const now = yield* DateTime.now;
@@ -5753,8 +6232,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
-    const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
@@ -6202,6 +6679,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 checkpointService.prepareRootRunScope({
                   threadId: command.threadId,
                   runId,
+                  runOrdinal: ordinal,
                   rootNodeId,
                   providerThreadId: queuedProviderThread.id,
                   cwd:
@@ -6419,20 +6897,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
     const pendingForkTransfer = pendingForkTransferForThread(projection);
+    const ordinal = nextRunOrdinal(projection);
+    const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
+    const runMergeBackTransfer = mergeBackTransferForRun(projection, runId);
     const pendingMergeBackSourceThreadIds = new Set(
       pendingMergeBackTransfers.map((transfer) => transfer.sourceThreadId),
     );
-    if (pendingMergeBackSourceThreadIds.size > 1) {
+    if (runMergeBackTransfer === undefined && pendingMergeBackSourceThreadIds.size > 1) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} has pending merge-back transfers from multiple forks.`,
       });
     }
-    const pendingMergeBackTransfer = latestContextTransfer(pendingMergeBackTransfers);
-    const supersededMergeBackTransfers = pendingMergeBackTransfers.filter(
-      (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
-    );
+    const pendingMergeBackTransfer =
+      runMergeBackTransfer ?? latestContextTransfer(pendingMergeBackTransfers);
+    const supersededMergeBackTransfers =
+      runMergeBackTransfer === undefined
+        ? pendingMergeBackTransfers.filter(
+            (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
+          )
+        : [];
     const now = yield* DateTime.now;
     if (
       !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
@@ -6467,8 +6952,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "A fresh session can't start while a fork or merge is still being applied.",
       });
     }
-    const ordinal = nextRunOrdinal(projection);
-    const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
     const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection.runs);
     const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
     const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
@@ -6616,6 +7099,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   checkpointService.prepareRootRunScope({
                     threadId: command.threadId,
                     runId,
+                    runOrdinal: ordinal,
                     rootNodeId,
                     providerThreadId,
                     cwd:
@@ -6736,9 +7220,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(freshContext ? { freshContext: true } : {}),
         ...(run.contextHandoffId === null ? modelSwitchSince(projection, modelSelection) : {}),
       };
-      const preparationTurnItem: OrchestrationV2TurnItem | null =
+      const preparationTurnItem =
         dispatchMode.type === "defer_start"
-          ? {
+          ? workspacePreparationTurnItem({
               id: idAllocator.derive.turnItemFromProviderItem({
                 driver: adapter.driver,
                 nativeItemId: `workspace-preparation:${runId}`,
@@ -6747,18 +7231,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId,
               nodeId: rootNodeId,
               providerThreadId,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
               ordinal: turnItem.ordinal + 1,
-              status: "running",
-              title: WORKSPACE_PREPARATION_INPUT,
-              startedAt: now,
-              completedAt: null,
-              updatedAt: now,
-              type: "command_execution",
-              input: WORKSPACE_PREPARATION_INPUT,
-            }
+              now,
+            })
           : null;
       const emitEvent = emit(events, command);
       yield* emitEvent({
@@ -7283,50 +7758,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
     const rootNodeId = idAllocator.derive.rootNode({ runId });
     const emitEvent = emit(events, command);
-    const mergeBackSourceProjection =
-      pendingMergeBackTransfer === undefined
-        ? null
-        : yield* projectionStore
-            .getThreadRecords(pendingMergeBackTransfer.sourceThreadId, [
-              "runs",
-              "attempts",
-              "providerThreads",
-              "providerTurns",
-            ])
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestratorProjectionError({
-                    threadId: pendingMergeBackTransfer.sourceThreadId,
-                    cause,
-                  }),
-              ),
-            );
-    const mergeBackSourceRun =
-      pendingMergeBackTransfer?.sourcePoint.runId === undefined ||
-      mergeBackSourceProjection === null
-        ? null
-        : (mergeBackSourceProjection.runs.find(
-            (candidate) => candidate.id === pendingMergeBackTransfer.sourcePoint.runId,
-          ) ?? null);
-    if (pendingMergeBackTransfer !== undefined && mergeBackSourceRun === null) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Pending merge-back transfer ${pendingMergeBackTransfer.id} has no resolvable source run.`,
-      });
-    }
-    const mergeBackSourceProviderThread =
-      mergeBackSourceProjection === null || mergeBackSourceRun === null
-        ? undefined
-        : providerThreadForRun(mergeBackSourceProjection, mergeBackSourceRun);
-    if (pendingMergeBackTransfer !== undefined && mergeBackSourceProviderThread === undefined) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Pending merge-back transfer ${pendingMergeBackTransfer.id} has no resolvable source provider thread.`,
-      });
-    }
     if (pendingMergeBackTransfer !== undefined) {
       yield* mapDispatchError(command)(
         commandPolicy.ensureContextHandoff({
@@ -7338,39 +7769,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
     }
-    const mergeBackDeltaItems =
-      mergeBackSourceProjection === null || mergeBackSourceRun === null
-        ? []
-        : visibleConversationItems(
-            mergeBackSourceProjection,
-            yield* readHandoffItems(
-              mergeBackSourceProjection.thread.id,
-              mergeBackSourceProjection.runs
-                .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
-                .map((run) => run.id),
-            ),
-          );
-    const mergeBackHandoff =
-      pendingMergeBackTransfer === undefined ||
-      mergeBackSourceProjection === null ||
-      mergeBackSourceRun === null ||
-      mergeBackSourceProviderThread === undefined
+    const mergeBack =
+      pendingMergeBackTransfer === undefined
         ? null
-        : yield* contextHandoffService
-            .prepareForkDelta({
-              sourceThreadId: pendingMergeBackTransfer.sourceThreadId,
-              targetThreadId: command.threadId,
+        : yield* prepareMergeBackHandoff(
+            {
+              transfer: pendingMergeBackTransfer,
+              target: projection,
               targetRunId: runId,
-              transferId: pendingMergeBackTransfer.id,
-              fromProviderThreadIds: [mergeBackSourceProviderThread.id],
               toProviderThreadId: providerThread.id,
-              fromProviderInstanceId: mergeBackSourceRun.providerInstanceId,
               toProviderInstanceId: modelSelection.instanceId,
-              coveredRunOrdinals: visibleDeltaRunOrdinals(
-                mergeBackSourceProjection,
-                mergeBackDeltaItems,
-              ),
-              deltaItems: mergeBackDeltaItems,
+              now,
+            },
+            command,
+          );
+    const mergeBackSourceRun = mergeBack?.sourceRun ?? null;
+    const mergeBackHandoff = mergeBack?.handoff ?? null;
+    // A deferred start gets its scope from prepared-run.release, in the prepared checkout.
+    const checkpointScope =
+      dispatchMode.type === "defer_start"
+        ? null
+        : yield* checkpointService
+            .prepareRootRunScope({
+              threadId: command.threadId,
+              runId,
+              runOrdinal: ordinal,
+              rootNodeId,
+              providerThreadId: providerThread.id,
+              cwd:
+                resolvedRuntimePolicy.cwd ??
+                existingProviderSession?.cwd ??
+                projection.thread.worktreePath ??
+                process.cwd(),
               createdAt: now,
             })
             .pipe(
@@ -7383,29 +7813,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-    const checkpointScope = yield* checkpointService
-      .prepareRootRunScope({
-        threadId: command.threadId,
-        runId,
-        rootNodeId,
-        providerThreadId: providerThread.id,
-        cwd:
-          resolvedRuntimePolicy.cwd ??
-          existingProviderSession?.cwd ??
-          projection.thread.worktreePath ??
-          process.cwd(),
-        createdAt: now,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
     const run: OrchestrationV2Run = {
       id: runId,
       threadId: command.threadId,
@@ -7416,12 +7823,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       userMessageId: command.messageId,
       rootNodeId,
       activeAttemptId: attemptId,
-      status: "starting",
+      status: dispatchMode.type === "defer_start" ? "preparing" : "starting",
       queuePosition: null,
       requestedAt: now,
       startedAt: null,
       completedAt: null,
       checkpointId: null,
+      ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
+        ? { workspacePreparation: dispatchMode.workspaceStrategy }
+        : {}),
       contextHandoffId:
         portableForkHandoff?.id ??
         providerSwitchHandoff?.id ??
@@ -7461,7 +7871,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerTurnId: null,
       nativeItemRef: null,
       runtimeRequestId: null,
-      checkpointScopeId: checkpointScope.id,
+      checkpointScopeId: checkpointScope?.id ?? null,
       startedAt: null,
       completedAt: null,
     };
@@ -7756,6 +8166,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       });
     }
+    if (pendingMergeBackTransfer !== undefined && mergeBackHandoff === null) {
+      yield* emitEvent({
+        type: "context-transfer.updated",
+        threadId: command.threadId,
+        runId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: {
+          ...pendingMergeBackTransfer,
+          targetRunId: runId,
+          status: "superseded",
+          error: "Earlier merge-backs already delivered this.",
+          updatedAt: now,
+        },
+      });
+    }
     if (pendingMergeBackTransfer !== undefined && mergeBackResolution !== null) {
       yield* emitEvent({
         type: "context-transfer.updated",
@@ -7803,15 +8229,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: rootNode,
     });
-    yield* emitEvent({
-      type: "checkpoint-scope.created",
-      threadId: command.threadId,
-      runId,
-      nodeId: rootNodeId,
-      providerInstanceId: modelSelection.instanceId,
-      occurredAt: now,
-      payload: checkpointScope,
-    });
+    if (checkpointScope !== null) {
+      yield* emitEvent({
+        type: "checkpoint-scope.created",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: checkpointScope,
+      });
+    }
     if (handoffTurnItem !== null) {
       yield* emitEvent({
         type: "turn-item.updated",
@@ -7845,6 +8273,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* notificationTasks(command.threadId, message, projection.subagents),
       ),
     });
+    if (dispatchMode.type === "defer_start") {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: workspacePreparationTurnItem({
+          id: idAllocator.derive.turnItemFromProviderItem({
+            driver: adapter.driver,
+            nativeItemId: `workspace-preparation:${runId}`,
+          }),
+          threadId: command.threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerThreadId: providerThread.id,
+          ordinal: turnItem.ordinal + 1,
+          now,
+        }),
+      });
+    }
     const forkResolution = nativeForkResolution ?? portableForkResolution;
     if (pendingForkTransfer !== undefined && forkResolution !== null) {
       yield* emitEvent({
@@ -7896,6 +8346,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
+    if (dispatchMode.type === "defer_start") return;
     const pendingEffect = {
       id: `effect:${command.commandId}:provider-turn.start:${runId}`,
       commandId: command.commandId,
@@ -7904,6 +8355,91 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies PendingOrchestrationEffectV2;
     yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
   });
+
+  // The child keeps its supervising parent; this transfer only records where its context came from.
+  const planDelegatedContextFork = Effect.fn("orchestrationV2.dispatch.delegatedContextFork")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
+      contextSource: NonNullable<
+        Extract<
+          OrchestrationV2Command,
+          { readonly type: "delegated_task.request" }
+        >["contextSource"]
+      >,
+      input: {
+        readonly parentProjectId: ProjectId;
+        readonly childThreadId: ThreadId;
+        readonly now: DateTime.Utc;
+        readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      },
+    ) {
+      const fail = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      const sourceProjection = yield* projectionStore
+        .getThreadRecords(contextSource.threadId, [
+          "runs",
+          "checkpoints",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+        ])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: contextSource.threadId, cause }),
+          ),
+        );
+      if (
+        sourceProjection.thread.deletedAt !== null ||
+        sourceProjection.thread.projectId !== input.parentProjectId
+      ) {
+        return yield* fail(
+          `Context source thread ${contextSource.threadId} is not a thread in this project.`,
+        );
+      }
+      const sourceRun = runForSourcePoint(sourceProjection, contextSource.point);
+      if (sourceRun === null) {
+        return yield* fail(
+          `No stable source run was found for context source ${contextSource.point.type}.`,
+        );
+      }
+      if (!isForkableSourceRunStatus(sourceRun.status)) {
+        return yield* fail(forkableSourceRunStatusError(sourceRun));
+      }
+      const transferId = yield* mapDispatchError(command)(
+        idAllocator.allocate.contextTransfer({
+          sourceThreadId: contextSource.threadId,
+          targetThreadId: input.childThreadId,
+          type: "fork",
+        }),
+      );
+      const transfer = forkContextTransfer({
+        transferId,
+        sourceThreadId: contextSource.threadId,
+        targetThreadId: input.childThreadId,
+        sourceRun,
+        sourceProviderThread: providerThreadForRun(sourceProjection, sourceRun),
+        sourceProviderInstanceId: sourceRun.providerInstanceId,
+        sourceTokenUsage: providerTurnForRun(sourceProjection, sourceRun)?.tokenUsage,
+        canonicalSourcePoint: contextSourcePointForRun(sourceProjection, sourceRun),
+        createdBy: command.createdBy,
+        createdAt: input.now,
+      });
+      yield* emit(
+        input.events,
+        command,
+      )({
+        type: "context-transfer.created",
+        threadId: input.childThreadId,
+        providerInstanceId: sourceRun.providerInstanceId,
+        occurredAt: input.now,
+        payload: transfer,
+      });
+    },
+  );
 
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
     function* (
@@ -8111,6 +8647,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: taskTurnItem,
       });
 
+      if (command.contextSource !== undefined) {
+        yield* planDelegatedContextFork(command, command.contextSource, {
+          parentProjectId: parentProjection.thread.projectId,
+          childThreadId,
+          now,
+          events,
+        });
+      }
+
       const childMessageCommand = {
         type: "message.dispatch",
         createdBy: command.createdBy,
@@ -8246,6 +8791,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       createdBy: command.createdBy,
       driver: adapter.driver,
       id: taskId,
+      originalTaskId: original.id,
       runId: owner.id,
       parentNodeId: owner.rootNodeId,
       providerInstanceId: run.providerInstanceId,
@@ -8253,7 +8799,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       model: run.modelSelection.model,
       modelSelection: run.modelSelection,
       prompt: command.text,
-      title: child.title,
+      title: original.title ?? child.title,
       completionWake: "always",
       completionDelivery: { state: "pending", observedByRunId: null },
       status: run.status === "queued" ? (run.queueHeld === true ? "idle" : "pending") : "running",
@@ -8291,7 +8837,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       parentItemId: null,
       ordinal: yield* nextTurnItemOrdinal(parent),
       status: task.status,
-      title: child.title,
+      title: task.title,
       startedAt: now,
       completedAt: null,
       updatedAt: now,
@@ -9742,6 +10288,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "turnItems",
         "runtimeRequests",
         "subagents",
+        "contextTransfers",
       ],
       // User messages measure a restart's model switch.
       { turnItemTypes: ["user_message"], messageRoles: ["user"] },
@@ -9791,6 +10338,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: "Automatic completion deliveries cannot be promoted to Steer.",
+      });
+    }
+    // A steer joins a turn that already started, so the merge-back context would never be sent.
+    if (mergeBackTransferForRun(projection, queuedRun.id) !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A Bring back runs as its own turn and cannot be promoted to Steer.",
       });
     }
 
@@ -10035,7 +10590,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const projection = yield* loadProjectionForCommand(
       command,
-      ["runs", "messages", "nodes", "attempts", "subagents", "turnItems"],
+      ["runs", "messages", "nodes", "attempts", "subagents", "turnItems", "contextTransfers"],
       { turnItemTypes: [], messageRoles: ["user"] },
     );
     const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
@@ -10115,6 +10670,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: now,
         },
       });
+    }
+    for (const event of failedMergeBackEvents(
+      projection,
+      queuedRun,
+      "Its queued turn was cancelled before delivery.",
+      now,
+    )) {
+      yield* emitEvent(event);
     }
     const guest = queuedMessage?.context?.guest;
     if (guest !== undefined) {
@@ -10354,6 +10917,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .prepareRootRunScope({
           threadId: command.threadId,
           runId: state.run.id,
+          runOrdinal: state.run.ordinal,
           rootNodeId: state.rootNode.id,
           providerThreadId: state.providerThread.id,
           cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
@@ -12687,6 +13251,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
         readonly resultRun?: OrchestrationV2Run;
+        readonly childrenPending?: boolean;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -12764,6 +13329,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         return;
       }
+      // Failures and stops surface at once; a success waits for the work it left running.
+      if (terminalStatus === "completed" && options.childrenPending === true) return;
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,
@@ -13013,6 +13580,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* finalizeAppOwnedSubagentTask(childControls, {
         ...options,
         task,
+        childrenPending: progress.childrenPending,
         ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
       });
     }
@@ -13466,6 +14034,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.tag.set":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.workspace.select":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
@@ -13695,7 +14264,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadFork(command, events);
         break;
       case "thread.merge_back":
-        yield* dispatchThreadMergeBack(command, events);
+        yield* dispatchThreadMergeBack(command, events, effects);
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);
@@ -13830,6 +14399,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          // Selecting the checkout a thread already uses changes nothing.
+          command.type === "thread.workspace.select" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
@@ -14138,7 +14709,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (event.type === "subagent.updated")
       return !isOrchestrationV2WorkActive(event.payload.status);
     if (event.type !== "provider-thread.updated") return false;
-    if (backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])) {
+    if (
+      backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [], {
+        awaitUnmarked: true,
+      })
+    ) {
       providerThreadsWithBackgroundWork.add(event.payload.id);
       return false;
     }

@@ -34,12 +34,15 @@ const RIGHT_PANEL_KINDS = [
   "reviews",
   "inspect",
   "notes",
+  "environments",
 ] as const;
 export type ThreadWorkspaceSection =
   | "unified"
   | "questions"
   | "action-items"
   | "design-notes"
+  | "agent-work"
+  | "record"
   | "summary"
   | "marks"
   | "threads"
@@ -111,6 +114,12 @@ export type RightPanelSurface =
     }
   | { id: "notes" | `notes:${string}`; kind: "notes" }
   | { id: "inspect" | `inspect:${string}`; kind: "inspect"; inspectSection?: ThreadInspectSection }
+  | {
+      id: "environments" | `environments:${string}`;
+      kind: "environments";
+      /** Xwing's environment id, not the T3 `EnvironmentId` of the machine that owns it. */
+      xwingEnvironmentId?: string;
+    }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -179,6 +188,13 @@ interface RightPanelStoreState {
     section: ThreadInspectSection,
     surfaceId?: string,
   ) => void;
+  selectXwingEnvironment: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    xwingEnvironmentId: string | null,
+  ) => void;
+  /** Shows one environment, reusing a tab that already shows it so other tabs keep their state. */
+  openXwingEnvironment: (ref: ScopedThreadRef, xwingEnvironmentId: string) => void;
   offerReviews: (ref: ScopedThreadRef, reviewId: string) => void;
   openDevice: (
     ref: ScopedThreadRef,
@@ -285,6 +301,8 @@ const singletonSurface = (
       return { id: "notes", kind };
     case "inspect":
       return { id: "inspect", kind, inspectSection: "loads" };
+    case "environments":
+      return { id: "environments", kind };
   }
 };
 
@@ -578,6 +596,15 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     if (kind === "plan" || kind === "agents") return [];
                     if (surface.kind === "notes")
                       return validAreaId(surface.id, "notes") ? [surface] : [];
+                    if (surface.kind === "environments") {
+                      if (!validAreaId(surface.id, "environments")) return [];
+                      const { xwingEnvironmentId, ...rest } = surface;
+                      return [
+                        typeof xwingEnvironmentId === "string"
+                          ? { ...rest, xwingEnvironmentId }
+                          : rest,
+                      ];
+                    }
                     if (surface.kind === "inspect") {
                       return validAreaId(surface.id, "inspect")
                         ? [
@@ -599,6 +626,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                               "questions",
                               "action-items",
                               "design-notes",
+                              "agent-work",
+                              "record",
                               "summary",
                               "marks",
                               "threads",
@@ -899,6 +928,35 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : surface,
             ),
           })),
+        ),
+      selectXwingEnvironment: (ref, surfaceId, xwingEnvironmentId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) => {
+              if (surface.kind !== "environments" || surface.id !== surfaceId) return surface;
+              const { xwingEnvironmentId: _previous, ...rest } = surface;
+              return xwingEnvironmentId === null ? rest : { ...rest, xwingEnvironmentId };
+            }),
+          })),
+        ),
+      openXwingEnvironment: (ref, xwingEnvironmentId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const shown = current.surfaces.find(
+              (surface) =>
+                surface.kind === "environments" &&
+                surface.xwingEnvironmentId === xwingEnvironmentId,
+            );
+            return upsertSurface(
+              current,
+              shown ?? {
+                id: `environments:${randomUUID()}`,
+                kind: "environments",
+                xwingEnvironmentId,
+              },
+            );
+          }),
         ),
       offerReviews: (ref, reviewId) =>
         set((state) =>

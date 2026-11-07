@@ -589,6 +589,7 @@ describe("background work kinds from older or newer servers", () => {
         { taskId: "bg-4", description: "npm test", kind: "command" },
         { taskId: "bg-5", kind: "subagent", childThreadId: "thread-child" },
         { taskId: "bg-6", kind: "subagent", providerInstanceId: "claudeAgent" },
+        { taskId: "bg-7", kind: "command", awaited: false },
       ],
     });
     expect(providerThread.pendingBackgroundTasks).toEqual([
@@ -598,6 +599,7 @@ describe("background work kinds from older or newer servers", () => {
       { taskId: "bg-4", description: "npm test", kind: "command" },
       { taskId: "bg-5", kind: "subagent", childThreadId: "thread-child" },
       { taskId: "bg-6", kind: "subagent", providerInstanceId: "claudeAgent" },
+      { taskId: "bg-7", kind: "command", awaited: false },
     ]);
     const encoded = encodeOrchestrationV2ProviderThreadJson(providerThread).pendingBackgroundTasks;
     expect(encoded).toEqual(providerThread.pendingBackgroundTasks);
@@ -617,6 +619,7 @@ describe("background work kinds from older or newer servers", () => {
       "bg-4",
       "bg-5",
       "bg-6",
+      "bg-7",
     ]);
     expect(() =>
       decodeOrchestrationV2ProviderThreadJson({

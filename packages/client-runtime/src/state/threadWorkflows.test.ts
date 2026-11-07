@@ -3,6 +3,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
   canForkProjectedAssistantItem,
+  deriveBringBacks,
   deriveThreadQueueWorkflowState,
   resolveLatestMergeBackRun,
   resolveLatestForkableAssistantItem,
@@ -69,6 +70,7 @@ describe("thread workflows", () => {
   it("sorts queued messages and gates promotion from capabilities", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      contextTransfers: [],
       runs: [
         {
           id: "active",
@@ -143,6 +145,7 @@ describe("thread workflows", () => {
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: null },
+        contextTransfers: [],
         runs: [
           { id: "previous", status, ordinal: 1 },
           { id: "queued", status: "queued", userMessageId: "message", ordinal: 2, queueHeld: true },
@@ -164,6 +167,7 @@ describe("thread workflows", () => {
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: null },
+        contextTransfers: [],
         runs: [{ id: "active", status, ordinal: 1 }],
         messages: [],
         providerThreads: [],
@@ -178,6 +182,7 @@ describe("thread workflows", () => {
   it("offers to skip a running compaction even when the provider cannot steer", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: null },
+      contextTransfers: [],
       runs: [
         { id: "compact", status: "running", userMessageId: "message-compact", ordinal: 1 },
         { id: "queued", status: "queued", userMessageId: "message-queued", ordinal: 2 },
@@ -199,6 +204,7 @@ describe("thread workflows", () => {
     for (const status of ["queued", "cancelled", "starting"] as const) {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: null },
+        contextTransfers: [],
         runs: [{ id: "held", status, userMessageId: "message", ordinal: 1, queueHeld: true }],
         messages: [{ id: "message", text: "Saved message" }],
         providerThreads: [],
@@ -215,6 +221,7 @@ describe("thread workflows", () => {
   it("hides automatic completion delivery from the visible queue", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: null },
+      contextTransfers: [],
       runs: [
         {
           id: "provider-wake",
@@ -272,6 +279,7 @@ describe("thread workflows", () => {
   it("removes only the promoted head from the visible queue", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      contextTransfers: [],
       runs: [
         {
           id: "promoted",
@@ -310,6 +318,7 @@ describe("thread workflows", () => {
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        contextTransfers: [],
         runs: [
           {
             id: "active",
@@ -450,4 +459,82 @@ describe("thread workflows", () => {
       expect(resolveLatestMergeBackRun(projection)).toBeNull();
     },
   );
+
+  it("reports each Bring back's delivery and whether the side chat has anything new", () => {
+    const transfer = (
+      id: string,
+      throughRunId: string,
+      targetRunId: string | null,
+      status: string,
+      error: string | null = null,
+    ) => ({
+      id,
+      type: "merge_back",
+      sourceThreadId: "side",
+      targetThreadId: "parent",
+      sourcePoint: { threadId: "side", runId: throughRunId },
+      mergeBackScope: "additional",
+      targetRunId,
+      status,
+      error,
+      createdAt: "2026-11-07T10:00:00.000Z",
+      consumedAt: status === "consumed" ? "2026-11-07T10:05:00.000Z" : null,
+    });
+    const parent = {
+      runs: [
+        { id: "p-delivered", status: "completed", userMessageId: "m-delivered" },
+        { id: "p-rolled", status: "rolled_back", userMessageId: "m-rolled" },
+        { id: "p-cancelled", status: "cancelled", userMessageId: "m-cancelled" },
+        { id: "p-queued", status: "queued", userMessageId: "m-queued" },
+      ],
+      contextTransfers: [
+        transfer("t-delivered", "s1", "p-delivered", "consumed"),
+        transfer("t-rolled", "s3", "p-rolled", "consumed"),
+        // A cancel path that did not mark the transfer still reads as not delivered.
+        transfer("t-cancelled", "s3", "p-cancelled", "pending"),
+        transfer(
+          "t-failed",
+          "s3",
+          null,
+          "failed",
+          "Its queued turn was cancelled before delivery.",
+        ),
+        transfer("t-queued", "s2", "p-queued", "pending"),
+        { ...transfer("t-other", "s9", "p-queued", "pending"), sourceThreadId: "other" },
+      ],
+    } as never;
+    const side = {
+      thread: { id: "side" },
+      runs: [
+        { id: "s1", ordinal: 1, status: "completed" },
+        { id: "s2", ordinal: 2, status: "completed" },
+        { id: "s3", ordinal: 3, status: "completed" },
+      ],
+    } as never;
+
+    const state = deriveBringBacks(parent, side);
+
+    expect(
+      state.records.map((record) => [record.transferId, record.status, record.throughOrdinal]),
+    ).toEqual([
+      ["t-delivered", "delivered", 1],
+      ["t-rolled", "rolled_back", 3],
+      ["t-cancelled", "failed", 3],
+      ["t-failed", "failed", 3],
+      ["t-queued", "queued", 2],
+    ]);
+    expect(state.records[1]?.parentMessageId).toBe("m-rolled");
+    expect(state.includedThroughOrdinal).toBe(1);
+    expect(state.requestedThroughOrdinal).toBe(2);
+    expect(state.hasNew).toBe(true);
+    expect(
+      deriveBringBacks(
+        { ...(parent as object), runs: [] } as never,
+        {
+          ...(side as object),
+          runs: [{ id: "s1", ordinal: 1, status: "completed" }],
+        } as never,
+      ).hasNew,
+    ).toBe(false);
+  });
 });

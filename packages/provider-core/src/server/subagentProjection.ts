@@ -266,7 +266,7 @@ export function delegatedTaskProgress(projection: {
             task.completionDelivery?.state === "claimed")),
     ) ||
     projection.providerThreads.some((thread) =>
-      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [], { awaitUnmarked: true }),
     );
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
@@ -279,6 +279,8 @@ export function delegatedTaskProgress(projection: {
           ? ("waiting_for_children" as const)
           : ("result_available" as const),
     resultRun,
+    /** Background work or subagents still hold a completed result, whatever the runs say. */
+    childrenPending: children,
   };
 }
 

@@ -1095,21 +1095,12 @@ describe("planComposerTurn", () => {
     });
   });
 
-  it("queues behind a compaction of a stale session, except for /compact itself", () => {
-    const stale = { ...base, resumeCompactionTokens: 120_000 };
-    for (const messageText of ["hello", "/compactfoo"]) {
-      expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
-        compactBeforeSend: true,
-        turnDispatchMode: "queue",
-        shouldQueueBehindActiveRun: true,
-      });
-    }
-    for (const messageText of ["/COMPACT", "/compact keep the API notes", "/compact\n  tests"]) {
-      expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
-        compactBeforeSend: false,
-        turnDispatchMode: "auto",
-        shouldQueueBehindActiveRun: false,
-      });
+  it("sends into a stale session without inserting a compaction", () => {
+    const stale = { ...base, resumeCompactionTokens: 883_344 };
+    for (const messageText of ["hello", "/compactfoo", "/COMPACT", "/compact keep the API notes"]) {
+      const plan = planComposerTurn({ ...stale, messageText });
+      expect(plan).not.toHaveProperty("compactBeforeSend");
+      expect(plan).toMatchObject({ turnDispatchMode: "auto", shouldQueueBehindActiveRun: false });
     }
   });
 
@@ -1133,10 +1124,8 @@ describe("planComposerTurn", () => {
         ...running,
         dispatchMode: "steer",
         freshContext: true,
-        resumeCompactionTokens: 120_000,
       }),
     ).toMatchObject({
-      compactBeforeSend: false,
       turnDispatchMode: "queue",
       shouldQueueBehindActiveRun: true,
     });

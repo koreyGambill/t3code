@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { emptyProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadMarks from "./ThreadMarks.ts";
 const threadId = ThreadId.make("marks-thread");
@@ -65,6 +66,28 @@ const getMarks = (deleted: boolean) =>
     Effect.provide(
       ThreadMarks.layer.pipe(
         Layer.provide(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            listDevelopmentEnvironmentUsage: () =>
+              Effect.succeed([
+                {
+                  threadId,
+                  projectId: ProjectId.make("project"),
+                  xwingEnvironmentId: "0123abcd",
+                  repositorySource: "/repo",
+                  checkoutPath: "/x/envs/12/repo",
+                  number: 12,
+                  name: "feature",
+                  firstSelectedAt: "2026-10-15T00:00:00.000Z",
+                  lastSelectedAt: "2026-10-16T00:00:00.000Z",
+                  threadTitle: "Marks",
+                  archivedAt: null,
+                  settledAt: null,
+                  current: true,
+                },
+              ]),
+          }),
+        ),
+        Layer.provide(
           Layer.mock(Orchestrator.OrchestratorV2)({
             getThreadRecords: () =>
               Effect.succeed({
@@ -97,8 +120,14 @@ it.effect(
       expect(marks.map((mark) => mark.url)).toEqual([
         "https://notion.so/old",
         "https://notion.so/repeated",
+        "xwing-environment:0123abcd",
         "https://github.com/new",
       ]);
+      expect(marks[2]).toMatchObject({
+        service: "Xwing",
+        description: "#12 feature, current checkout",
+        link: { type: "xwing_environment", xwingEnvironmentId: "0123abcd" },
+      });
       expect(marks[1]?.timestamp).toBe("2026-10-01T12:00:00.000Z");
       expect(marks[0]?.description).toBe("");
     }),

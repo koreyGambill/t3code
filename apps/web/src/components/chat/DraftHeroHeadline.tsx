@@ -28,6 +28,7 @@ import {
   projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useVisibleThreadShells } from "~/state/entities";
+import { usePreferredEnvironmentId } from "~/state/preferredEnvironment";
 import {
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -93,6 +94,7 @@ export function DraftHeroHeadline({
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const preferredEnvironmentId = usePreferredEnvironmentId();
   const openProjectDraft = useNewThreadHandler();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -127,6 +129,7 @@ export function DraftHeroHeadline({
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: activeProjectRef,
+    preferredEnvironmentId,
   });
   const projectEntryByKey = new Map(
     projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const),

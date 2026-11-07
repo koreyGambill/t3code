@@ -2170,7 +2170,8 @@ function renderFeedEntry(
           ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-              {foldRowId !== null && message.senderThreadId ? (
+              {/* The user's own messages carry a sender when they bring back a fork. */}
+              {message.senderThreadId ? (
                 <OpenSenderThreadButton
                   environmentId={props.environmentId}
                   senderThreadId={message.senderThreadId}

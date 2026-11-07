@@ -7,7 +7,7 @@ import {
   RunId,
   OrchestrationV2DelegatedFrom,
   OrchestrationV2RunStatus,
-  OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  OrchestrationV2ThreadLaunchRequestWorkspaceStrategy,
   RuntimeMode,
   ProviderInteractionMode,
   Project,
@@ -26,6 +26,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as DevelopmentEnvironments from "../../../developmentEnvironments/DevelopmentEnvironments.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
@@ -139,9 +140,9 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspaceStrategy: Schema.optional(
-      OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
+      OrchestrationV2ThreadLaunchRequestWorkspaceStrategy.annotate({
         description:
-          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied.",
+          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'xwing_environment': that Xwing environment's checkout of the project (`t3_xwing_environment_list`). 'root': project checkout, the default, not your worktree. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied.",
       }),
     ),
     message: Schema.optional(
@@ -165,6 +166,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   dependencies: [
     ...shared.dependencies,
     ThreadLaunchService.ThreadLaunchService,
+    DevelopmentEnvironments.DevelopmentEnvironments,
     ManagedProjectFolders.ManagedProjectFolders,
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,

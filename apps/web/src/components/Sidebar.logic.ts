@@ -2,7 +2,7 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { threadBackgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
@@ -715,6 +715,7 @@ type ThreadStatusInput = Pick<
 > & {
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
+  lineage?: SidebarThreadSummary["lineage"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
 };
 
@@ -939,15 +940,16 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 }
 
 export function isThreadGlyphWorking(
-  thread: SidebarThreadStatusInput & Pick<SidebarThreadSummary, "pendingBackgroundTasks">,
+  thread: SidebarThreadStatusInput &
+    Pick<SidebarThreadSummary, "pendingBackgroundTasks"> &
+    Partial<Pick<SidebarThreadSummary, "lineage">>,
 ): boolean {
   const status = resolveSidebarThreadStatus(thread);
   return (
     status === "preparing" ||
     status === "working" ||
     (status === "waiting" &&
-      (thread.runtime?.status === "running" ||
-        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks)))
+      (thread.runtime?.status === "running" || threadBackgroundWorkHoldsCompletion(thread)))
   );
 }
 
@@ -1207,7 +1209,7 @@ export function resolveThreadStatusPill(input: {
 
   if (
     (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+    threadBackgroundWorkHoldsCompletion(thread)
   ) {
     return {
       label: "Waiting",

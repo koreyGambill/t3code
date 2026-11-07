@@ -39,6 +39,11 @@ const ThreadInspectPanel = lazy(() =>
     default: module.ThreadInspectPanel,
   })),
 );
+const XwingEnvironmentsPanel = lazy(() =>
+  import("../xwing/XwingEnvironmentsPanel").then((module) => ({
+    default: module.XwingEnvironmentsPanel,
+  })),
+);
 const NotesPanel = lazy(() =>
   import("../notes/NotesPanel").then((module) => ({ default: module.NotesPanel })),
 );
@@ -133,6 +138,18 @@ export function RightPanelSurfaceContent(props: {
             section={surface.inspectSection ?? "loads"}
             visible={visible}
             startedThread={props.startedThread}
+          />
+        </Suspense>
+      );
+    case "environments":
+      return (
+        <Suspense fallback={null}>
+          <XwingEnvironmentsPanel
+            key={`${threadRef.environmentId}:${surface.id}`}
+            threadRef={threadRef}
+            surfaceId={surface.id}
+            selectedId={surface.xwingEnvironmentId}
+            visible={visible}
           />
         </Suspense>
       );

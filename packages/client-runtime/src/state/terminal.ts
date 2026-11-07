@@ -10,6 +10,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -19,6 +20,7 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentSubscriptionAtomFamily,
   runAtomCommand,
+  squashAtomCommandFailure,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, subscribeDynamic, type EnvironmentRpcInput } from "../rpc/client.ts";
@@ -144,7 +146,8 @@ export type TerminalLifecycleEvent =
       readonly status: TerminalBufferState["status"];
       readonly version: number;
     }
-  | { readonly type: "reopen-failed" };
+  /** `checkoutChanged`: the thread left this shell's checkout, so it stays history only. */
+  | { readonly type: "reopen-failed"; readonly checkoutChanged?: boolean };
 
 export type TerminalLifecycleCommand = "exit" | "reopen" | null;
 
@@ -166,7 +169,9 @@ export function transitionTerminalLifecycle(
         command: null,
       };
     case "reopen-failed":
-      return { state: { ...state, reopened: false }, command: null };
+      return event.checkoutChanged === true
+        ? { state: { ...state, observed: true }, command: null }
+        : { state: { ...state, reopened: false }, command: null };
     case "status": {
       if (event.version === 0) return { state, command: null };
       if (event.status === "running" || event.status === "starting") {
@@ -308,11 +313,18 @@ export function createTerminalSession(
           ...(input.env ? { env: input.env } : {}),
         },
       });
-      return result._tag === "Success";
+      if (result._tag === "Success") return "reopened" as const;
+      const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+      return Predicate.isTagged(error, "TerminalWorkspaceChangedError")
+        ? ("checkout-changed" as const)
+        : ("failed" as const);
     };
-    void reopen().then((succeeded) => {
-      if (!succeeded)
-        lifecycle = transitionTerminalLifecycle(lifecycle, { type: "reopen-failed" }).state;
+    void reopen().then((outcome) => {
+      if (outcome === false || outcome === "reopened") return;
+      lifecycle = transitionTerminalLifecycle(lifecycle, {
+        type: "reopen-failed",
+        checkoutChanged: outcome === "checkout-changed",
+      }).state;
     });
   };
 

@@ -12,6 +12,7 @@ import {
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   resolveAddProjectEntry,
+  buildEnvironmentChoice,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
   type CommandPaletteUiState,
@@ -112,25 +113,84 @@ describe("reduceCommandPaletteUiState", () => {
 describe("resolveAddProjectEntry", () => {
   const local = EnvironmentId.make("local");
   const remote = EnvironmentId.make("remote");
+  const connected = (environmentId: EnvironmentId) => ({ environmentId, isConnected: true });
 
   it("sends the user to connect an environment when none can add a project", () => {
     expect(resolveAddProjectEntry([], null)).toEqual({ kind: "connect-environment" });
+    expect(resolveAddProjectEntry([{ environmentId: local, isConnected: false }], null)).toEqual({
+      kind: "connect-environment",
+    });
   });
 
   it("asks for an environment when there is a choice or no connected default", () => {
-    expect(
-      resolveAddProjectEntry([{ environmentId: local }, { environmentId: remote }], local),
-    ).toEqual({ kind: "choose-environment" });
-    expect(resolveAddProjectEntry([{ environmentId: local }], null)).toEqual({
+    expect(resolveAddProjectEntry([connected(local), connected(remote)], local)).toEqual({
+      kind: "choose-environment",
+    });
+    expect(resolveAddProjectEntry([connected(local)], null)).toEqual({
       kind: "choose-environment",
     });
   });
 
   it("goes straight to sources for the only environment", () => {
-    expect(resolveAddProjectEntry([{ environmentId: local }], local)).toEqual({
+    expect(resolveAddProjectEntry([connected(local)], local)).toEqual({
       kind: "choose-source",
       environmentId: local,
     });
+  });
+});
+
+describe("buildEnvironmentChoice", () => {
+  const windows = EnvironmentId.make("windows");
+  const wsl = EnvironmentId.make("wsl");
+  const vps = EnvironmentId.make("vps");
+  const environment = (environmentId: EnvironmentId, isConnected: boolean, isPrimary = false) => ({
+    environmentId,
+    label: environmentId,
+    machine: "server" as const,
+    isPrimary,
+    isConnected,
+    status: isConnected ? "Connected" : "Offline",
+  });
+  const ids = (choice: ReturnType<typeof buildEnvironmentChoice>) =>
+    choice.options.map((option) => option.environmentId);
+
+  it("leads with the primary machine when none is preferred", () => {
+    const choice = buildEnvironmentChoice(
+      [environment(wsl, true), environment(windows, true, true), environment(vps, false)],
+      null,
+    );
+    expect(ids(choice)).toEqual([windows, wsl]);
+    expect(choice.defaultEnvironmentId).toBe(windows);
+  });
+
+  it("leads with and defaults to the preferred machine", () => {
+    const choice = buildEnvironmentChoice(
+      [environment(windows, true, true), environment(wsl, true)],
+      wsl,
+    );
+    expect(ids(choice)).toEqual([wsl, windows]);
+    expect(choice.defaultEnvironmentId).toBe(wsl);
+  });
+
+  it("lists an offline preferred machine as unavailable and picks no default", () => {
+    const choice = buildEnvironmentChoice(
+      [environment(windows, true, true), environment(wsl, false)],
+      wsl,
+    );
+    expect(choice.options.map((option) => [option.environmentId, option.isConnected])).toEqual([
+      [wsl, false],
+      [windows, true],
+    ]);
+    expect(choice.defaultEnvironmentId).toBeNull();
+    expect(resolveAddProjectEntry(choice.options, choice.defaultEnvironmentId)).toEqual({
+      kind: "choose-environment",
+    });
+  });
+
+  it("keeps the primary default when the preferred machine was removed", () => {
+    const choice = buildEnvironmentChoice([environment(windows, true, true)], wsl);
+    expect(ids(choice)).toEqual([windows]);
+    expect(choice.defaultEnvironmentId).toBe(windows);
   });
 });
 

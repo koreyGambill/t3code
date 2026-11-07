@@ -4,6 +4,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
+  CheckpointId,
   ContextTransferId,
   EnvironmentId,
   IsoDateTime,
@@ -37,6 +38,7 @@ import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2IdleCompaction,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -165,6 +167,20 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+export const OrchestratorMcpTaskContextSource = Schema.Struct({
+  threadId: Schema.optional(
+    ThreadId.annotate({ description: "Thread in this project. Default: yours." }),
+  ),
+  runId: Schema.optional(RunId),
+  checkpointId: Schema.optional(CheckpointId),
+  mark: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "Context mark url or name from your Workspace.",
+    }),
+  ),
+});
+export type OrchestratorMcpTaskContextSource = typeof OrchestratorMcpTaskContextSource.Type;
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
   target: Schema.optional(OrchestratorMcpTarget),
@@ -193,6 +209,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  context: Schema.optional(
+    OrchestratorMcpTaskContextSource.annotate({
+      description:
+        "Omit for a fresh child (default; keep reviews fresh). Otherwise the child continues that thread's conversation at its latest finished turn, or the given runId, checkpointId or mark. Files are not rewound; the child is told what changed since. Reuse the returned context.runId so several children share one point.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
@@ -203,6 +225,8 @@ const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_T
 
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
+  /** For a follow-up sent to a finished child: the delegated task it continues. */
+  originalTaskId: Schema.optional(NodeId),
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
   childThreadId: Schema.NullOr(ThreadId),
   /** The linked environment and thread a remote task runs as. */
@@ -236,6 +260,16 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   waitTimedOut: Schema.Boolean.annotate({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
+  /** Where the child's conversation came from; absent for a fresh child. */
+  context: Schema.optional(
+    Schema.Struct({
+      threadId: ThreadId,
+      runId: RunId,
+      checkpointId: Schema.NullOr(CheckpointId),
+      strategy: Schema.Literals(["pending", "native_fork", "portable_context", "failed"]),
+      changesSincePoint: Schema.optional(Schema.String),
+    }),
+  ),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
@@ -244,6 +278,31 @@ export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,
 });
 export type OrchestratorMcpTaskStatusInput = typeof OrchestratorMcpTaskStatusInput.Type;
+
+export const OrchestratorMcpTaskProgressResult = Schema.Struct({
+  taskId: NodeId,
+  originalTaskId: Schema.optional(NodeId),
+  title: Schema.String,
+  status: Schema.Literals(["working", "waiting", "done", "question"]),
+  outcome: OrchestratorMcpDelegatedTaskStatus,
+  childThreadId: Schema.NullOr(ThreadId),
+  link: Schema.optional(Schema.String),
+  pendingApproval: OrchestratorMcpDelegateTaskResult.fields.pendingApproval,
+  pendingBackgroundWorkCount: Schema.NullOr(Schema.Number).annotate({
+    description:
+      "Pending background tasks and children. Null when remote live progress is unavailable.",
+  }),
+  lastAssistantReply: Schema.NullOr(
+    Schema.Struct({
+      runId: Schema.NullOr(RunId),
+      text: Schema.String.check(Schema.isMaxLength(500)),
+      truncated: Schema.Boolean,
+      isFinal: Schema.Boolean,
+    }),
+  ),
+  progressAvailable: Schema.Boolean,
+});
+export type OrchestratorMcpTaskProgressResult = typeof OrchestratorMcpTaskProgressResult.Type;
 
 export const OrchestratorMcpTaskCancelInput = Schema.Struct({
   taskId: NodeId,
@@ -479,6 +538,8 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   createdBy: Schema.NullOr(OrchestrationV2Actor),
   creationSource: Schema.NullOr(OrchestrationV2CreationSource),
   senderThreadId: Schema.optional(ThreadId),
+  /** Set when T3 Code sent this `/compact` itself; `createdBy` stays the stored actor. */
+  idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
   type: Schema.String,
   status: OrchestrationV2TurnItemStatus,
   title: Schema.NullOr(Schema.String),
@@ -509,6 +570,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
         "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
     }),
   ),
+  reply: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Default true: when the thread is done, its outcome arrives here as a message. false: fire and forget.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
@@ -521,6 +588,8 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  /** True when the thread's outcome will arrive in the sender as a message. */
+  reply: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 

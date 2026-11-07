@@ -103,12 +103,14 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
+      // A scope opened by a checkout change starts at its own baseline, not at thread start.
+      const scopeStartOrdinal = scope.baselineOrdinalWithinScope ?? 0;
       const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
+        baselineOrdinalWithinScope === scopeStartOrdinal || hasReadyCheckpoint(scopeStartOrdinal)
           ? null
           : yield* checkpoints.materializeBaselineCheckpoint({
               scope,
-              ordinalWithinScope: 0,
+              ordinalWithinScope: scopeStartOrdinal,
               forceMissing: sideChat,
             });
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)

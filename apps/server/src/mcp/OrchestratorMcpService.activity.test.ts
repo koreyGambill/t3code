@@ -34,10 +34,12 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(ThreadWorkspace.layerTest),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
@@ -299,6 +301,133 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         });
       }
     }
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread marks automatic /compact prompts across pages and leaves a typed one alone", async () => {
+  const compactRows = (
+    [
+      ["turn-item-compact-on-return", "message-compact-on-return", "onReturn"],
+      ["turn-item-compact-before-expiry", "message-compact-before-expiry", "beforeCacheExpires"],
+      ["turn-item-compact-typed", "message-compact-typed", undefined],
+    ] as const
+  ).map(([itemId, messageId, idleCompaction], position) => ({
+    row: {
+      position,
+      visibility: "local",
+      sourceThreadId: parentThreadId,
+      sourceItemId: TurnItemId.make(itemId),
+      item: {
+        type: "user_message",
+        runId: activeRunId,
+        messageId,
+        status: "completed",
+        title: null,
+        text: "/compact",
+        updatedAt: now,
+      },
+    },
+    message: {
+      id: messageId,
+      runId: activeRunId,
+      role: "user",
+      text: "/compact",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      ...(idleCompaction === undefined ? {} : { idleCompaction }),
+      createdAt: now,
+      updatedAt: now,
+    },
+  }));
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: compactRows.map(({ message }) => message),
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: (_threadId, input) => {
+            const rows = compactRows
+              .map(({ row }) => row)
+              .filter((row) => row.position > (input.afterPosition ?? -1));
+            return Effect.succeed({
+              items: rows.slice(
+                0,
+                input.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: compactRows.length,
+              hasMore: rows.length > input.limit,
+            });
+          },
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const first = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      limit: 1,
+    });
+    const rest = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      afterPosition: first.nextPosition ?? undefined,
+    });
+    const [onReturn, beforeExpiry, typed] = [...first.items, ...rest.items];
+    for (const [item, idleCompaction] of [
+      [onReturn, "onReturn"],
+      [beforeExpiry, "beforeCacheExpires"],
+    ] as const) {
+      expect(item).toMatchObject({
+        text: "/compact",
+        createdBy: "user",
+        creationSource: "web",
+        idleCompaction,
+      });
+      expect(item?.title).toMatch(/^Automatic \/compact sent by T3 Code/);
+    }
+    expect(typed).toMatchObject({
+      text: "/compact",
+      createdBy: "user",
+      creationSource: "web",
+      title: null,
+    });
+    expect(typed).not.toHaveProperty("idleCompaction");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

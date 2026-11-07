@@ -16,6 +16,7 @@ import {
   WS_METHODS,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
+  XwingEnvironmentId,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
 } from "@t3tools/contracts";
@@ -253,6 +254,37 @@ describe("V2 environment commands", () => {
           worktreePath: "/workspace/project-worktrees/feature",
           branch: "feature",
         },
+      });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-xwing-environment"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-xwing-environment"),
+          role: "user",
+          text: "Work in my environment",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            xwingEnvironmentId: XwingEnvironmentId.make("0123abcd"),
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[1]?.workspaceStrategy).toEqual({
+        type: "xwing_environment",
+        xwingEnvironmentId: "0123abcd",
       });
     }).pipe(Effect.provide(layerTestRandom)),
   );

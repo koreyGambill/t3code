@@ -2767,6 +2767,108 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live("refuses a checkout change while the session still runs native background agents", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("checkout-change-background-work");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const backgroundWork = yield* Ref.make(true);
+        const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const threadId = ThreadId.make("thread:checkout-change-background-work");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:checkout-change-background-work:create"),
+            threadId,
+            projectId: ProjectId.make("project:checkout-change-background-work"),
+            title: "Checkout change with background work",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:checkout-change-background-work:send"),
+            threadId,
+            messageId: MessageId.make("message:checkout-change-background-work"),
+            text: "Start background agents",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          const idle = yield* waitForIdle(threadId);
+          const session = idle.providerSessions[0]!;
+          const select = (attempt: string) =>
+            orchestrator.dispatch({
+              type: "thread.workspace.select",
+              commandId: CommandId.make(`command:checkout-change-background-work:${attempt}`),
+              threadId,
+              expected: { worktreePath: cwd, xwingEnvironmentId: null },
+              worktreePath: `${cwd}-other-checkout`,
+              branch: null,
+              developmentEnvironment: null,
+            });
+
+          const refused = yield* select("refused").pipe(Effect.flip);
+          assert.instanceOf(refused, Orchestrator.OrchestratorWorkspaceSelectionRejectedError);
+          assert.equal(refused.reason, "work-in-progress");
+          yield* worker.drain();
+          const unchanged = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(unchanged.thread.worktreePath, cwd);
+          assert.deepEqual(
+            unchanged.providerSessions.map((candidate) => [candidate.id, candidate.status]),
+            [[session.id, "ready"]],
+          );
+          assert.deepEqual(yield* Ref.get(closedSessions), []);
+
+          yield* Ref.set(backgroundWork, false);
+          yield* select("accepted");
+          yield* worker.drain();
+          const moved = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(moved.thread.worktreePath, `${cwd}-other-checkout`);
+          assert.deepEqual(yield* Ref.get(closedSessions), [session.id]);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "checkout-change-background-work",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters([
+                makeTestAdapter({
+                  instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: CLAUDE_MODEL_SELECTION,
+                  responseByRunOrdinal: { 1: "Background agents started" },
+                  capturedTurns,
+                  backgroundWork,
+                  closedSessions,
+                }),
+              ]),
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["immediately", "behind a running turn"] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>

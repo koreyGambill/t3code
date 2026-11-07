@@ -277,6 +277,21 @@ describe("environment grouping", () => {
       environmentId: primaryEnvironmentId,
       id: fallbackPrimary.id,
     });
+
+    // The machine on screen still wins; the preferred machine applies without one.
+    const targetOn = (
+      preferredProjectRef: { environmentId: EnvironmentId; projectId: ProjectId } | null,
+    ) =>
+      buildSidebarProjectPickerEntries({
+        groups,
+        preferredProjectRef,
+        preferredEnvironmentId: remoteEnvironmentId,
+      }).find((entry) => entry.group.projectKey === destinationRepositoryIdentity.canonicalKey)
+        ?.targetProject.id;
+    expect(targetOn({ environmentId: primaryEnvironmentId, projectId: currentPrimary.id })).toBe(
+      destinationPrimary.id,
+    );
+    expect(targetOn(null)).toBe(destinationRemote.id);
   });
 
   it("puts the preferred project after pinned projects", () => {

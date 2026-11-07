@@ -2,10 +2,8 @@ import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
-  globalIdleCompaction,
   idleCompactionPatch,
   isNullableProjectSettingsOverride,
-  readsIdleCompactionModes,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
   type ProjectScopedServerSettingKey,
@@ -59,7 +57,7 @@ export function isConnectedWithConfig(
 export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnvironment>(
   scope: ResolvedSettingsScope,
   available: readonly T[],
-  primaryEnvironmentId: EnvironmentId | null,
+  defaultEnvironmentId: EnvironmentId | null,
 ) {
   const selectedIds = new Set(scope.environmentIds);
   const environments = available.filter((environment) =>
@@ -67,7 +65,7 @@ export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnviron
   );
   const connectedEnvironments = environments.filter(isConnectedWithConfig);
   const environment =
-    connectedEnvironments.find((candidate) => candidate.environmentId === primaryEnvironmentId) ??
+    connectedEnvironments.find((candidate) => candidate.environmentId === defaultEnvironmentId) ??
     connectedEnvironments[0] ??
     null;
   return { environments, connectedEnvironments, environment };
@@ -136,19 +134,6 @@ export function scopedSettingsAreMixed(
       keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
     )
   );
-}
-
-/**
- * Servers store the idle compaction mode differently by version, so selected
- * environments are compared by the mode each resolves to, and "Never" is offered
- * only when every one of them can store it.
- */
-export function scopedIdleCompaction(targets: readonly Pick<ScopedSettingsTarget, "settings">[]) {
-  const modes = targets.map((candidate) => globalIdleCompaction(candidate.settings));
-  return {
-    mixed: modes.some((mode) => mode !== modes[0]),
-    neverAvailable: targets.every((candidate) => readsIdleCompactionModes(candidate.settings)),
-  };
 }
 
 export type ScopedSettingSource = ProjectSettingSource | "mixed";

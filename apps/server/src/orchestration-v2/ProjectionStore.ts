@@ -66,6 +66,8 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  OrchestrationV2DevelopmentEnvironmentUsage,
+  NonNegativeInt,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -195,6 +197,7 @@ export type ProjectionThreadPullRequests = Pick<
 export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
+  | "lineage"
   | "projectId"
   | "branch"
   | "worktreePath"
@@ -235,6 +238,7 @@ const ProjectionCheckpointContext = Schema.Struct({
       runId,
       kind,
       cwd,
+      baselineOrdinalWithinScope: Schema.optional(Schema.NullOr(NonNegativeInt)),
     })),
   ),
   checkpoints: Schema.Array(
@@ -252,6 +256,22 @@ const ProjectionCheckpointContext = Schema.Struct({
 });
 export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
 const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+
+export interface ProjectionRootCheckpointScopeContext {
+  /** Root scope of the latest started, not rolled back, run other than the one being prepared. */
+  readonly previousScope: OrchestrationV2CheckpointScope | undefined;
+  readonly legacyRootScope: OrchestrationV2CheckpointScope | undefined;
+}
+
+const DevelopmentEnvironmentUsageRows = Schema.Array(
+  OrchestrationV2DevelopmentEnvironmentUsage.mapFields((fields) => ({
+    ...fields,
+    current: Schema.BooleanFromBit,
+  })),
+);
+const decodeDevelopmentEnvironmentUsageRows = Schema.decodeUnknownEffect(
+  DevelopmentEnvironmentUsageRows,
+);
 
 export interface ProjectionCheckpointCaptureContext {
   readonly run: OrchestrationV2Run | undefined;
@@ -565,6 +585,7 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
+    readonly includeProjectRoots?: boolean;
   }) => Effect.Effect<
     ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string }>,
     ProjectionStoreV2Error
@@ -658,6 +679,18 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     target: { readonly runId: RunId; readonly scopeId: CheckpointScopeId },
   ) => Effect.Effect<ProjectionCheckpointCaptureContext, ProjectionStoreV2Error>;
+  readonly getRootCheckpointScopeContext: (
+    threadId: ThreadId,
+    target: { readonly runId: RunId; readonly legacyRootScopeId: CheckpointScopeId },
+  ) => Effect.Effect<ProjectionRootCheckpointScopeContext, ProjectionStoreV2Error>;
+  /** Every recorded checkout selection matching the filter, deleted threads excluded. */
+  readonly listDevelopmentEnvironmentUsage: (filter: {
+    readonly xwingEnvironmentId?: string | undefined;
+    readonly threadId?: ThreadId | undefined;
+  }) => Effect.Effect<
+    ReadonlyArray<OrchestrationV2DevelopmentEnvironmentUsage>,
+    ProjectionStoreV2Error
+  >;
   readonly getCheckpointRollbackContext: (
     threadId: ThreadId,
     target: {
@@ -1617,6 +1650,7 @@ export function threadShellFromProjection(
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
+    developmentEnvironment: projection.thread.developmentEnvironment ?? null,
     pullRequests: threadPullRequestsOf(projection.thread),
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
@@ -1901,6 +1935,7 @@ function shellFromState(input: {
     interactionMode: input.state.thread.interactionMode,
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
+    developmentEnvironment: input.state.thread.developmentEnvironment ?? null,
     pullRequests: threadPullRequestsOf(input.state.thread),
     ...(input.state.thread.linkedPullRequest === undefined
       ? {}
@@ -2077,6 +2112,46 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
             `;
+              const environment = payload["developmentEnvironment"] as
+                | Record<string, unknown>
+                | null
+                | undefined;
+              // Replays and later thread writes repeat selectedAt, so min/max keeps them idempotent.
+              if (environment != null) {
+                const selectedAt = stringField(environment, "selectedAt");
+                yield* sql`
+                INSERT INTO orchestration_v2_projection_development_environment_usage (
+                  thread_id,
+                  xwing_environment_id,
+                  repository_source,
+                  checkout_path,
+                  environment_number,
+                  environment_name,
+                  first_selected_at,
+                  last_selected_at
+                )
+                VALUES (
+                  ${event.payload.id},
+                  ${stringField(environment, "xwingEnvironmentId")},
+                  ${stringField(environment, "repositorySource")},
+                  ${stringField(environment, "checkoutPath")},
+                  ${(environment["number"] as number | null | undefined) ?? null},
+                  ${stringField(environment, "name")},
+                  ${selectedAt},
+                  ${selectedAt}
+                )
+                ON CONFLICT(thread_id, xwing_environment_id, repository_source)
+                DO UPDATE SET
+                  checkout_path = CASE WHEN excluded.last_selected_at >= last_selected_at
+                    THEN excluded.checkout_path ELSE checkout_path END,
+                  environment_number = CASE WHEN excluded.last_selected_at >= last_selected_at
+                    THEN excluded.environment_number ELSE environment_number END,
+                  environment_name = CASE WHEN excluded.last_selected_at >= last_selected_at
+                    THEN excluded.environment_name ELSE environment_name END,
+                  first_selected_at = MIN(first_selected_at, excluded.first_selected_at),
+                  last_selected_at = MAX(last_selected_at, excluded.last_selected_at)
+              `;
+              }
               break;
             }
             case "run.created":
@@ -5229,7 +5304,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `,
               sql`
               SELECT scope_id AS id, run_id AS "runId", kind,
-                json_extract(payload_json, '$.cwd') AS cwd
+                json_extract(payload_json, '$.cwd') AS cwd,
+                json_extract(payload_json, '$.baselineOrdinalWithinScope') AS "baselineOrdinalWithinScope"
               FROM orchestration_v2_projection_checkpoint_scopes
               WHERE thread_id = ${threadId}
               ORDER BY ordinal_within_parent ASC, scope_id ASC
@@ -5253,6 +5329,82 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? cause
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
+        );
+
+    const getRootCheckpointScopeContext: ProjectionStoreV2Shape["getRootCheckpointScopeContext"] = (
+      threadId,
+      target,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const [previousRows, legacyRows] = yield* Effect.all([
+              // Runs cancelled while queued never had a scope, so they never end a period.
+              sql<{ readonly scope_json: string }>`
+              SELECT scope.payload_json AS scope_json
+              FROM orchestration_v2_projection_runs AS run
+              JOIN orchestration_v2_projection_nodes AS node
+                ON node.node_id = json_extract(run.payload_json, '$.rootNodeId')
+              JOIN orchestration_v2_projection_checkpoint_scopes AS scope
+                ON scope.scope_id = json_extract(node.payload_json, '$.checkpointScopeId')
+                  AND scope.kind = 'root_run'
+              WHERE run.thread_id = ${threadId} AND run.run_id != ${target.runId}
+                AND run.status NOT IN ('queued', 'preparing', 'rolled_back')
+              ORDER BY run.ordinal DESC
+              LIMIT 1
+            `,
+              sql<PayloadRow>`
+              SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+              WHERE thread_id = ${threadId} AND scope_id = ${target.legacyRootScopeId}
+            `,
+            ]);
+            const previous = previousRows[0];
+            return {
+              previousScope:
+                previous === undefined
+                  ? undefined
+                  : yield* decodeCheckpointScopePayload(previous.scope_json),
+              legacyRootScope:
+                legacyRows[0] === undefined
+                  ? undefined
+                  : yield* decodeCheckpointScopePayload(legacyRows[0].payload_json),
+            } satisfies ProjectionRootCheckpointScopeContext;
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const listDevelopmentEnvironmentUsage: ProjectionStoreV2Shape["listDevelopmentEnvironmentUsage"] =
+      (filter) =>
+        sql<Record<string, unknown>>`
+          SELECT usage.thread_id AS "threadId",
+            thread.project_id AS "projectId",
+            usage.xwing_environment_id AS "xwingEnvironmentId",
+            usage.repository_source AS "repositorySource",
+            usage.checkout_path AS "checkoutPath",
+            usage.environment_number AS "number",
+            usage.environment_name AS "name",
+            usage.first_selected_at AS "firstSelectedAt",
+            usage.last_selected_at AS "lastSelectedAt",
+            thread.title AS "threadTitle",
+            thread.archived_at AS "archivedAt",
+            json_extract(thread.payload_json, '$.settledAt') AS "settledAt",
+            CASE
+              WHEN json_extract(thread.payload_json, '$.developmentEnvironment.xwingEnvironmentId')
+                  = usage.xwing_environment_id
+                AND json_extract(thread.payload_json, '$.developmentEnvironment.repositorySource')
+                  = usage.repository_source
+              THEN 1 ELSE 0
+            END AS "current"
+          FROM orchestration_v2_projection_development_environment_usage AS usage
+          JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = usage.thread_id
+          WHERE thread.deleted_at IS NULL
+            AND (${filter.xwingEnvironmentId ?? null} IS NULL
+              OR usage.xwing_environment_id = ${filter.xwingEnvironmentId ?? null})
+            AND (${filter.threadId ?? null} IS NULL OR usage.thread_id = ${filter.threadId ?? null})
+          ORDER BY usage.last_selected_at DESC, usage.thread_id ASC
+        `.pipe(
+          Effect.flatMap(decodeDevelopmentEnvironmentUsageRows),
+          Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
         );
 
     const getCheckpointCaptureContext: ProjectionStoreV2Shape["getCheckpointCaptureContext"] = (
@@ -6706,13 +6858,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
-    const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (options) =>
-      sql<{ readonly thread_id: string; readonly worktree_path: string }>`
-        SELECT thread_id, json_extract(payload_json, '$.worktreePath') AS worktree_path
-        FROM orchestration_v2_projection_threads
-        WHERE deleted_at IS NULL
-          ${options?.includeArchived === true ? sql`` : sql`AND json_extract(payload_json, '$.archivedAt') IS NULL`}
-          AND json_extract(payload_json, '$.worktreePath') IS NOT NULL
+    const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (options) => {
+      const workspacePath = options?.includeProjectRoots
+        ? sql`COALESCE(json_extract(threads.payload_json, '$.worktreePath'), projects.workspace_root)`
+        : sql`json_extract(threads.payload_json, '$.worktreePath')`;
+      return sql<{ readonly thread_id: string; readonly worktree_path: string }>`
+        SELECT threads.thread_id, ${workspacePath} AS worktree_path
+        FROM orchestration_v2_projection_threads AS threads
+        LEFT JOIN projection_projects AS projects ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          ${options?.includeArchived === true ? sql`` : sql`AND json_extract(threads.payload_json, '$.archivedAt') IS NULL`}
+          AND ${workspacePath} IS NOT NULL
       `.pipe(
         Effect.map((rows) =>
           rows.map((row) => ({
@@ -6722,6 +6878,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
+    };
 
     const shellThreadStateFromRow =
       /* Runs once per shell row; the enclosing snapshot or thread read owns the span. */
@@ -7448,6 +7605,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRuntimeResponseContext: readOnReader(getRuntimeResponseContext),
       getCheckpointContext: readOnReader(getCheckpointContext),
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
+      getRootCheckpointScopeContext: readOnReader(getRootCheckpointScopeContext),
+      listDevelopmentEnvironmentUsage: readOnReader(listDevelopmentEnvironmentUsage),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
       canStartQueuedRun: readOnReader(canStartQueuedRun),

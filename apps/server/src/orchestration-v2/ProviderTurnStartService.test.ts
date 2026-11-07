@@ -80,6 +80,7 @@ function startWithMissingWorktree(
     [managedWorktreesDir]: managedWorktreesDir,
     [`${managedWorktreesDir}/project`]: `${managedWorktreesDir}/project`,
   },
+  xwingEnvironmentId?: string,
 ) {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
@@ -101,6 +102,17 @@ function startWithMissingWorktree(
       projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
       branch: "feature/restore",
       worktreePath,
+      developmentEnvironment:
+        xwingEnvironmentId === undefined
+          ? null
+          : {
+              xwingEnvironmentId,
+              repositorySource: "/tmp/provider-turn-start-project",
+              checkoutPath: worktreePath,
+              number: 3,
+              name: "restore",
+              selectedAt: "1970-01-01T00:00:00.000Z",
+            },
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     },
     runs: [
@@ -261,8 +273,18 @@ it.each([
     recreated: false,
   },
   { label: "a relative path", worktreePath: "project/feature-restore", recreated: false },
+  {
+    label: "an Xwing checkout at the managed location",
+    worktreePath: `${managedWorktreesDir}/project/feature-restore`,
+    xwingEnvironmentId: "0123abcd",
+    recreated: false,
+  },
 ])("recreates a missing worktree only at the managed location: $label", async (input) => {
-  const harness = startWithMissingWorktree(input.worktreePath, input.realPaths);
+  const harness = startWithMissingWorktree(
+    input.worktreePath,
+    input.realPaths,
+    input.xwingEnvironmentId,
+  );
   await harness.start;
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
 });

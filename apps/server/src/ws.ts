@@ -194,8 +194,12 @@ import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
+import { threadCheckoutGuard } from "./terminal/threadCheckoutGuard.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as XwingEnvironments from "./xwing/XwingEnvironments.ts";
+import * as DevelopmentEnvironments from "./developmentEnvironments/DevelopmentEnvironments.ts";
+import * as DevelopmentEnvironmentLifecycle from "./developmentEnvironments/DevelopmentEnvironmentLifecycle.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -1374,6 +1378,7 @@ export const layerWsRpc = (
       const intakeContext = yield* Effect.context<
         | ThreadManagementService.ThreadManagementService
         | ThreadLaunchService.ThreadLaunchService
+        | DevelopmentEnvironments.DevelopmentEnvironments
         | FileSystem.FileSystem
         | ServerConfig.ServerConfig
         | ServerSettings.ServerSettingsService
@@ -1418,6 +1423,10 @@ export const layerWsRpc = (
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
+      const xwingEnvironments = yield* XwingEnvironments.XwingEnvironments;
+      const developmentEnvironments = yield* DevelopmentEnvironments.DevelopmentEnvironments;
+      const environmentLifecycle =
+        yield* DevelopmentEnvironmentLifecycle.DevelopmentEnvironmentLifecycle;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -2287,6 +2296,20 @@ export const layerWsRpc = (
                         message: cause.message,
                         cause,
                       }),
+                    DevelopmentEnvironmentCheckoutUnavailableError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    DevelopmentEnvironmentProjectNotFoundError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
                   }),
                 ),
             ),
@@ -3007,6 +3030,7 @@ export const layerWsRpc = (
         [WS_METHODS.threadNotesSendSelection]: (input) => threadNotes.sendSelection(input),
         [WS_METHODS.threadWorkspaceGet]: (input) => threadWorkspace.get(input),
         [WS_METHODS.threadWorkspaceCounts]: (input) => threadWorkspace.counts(input),
+        [WS_METHODS.threadWorkspaceListWork]: (input) => threadWorkspace.listWork(input),
         [WS_METHODS.threadWorkspacePatch]: (input) => threadWorkspace.patch(input),
         [WS_METHODS.threadWorkspaceSaveDraft]: (input) => threadWorkspace.saveDraft(input),
         [WS_METHODS.threadWorkspaceSubmit]: (input) => threadWorkspace.submit(input),
@@ -3016,6 +3040,32 @@ export const layerWsRpc = (
         [WS_METHODS.reviewsSave]: (input) => reviewArtifacts.save(input),
         [WS_METHODS.reviewsSubmit]: (input) => reviewArtifacts.submit(input),
         [WS_METHODS.reviewsDue]: () => reviewArtifacts.due(),
+        [WS_METHODS.xwingEnvironmentsList]: () => xwingEnvironments.list(),
+        [WS_METHODS.xwingEnvironmentsInspect]: (input) => xwingEnvironments.inspect(input.id),
+        [WS_METHODS.developmentEnvironmentsListCheckouts]: (input) =>
+          developmentEnvironments.listCheckouts(input),
+        [WS_METHODS.developmentEnvironmentsListUsage]: (input) =>
+          developmentEnvironments.listUsage(input),
+        [WS_METHODS.developmentEnvironmentsSelectCheckout]: (input) =>
+          developmentEnvironments.selectCheckout({
+            threadId: input.threadId,
+            commandId: input.commandId,
+            expected: input.expected,
+            target: { type: "xwing", xwingEnvironmentId: input.xwingEnvironmentId },
+          }),
+        [WS_METHODS.developmentEnvironmentsCreate]: (input) => environmentLifecycle.create(input),
+        [WS_METHODS.developmentEnvironmentsAttach]: (input) => environmentLifecycle.attach(input),
+        [WS_METHODS.developmentEnvironmentsRepair]: (input) => environmentLifecycle.repair(input),
+        [WS_METHODS.developmentEnvironmentsListAppCommands]: (input) =>
+          environmentLifecycle.listAppCommands(input),
+        [WS_METHODS.developmentEnvironmentsStartApp]: (input) =>
+          environmentLifecycle.startApp(input),
+        [WS_METHODS.developmentEnvironmentsStopApp]: (input) => environmentLifecycle.stopApp(input),
+        [WS_METHODS.developmentEnvironmentsReadAppLogs]: (input) =>
+          environmentLifecycle.readAppLogs(input),
+        [WS_METHODS.developmentEnvironmentsAssessCleanup]: (input) =>
+          environmentLifecycle.assessCleanup(input),
+        [WS_METHODS.developmentEnvironmentsCleanUp]: (input) => environmentLifecycle.cleanUp(input),
         [WS_METHODS.agentSessionsProgress]: (input) => agentSessionProgress.progress(input),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
@@ -3178,9 +3228,14 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
-        [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
+        [WS_METHODS.terminalOpen]: (input) =>
+          terminalManager.open(input, threadCheckoutGuard(threadManagement)),
         [WS_METHODS.terminalAttach]: (input, metadata) =>
-          terminalManager.attachOutputStream(input, terminalViewerId(metadata)),
+          terminalManager.attachOutputStream(
+            input,
+            terminalViewerId(metadata),
+            threadCheckoutGuard(threadManagement),
+          ),
         [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
         [WS_METHODS.terminalResize]: (input, metadata) =>
           terminalManager.resize(input, terminalViewerId(metadata)),

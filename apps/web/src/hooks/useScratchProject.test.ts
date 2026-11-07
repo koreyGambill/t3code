@@ -20,6 +20,7 @@ function actions(
   primary: EnvironmentId | null,
   localRoot: string | null,
   remoteRoot: string | null = "/remote/scratch",
+  preferred: EnvironmentId | null = null,
 ) {
   const environments = [
     scratchEnvironment(local, localRoot),
@@ -29,6 +30,7 @@ function actions(
   return createScratchProjectActions({
     environments: () => environments,
     primaryEnvironmentId: () => primary,
+    preferredEnvironmentId: () => preferred,
     registry: AtomRegistry.make(),
     handleNewThread: async () => null,
   });
@@ -45,5 +47,31 @@ describe("scratchEnvironmentId", () => {
     expect(actions(null, null).scratchEnvironmentId(remote)).toBe(remote);
     expect(actions(null, null, null).scratchEnvironmentId(remote)).toBe(other);
     expect(actions(local, null).scratchEnvironmentId(null)).toBeNull();
+  });
+
+  it("uses the preferred machine over the primary and the one on screen", () => {
+    expect(
+      actions(local, "/local/scratch", "/remote/scratch", remote).scratchEnvironmentId(other),
+    ).toBe(remote);
+  });
+
+  it("does not fall back to the primary when the preferred machine has no scratch root", () => {
+    const scratch = actions(local, "/local/scratch", null, remote);
+    expect(scratch.scratchEnvironmentChoice(local)).toEqual({
+      kind: "preferred-unavailable",
+      environmentId: remote,
+    });
+    expect(scratch.scratchEnvironmentId(local)).toBeNull();
+  });
+
+  it("ignores a preferred machine that is no longer saved", () => {
+    expect(
+      actions(
+        local,
+        "/local/scratch",
+        "/remote/scratch",
+        "removed" as EnvironmentId,
+      ).scratchEnvironmentId(remote),
+    ).toBe(local);
   });
 });

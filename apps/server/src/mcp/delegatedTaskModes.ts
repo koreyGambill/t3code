@@ -87,6 +87,17 @@ export function resolveInteractionMode(
     : Effect.succeed(resolved);
 }
 
+/**
+ * The task after the parent thread's Workspace child preamble. The source is
+ * named so the child and the user reading its first message can tell the two apart.
+ */
+export function withChildPreamble(preamble: string, task: string): string {
+  const trimmed = preamble.trim();
+  return trimmed === ""
+    ? task
+    : `<child_preamble source="parent thread Workspace">\n${trimmed}\n</child_preamble>\nWhere the preamble and the task differ, follow the task.\n\n${task}`;
+}
+
 /** The task as its child receives it, with the role the caller asked for. */
 export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"

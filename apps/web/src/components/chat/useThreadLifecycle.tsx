@@ -594,6 +594,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const backgroundWorkNow = activeThread
     ? backgroundWorkNowItem({
         threadId: activeThread.id,
+        lineage: activeThread.lineage,
         tasks: activeBackgroundTasks,
         turnItems,
         stopDisabled: !canOperateThread || isStoppingBackgroundWork,

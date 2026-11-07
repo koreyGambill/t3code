@@ -1,4 +1,5 @@
 import {
+  DevelopmentEnvironmentSelectCheckoutResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -523,20 +524,38 @@ export const titleFromMessage = (message: string) => {
 const launchWorkspaceStrategy = (input: {
   readonly worktree: Option.Option<string>;
   readonly branch: Option.Option<string>;
+  readonly xwing: Option.Option<string>;
 }) =>
-  Option.match(input.worktree, {
-    onNone: () =>
-      Option.isSome(input.branch)
-        ? Effect.fail(new ThreadUsageError({ detail: "--branch needs --worktree <base-ref>." }))
-        : Effect.void,
-    onSome: (baseRef) =>
-      Effect.succeed({
-        type: "worktree" as const,
-        baseRef,
-        ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
-      }),
-  });
+  Option.isSome(input.xwing)
+    ? Option.isSome(input.worktree) || Option.isSome(input.branch)
+      ? Effect.fail(
+          new ThreadUsageError({
+            detail: "--xwing uses the environment's checkout; omit --worktree and --branch.",
+          }),
+        )
+      : Effect.succeed({
+          type: "xwing_environment" as const,
+          xwingEnvironmentId: input.xwing.value,
+        })
+    : Option.match(input.worktree, {
+        onNone: () =>
+          Option.isSome(input.branch)
+            ? Effect.fail(new ThreadUsageError({ detail: "--branch needs --worktree <base-ref>." }))
+            : Effect.void,
+        onSome: (baseRef) =>
+          Effect.succeed({
+            type: "worktree" as const,
+            baseRef,
+            ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
+          }),
+      });
 
+const xwingFlag = Flag.String("xwing").pipe(
+  Flag.withDescription(
+    "Run in this Xwing environment's checkout of the project, by environment id.",
+  ),
+  Flag.optional,
+);
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
   Flag.withDefault(false),
@@ -623,6 +642,7 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Branch name for the new worktree."),
     Flag.optional,
   ),
+  xwing: xwingFlag,
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -708,6 +728,37 @@ const threadSendCommand = Command.make("send", {
   ),
 );
 
+const threadMoveCommand = Command.make("move", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  xwing: Flag.String("xwing").pipe(
+    Flag.withDescription("Xwing environment id; the thread moves to its checkout of the project."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Move a stopped thread into an Xwing environment's checkout. Fails while the thread runs.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.move")(function* (tools) {
+          const moved = yield* tools.call(
+            "t3_xwing_environment_select",
+            { threadId, xwingEnvironmentId: flags.xwing },
+            DevelopmentEnvironmentSelectCheckoutResult,
+          );
+          yield* flags.json
+            ? printJson(moved)
+            : Console.log(moved.changed ? `Moved to ${moved.worktreePath}.` : "Already there.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -768,6 +819,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadMoveCommand,
     threadShowCommand,
   ]),
 );

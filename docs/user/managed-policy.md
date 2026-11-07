@@ -146,8 +146,8 @@ A few settings need care:
 - `worktreeCleanup`, which projects can also set, overrides the `worktree` rules in
   `storageCleanup`. Lock it along with those rules; T3 Code refuses a policy that locks only the
   rules.
-- Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
-  compaction choice still wins over `idleCompaction`.
+- `idleCompaction` and `compactIdleThreads` no longer trigger compaction. Claude Code's
+  own context threshold still applies.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
   or pin single fields with [`providers.instances`](#providers). T3 Code refuses a lock on one
   field inside an instance. A whole-instance lock covers only that instance; to cover every

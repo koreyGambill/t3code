@@ -31,10 +31,10 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
-        const { projection } = yield* readThread(input.threadId);
+        const { projection, caller } = yield* readThread(input.threadId);
         const workspace = yield* ThreadWorkspace;
         return yield* workspace
-          .mutate({ ...input, threadId: projection.thread.id })
+          .mutate({ ...input, threadId: projection.thread.id }, caller?.id ?? null)
           .pipe(Effect.mapError(failure));
       }),
   ),

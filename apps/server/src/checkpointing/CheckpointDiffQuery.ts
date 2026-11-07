@@ -175,29 +175,27 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
-      const firstScope =
-        input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
-          : undefined;
+      // Earlier turns ran in another checkout, so the range starts where this checkout's period did.
+      const periodBaseline = toScope.baselineOrdinalWithinScope ?? 0;
+      const fromOrdinal = Math.max(input.fromTurnCount, periodBaseline);
       const fromCheckpointRef =
-        input.fromTurnCount === 0
-          ? firstScope === undefined
-            ? undefined
-            : yield* checkpointRefForScopeOrdinal({
-                scopeId: firstScope.id,
-                ordinalWithinScope: 0,
-              }).pipe(Effect.provideService(Digest.Digest, digest))
+        fromOrdinal === periodBaseline
+          ? yield* checkpointRefForScopeOrdinal({
+              scopeId: toScope.id,
+              ordinalWithinScope: periodBaseline,
+            }).pipe(Effect.provideService(Digest.Digest, digest))
           : (
               parentCheckpoint ??
               readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+                (checkpoint) =>
+                  checkpoint.scopeId === toScope.id && checkpoint.appRunOrdinal === fromOrdinal,
               )
             )?.ref;
       if (fromCheckpointRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
-          turnCount: input.fromTurnCount,
+          turnCount: fromOrdinal,
           checkpoint: "from",
         });
       }
@@ -252,7 +250,7 @@ export const make = Effect.gen(function* () {
         remainingBytes -= patchBytes;
       }
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const turnDiff = buildTurnDiffResult({ ...input, fromTurnCount: fromOrdinal }, diff);
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,

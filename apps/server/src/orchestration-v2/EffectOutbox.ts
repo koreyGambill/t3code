@@ -102,6 +102,10 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
+    type: Schema.Literal("terminal.close-idle"),
+    worktreePath: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
     type: Schema.Literal("preview.cleanup"),
   }),
   Schema.Struct({
@@ -129,6 +133,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "scheduled-tasks.cleanup",
   "terminal.cleanup",
+  "terminal.close-idle",
   "preview.cleanup",
   "attachment.cleanup",
   "thread-title.generate",

@@ -99,6 +99,19 @@ it("names a lost subagent by the id the agent resumes it with", () => {
     id: "agent-1",
   });
   assert.isTrue(isAwaitedWork(ownShell));
+  assert.isFalse(
+    isAwaitedWork(
+      cancelledRosterTaskWork(
+        {
+          kind: "command",
+          taskId: "dev-server",
+          parentTaskId: "agent-1",
+          awaited: false,
+        },
+        { awaitUnmarked: true },
+      ),
+    ),
+  );
   const long = cancelledRosterTaskWork({
     kind: "command",
     taskId: "shell-1",

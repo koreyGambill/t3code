@@ -24,6 +24,7 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpTaskStatusInput,
+  OrchestratorMcpTaskProgressResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
@@ -85,7 +86,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
+    "Start one child agent with `task`, after this thread's Workspace child preamble when set. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -98,7 +99,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read one delegated task you started. Do not call it on a running task before its completion wakes you. `workState`: working, waiting_for_children, result_available. A finished turn with live child work is not done. `summary`: final result. Reading it marks it delivered.",
+    "Read one delegated task you started. A running task's completion wakes you. `workState`: working, waiting_for_children, result_available. A finished turn with live child work is not done. `summary`: final result. Reading it marks it delivered.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -107,6 +108,20 @@ const TaskStatusTool = Tool.make("task_status", {
 })
   .annotate(Tool.Title, "Get delegated task status")
   .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const TaskProgressTool = Tool.make("task_progress", {
+  description:
+    "Read compact progress for your delegated task: working, waiting, done, or question; its latest reply (at most 500 characters), and pending work count. Does not mark results delivered. Use task_status for the full result. Remote live details may be unavailable. Completion wakes you; do not poll.",
+  parameters: OrchestratorMcpTaskStatusInput,
+  success: OrchestratorMcpTaskProgressResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Get compact delegated task progress")
+  .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
@@ -270,7 +285,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim.",
+    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. `reply:true` in the result: its outcome arrives here as a message, so do not wait on or poll it. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,
@@ -353,6 +368,7 @@ export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,
+  TaskProgressTool,
   TaskCancelTool,
   WorkflowStopTool,
   BackgroundWaitTool,

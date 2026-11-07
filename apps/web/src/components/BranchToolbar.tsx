@@ -41,6 +41,7 @@ import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { XwingCheckoutChooser } from "./xwing/XwingCheckoutChooser";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -651,6 +652,9 @@ export const BranchToolbar = memo(function BranchToolbar({
     });
   };
 
+  // A started thread may move between checkouts while stopped; the server decides when.
+  const showXwingChooser = !forceNewWorktree && (isServerThread || !envModeLocked);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -809,6 +813,14 @@ export const BranchToolbar = memo(function BranchToolbar({
         </div>
       ) : null}
 
+      {showGitControls && showXwingChooser ? (
+        <XwingCheckoutChooser
+          environmentId={environmentId}
+          threadId={threadId}
+          draftId={draftId}
+          projectId={projectId}
+        />
+      ) : null}
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}

@@ -14,7 +14,6 @@ import { makeThreadProjectionFixture } from "../test-fixtures";
 import {
   deriveLatestContextWindowSnapshot,
   latestProviderTurnTokenUsage,
-  shouldOfferResumeCompaction,
 } from "@t3tools/client-runtime/state/context-window";
 
 const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
@@ -130,15 +129,6 @@ describe("latestProviderTurnTokenUsage", () => {
     expect(usage).toEqual(sourceUsage);
     const snapshot = deriveLatestContextWindowSnapshot([], usage);
     expect(snapshot?.usedTokens).toBe(513_000);
-    expect(
-      shouldOfferResumeCompaction({
-        provider: "claudeAgent",
-        usedTokens: snapshot?.usedTokens,
-        updatedAt: snapshot?.updatedAt,
-        promptCacheTtlMs: usage?.promptCacheTtlMs,
-        now: "2026-10-19T12:06:00.000Z",
-      }),
-    ).toBe(true);
   });
 
   it("replaces inherited usage with the fork's own report", () => {

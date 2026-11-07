@@ -2,10 +2,10 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
   ThreadId,
+  type ThreadActionItem,
   type ThreadWorkspace,
-  type ThreadWorkspacePatchInput,
+  type ThreadWorkspaceMutateInput,
   type ThreadWorkspaceSaveDraftInput,
-  type ThreadWorkspaceSubmitInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -94,6 +94,44 @@ function setup(multiSelect = false, retired = false) {
         html: null,
       },
     ],
+    agentWork: [
+      {
+        id: "w1",
+        ref: "W-1A2",
+        title: "Field-level merge",
+        status: "landed",
+        remaining: "",
+        source: "user ask",
+        details: "",
+        changed: "Answers and agent edits merge per field",
+        qaSteps: "Answer while the agent edits",
+        checks: "server merge tests",
+        userQa: "pending",
+        userQaNote: "",
+        completedAt: "2026-11-07T10:00:00.000Z",
+        recordedByThreadId: ThreadId.make("implementer"),
+      },
+    ],
+    verifications: [
+      {
+        id: "v1",
+        ref: "V-1",
+        workId: "w1",
+        verifier: "root",
+        method: "executed",
+        details: "vp test run",
+        testedRevision: "abc123",
+        result: "pass",
+        gaps: "no mobile",
+        evidence: "",
+        at: "2026-11-07T11:00:00.000Z",
+        recordedBy: "agent",
+        recordedByThreadId: ThreadId.make("root"),
+      },
+    ],
+    decisions: [],
+    contextItems: [],
+    childPreamble: "",
     designNotes: "",
     summaryNotes: "Reviewing the CLI contract.",
     relatedThreads: [],
@@ -121,32 +159,59 @@ function setup(multiSelect = false, retired = false) {
     }).pipe(Atom.keepAlive),
   );
   state.marks.mockReset().mockReturnValue(Atom.make(AsyncResult.success([])).pipe(Atom.keepAlive));
-  state.command.mockReset().mockImplementation(
-    async (
-      name: string,
-      {
-        input,
-      }: {
-        input: ThreadWorkspaceSaveDraftInput &
-          ThreadWorkspacePatchInput &
-          ThreadWorkspaceSubmitInput;
+  // Mirrors the server's per-entry merge: only an entry changed after the writer's revision conflicts.
+  const changedAt: Record<string, number> = {};
+  state.command
+    .mockReset()
+    .mockImplementation(
+      async (
+        name: string,
+        { input }: { input: ThreadWorkspaceSaveDraftInput & ThreadWorkspaceMutateInput },
+      ) => {
+        const conflict = () =>
+          AsyncResult.failure(Cause.fail(new Error("Workspace changed on another client.")));
+        const revision = workspace.revision + 1;
+        if (name === "save") {
+          for (const id of Object.keys(input.userDraft.questionAnswers))
+            if ((changedAt[`answer:${id}`] ?? 0) > input.expectedRevision) return conflict();
+          for (const id of Object.keys(input.userDraft.questionAnswers))
+            changedAt[`answer:${id}`] = revision;
+          workspace = {
+            ...workspace,
+            revision,
+            userDraft: {
+              questionAnswers: {
+                ...workspace.userDraft.questionAnswers,
+                ...input.userDraft.questionAnswers,
+              },
+              actionNotes: { ...workspace.userDraft.actionNotes, ...input.userDraft.actionNotes },
+            },
+          };
+        } else if (name === "patch") {
+          for (const change of input.changes) {
+            const key = `${change.kind}:${change.id}`;
+            if ((changedAt[key] ?? 0) > input.expectedRevision) return conflict();
+            changedAt[key] = revision;
+            workspace = {
+              ...workspace,
+              revision,
+              actionItems: workspace.actionItems.map((item) =>
+                item.id === change.id && change.status !== undefined
+                  ? { ...item, status: change.status as ThreadActionItem["status"] }
+                  : item,
+              ),
+              agentWork: workspace.agentWork.map((item) =>
+                item.id === change.id && change.userQa !== undefined
+                  ? { ...item, userQa: change.userQa }
+                  : item,
+              ),
+            };
+          }
+        }
+        appAtomRegistry.set(atom, AsyncResult.success(workspace));
+        return { _tag: "Success", value: workspace };
       },
-    ) => {
-      if (input.expectedRevision !== workspace.revision)
-        return AsyncResult.failure(Cause.fail(new Error("Workspace changed on another client.")));
-      workspace = {
-        ...workspace,
-        revision: workspace.revision + 1,
-        ...(name === "save"
-          ? { userDraft: input.userDraft }
-          : name === "patch"
-            ? { actionItems: input.actionItems ?? workspace.actionItems }
-            : {}),
-      };
-      appAtomRegistry.set(atom, AsyncResult.success(workspace));
-      return { _tag: "Success", value: workspace };
-    },
-  );
+    );
   useRightPanelStore.setState({
     byThreadKey: {},
     userActionRevisionByThreadKey: {},
@@ -179,6 +244,7 @@ function setup(multiSelect = false, retired = false) {
       appAtomRegistry.set(atom, AsyncResult.success(workspace));
     },
     externalEdit: () => {
+      changedAt["answer:q1"] = workspace.revision + 1;
       workspace = {
         ...workspace,
         revision: workspace.revision + 1,
@@ -286,7 +352,7 @@ it("shares expanded groups across tabs and sends explicit answers without accept
   await vi.waitFor(() => expect(useWorkspaceViewState.getState().focusedItem).toBeNull());
 });
 
-it("preserves multi-select local answers when another client changes the saved draft", async () => {
+it("keeps a conflicting local answer while unrelated edits still save", async () => {
   await using _viewport = await wideViewport();
   const fixture = setup(true);
   await using _screen = await render(<Panel />);
@@ -313,12 +379,8 @@ it("preserves multi-select local answers when another client changes the saved d
   await page.getByRole("tab", { name: /^Action items 1$/ }).click();
   await page.getByText("Share a config", { exact: true }).click();
   await page.getByRole("button", { name: "Mark done", exact: true }).click();
-  await vi.waitFor(() =>
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      "Workspace changed on another client.",
-    ),
-  );
-  expect(state.command.mock.calls.some(([name]) => name === "patch")).toBe(false);
+  await expect.element(page.getByRole("button", { name: "Reopen", exact: true })).toBeVisible();
+  expect(fixture.getWorkspace().actionItems[0]?.status).toBe("done");
   await page.getByRole("tab", { name: /^Questions 1$/ }).click();
   await page.getByText("What should a profile control?", { exact: true }).click();
   await page.getByRole("button", { name: "Reload saved answers" }).click();
@@ -368,4 +430,19 @@ it("adds a completed action without notes to the composer without sending it", a
     expect(draft?.threadContexts).toMatchObject([{ workspaceItemId: "a1" }]);
   });
   expect(state.command.mock.calls.some(([name]) => name === "submit")).toBe(false);
+});
+
+it("lists agent work apart from the user's actions and records human QA without changing agent status", async () => {
+  await using _viewport = await wideViewport();
+  const fixture = setup();
+  await using _screen = await render(<Panel />);
+  await page.getByRole("tab", { name: "Agent work", exact: true }).click();
+  await expect.element(page.getByText("Field-level merge", { exact: true })).toBeVisible();
+  await expect.element(page.getByText(/pass · independent run · root · at abc123/)).toBeVisible();
+  await expect.element(page.getByText("Share a config", { exact: true })).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Pass", exact: true }).click();
+  await expect.element(page.getByText("QA passed", { exact: true })).toBeVisible();
+  expect(fixture.getWorkspace().agentWork[0]).toMatchObject({ status: "landed", userQa: "passed" });
+  await page.getByRole("button", { name: "Back to pending", exact: true }).click();
+  await expect.element(page.getByText("QA pending", { exact: true })).toBeVisible();
 });

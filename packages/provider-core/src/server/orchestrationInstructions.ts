@@ -4,19 +4,13 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
-Ordinary coding tasks need no orchestration tools.
+Reference for T3's agent tools; the user's own instructions decide how much and how to delegate.
 
-- Subagents: use your native tool when the child uses your provider, a model it offers, and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked.
-- Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked, or fall back to native tools, Workflow, or CLIs. Never make a child's checkout in the shell or in \`task\`.
-- Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
-- Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
-- If you are a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
-  `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
-- Given a thread id, \`t3_thread_read\` it before you answer about it.
-- Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` to a T3 tool to act there. Ids are then that machine's, so pass \`threadId\`.
-- A machine the user names that is not linked ("delegate this to my vps"): call \`t3_environment_link\` with a \`hint\` from their words. Never ask for a pairing code in chat.
-- In your reply, mention a thread by its \`link\`, verbatim. Never a plain title or bare id.
-- A login, token, PIN or pairing code only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. When asked only to schedule, \`schedule_task\` without running its prompt.
+- Native subagents (Claude \`Agent\`, foreground or \`run_in_background:true\`; Codex \`spawn_agent\`) run on your provider and show nested under this thread. \`delegate_task\` starts a child T3 thread; only it can use another provider, a model your native tool lacks, settings beyond yours (\`target.options\`), or its own checkout (\`isolation:"worktree"\`; a shell checkout is not bound to the child). Get its targets from \`orchestrator_capabilities\` first. If the provider or model asked for is missing, say so rather than substituting one.
+- \`t3_thread_launch\` and \`create_threads\` make top-level threads in the user's sidebar, for when the user asks for a thread. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it. Without it: project root, not your worktree.`,
+  `- Given a thread id, \`t3_thread_read\` it before you answer about it. Mention a thread by its \`link\`, verbatim, never a plain title or bare id.
+- Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` to a T3 tool to act there; ids are then that machine's, so pass \`threadId\`. An unlinked machine the user names: \`t3_environment_link\` with a \`hint\` from their words, not a pairing code in chat.
+- A login, token, PIN or pairing code only the user can give: \`request_secret\`. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Thread workspace
 

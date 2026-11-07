@@ -682,7 +682,12 @@ export const make = Effect.gen(function* () {
             )
               continue;
             cancelledBackgroundNativeIds.add(task.taskId);
-            recordCancelledBackgroundWork(providerThread.id, cancelledRosterTaskWork(task));
+            recordCancelledBackgroundWork(
+              providerThread.id,
+              cancelledRosterTaskWork(task, {
+                awaitUnmarked: projection.thread.lineage?.relationshipToParent === "subagent",
+              }),
+            );
           }
         }
         events.push({

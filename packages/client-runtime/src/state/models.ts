@@ -1,4 +1,4 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { threadBackgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
@@ -134,6 +134,14 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
   );
 }
 
+export interface ThreadDevelopmentEnvironment {
+  readonly xwingEnvironmentId: string;
+  readonly number: number | null;
+  readonly name: string;
+  readonly checkoutPath: string;
+  readonly selectedAt: string;
+}
+
 export interface EnvironmentThreadShell {
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
@@ -187,6 +195,8 @@ export interface EnvironmentThreadShell {
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
+  /** The Xwing checkout the thread works in; null outside Xwing or from older servers. */
+  readonly developmentEnvironment?: ThreadDevelopmentEnvironment | null;
   /**
    * Server-tracked visited watermark. `undefined` means the environment's
    * server predates visited tracking and clients should fall back to any
@@ -218,14 +228,9 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-// Only work the agent waits on holds it: commands and monitors it left running
-// unmarked, such as a dev server, present the run's own status. The
-// server suppresses the roster while an interruptible activity run exists, so a
-// remaining roster is stronger than checkpoint-oriented waiting.
+// The server hides the roster while an interruptible run exists; remaining work outranks checkpoint waiting.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
-  const parkAtIdle =
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
-    thread.status !== "failed";
+  const parkAtIdle = threadBackgroundWorkHoldsCompletion(thread) && thread.status !== "failed";
   if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
     return null;
   }
@@ -297,6 +302,16 @@ export function presentThreadShell(
     pullRequests: threadPullRequestsOf(thread),
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
+    developmentEnvironment:
+      thread.developmentEnvironment == null
+        ? null
+        : {
+            xwingEnvironmentId: thread.developmentEnvironment.xwingEnvironmentId,
+            number: thread.developmentEnvironment.number,
+            name: thread.developmentEnvironment.name,
+            checkoutPath: thread.developmentEnvironment.checkoutPath,
+            selectedAt: iso(thread.developmentEnvironment.selectedAt),
+          },
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,

@@ -275,7 +275,7 @@ window indicator (legacy)** to see context usage. The meter is off by default
 and appears once the provider reports usage. Open it for usage details and
 **Compact context** when the provider supports compaction.
 
-Claude instances can also compact idle threads for you. See
+Claude Code also compacts at its configured context threshold. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals

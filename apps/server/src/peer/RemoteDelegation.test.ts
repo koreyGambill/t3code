@@ -36,6 +36,7 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -50,6 +51,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -462,7 +464,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
   });
   return Layer.merge(
-    McpHttpServer.layerOrchestratorToolkit,
+    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -474,7 +476,10 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
     Layer.provide(
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+      Layer.mergeAll(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+        Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
+      ),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
@@ -565,6 +570,8 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(ThreadWorkspace.layerTest),
+
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(

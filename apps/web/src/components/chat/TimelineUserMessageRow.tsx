@@ -455,8 +455,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const folded = userMessage.attribution === "agent";
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
+  // The user's own messages carry a sender when they bring back a side chat or fork.
   const senderShell = useQuietThreadShell(
-    folded && senderThreadId
+    senderThreadId
       ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
       : null,
   );
@@ -782,9 +783,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         floatActions ? "flex-wrap" : "shrink-0",
       )}
     >
-      {folded && senderThreadId ? (
+      {senderThreadId ? (
         <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
-          Open thread
+          {!folded && senderShell?.lineage.sideChat ? "Open side chat" : "Open thread"}
         </InlineButton>
       ) : null}
       <Tooltip>

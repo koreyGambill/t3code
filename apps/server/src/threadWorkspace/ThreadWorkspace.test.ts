@@ -2,16 +2,21 @@
 import * as NodeCrypto from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import {
+  CommandId,
   EnvironmentId,
   EventId,
+  isIndependentVerification,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   RunId,
+  CheckpointId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { formatWorkspaceFeedback } from "@t3tools/shared/workspaceFeedback";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -75,6 +80,8 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   let deleted = false;
   let threadFailure: Orchestrator.OrchestratorProjectionError | null = null;
   const attempts: ThreadManagement.ThreadManagementSendInput[] = [];
+  const messages: OrchestrationV2ConversationMessage[] = [];
+  const runs: OrchestrationV2Run[] = [];
   let failSend = false;
   const send: ThreadManagement.ThreadManagementService["Service"]["sendToThread"] = Effect.fn(
     "test.sendWorkspace",
@@ -93,11 +100,13 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
       createdBy: "user",
       creationSource: "web",
       text: input.text,
+      ...(input.context === undefined ? {} : { context: input.context }),
       attachments: [],
       streaming: false,
       createdAt: at,
       updatedAt: at,
     };
+    messages.push(message);
     const run: OrchestrationV2Run = {
       id: RunId.make("review-run"),
       threadId,
@@ -131,12 +140,20 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({ sendToThread: send }),
     Layer.mock(Orchestrator.OrchestratorV2)({
-      getThreadRecords: () =>
+      getThreadRecords: (requestedThreadId) =>
         threadFailure !== null
           ? Effect.fail(threadFailure)
           : Effect.succeed({
               ...projection,
-              thread: { ...projection.thread, deletedAt: deleted ? at : null },
+              messages,
+              runs,
+              thread: {
+                ...projection.thread,
+                id: requestedThreadId,
+                archivedAt: at,
+                settledAt: at,
+                deletedAt: deleted ? at : null,
+              },
             }),
     }),
   );
@@ -148,7 +165,24 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   });
   return {
     service: yield* open(),
+    addRun: (run: OrchestrationV2Run) => runs.push(run),
     attempts,
+    sendFromComposer: (
+      text: string,
+      context: ThreadManagement.ThreadManagementSendInput["context"],
+    ) =>
+      send({
+        projectId: projection.thread.projectId,
+        commandId: CommandId.make(`composer-${messages.length}`),
+        threadId,
+        messageId: MessageId.make(`composer-${messages.length}`),
+        text,
+        ...(context === undefined ? {} : { context }),
+        attachments: [],
+        mode: "queue",
+        createdBy: "user",
+        creationSource: "web",
+      }),
     failSend: () => {
       failSend = true;
     },
@@ -170,8 +204,72 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   };
 });
 
+it.effect("context marks persist a fixed run through renames and later turns", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const sent = yield* h.sendFromComposer("Scout findings", undefined);
+    const first = {
+      ...sent.run,
+      status: "completed" as const,
+      checkpointId: CheckpointId.make("mark-first-checkpoint"),
+    };
+    h.addRun(first);
+    const marked = yield* h.service.patch({
+      threadId,
+      expectedRevision: 0,
+      changes: [{ kind: "mark", name: "scout final", contextSource: {} }],
+    });
+    const mark = marked.markAnnotations[0]!;
+    expect(mark.contextSource).toEqual({
+      threadId,
+      runId: first.id,
+      checkpointId: first.checkpointId,
+    });
+    h.addRun({ ...first, id: RunId.make("mark-later-run"), ordinal: 2 });
+    const renamed = yield* h.service.patch({
+      threadId,
+      expectedRevision: marked.revision,
+      changes: [{ kind: "mark", url: mark.url, name: "ready for workers" }],
+    });
+    const reopened = yield* h.open();
+    expect((yield* reopened.get({ threadId })).markAnnotations).toEqual(renamed.markAnnotations);
+    expect(renamed.markAnnotations[0]?.contextSource).toEqual(mark.contextSource);
+    const moved = yield* h.service
+      .patch({
+        threadId,
+        expectedRevision: renamed.revision,
+        changes: [{ kind: "mark", url: mark.url, contextSource: {} }],
+      })
+      .pipe(Effect.flip);
+    expect(moved.code).toBe("invalid");
+    const ambiguous = yield* h.service
+      .patch({
+        threadId,
+        expectedRevision: renamed.revision,
+        changes: [
+          {
+            kind: "mark",
+            name: "ambiguous",
+            contextSource: {
+              runId: first.id,
+              checkpointId: CheckpointId.make("another-checkpoint"),
+            },
+          },
+        ],
+      })
+      .pipe(Effect.flip);
+    expect(ambiguous.code).toBe("invalid");
+    const removed = yield* h.service.patch({
+      threadId,
+      expectedRevision: renamed.revision,
+      changes: [{ kind: "mark", url: mark.url, remove: true }],
+    });
+    expect(removed.markAnnotations).toEqual([]);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect(
-  "persists partial edits across reconstruction and rejects stale writes without losing other sections",
+  "persists partial edits across reconstruction and rejects stale writes to the same field",
   () =>
     Effect.gen(function* () {
       const h = yield* harness();
@@ -180,23 +278,27 @@ it.effect(
       const saved = yield* h.service.patch({
         threadId,
         expectedRevision: 0,
-        actionItems: [item],
-        designNotes: "Use a small module",
+        changes: [{ kind: "action", title: item.title, details: item.details }],
+        summaryNotes: "Use a small module",
       });
       expect(saved.revision).toBe(1);
       expect(saved.updatedAt).not.toBeNull();
+      const actionId = saved.actionItems[0]!.id;
       const reopened = yield* h.open();
       expect(yield* reopened.get({ threadId })).toEqual(saved);
       const next = yield* reopened.patch({
         threadId,
         expectedRevision: 1,
-        summaryNotes: "Direction chosen",
-        actionItems: [{ ...item, status: "deferred" }],
+        changes: [{ kind: "action", id: actionId, status: "deferred" }],
       });
-      expect(next.designNotes).toBe(saved.designNotes);
+      expect(next.summaryNotes).toBe(saved.summaryNotes);
       expect(next.actionItems[0]?.status).toBe("deferred");
       const stale = yield* Effect.result(
-        reopened.patch({ threadId, expectedRevision: 1, designNotes: "Overwrite" }),
+        reopened.patch({
+          threadId,
+          expectedRevision: 1,
+          changes: [{ kind: "action", id: actionId, status: "done" }],
+        }),
       );
       expect(stale).toMatchObject({
         _tag: "Failure",
@@ -215,7 +317,9 @@ it.effect("serializes simultaneous compare-and-save edits", () =>
     const results = yield* Effect.forEach(
       ["one", "two"],
       (summaryNotes) =>
-        Effect.result(h.service.patch({ threadId, expectedRevision: 0, summaryNotes })),
+        Effect.result(
+          h.service.patch({ threadId, expectedRevision: 0, changes: [], summaryNotes }),
+        ),
       { concurrency: "unbounded" },
     );
     expect(results.filter(Result.isSuccess)).toHaveLength(1);
@@ -226,28 +330,25 @@ it.effect("serializes simultaneous compare-and-save edits", () =>
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect(
-  "rejects duplicate action IDs and malformed saved documents instead of resetting them",
-  () =>
-    Effect.gen(function* () {
-      const h = yield* harness();
-      const invalid = yield* Effect.result(
-        h.service.patch({ threadId, expectedRevision: 0, actionItems: [item, item] }),
-      );
-      expect(invalid).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } });
-      expect(yield* h.fs.exists(h.directory)).toBe(true);
-      const saved = yield* h.service.patch({ threadId, expectedRevision: 0, actionItems: [item] });
-      for (const contents of [
-        "{bad json",
-        JSON.stringify({ formatVersion: 1, workspace: { ...saved, threadId: "another-thread" } }),
-        JSON.stringify({ formatVersion: 1, workspace: { ...saved, actionItems: [item, item] } }),
-      ]) {
-        yield* h.fs.writeFileString(h.file, contents);
-        const failure = yield* Effect.result(h.service.get({ threadId }));
-        expect(failure).toMatchObject({ _tag: "Failure", failure: { code: "storage" } });
-        expect(yield* h.fs.readFileString(h.file)).toBe(contents);
-      }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+it.effect("rejects malformed saved documents instead of resetting them", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const saved = yield* h.service.patch({
+      threadId,
+      expectedRevision: 0,
+      changes: [{ kind: "action", title: item.title }],
+    });
+    for (const contents of [
+      "{bad json",
+      JSON.stringify({ formatVersion: 1, workspace: { ...saved, threadId: "another-thread" } }),
+      JSON.stringify({ formatVersion: 1, workspace: { ...saved, actionItems: [item, item] } }),
+    ]) {
+      yield* h.fs.writeFileString(h.file, contents);
+      const failure = yield* Effect.result(h.service.get({ threadId }));
+      expect(failure).toMatchObject({ _tag: "Failure", failure: { code: "storage" } });
+      expect(yield* h.fs.readFileString(h.file)).toBe(contents);
+    }
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect(
@@ -271,14 +372,14 @@ it.effect(
       h.setThreadFailure(broken);
       expect(
         yield* Effect.result(
-          h.service.patch({ threadId, expectedRevision: 0, summaryNotes: "No" }),
+          h.service.patch({ threadId, expectedRevision: 0, changes: [], summaryNotes: "No" }),
         ),
       ).toMatchObject({ _tag: "Failure", failure: { code: "thread", cause: broken } });
       h.setThreadFailure(null);
       yield* h.fs.writeFileString(h.directory, "blocks directory creation");
       expect(
         yield* Effect.result(
-          h.service.patch({ threadId, expectedRevision: 0, summaryNotes: "No" }),
+          h.service.patch({ threadId, expectedRevision: 0, changes: [], summaryNotes: "No" }),
         ),
       ).toMatchObject({ _tag: "Failure", failure: { code: "storage", cause: expect.anything() } });
       h.setDeleted();
@@ -288,7 +389,7 @@ it.effect(
       });
       expect(
         yield* Effect.result(
-          h.service.patch({ threadId, expectedRevision: 0, summaryNotes: "No" }),
+          h.service.patch({ threadId, expectedRevision: 0, changes: [], summaryNotes: "No" }),
         ),
       ).toMatchObject({ _tag: "Failure", failure: { code: "not_found" } });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -367,19 +468,13 @@ it.effect(
         recommendedOptionIds: ["storage"],
       });
       expect(current.userDraft.questionAnswers[question.id]?.notes).toBe("My private reasoning");
-      for (const groups of [
-        [
-          { id: "ungrouped", parentId: null, title: "Ungrouped" },
-          { id: "cycle", parentId: "cycle", title: "Cycle" },
-        ],
-        [
-          { id: "ungrouped", parentId: null, title: "Ungrouped" },
-          { id: "orphan", parentId: "missing", title: "Orphan" },
-        ],
-      ]) {
+      for (const changes of [
+        [{ kind: "group", id: groupId, parentId: groupId }],
+        [{ kind: "group", title: "Orphan", parentId: "missing" }],
+      ] as const) {
         expect(
           yield* Effect.result(
-            h.service.patch({ threadId, expectedRevision: current.revision, groups }),
+            h.service.patch({ threadId, expectedRevision: current.revision, changes }),
           ),
         ).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } });
       }
@@ -462,6 +557,10 @@ it.effect(
         outstandingActions: 1,
         designs: 0,
         relatedThreads: 0,
+        agentWork: 0,
+        openAgentWork: 0,
+        pendingQa: 0,
+        records: 0,
       });
       h.failSend();
       expect(
@@ -495,7 +594,10 @@ it.effect(
         itemIds: [question.id],
       });
       expect(detail.questions).toHaveLength(1);
-      expect(detail.submissions?.[0]?.markdown).toContain("Immediate");
+      expect(detail.questions?.[0]).toMatchObject({
+        status: "answered",
+        submitted: { text: expect.stringContaining("Answer: Immediate") },
+      });
       expect(JSON.stringify(detail)).not.toContain("Private undecided note");
       expect(
         (yield* h.service.submit({ threadId, expectedRevision: saved.revision, itemIds: [] }))
@@ -603,9 +705,454 @@ it.effect(
       const saved = yield* h.service.patch({
         threadId,
         expectedRevision: 5,
+        changes: [],
         summaryNotes: "Current state",
       });
       expect(yield* (yield* h.open()).get({ threadId })).toEqual(saved);
       expect(yield* h.fs.readFileString(reviewPath)).toBe(legacyReview);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("keeps the child preamble across reopen and reads saves without one as empty", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    yield* h.service.mutate({
+      threadId,
+      expectedRevision: 0,
+      changes: [],
+      childPreamble: "Use the shared env.",
+    });
+    const edited = yield* (yield* h.open()).patch({
+      threadId,
+      expectedRevision: 1,
+      changes: [],
+      childPreamble: "Use the shared env. Report friction.",
+    });
+    expect((yield* (yield* h.open()).get({ threadId })).childPreamble).toBe(
+      "Use the shared env. Report friction.",
+    );
+    const { childPreamble: _, ...older } = edited;
+    yield* h.fs.writeFileString(h.file, JSON.stringify({ formatVersion: 2, workspace: older }));
+    expect((yield* (yield* h.open()).get({ threadId })).childPreamble).toBe("");
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("merges a user answer and an agent edit that both started from the same revision", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const created = yield* h.service.mutate({
+      threadId,
+      expectedRevision: 0,
+      changes: [
+        { kind: "question", title: "Which rollout?" },
+        { kind: "action", title: "Confirm owner" },
+      ],
+    });
+    const question = created.items.find((entry) => entry.kind === "question")!;
+    const action = created.items.find((entry) => entry.kind === "action")!;
+    const seen = created.revision;
+    const agent = yield* h.service.mutate({
+      threadId,
+      expectedRevision: seen,
+      changes: [{ kind: "action", id: action.id, title: "Confirm the owner" }],
+      summaryNotes: "Agent caught up",
+    });
+    const user = yield* h.service.saveDraft({
+      threadId,
+      expectedRevision: seen,
+      userDraft: {
+        questionAnswers: { [question.id]: { selectedOptionIds: [], notes: "Slow" } },
+        actionNotes: {},
+      },
+    });
+    expect(user.revision).toBe(agent.revision + 1);
+    const status = yield* h.service.patch({
+      threadId,
+      expectedRevision: seen,
+      changes: [{ kind: "action", id: action.id, status: "done" }],
+    });
+    const reopened = yield* (yield* h.open()).get({ threadId });
+    expect(reopened).toEqual(status);
+    expect(reopened.summaryNotes).toBe("Agent caught up");
+    expect(reopened.actionItems).toMatchObject([{ title: "Confirm the owner", status: "done" }]);
+    expect(reopened.userDraft.questionAnswers[question.id]?.notes).toBe("Slow");
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("conflicts only on the same field or a removed item and never loses either write", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const created = yield* h.service.mutate({
+      threadId,
+      expectedRevision: 0,
+      changes: [
+        { kind: "question", title: "Q one" },
+        { kind: "action", title: "First" },
+        { kind: "action", title: "Second" },
+      ],
+    });
+    const [question, first, second] = created.items;
+    const seen = created.revision;
+    yield* h.service.mutate({
+      threadId,
+      expectedRevision: seen,
+      changes: [
+        { kind: "question", id: question!.ref, title: "Agent title" },
+        { kind: "action", id: second!.id, remove: true },
+      ],
+    });
+    yield* h.service.saveDraft({
+      threadId,
+      expectedRevision: seen,
+      userDraft: { questionAnswers: {}, actionNotes: { [first!.id]: "Device A" } },
+    });
+    const before = yield* h.service.get({ threadId });
+    for (const attempt of [
+      h.service.patch({
+        threadId,
+        expectedRevision: seen,
+        changes: [{ kind: "question", id: question!.id, title: "User title" }],
+      }),
+      h.service.patch({
+        threadId,
+        expectedRevision: seen,
+        changes: [{ kind: "action", id: second!.id, status: "done" }],
+      }),
+      h.service.saveDraft({
+        threadId,
+        expectedRevision: seen,
+        userDraft: { questionAnswers: {}, actionNotes: { [first!.id]: "Device B" } },
+      }),
+    ])
+      expect(yield* Effect.result(attempt)).toMatchObject({
+        _tag: "Failure",
+        failure: { code: "conflict", currentRevision: before.revision },
+      });
+    expect(yield* h.service.get({ threadId })).toEqual(before);
+    const merged = yield* h.service.patch({
+      threadId,
+      expectedRevision: seen,
+      changes: [
+        { kind: "action", id: second!.id, remove: true },
+        { kind: "action", id: first!.id, status: "deferred" },
+        { kind: "action", title: "Third" },
+      ],
+    });
+    expect(merged.questions[0]?.title).toBe("Agent title");
+    expect(merged.actionItems.map((entry) => [entry.title, entry.status])).toEqual([
+      ["First", "deferred"],
+      ["Third", "open"],
+    ]);
+    expect(merged.userDraft.actionNotes[first!.id]).toBe("Device A");
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "keeps agent work apart from user actions with server-set provenance and reads older saves",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* harness();
+      yield* h.fs.makeDirectory(h.directory, { recursive: true });
+      const older = {
+        ...Workspaces.emptyWorkspace(threadId),
+        revision: 26,
+        actionItems: [{ ...item, ref: "A-OLD", groupId: "ungrouped" }],
+        userDraft: { questionAnswers: {}, actionNotes: { decision: "Keep this" } },
+      };
+      const {
+        agentWork: _w,
+        decisions: _d,
+        contextItems: _c,
+        childPreamble: _p,
+        ...legacy
+      } = older;
+      yield* h.fs.writeFileString(h.file, JSON.stringify({ formatVersion: 2, workspace: legacy }));
+      expect(yield* h.service.get({ threadId })).toEqual(older);
+      yield* h.service.mutate({
+        threadId,
+        expectedRevision: 26,
+        changes: [
+          {
+            kind: "work",
+            title: "Add merge",
+            status: "active",
+            remaining: "web test",
+            source: "chat",
+          },
+          { kind: "decision", title: "Stamp per field", rationale: "Smallest merge" },
+          { kind: "decision", title: "No separate DB", decidedBy: "user", source: "chat" },
+        ],
+      });
+      const user = yield* h.service.patch({
+        threadId,
+        expectedRevision: 26,
+        changes: [{ kind: "context", category: "preference", title: "Dense rows" }],
+      });
+      const work = user.agentWork[0]!;
+      expect(user.actionItems).toEqual(older.actionItems);
+      expect(user.userDraft).toEqual(older.userDraft);
+      expect(
+        user.decisions.map((entry) => [entry.decidedBy, entry.status, entry.recordedBy]),
+      ).toEqual([
+        ["agent", "proposed", "agent"],
+        ["user", "accepted", "agent"],
+      ]);
+      expect(user.contextItems[0]).toMatchObject({ category: "preference", recordedBy: "user" });
+      const done = yield* h.service.mutate({
+        threadId,
+        expectedRevision: user.revision,
+        changes: [{ kind: "work", id: work.ref, status: "done", details: "Merged" }],
+      });
+      const record = yield* h.service.query({ threadId, section: "record" });
+      expect(record.agentWork).toMatchObject([
+        { status: "done", userQa: "pending", completedAt: expect.any(String) },
+      ]);
+      expect(record.actionItems).toEqual(older.actionItems);
+      expect(record.decisions).toHaveLength(2);
+      expect(done.revision).toBe(user.revision + 1);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("marks a question answered only once the user sends its feedback from the composer", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const created = yield* h.service.mutate({
+      threadId,
+      expectedRevision: 0,
+      changes: [
+        {
+          kind: "question",
+          title: "Which rollout?",
+          options: [{ id: "slow", label: "Gradual", description: "" }],
+        },
+        { kind: "question", title: "Recovery?" },
+      ],
+    });
+    const [question, other] = created.items;
+    const saved = yield* h.service.saveDraft({
+      threadId,
+      expectedRevision: created.revision,
+      userDraft: {
+        questionAnswers: {
+          [question!.id]: { selectedOptionIds: ["slow"], notes: "Watch the error rate" },
+          [other!.id]: { selectedOptionIds: [], notes: "Private, unsent" },
+        },
+        actionNotes: {},
+      },
+    });
+    expect((yield* h.service.query({ threadId })).items.map((item) => item.status)).toEqual([
+      "open",
+      "open",
+    ]);
+    const composed = formatWorkspaceFeedback(
+      { environmentId: EnvironmentId.make("test-environment"), threadId },
+      saved,
+      [question!.id],
+    );
+    yield* h.sendFromComposer(`Thoughts below.\n\n${composed.markdown}\n\nThanks`, {
+      version: 1,
+      records: composed.records,
+    });
+    const index = yield* h.service.query({ threadId });
+    expect(index.items.map((item) => [item.id, item.status])).toEqual([
+      [question!.id, "answered"],
+      [other!.id, "open"],
+    ]);
+    const open = yield* h.service.query({ threadId, section: "questions", status: ["open"] });
+    expect(open.questions?.map((item) => item.id)).toEqual([other!.id]);
+    const detail = yield* h.service.query({
+      threadId,
+      section: "questions",
+      itemIds: [question!.ref],
+    });
+    expect(detail.questions?.[0]?.submitted?.text).toContain("Answer: Gradual");
+    expect(detail.questions?.[0]?.submitted?.text).toContain("Notes: Watch the error rate");
+    expect(detail.questions?.[0]?.submitted?.text).not.toContain("Thoughts below");
+    expect(JSON.stringify(yield* h.service.query({ threadId, section: "all" }))).not.toContain(
+      "Private, unsent",
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("returns only the items an update changed unless the full index is requested", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const seeded = yield* h.service.mutate({
+      threadId,
+      expectedRevision: 0,
+      changes: [
+        { kind: "group", title: "Unrelated topic" },
+        { kind: "design", title: "Unrelated design", markdown: "Long body" },
+        { kind: "action", title: "Unrelated action" },
+        { kind: "work", title: "Ship merge" },
+      ],
+    });
+    const work = seeded.items.find((item) => item.kind === "work")!;
+    const update = yield* h.service.mutate({
+      threadId,
+      expectedRevision: seeded.revision,
+      changes: [{ kind: "work", id: work.ref, status: "landed", userQa: "pending" }],
+    });
+    expect(update.revision).toBe(seeded.revision + 1);
+    expect(update.groups).toEqual([]);
+    expect(update.items).toEqual([{ ...work, status: "landed" }]);
+    const removed = yield* h.service.mutate({
+      threadId,
+      expectedRevision: update.revision,
+      changes: [
+        {
+          kind: "action",
+          id: seeded.items.find((item) => item.kind === "action")!.id,
+          remove: true,
+        },
+      ],
+    });
+    expect(removed.items).toEqual([]);
+    expect(removed.removedIds).toHaveLength(1);
+    const full = yield* h.service.mutate({
+      threadId,
+      expectedRevision: removed.revision,
+      changes: [],
+      fullIndex: true,
+    });
+    expect(full.items.map((item) => item.kind)).toEqual(["design", "work"]);
+    expect(full.groups.map((group) => group.title)).toContain("Unrelated topic");
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "records QA evidence with server provenance so self-report never reads as independent",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* harness();
+      const implementer = ThreadId.make("implementer-thread");
+      const verifier = ThreadId.make("verifier-thread");
+      const created = yield* h.service.mutate(
+        {
+          threadId,
+          expectedRevision: 0,
+          changes: [
+            {
+              kind: "work",
+              title: "Field merge",
+              status: "landed",
+              changed: "Workspace writes merge per field",
+              qaSteps: "Answer a question while the agent edits",
+              checks: "vp test ThreadWorkspace.test.ts",
+              userQa: "pending",
+            },
+          ],
+        },
+        implementer,
+      );
+      const work = created.items[0]!;
+      const evidence = (writer: ThreadId, method: "executed" | "source-review") =>
+        h.service.mutate(
+          {
+            threadId,
+            expectedRevision: created.revision,
+            changes: [
+              {
+                kind: "verification",
+                workId: work.ref,
+                verifier: "Claimed independent reviewer",
+                method,
+                details: "vp test run",
+                testedRevision: "abc123",
+                result: "pass",
+                gaps: "No mobile pass",
+              },
+            ],
+          },
+          writer,
+        );
+      yield* evidence(implementer, "executed");
+      yield* evidence(verifier, "source-review");
+      yield* evidence(verifier, "executed");
+      const qa = yield* h.service.query({ threadId, section: "work", userQa: ["pending"] });
+      const item = qa.agentWork![0]!;
+      expect(item).toMatchObject({
+        status: "landed",
+        userQa: "pending",
+        recordedByThreadId: implementer,
+      });
+      expect(qa.verifications?.map((entry) => isIndependentVerification(item, entry))).toEqual([
+        false,
+        false,
+        true,
+      ]);
+      expect(isIndependentVerification({ recordedByThreadId: null }, qa.verifications![2]!)).toBe(
+        false,
+      );
+      expect(qa.verifications?.[0]).toMatchObject({
+        testedRevision: "abc123",
+        at: expect.any(String),
+      });
+      const aggregate = yield* h.service.listWork({ userQa: ["pending"] });
+      expect(aggregate).toHaveLength(1);
+      expect(aggregate[0]?.verifications).toEqual(qa.verifications);
+      expect(aggregate[0]?.item.recordedByThreadId).toBe(implementer);
+      const passed = yield* h.service.patch({
+        threadId,
+        expectedRevision: created.revision,
+        changes: [{ kind: "work", id: work.id, userQa: "passed" }],
+      });
+      expect(passed.agentWork[0]).toMatchObject({ status: "landed", userQa: "passed" });
+      expect(yield* h.service.counts({ threadId })).toMatchObject({
+        openAgentWork: 0,
+        pendingQa: 0,
+      });
+      expect(
+        (yield* h.service.query({ threadId, section: "work", userQa: ["pending"] })).agentWork,
+      ).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "lists persisted agent work across archived and settled threads without private fields",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* harness();
+      expect(yield* h.service.listWork({})).toEqual([]);
+      const secondThreadId = ThreadId.make("second-work-thread");
+      for (const id of [threadId, secondThreadId]) {
+        yield* h.service.patch({
+          threadId: id,
+          expectedRevision: 0,
+          changes: [
+            {
+              kind: "work",
+              title: `Work ${id}`,
+              status: "done",
+              changed: "Shipped",
+              qaSteps: "Try it",
+            },
+          ],
+        });
+        yield* h.service.saveDraft({
+          threadId: id,
+          expectedRevision: 1,
+          userDraft: { questionAnswers: {}, actionNotes: { secret: "private draft" } },
+        });
+      }
+      const rows = yield* h.service.listWork({});
+      expect(rows.map((row) => row.threadId).toSorted()).toEqual(
+        [threadId, secondThreadId].toSorted(),
+      );
+      expect(rows.every((row) => row.item.userQa === "pending")).toBe(true);
+      expect(rows.every((row) => row.threadTitle === "Thread")).toBe(true);
+      expect(JSON.stringify(rows)).not.toContain("private");
+      expect(yield* h.service.listWork({ userQa: ["passed"] })).toEqual([]);
+      const work = rows.find((row) => row.threadId === threadId)!;
+      yield* h.service.patch({
+        threadId,
+        expectedRevision: work.revision,
+        changes: [{ kind: "work", id: work.item.id, userQa: "issues", userQaNote: "Still broken" }],
+      });
+      const issues = yield* h.service.listWork({ userQa: ["issues"] });
+      expect(issues).toHaveLength(1);
+      expect(issues[0]?.item.userQaNote).toBe("Still broken");
+      h.setDeleted();
+      expect(yield* h.service.listWork({})).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

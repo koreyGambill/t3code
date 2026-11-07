@@ -79,3 +79,7 @@ export * from "./threadWorkspace.ts";
 export * from "./threadNotes.ts";
 export * from "./threadInsights.ts";
 export * from "./threadMarks.ts";
+export * from "./xwingEnvironments.ts";
+export * from "./xwingOperations.ts";
+export * from "./developmentEnvironments.ts";
+export * from "./developmentEnvironmentLifecycle.ts";

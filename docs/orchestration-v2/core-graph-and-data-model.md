@@ -309,10 +309,13 @@ type CheckpointScope = {
   advancesAppRunCount: boolean;
   cwd: string;
   createdAt: string;
+  baselineOrdinalWithinScope?: number;
 };
 ```
 
 Root run scopes have `advancesAppRunCount = true`. Child scopes, such as subagents, have `advancesAppRunCount = false` and are nested under the parent run's scope.
+
+A root scope covers one checkout period. A run continues the previous run's root scope only when both ran in the same directory; otherwise it opens a new scope whose `baselineOrdinalWithinScope` is the previous run's ordinal. Diffs never compare refs across scopes, and a full-thread diff starts at the destination scope's baseline, because a scope's refs only describe its own `cwd`. Restores use the scope's `cwd`, so a checkpoint taken in another checkout is refused rather than written into the current one.
 
 ## ProviderSession
 

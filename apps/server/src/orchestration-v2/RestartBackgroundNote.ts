@@ -99,8 +99,11 @@ function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind
   }
 }
 
-export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTask): Work {
-  if (task.parentTaskId !== undefined) {
+export function cancelledRosterTaskWork(
+  task: OrchestrationV2PendingBackgroundTask,
+  options?: { readonly awaitUnmarked?: boolean },
+): Work {
+  if (task.parentTaskId !== undefined && task.awaited !== false) {
     return {
       kind: "subagent",
       label: labelWithId(task.description, "background task", ` (subagent ${task.parentTaskId})`),
@@ -116,7 +119,7 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
         description === undefined ? task.taskId : `${description} (id ${task.taskId})`,
       ) ?? "background task",
     id: task.taskId,
-    ...(task.awaited === true ? { awaited: true as const } : {}),
+    ...((task.awaited ?? options?.awaitUnmarked) === true ? { awaited: true as const } : {}),
   };
 }
 

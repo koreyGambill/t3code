@@ -81,9 +81,18 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create": {
-      // Only the server stamps a link's origin, so a client cannot set one.
-      const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
+      // Origins and workspace ownership must come from server resolution.
+      const {
+        linkOrigin: _linkOrigin,
+        delegatedFrom: _delegatedFrom,
+        developmentEnvironment: _developmentEnvironment,
+        ...rest
+      } = command;
       return { ...rest, ...provenance };
+    }
+    case "thread.metadata.update": {
+      const { workspaceChange: _workspaceChange, ...rest } = command;
+      return rest;
     }
     case "message.dispatch":
     case "thread.fork":
@@ -814,6 +823,33 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  /** Whether a run, delegated task or background task will still wake the thread. */
+  const owesFollowUp = Effect.fn("ThreadManagementService.owesFollowUp")(function* (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+  }) {
+    const records = yield* getProjectThreadRecords(
+      input,
+      ["runs", "messages", "subagents", "providerThreads"],
+      { messageRoles: ["user"], monitorNotificationsOnly: true },
+    );
+    if (
+      records.runs.some((run) => !isTerminalRunStatus(run.status)) ||
+      delegatedTaskProgress(records).childrenPending
+    )
+      return true;
+    return yield* orchestrator.delegatedTaskResultPending(input.threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadManagementProjectionLoadError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+            cause,
+          }),
+      ),
+    );
+  });
+
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
   )(function* (input) {
@@ -833,7 +869,10 @@ const make = Effect.gen(function* () {
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (mode === "steer" || mode === "restart") {
+    if (mode === "steer" && steerableRun === undefined && (yield* owesFollowUp(input))) {
+      // Between turns, with work still due to wake the thread, the steer becomes its next turn.
+      dispatchMode = { type: "queue_after_active" };
+    } else if (mode === "steer" || mode === "restart") {
       if (steerableRun === undefined) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,

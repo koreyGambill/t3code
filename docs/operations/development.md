@@ -71,7 +71,12 @@ See [test data](../../AGENTS.md#test-data) for copying a consistent database sna
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
-different preference when needed.
+different preference when needed. `--port`/`T3CODE_PORT` and `--web-port`/`T3CODE_WEB_PORT` pin the
+backend and web ports instead; dev refuses to start when a pinned port is in use.
+
+`.xwing-env.yaml` declares the same workflow for Xwing. `xwing app run` pins both ports through
+those variables and reports their loopback URLs, and `xwing app install` runs the worktree setup
+script. Outside T3's setup action, that script finds the main checkout's env files through Git.
 
 ### Replay provider
 

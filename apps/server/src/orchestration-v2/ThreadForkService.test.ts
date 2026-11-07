@@ -152,6 +152,14 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
       historyOrigin: "v1_import",
       linkOrigin,
       tags: ["private"],
+      developmentEnvironment: {
+        xwingEnvironmentId: "aaaaaaaa",
+        repositorySource: "/repo",
+        checkoutPath: "/tmp/source-worktree",
+        number: 1,
+        name: "env 1",
+        selectedAt: sourceCreatedAt,
+      },
     };
     const sourceRun = makeSourceRun("completed");
     const result = yield* planFork(sourceRun, {
@@ -177,6 +185,10 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.equal(result.targetThread.interactionMode, sourceThread.interactionMode);
     assert.equal(result.targetThread.branch, sourceThread.branch);
     assert.equal(result.targetThread.worktreePath, sourceThread.worktreePath);
+    assert.deepEqual(result.targetThread.developmentEnvironment, {
+      ...sourceThread.developmentEnvironment!,
+      selectedAt: forkCreatedAt,
+    });
     assert.isNull(result.targetThread.activeProviderThreadId);
     assert.deepEqual(result.targetThread.lineage, {
       parentThreadId: sourceThreadId,

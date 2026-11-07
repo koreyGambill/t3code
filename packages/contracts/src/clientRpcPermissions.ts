@@ -25,6 +25,15 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.reviewsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewsSave]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewsSubmit]: AuthOrchestrationOperateScope,
+  // Moving a thread closes its idle terminals and provider sessions in the old checkout.
+  [WS_METHODS.developmentEnvironmentsSelectCheckout]: AuthOrchestrationOperateScope,
+  // Creating and repairing make worktrees and branches and run the repository's installs.
+  [WS_METHODS.developmentEnvironmentsCreate]: AuthSourceControlWriteScope,
+  [WS_METHODS.developmentEnvironmentsAttach]: AuthSourceControlWriteScope,
+  [WS_METHODS.developmentEnvironmentsRepair]: AuthSourceControlWriteScope,
+  [WS_METHODS.developmentEnvironmentsStartApp]: AuthTerminalOperateScope,
+  [WS_METHODS.developmentEnvironmentsStopApp]: AuthTerminalOperateScope,
+  [WS_METHODS.developmentEnvironmentsCleanUp]: AuthEnvironmentMaintainScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,

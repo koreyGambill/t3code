@@ -715,6 +715,7 @@ function ThreadDetailBody(
   };
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
+    props.selectedThread.lineage,
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({

@@ -4,7 +4,6 @@ import {
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -1407,25 +1406,15 @@ export function planComposerTurn(input: {
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly worktreePath: string | null;
   readonly activeThreadBranch: string | null;
-  readonly resumeCompactionTokens: number | null;
-  readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
   readonly dispatchMode: ComposerDispatchMode;
-  /** The turn starts a new provider session, so it neither compacts first nor steers. */
+  /** A new provider session cannot steer the current turn. */
   readonly freshContext: boolean;
 }) {
   const isFirstMessage =
     !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
   const shouldCreateWorktree =
     isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
-  // A stale Claude session compacts before this message so the turn does not re-read the
-  // old history. The message queues behind the /compact run, since steering into it is
-  // rejected.
-  const compactBeforeSend =
-    !input.freshContext &&
-    input.resumeCompactionTokens !== null &&
-    !input.keepFullHistory &&
-    !COMPACT_COMMAND_PATTERN.test(input.messageText);
   const dispatchMode =
     input.freshContext && (input.dispatchMode === "steer" || input.dispatchMode === "restart")
       ? "queue"
@@ -1435,13 +1424,9 @@ export function planComposerTurn(input: {
     // fall back to local execution when branch selection is missing.
     missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
     baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
-    compactBeforeSend,
-    turnDispatchMode:
-      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : dispatchMode,
+    turnDispatchMode: input.sendQueuesBehindSetup ? ("queue" as const) : dispatchMode,
     shouldQueueBehindActiveRun:
-      compactBeforeSend ||
-      input.sendQueuesBehindSetup ||
-      (input.phase === "running" && dispatchMode === "queue"),
+      input.sendQueuesBehindSetup || (input.phase === "running" && dispatchMode === "queue"),
   };
 }
 

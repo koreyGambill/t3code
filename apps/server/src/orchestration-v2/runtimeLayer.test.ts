@@ -8,6 +8,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
+  EnvironmentId,
   type ApplicationStoredEvent,
   CheckpointId,
   CheckpointRef,
@@ -67,6 +68,11 @@ import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as DevelopmentEnvironmentCheckouts from "../developmentEnvironments/DevelopmentEnvironmentCheckouts.ts";
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
+import * as DevelopmentEnvironmentHolds from "../developmentEnvironments/DevelopmentEnvironmentHolds.ts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as XwingOperations from "../xwing/XwingOperations.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
@@ -1095,11 +1101,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           assert.match(String(overlap.cause), /isolated worktree/);
           assert.equal(yield* orchestrator.getThreadEventSequence(threadId), overlapSequence);
           assert.deepEqual(yield* outbox.listByCommandId(overlapCommandId), []);
+          // The accepted rollback is still pending, which refuses a client's checkout move.
           yield* orchestrator.dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make("runtime-rollback-share"),
             threadId,
             worktreePath: null,
+            workspaceChange: "preparation",
           });
           const sharedCommandId = CommandId.make("runtime-rollback-shared");
           const sequence = yield* orchestrator.getThreadEventSequence(threadId);
@@ -2010,7 +2018,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
-  it.effect("refuses busy merge-back targets without blocking the queue", () =>
+  it.effect("queues a merge-back behind a busy target as its own message", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -2172,74 +2180,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       });
       const activeTarget = yield* orchestrator.getThreadProjection(targetThreadId);
       const targetRun = activeTarget.runs[0]!;
-      for (const status of ["preparing", "starting", "waiting", "queued", "running"] as const) {
-        yield* eventSink.write({
-          commandId: CommandId.make(`runtime-layer-merge-target-${status}`),
-          events: [
-            {
-              id: EventId.make(`runtime-layer-merge-target-${status}-event`),
-              type: "run.updated",
-              threadId: targetThreadId,
-              runId: targetRun.id,
-              occurredAt: now,
-              payload: { ...targetRun, status },
-            },
-          ],
-        });
-        const error = yield* orchestrator
-          .dispatch({
-            type: "thread.merge_back",
-            createdBy: "user",
-            creationSource: "mobile",
-            commandId: CommandId.make(`runtime-layer-merge-refused-${status}`),
-            sourceThreadId,
-            targetThreadId,
-            sourcePoint: { type: "run", runId: sourceRunId },
-          })
-          .pipe(Effect.flip);
-        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
-        assert.equal(
-          error.cause,
-          "Finish or stop the target thread's active work and clear its queue before merging back.",
-        );
-        const refusedTarget = yield* orchestrator.getThreadProjection(targetThreadId);
-        assert.deepEqual(refusedTarget.contextTransfers, activeTarget.contextTransfers);
-        assert.equal(refusedTarget.runs[0]?.status, status);
-      }
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-merge-target-queue"),
-        threadId: targetThreadId,
-        messageId: MessageId.make("runtime-layer-merge-target-queued-message"),
-        text: "Run this after the current turn.",
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-      });
-      const queuedTarget = yield* orchestrator.getThreadProjection(targetThreadId);
-      const queuedRun = queuedTarget.runs.find((run) => run.status === "queued");
-      assert.isDefined(queuedRun);
-      yield* orchestrator.dispatch({
-        type: "queued-run.cancel",
-        commandId: CommandId.make("runtime-layer-merge-target-cancel-queue"),
-        threadId: targetThreadId,
-        runId: queuedRun.id,
-      });
       yield* eventSink.write({
-        commandId: CommandId.make("runtime-layer-merge-target-complete"),
+        commandId: CommandId.make("runtime-layer-merge-target-running"),
         events: [
           {
-            id: EventId.make("runtime-layer-merge-target-completed-event"),
+            id: EventId.make("runtime-layer-merge-target-running-event"),
             type: "run.updated",
             threadId: targetThreadId,
             runId: targetRun.id,
             occurredAt: now,
-            payload: { ...targetRun, status: "completed", completedAt: now },
+            payload: { ...targetRun, status: "running" },
           },
         ],
       });
-
       yield* orchestrator.dispatch({
         type: "thread.merge_back",
         createdBy: "user",
@@ -2257,6 +2210,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       );
       assert.isDefined(transfer);
       assert.equal(transfer.status, "pending");
+      const queuedRun = mergedTarget.runs.find((run) => run.id === transfer.targetRunId);
+      assert.equal(queuedRun?.status, "queued");
+      assert.equal(mergedTarget.runs.find((run) => run.id === targetRun.id)?.status, "running");
+      assert.equal(
+        mergedTarget.messages.find((message) => message.id === queuedRun?.userMessageId)
+          ?.senderThreadId,
+        sourceThreadId,
+      );
       assert.equal(transfer.sourceThreadId, sourceThreadId);
       assert.equal(transfer.targetThreadId, targetThreadId);
       assert.equal(transfer.sourcePoint.runId, sourceRunId);
@@ -2803,6 +2764,293 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
     }),
+  );
+
+  it.effect(
+    "moves a stopped thread between Xwing checkouts and keeps every period in replayable history",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
+        const threadId = ThreadId.make("runtime-layer-xwing-thread");
+        const projectId = ProjectId.make("runtime-layer-xwing-project");
+        yield* seedProject({
+          projectId,
+          title: "Xwing project",
+          workspaceRoot: "/workspace/xwing",
+          defaultModelSelection: null,
+          createdAt: "2026-11-07T00:00:00.000Z",
+        });
+        const checkout = (id: string, number: number) => ({
+          xwingEnvironmentId: id,
+          repositorySource: "/workspace/xwing",
+          checkoutPath: `/xwing/envs/${number}/repo`,
+          number,
+          name: `env ${number}`,
+        });
+        const checkoutA = checkout("aaaaaaaa", 1);
+        const checkoutB = checkout("bbbbbbbb", 2);
+        const createdAt = yield* DateTime.now;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-xwing-create"),
+          threadId,
+          projectId,
+          title: "Xwing thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/a",
+          worktreePath: checkoutA.checkoutPath,
+          developmentEnvironment: checkoutA,
+        });
+        let busyTerminalCheckout: string | null | undefined;
+        const holds: Array<{ readonly id: string; readonly owner: string; readonly key: string }> =
+          [];
+        const layerEnvironments = DevelopmentEnvironments.layer.pipe(
+          Layer.provide(DevelopmentEnvironmentHolds.layer),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(TerminalManager.TerminalManager)({
+                hasForegroundWork: ({ worktreePath }) =>
+                  Effect.sync(() => busyTerminalCheckout === worktreePath),
+              }),
+              Layer.mock(ServerEnvironmentIdentity)({
+                getEnvironmentId: Effect.succeed(EnvironmentId.make("server-environment")),
+              }),
+              Layer.mock(XwingOperations.XwingOperations)({
+                registerHold: (hold) =>
+                  Effect.sync(() => {
+                    holds.push(hold);
+                    return {} as never;
+                  }),
+              }),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome({ workspaceRoot: "/workspace/xwing" } as never),
+              }),
+              Layer.mock(DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckouts)({
+                resolve: ({ xwingEnvironmentId }) => {
+                  const target = [checkoutA, checkoutB].find(
+                    (candidate) => candidate.xwingEnvironmentId === xwingEnvironmentId,
+                  )!;
+                  return Effect.succeed({ ...target, branch: `feature/${target.number}` });
+                },
+              }),
+            ),
+          ),
+        );
+        const select = (
+          name: string,
+          expected: {
+            readonly worktreePath: string | null;
+            readonly xwingEnvironmentId: string | null;
+          },
+          target: typeof checkoutA,
+        ) =>
+          Effect.flatMap(DevelopmentEnvironments.DevelopmentEnvironments, (environments) =>
+            environments.selectCheckout({
+              threadId,
+              commandId: CommandId.make(`runtime-layer-xwing-${name}`),
+              expected,
+              target: { type: "xwing", xwingEnvironmentId: target.xwingEnvironmentId },
+            }),
+          ).pipe(Effect.provide(layerEnvironments));
+        const workspace = Effect.map(orchestrator.getThreadProjection(threadId), ({ thread }) => ({
+          worktreePath: thread.worktreePath,
+          xwingEnvironmentId: thread.developmentEnvironment?.xwingEnvironmentId ?? null,
+        }));
+        const inA = { worktreePath: checkoutA.checkoutPath, xwingEnvironmentId: "aaaaaaaa" };
+        const inB = { worktreePath: checkoutB.checkoutPath, xwingEnvironmentId: "bbbbbbbb" };
+
+        yield* TestClock.adjust("1 minute");
+        const now = yield* DateTime.now;
+        const run = {
+          id: RunId.make("runtime-layer-xwing-run"),
+          threadId,
+          ordinal: 1,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("runtime-layer-xwing-message"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "queued" as const,
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const writeRun = (status: "queued" | "running" | "completed") =>
+          eventSink.write({
+            commandId: CommandId.make(`runtime-layer-xwing-run-${status}`),
+            events: [
+              {
+                id: EventId.make(`runtime-layer-xwing-run-${status}`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: { ...run, status },
+              },
+            ],
+          });
+        const moveByMetadata = (name: string, worktreePath: string | null) =>
+          orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`runtime-layer-xwing-metadata-${name}`),
+            threadId,
+            worktreePath,
+            branch: null,
+          });
+        for (const status of ["queued", "running"] as const) {
+          yield* writeRun(status);
+          const busy = yield* select(`busy-${status}`, inA, checkoutB).pipe(Effect.flip);
+          assert.instanceOf(
+            busy,
+            DevelopmentEnvironments.DevelopmentEnvironmentSelectionRejectedError,
+          );
+          assert.equal(busy.reason, "work-in-progress");
+          const busyMetadata = yield* moveByMetadata(`busy-${status}`, "/native/worktree").pipe(
+            Effect.flip,
+          );
+          assert.instanceOf(busyMetadata, Orchestrator.OrchestratorWorkspaceSelectionRejectedError);
+          assert.deepEqual(yield* workspace, inA);
+        }
+        yield* writeRun("completed");
+        busyTerminalCheckout = checkoutA.checkoutPath;
+        const busyTerminal = yield* select("busy-terminal", inA, checkoutB).pipe(Effect.flip);
+        assert.instanceOf(
+          busyTerminal,
+          DevelopmentEnvironments.DevelopmentEnvironmentSelectionRejectedError,
+        );
+        assert.equal(busyTerminal.reason, "work-in-progress");
+        assert.deepEqual(yield* workspace, inA);
+        busyTerminalCheckout = undefined;
+
+        const toB = yield* select("to-b", inA, checkoutB);
+        const selectedB = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(yield* workspace, inB);
+        assert.equal(selectedB.thread.branch, "feature/2");
+        assert.deepEqual(toB, {
+          changed: true,
+          sequence: toB.sequence,
+          worktreePath: checkoutB.checkoutPath,
+          branch: "feature/2",
+          developmentEnvironment: selectedB.thread.developmentEnvironment!,
+        });
+        assert.equal(
+          DateTime.toEpochMillis(selectedB.thread.developmentEnvironment!.selectedAt),
+          DateTime.toEpochMillis(now),
+        );
+        // Only idle shells from the checkout the thread left close; history and busy shells stay.
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(CommandId.make("runtime-layer-xwing-to-b"))).map(
+            (effect) => effect.request,
+          ),
+          [{ type: "terminal.close-idle", worktreePath: checkoutA.checkoutPath }],
+        );
+
+        const stale = yield* select("stale", inA, checkoutA).pipe(Effect.flip);
+        assert.instanceOf(
+          stale,
+          DevelopmentEnvironments.DevelopmentEnvironmentSelectionRejectedError,
+        );
+        assert.equal(stale.reason, "workspace-changed");
+        assert.deepEqual(yield* workspace, inB);
+
+        yield* TestClock.adjust("1 minute");
+        const repeated = yield* select("repeat-b", inB, checkoutB);
+        assert.equal(repeated.changed, false);
+        assert.equal(repeated.sequence, toB.sequence);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.developmentEnvironment,
+          selectedB.thread.developmentEnvironment,
+        );
+
+        yield* select("back-to-a", inB, checkoutA);
+        const backAt = yield* DateTime.now;
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (candidate) => candidate.id === threadId,
+        );
+        assert.equal(shell?.developmentEnvironment?.xwingEnvironmentId, "aaaaaaaa");
+        assert.deepEqual(
+          (yield* projections.listDevelopmentEnvironmentUsage({ threadId })).map((row) => [
+            row.xwingEnvironmentId,
+            row.current,
+            row.threadTitle,
+            row.archivedAt,
+          ]),
+          [
+            ["aaaaaaaa", true, "Xwing thread", null],
+            ["bbbbbbbb", false, "Xwing thread", null],
+          ],
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* moveByMetadata("native", "/native/worktree");
+        assert.deepEqual(yield* workspace, {
+          worktreePath: "/native/worktree",
+          xwingEnvironmentId: null,
+        });
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(
+            CommandId.make("runtime-layer-xwing-metadata-native"),
+          )).map((effect) => effect.request),
+          [{ type: "terminal.close-idle", worktreePath: checkoutA.checkoutPath }],
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("runtime-layer-xwing-archive"),
+          threadId,
+        });
+
+        const usage = Effect.map(
+          projections.listDevelopmentEnvironmentUsage({ threadId }),
+          (rows) =>
+            rows.map((row) => [row.xwingEnvironmentId, row.firstSelectedAt, row.lastSelectedAt]),
+        );
+        const expectedUsage = [
+          ["aaaaaaaa", DateTime.formatIso(createdAt), DateTime.formatIso(backAt)],
+          ["bbbbbbbb", DateTime.formatIso(now), DateTime.formatIso(now)],
+        ];
+        assert.deepEqual(yield* usage, expectedUsage);
+        // One hold per move, each under its own key; rejected and repeated selections add none.
+        assert.deepEqual(
+          holds.map((hold) => [hold.id, hold.key]),
+          [
+            [
+              "bbbbbbbb",
+              DevelopmentEnvironmentHolds.holdKey({
+                threadId,
+                period: "runtime-layer-xwing-to-b",
+              }),
+            ],
+            [
+              "aaaaaaaa",
+              DevelopmentEnvironmentHolds.holdKey({
+                threadId,
+                period: "runtime-layer-xwing-back-to-a",
+              }),
+            ],
+          ],
+        );
+        const archivedUsage = yield* projections.listDevelopmentEnvironmentUsage({
+          xwingEnvironmentId: "bbbbbbbb",
+        });
+        assert.deepEqual(
+          archivedUsage.map((row) => [row.threadId, row.current]),
+          [[threadId, false]],
+        );
+        assert.isNotNull(archivedUsage[0]?.archivedAt);
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepEqual(yield* usage, expectedUsage);
+      }),
   );
 
   it.effect("keeps the branch pull request when linking another pull request", () =>

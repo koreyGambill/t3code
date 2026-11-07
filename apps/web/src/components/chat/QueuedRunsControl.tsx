@@ -114,9 +114,11 @@ export function QueuedRunsControl({
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
-  const canSendRun = (freshContext: boolean) =>
+  // A Bring back delivers its context only when its own turn starts.
+  const canSendRun = (freshContext: boolean, bringsBack: boolean) =>
     workflow?.canSendNow === true ||
     (workflow?.canPromoteToSteer === true &&
+      !bringsBack &&
       (!freshContext || workflow.promoteSkipsCompaction === true));
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
@@ -128,12 +130,13 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments, context, message, bringsBack }, serverIndex) => ({
       key: run.id,
       message,
       runId: run.id,
       messageId: run.userMessageId,
       freshContext: run.freshContext === true,
+      bringsBack,
       serverIndex,
       text,
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
@@ -154,6 +157,7 @@ export function QueuedRunsControl({
       runId: null,
       messageId: null,
       freshContext: false,
+      bringsBack: false,
       serverIndex: null,
       text: message.text,
       editable: true,
@@ -170,10 +174,12 @@ export function QueuedRunsControl({
   ];
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    const freshContext = queued.some(
-      ({ run }) => run.id === queuedRunId && run.freshContext === true,
-    );
-    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
+    const entry = queued.find(({ run }) => run.id === queuedRunId);
+    if (
+      !canSendRun(entry?.run.freshContext === true, entry?.bringsBack === true) ||
+      steerInFlightRef.current
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -194,7 +200,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      if (!next || !canSendRun(next.run.freshContext === true, next.bringsBack)) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -275,7 +281,7 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSendRun(item.freshContext) && !isEditing ? (
+                {canSendRun(item.freshContext, item.bringsBack) && !isEditing ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -421,9 +427,7 @@ function QueuedMessage(props: {
   const [expanded, setExpanded] = useState(false);
   const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
   const senderShell = useQuietThreadShell(
-    attribution === "agent" && senderThreadId
-      ? { environmentId: props.environmentId, threadId: senderThreadId }
-      : null,
+    senderThreadId ? { environmentId: props.environmentId, threadId: senderThreadId } : null,
   );
   const fold =
     attribution === "automation"
@@ -508,9 +512,11 @@ function QueuedMessage(props: {
       <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
         {props.message ? (
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
-            {attribution === "agent" && senderThreadId ? (
+            {senderThreadId ? (
               <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
-                Open thread
+                {attribution !== "agent" && senderShell?.lineage.sideChat
+                  ? "Open side chat"
+                  : "Open thread"}
               </InlineButton>
             ) : null}
             {scheduledTaskId ? (

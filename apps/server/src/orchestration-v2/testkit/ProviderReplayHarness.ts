@@ -365,7 +365,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer, layerStores)),
   );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(IdAllocator.layer),

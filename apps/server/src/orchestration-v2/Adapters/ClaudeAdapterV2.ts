@@ -82,6 +82,7 @@ import {
   mcpAppToolResourceUri,
 } from "@t3tools/shared/mcpApp";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
@@ -2012,6 +2013,7 @@ export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 // Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
+  "mcp__t3-code__task_progress",
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_thread_list",
   "mcp__t3-code__t3_thread_wait",
@@ -2023,6 +2025,8 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_preview_list",
   "mcp__t3-code__t3_environment_read",
   "mcp__t3-code__t3_environment_links",
+  "mcp__t3-code__t3_xwing_environment_list",
+  "mcp__t3-code__t3_xwing_environment_threads",
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
   "mcp__t3-code__review_create",
@@ -3261,15 +3265,6 @@ function isClaudeRootTurnFrame(message: SDKMessage): boolean {
     isClaudeTurnStartMessage(message) ||
     ((message.type === "user" || message.type === "assistant" || message.type === "stream_event") &&
       message.parent_tool_use_id == null)
-  );
-}
-
-function claudePendingBackgroundTasksFromRoster(
-  roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
-  awaitedTaskIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
-  return Array.from(roster.values(), (task) =>
-    awaitedTaskIds.has(task.taskId) ? { ...task, awaited: true as const } : task,
   );
 }
 
@@ -5176,15 +5171,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const lastTurnRouteByNativeThread = yield* Ref.make(
           new Map<
             string,
-            { readonly threadId: ThreadId; readonly providerThreadId: ProviderThreadId }
+            {
+              readonly threadId: ThreadId;
+              readonly providerThreadId: ProviderThreadId;
+              readonly delegated: boolean;
+            }
           >(),
         );
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
-        );
-        // Survives roster REPLACE levels, which rebuild every entry without the agent's mark.
-        const awaitedBackgroundTasksByNativeThread = yield* Ref.make(
-          new Map<string, Set<string>>(),
         );
         // Wake eligibility is separate from the Waiting roster. It survives empty
         // background_tasks_changed levels (SDK: empty level can precede task_notification) and
@@ -5660,16 +5655,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
             input.nativeThreadId,
           );
-          const awaitedTaskIds = taskIdSetForNativeThread(
-            yield* Ref.get(awaitedBackgroundTasksByNativeThread),
-            input.nativeThreadId,
-          );
           const now = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
-            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster, awaitedTaskIds),
+            pendingBackgroundTasks: Array.from(roster.values()),
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),
@@ -5732,36 +5723,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId: string,
             tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
           ) {
+            const previous = rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              nativeThreadId,
+            );
+            const markedTasks = tasks.map((task) => {
+              const awaited = previous.get(task.taskId)?.awaited;
+              return awaited === undefined ? task : { ...task, awaited };
+            });
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
-              if (tasks.length === 0) {
+              if (markedTasks.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
                 updated.set(
                   nativeThreadId,
-                  new Map(tasks.map((task) => [task.taskId, task] as const)),
+                  new Map(markedTasks.map((task) => [task.taskId, task] as const)),
                 );
               }
               return updated;
             });
-            yield* rememberOpaqueTasks(tasks);
-            if (tasks.length > 0) {
+            yield* rememberOpaqueTasks(markedTasks);
+            if (markedTasks.length > 0) {
               yield* markWakeEligibleOpaqueBackgroundTasks(
                 nativeThreadId,
-                tasks.map((task) => task.taskId),
+                markedTasks.map((task) => task.taskId),
               );
             }
-            const listed = new Set(tasks.map((task) => task.taskId));
-            yield* Ref.update(awaitedBackgroundTasksByNativeThread, (current) => {
-              const awaited = current.get(nativeThreadId);
-              if (awaited === undefined) return current;
-              const kept = new Set([...awaited].filter((taskId) => listed.has(taskId)));
-              if (kept.size === awaited.size) return current;
-              const updated = new Map(current);
-              if (kept.size === 0) updated.delete(nativeThreadId);
-              else updated.set(nativeThreadId, kept);
-              return updated;
-            });
           });
 
         const upsertPendingBackgroundTask =
@@ -5772,7 +5760,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const roster = new Map(rosterForNativeThread(current, nativeThreadId));
-              roster.set(task.taskId, task);
+              const awaited = roster.get(task.taskId)?.awaited;
+              roster.set(task.taskId, awaited === undefined ? task : { ...task, awaited });
               return new Map(current).set(nativeThreadId, roster);
             });
             yield* rememberOpaqueTasks([task]);
@@ -5794,15 +5783,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.set(nativeThreadId, nextRoster);
             }
             return [true, updated] as const;
-          }).pipe(
-            Effect.tap(() =>
-              clearTaskIdFromNativeThreadSet(
-                awaitedBackgroundTasksByNativeThread,
-                nativeThreadId,
-                taskId,
-              ),
-            ),
-          );
+          });
 
         const clearPendingBackgroundTasksForNativeThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -5815,7 +5796,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(nativeThreadId);
               return updated;
             });
-            yield* clearNativeThreadTaskIdSet(awaitedBackgroundTasksByNativeThread, nativeThreadId);
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
 
@@ -8145,13 +8125,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         yield* Ref.get(pendingBackgroundTasksByNativeThread),
                         nativeThreadId,
                       );
-                const awaitedTaskIds =
-                  nativeThreadId === null
-                    ? new Set<string>()
-                    : taskIdSetForNativeThread(
-                        yield* Ref.get(awaitedBackgroundTasksByNativeThread),
-                        nativeThreadId,
-                      );
                 // A stopped turn that wrote to the transcript moved past the pinned head.
                 const clearConversationHead =
                   (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
@@ -8190,10 +8163,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.input.providerThread.firstRunOrdinal ??
                     input.context.input.runOrdinal,
                   lastRunOrdinal: input.context.input.runOrdinal,
-                  pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(
-                    roster,
-                    awaitedTaskIds,
-                  ),
+                  pendingBackgroundTasks: Array.from(roster.values()),
                   status: input.status === "completed" ? "active" : "idle",
                   updatedAt: input.completedAt,
                 };
@@ -8646,6 +8616,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           const message = input.message;
           let rosterChanged = false;
+          const delegated =
+            (yield* Ref.get(lastTurnRouteByNativeThread)).get(input.nativeThreadId)?.delegated ===
+            true;
 
           if (isClaudeBackgroundTasksChangedMessage(message)) {
             const roster = Reflect.get(message, "tasks");
@@ -8672,6 +8645,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nextTasks.push(task);
               }
             }
+            // A roster can empty before admission; work that holds completion still owns that handoff.
+            if (input.activeContext === null) {
+              for (const [taskId, task] of rosterForNativeThread(
+                yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                input.nativeThreadId,
+              )) {
+                if (
+                  backgroundWorkHoldsCompletion([task], { awaitUnmarked: delegated }) &&
+                  !listedTaskIds.has(taskId)
+                )
+                  nextTasks.push(task);
+              }
+            }
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_started") {
@@ -8696,6 +8682,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
             yield* endClaudeMonitorTasks((taskId) => taskId === message.task_id);
+            const pending = rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              input.nativeThreadId,
+            ).get(message.task_id);
+            if (
+              input.activeContext === null &&
+              pending !== undefined &&
+              backgroundWorkHoldsCompletion([pending], { awaitUnmarked: delegated })
+            ) {
+              return false;
+            }
             const removed = yield* clearPendingBackgroundTask(
               input.nativeThreadId,
               message.task_id,
@@ -8914,9 +8911,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       entry.subtype === "task_started" &&
                       entry.task_id === message.task_id,
                   ) ?? false;
+              // A queued root wake still owes its result; nested outcomes belong to their owner.
+              const awaitsWake =
+                message.status === "completed" &&
+                !(yield* isNestedSubagentTask(message.task_id)) &&
+                (yield* Ref.get(requestedContinuations)).has(liveQuery.nativeThreadId);
               const canApplyOutcome =
                 subagentStopOutcomes.has(message.task_id) ||
-                (!hasBufferedStart && registered?.task.workflow === undefined);
+                (!hasBufferedStart && registered?.task.workflow === undefined && !awaitsWake);
               if (registered !== undefined && settled !== undefined && canApplyOutcome) {
                 yield* discardBufferedSubagentStarts(
                   liveQuery.nativeThreadId,
@@ -11124,6 +11126,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.set(nativeThreadId, {
                 threadId: turnInput.threadId,
                 providerThreadId: turnInput.providerThread.id,
+                delegated: turnInput.appThread.lineage.relationshipToParent === "subagent",
               });
               return updated;
             });
@@ -12003,21 +12006,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
               if (matched.length === 0) return { matched };
-              if (awaited) {
-                yield* addTaskIdsToNativeThreadSet(
-                  awaitedBackgroundTasksByNativeThread,
-                  nativeThreadId,
-                  matched,
-                );
-              } else {
+              yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
+                const nextRoster = new Map(rosterForNativeThread(current, nativeThreadId));
                 for (const taskId of matched) {
-                  yield* clearTaskIdFromNativeThreadSet(
-                    awaitedBackgroundTasksByNativeThread,
-                    nativeThreadId,
-                    taskId,
-                  );
+                  const task = nextRoster.get(taskId);
+                  if (task !== undefined) nextRoster.set(taskId, { ...task, awaited });
                 }
-              }
+                return new Map(current).set(nativeThreadId, nextRoster);
+              });
               const active = yield* Ref.get(activeTurn);
               yield* emitRosterUpdate(
                 nativeThreadId,

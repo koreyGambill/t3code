@@ -31,6 +31,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -42,6 +43,7 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
@@ -114,7 +116,7 @@ const layerLaunches = Layer.effect(
 );
 
 const layerTools = Layer.mergeAll(
-  McpHttpServer.layerOrchestratorToolkit,
+  McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
   McpHttpServer.layerThreadToolkit,
   McpHttpServer.layerProjectRegistration,
 ).pipe(
@@ -166,7 +168,10 @@ const layerTools = Layer.mergeAll(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
   Layer.provide(
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+    Layer.mergeAll(
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+      Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
+    ),
   ),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
   Layer.provide(

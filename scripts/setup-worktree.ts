@@ -3,6 +3,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { resolvePrimaryCheckout } from "./lib/primary-checkout.ts";
+
 const ENV_FILES = [".env", NodePath.join("infra", "relay", ".env")];
 
 const worktree = NodePath.dirname(import.meta.dirname);
@@ -41,10 +43,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   });
 }
 
-const projectRoot = process.env.T3CODE_PROJECT_ROOT;
-if (!projectRoot) {
-  throw new Error("T3CODE_PROJECT_ROOT is not set. Run this through the t3.json setup action.");
-}
+const projectRoot = resolvePrimaryCheckout(worktree, process.env);
 
 // Use the shell for Windows vp shims. Unattended installs need pnpm's confirmation
 // flag and closed stdin so other prompts fail. A stale lockfile must fail, not be rewritten.
@@ -101,6 +100,7 @@ if (
 
 // Worktrees link main-checkout env files; replace only symlinks so real files always survive.
 for (const file of ENV_FILES) {
+  if (projectRoot === undefined || projectRoot === worktree) break;
   const source = NodePath.join(projectRoot, file);
   const sourceStat = NodeFS.lstatSync(source, { throwIfNoEntry: false });
   if (!sourceStat) continue;

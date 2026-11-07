@@ -47,7 +47,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
-import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
+import { removeLinkedWorktree, WorktreeRemovalOwnership } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -301,6 +301,7 @@ const make = Effect.gen(function* () {
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const worktreeOwnership = yield* WorktreeRemovalOwnership;
   const gitManager = yield* GitManager.GitManager;
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
@@ -449,10 +450,14 @@ const make = Effect.gen(function* () {
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
     entries: StorageCleanupReportEntry[],
   ) {
+    // Xwing owns checkouts a thread has used, even after the thread moved on.
     const rows = yield* sql<{ worktreePath: string }>`
-      SELECT DISTINCT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
+      SELECT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
       FROM orchestration_v2_projection_threads
       WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL
+      UNION
+      SELECT checkout_path AS "worktreePath"
+      FROM orchestration_v2_projection_development_environment_usage
     `.pipe(NodeSqliteClient.readOnly);
     const referenced = new Set<string>();
     for (const row of rows) {
@@ -891,6 +896,8 @@ const make = Effect.gen(function* () {
       };
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
+        const owner = yield* worktreeOwnership.ownerOf(worktreePath);
+        if (owner !== null) return keep(`owned by ${owner}`);
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);
@@ -1183,6 +1190,7 @@ const make = Effect.gen(function* () {
           // Git requires force for submodules; recursive checks above cannot make removal atomic.
           force: submodules.force,
           execute: git.execute,
+          ownership: worktreeOwnership,
           run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
         });
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });

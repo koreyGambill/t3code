@@ -42,6 +42,7 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { PreferredEnvironmentSetting } from "./PreferredEnvironmentSetting";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
@@ -1659,6 +1660,7 @@ function ConnectionsSettingsContent({
           isSearchTarget={index === 0}
         />
       ))}
+      <PreferredEnvironmentSetting />
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>

@@ -56,6 +56,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { XwingEnvironmentId } from "./xwingEnvironments.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -185,9 +186,16 @@ export type OrchestrationV2ContextSourcePoint = typeof OrchestrationV2ContextSou
 export const OrchestrationV2ThreadForkSourcePoint = Schema.Union([
   Schema.Struct({ type: Schema.Literal("latest_stable") }),
   Schema.Struct({ type: Schema.Literal("run"), runId: RunId }),
-  Schema.Struct({ type: Schema.Literal("checkpoint"), checkpointId: CheckpointId }),
+  Schema.Struct({
+    type: Schema.Literal("checkpoint"),
+    checkpointId: CheckpointId,
+  }),
 ]);
 export type OrchestrationV2ThreadForkSourcePoint = typeof OrchestrationV2ThreadForkSourcePoint.Type;
+
+/** `additional` sends what earlier merge-backs have not delivered; `all` resends everything since the fork. */
+export const OrchestrationV2MergeBackScope = Schema.Literals(["additional", "all"]);
+export type OrchestrationV2MergeBackScope = typeof OrchestrationV2MergeBackScope.Type;
 
 export const OrchestrationV2ContextTransferResolution = Schema.Union([
   Schema.Struct({
@@ -238,6 +246,7 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   basePoint: Schema.NullOr(OrchestrationV2ContextSourcePoint),
   sourceProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   sourceTokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
+  mergeBackScope: Schema.optional(OrchestrationV2MergeBackScope),
   targetProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetRunId: Schema.NullOr(RunId),
   status: Schema.Literals([
@@ -430,7 +439,10 @@ export const OrchestrationV2ThreadOpens = Schema.Struct({
   openedAt: Schema.Finite,
   score: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
   picks: Schema.Array(
-    Schema.Struct({ query: Schema.String.check(Schema.isMaxLength(32)), at: Schema.Finite }),
+    Schema.Struct({
+      query: Schema.String.check(Schema.isMaxLength(32)),
+      at: Schema.Finite,
+    }),
   ).check(Schema.isMaxLength(3)),
 });
 export type OrchestrationV2ThreadOpens = typeof OrchestrationV2ThreadOpens.Type;
@@ -440,6 +452,45 @@ export type OrchestrationV2ThreadOpens = typeof OrchestrationV2ThreadOpens.Type;
 const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
+
+/**
+ * The Xwing development environment checkout a thread works in. Xwing owns the environment's
+ * lifecycle; the thread keeps this snapshot, which outlives the checkout. `worktreePath` stays the
+ * thread's execution directory and equals `checkoutPath` while the binding is current.
+ */
+export const OrchestrationV2DevelopmentEnvironmentCheckout = Schema.Struct({
+  xwingEnvironmentId: TrimmedNonEmptyString,
+  repositorySource: TrimmedNonEmptyString,
+  checkoutPath: TrimmedNonEmptyString,
+  number: Schema.NullOr(NonNegativeInt),
+  name: TrimmedNonEmptyString,
+});
+export type OrchestrationV2DevelopmentEnvironmentCheckout =
+  typeof OrchestrationV2DevelopmentEnvironmentCheckout.Type;
+
+export const OrchestrationV2ThreadDevelopmentEnvironment = Schema.Struct({
+  ...OrchestrationV2DevelopmentEnvironmentCheckout.fields,
+  /** When this binding was selected; unchanged by later thread updates. */
+  selectedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadDevelopmentEnvironment =
+  typeof OrchestrationV2ThreadDevelopmentEnvironment.Type;
+
+/** One thread's use of one environment's checkout, kept after the thread or checkout moves on. */
+export const OrchestrationV2DevelopmentEnvironmentUsage = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  ...OrchestrationV2DevelopmentEnvironmentCheckout.fields,
+  firstSelectedAt: IsoDateTime,
+  lastSelectedAt: IsoDateTime,
+  threadTitle: Schema.String,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  settledAt: Schema.NullOr(IsoDateTime),
+  /** The thread still works in this checkout. */
+  current: Schema.Boolean,
+});
+export type OrchestrationV2DevelopmentEnvironmentUsage =
+  typeof OrchestrationV2DevelopmentEnvironmentUsage.Type;
 
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
@@ -453,6 +504,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Absent or null when the thread works outside an Xwing development environment. */
+  developmentEnvironment: Schema.optional(
+    Schema.NullOr(OrchestrationV2ThreadDevelopmentEnvironment),
+  ),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -463,7 +518,11 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
-      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({
+        type: Schema.Literal("run"),
+        threadId: ThreadId,
+        runId: RunId,
+      }),
       Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
       Schema.Struct({
         type: Schema.Literal("provider_thread"),
@@ -671,6 +730,20 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+/**
+ * A launch request may also name an Xwing environment by id. The server resolves its checkout of
+ * the project's repository, so the caller never supplies the path.
+ */
+export const OrchestrationV2ThreadLaunchRequestWorkspaceStrategy = Schema.Union([
+  ...OrchestrationV2ThreadLaunchWorkspaceStrategy.members,
+  Schema.Struct({
+    type: Schema.Literal("xwing_environment"),
+    xwingEnvironmentId: XwingEnvironmentId,
+  }),
+]);
+export type OrchestrationV2ThreadLaunchRequestWorkspaceStrategy =
+  typeof OrchestrationV2ThreadLaunchRequestWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
@@ -897,6 +970,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   childThreadId: Schema.NullOr(ThreadId),
   remoteChild: Schema.optional(OrchestrationV2RemoteTaskChild),
   nativeTaskRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  /** A follow-up's original delegated task: the one its child thread was created for. */
+  originalTaskId: Schema.optional(NodeId),
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
@@ -943,6 +1018,11 @@ export const OrchestrationV2CheckpointScope = Schema.Struct({
   advancesAppRunCount: Schema.Boolean,
   cwd: TrimmedNonEmptyString,
   createdAt: Schema.DateTimeUtc,
+  /**
+   * First checkpoint ordinal of a root scope that began when the thread moved to another
+   * checkout. Absent means 0: the scope started with the thread.
+   */
+  baselineOrdinalWithinScope: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2CheckpointScope = typeof OrchestrationV2CheckpointScope.Type;
 
@@ -1010,11 +1090,8 @@ const PendingBackgroundTaskFields = {
   description: Schema.optional(TrimmedNonEmptyString),
   /** The subagent task that started this work and waits on it. */
   parentTaskId: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * The agent declared it resumes when this work ends, so the thread holds like it does for a
-   * subagent. Only the agent knows whether a command is a wait or a dev server it left running.
-   */
-  awaited: Schema.optional(Schema.Literal(true)),
+  /** Explicitly wait for this work, or detach it from completion with false. */
+  awaited: Schema.optional(Schema.Boolean),
 };
 
 export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
@@ -1026,9 +1103,18 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
       providerInstanceId: Schema.optional(ProviderInstanceId),
       childThreadId: Schema.optional(ThreadId),
     }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("command") }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("monitor") }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("background_task") }),
+    Schema.Struct({
+      ...PendingBackgroundTaskFields,
+      kind: Schema.Literal("command"),
+    }),
+    Schema.Struct({
+      ...PendingBackgroundTaskFields,
+      kind: Schema.Literal("monitor"),
+    }),
+    Schema.Struct({
+      ...PendingBackgroundTaskFields,
+      kind: Schema.Literal("background_task"),
+    }),
   ],
   (kind) => Schema.Struct({ ...PendingBackgroundTaskFields, kind }),
   ({ taskId, description, parentTaskId }) => ({
@@ -1222,7 +1308,10 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
       supportsFeedback: Schema.optional(Schema.Boolean),
     }),
     Schema.Struct({ type: Schema.Literal("message") }),
-    Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
+    Schema.Struct({
+      type: Schema.Literal("not_resumable"),
+      reason: Schema.String,
+    }),
   ]),
   createdAt: Schema.DateTimeUtc,
   resolvedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1236,7 +1325,9 @@ const SubagentNotificationSource = Schema.Struct({
   kind: Schema.Literal("subagent"),
   childThreadId: Schema.optional(ThreadId),
 });
-const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+const CommandNotificationSource = Schema.Struct({
+  kind: Schema.Literal("command"),
+});
 
 /** Encode legacy background_command/background_task shapes first so older clients accept command/subagent sources. */
 export const OrchestrationV2NotificationSource = kindUnionWithFallback(
@@ -1264,7 +1355,11 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
         })),
       }),
     ),
-    Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
+    Schema.Struct({
+      kind: Schema.Literal("background_command").transform("command"),
+    }),
+    /** Another thread's outcome for a message this thread sent it. */
+    Schema.Struct({ kind: Schema.Literal("thread_reply"), threadId: ThreadId }),
     SubagentNotificationSource,
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
@@ -1766,7 +1861,11 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("fork"),
     source: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({
+        type: Schema.Literal("run"),
+        threadId: ThreadId,
+        runId: RunId,
+      }),
       Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
       Schema.Struct({
         type: Schema.Literal("provider_thread"),
@@ -2085,6 +2184,10 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Absent from older servers; null when the thread works outside Xwing. */
+  developmentEnvironment: Schema.optional(
+    Schema.NullOr(OrchestrationV2ThreadDevelopmentEnvironment),
+  ),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2296,6 +2399,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
         requestId: CommandId,
         startedAt: Schema.DateTimeUtcFromString,
       }),
+    ),
+  ),
+  developmentEnvironment: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
+        ...environment,
+        selectedAt: Schema.DateTimeUtcFromString,
+      })),
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2597,7 +2708,11 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("fork"),
     source: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({
+        type: Schema.Literal("run"),
+        threadId: ThreadId,
+        runId: RunId,
+      }),
       Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
       Schema.Struct({
         type: Schema.Literal("provider_thread"),
@@ -2707,6 +2822,14 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  developmentEnvironment: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
+        ...environment,
+        selectedAt: Schema.DateTimeUtcFromString,
+      })),
+    ),
+  ),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
@@ -2922,6 +3045,8 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /** Only the server sets this, after resolving `worktreePath` from Xwing. */
+    developmentEnvironment: Schema.optional(OrchestrationV2DevelopmentEnvironmentCheckout),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
@@ -3059,6 +3184,11 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    /**
+     * Only the server sets this. A launch preparing its checkout, or an agent's explicit handoff
+     * from its own turn, may move a thread that is not stopped; any other checkout change must.
+     */
+    workspaceChange: Schema.optional(Schema.Literals(["preparation", "agent-handoff"])),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
@@ -3187,8 +3317,14 @@ export const OrchestrationV2Command = Schema.Union([
         type: Schema.Literal("defer_start"),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
       }),
-      Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
-      Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
+      Schema.Struct({
+        type: Schema.Literal("steer_active"),
+        targetRunId: RunId,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("restart_active"),
+        targetRunId: RunId,
+      }),
       Schema.Struct({ type: Schema.Literal("queue_after_active") }),
       Schema.Struct({ type: Schema.Literal("start_immediately") }),
     ]),
@@ -3323,6 +3459,7 @@ export const OrchestrationV2Command = Schema.Union([
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    scope: Schema.optional(OrchestrationV2MergeBackScope),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -3338,6 +3475,13 @@ export const OrchestrationV2Command = Schema.Union([
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    // The child starts from this conversation point as a fork; omitted starts it fresh.
+    contextSource: Schema.optional(
+      Schema.Struct({
+        threadId: ThreadId,
+        point: OrchestrationV2ThreadForkSourcePoint,
+      }),
+    ),
     // Defaults to settled_only; fire-and-forget wakes require always.
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
     createdAt: Schema.optional(Schema.DateTimeUtc),
@@ -3407,6 +3551,23 @@ const OrchestrationV2InternalCommand = Schema.Union([
     guestMessageId: GuestMessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
+  /**
+   * Moves a stopped thread to another checkout. Rejected unless the thread still works in
+   * `expected` and has no unfinished run, pending request, or rollback. `developmentEnvironment`
+   * is resolved by the server and must name `worktreePath` as its checkout.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.workspace.select"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expected: Schema.Struct({
+      worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+      xwingEnvironmentId: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+    worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    branch: Schema.NullOr(TrimmedNonEmptyString),
+    developmentEnvironment: Schema.NullOr(OrchestrationV2DevelopmentEnvironmentCheckout),
   }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({
@@ -3650,7 +3811,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  workspaceStrategy: OrchestrationV2ThreadLaunchRequestWorkspaceStrategy,
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),
@@ -4180,7 +4341,10 @@ export const OrchestrationV2SearchThreadInput = Schema.Struct({
   index: Schema.optionalKey(NonNegativeInt),
   offset: Schema.optionalKey(Schema.Int),
   start: Schema.optionalKey(
-    Schema.Struct({ entryId: TrimmedNonEmptyString, occurrence: NonNegativeInt }),
+    Schema.Struct({
+      entryId: TrimmedNonEmptyString,
+      occurrence: NonNegativeInt,
+    }),
   ),
 });
 export type OrchestrationV2SearchThreadInput = typeof OrchestrationV2SearchThreadInput.Type;

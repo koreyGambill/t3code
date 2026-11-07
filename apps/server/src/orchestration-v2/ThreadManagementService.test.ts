@@ -55,7 +55,13 @@ it("stamps authoritative provenance on commands that create threads or messages"
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    // A client cannot claim a linked environment's origin, or a parent there.
+    developmentEnvironment: {
+      xwingEnvironmentId: "forged",
+      repositorySource: "/repo",
+      checkoutPath: "/checkout",
+      number: null,
+      name: "Forged binding",
+    },
     linkOrigin: { sessionId: "forged", label: "Somewhere else" },
     delegatedFrom: {
       environmentId: EnvironmentId.make("environment:elsewhere"),
@@ -74,6 +80,19 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("developmentEnvironment");
+  expect(
+    ThreadManagementService.withCreationProvenance(
+      {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:thread-management:metadata"),
+        threadId: ThreadId.make("thread:thread-management:create"),
+        worktreePath: "/elsewhere",
+        workspaceChange: "agent-handoff",
+      },
+      { createdBy: "user", creationSource: "web" },
+    ),
+  ).not.toHaveProperty("workspaceChange");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
@@ -767,5 +786,82 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     }).pipe(Effect.provide(layerTest));
     expect(error.reason).toBe("superseded");
     expect(killed).toBe(false);
+  }),
+);
+
+it.effect("a steer between turns queues while delegated work will wake the thread", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:idle-steer");
+    const threadId = ThreadId.make("thread:thread-management:idle-steer");
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const finished = { id: RunId.make("run:idle-steer:1"), status: "completed", ordinal: 1 };
+    for (const pendingTask of [true, false]) {
+      const dispatched: Array<{ readonly type: string }> = [];
+      const messageId = MessageId.make(`message:idle-steer:${pendingTask}`);
+      const queued = { id: RunId.make("run:idle-steer:2"), status: "queued", ordinal: 2 };
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: threadId,
+                  projectId,
+                  deletedAt: null,
+                  archivedAt: null,
+                  modelSelection: { instanceId, model: "test" },
+                },
+                runs: dispatched.length === 0 ? [finished] : [finished, queued],
+                providerTurns: [],
+                providerThreads: [],
+                subagents: pendingTask ? [{ status: "running" }] : [],
+                messages: dispatched.length === 0 ? [] : [{ id: messageId, runId: queued.id }],
+                turnItems: [],
+              } as unknown as OrchestrationV2ThreadProjection),
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: 1, storedEvents: [] } as never;
+              }),
+          }),
+        ),
+        Layer.provide(
+          ServerSettings.layerTest({
+            providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+          }),
+        ),
+        Layer.provideMerge(layerReceiptsTest),
+      );
+      const sent = yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        return yield* threads
+          .sendToThread({
+            projectId,
+            commandId: CommandId.make(`command:idle-steer:${pendingTask}`),
+            threadId,
+            messageId,
+            text: "Also check the retry path",
+            attachments: [],
+            mode: "steer",
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(Effect.result);
+      }).pipe(Effect.provide(layerTest));
+      if (pendingTask) {
+        expect(sent._tag).toBe("Success");
+        if (sent._tag === "Success") expect(sent.success.delivery).toBe("queued");
+        expect(dispatched).toMatchObject([{ dispatchMode: { type: "queue_after_active" } }]);
+      } else {
+        expect(sent._tag).toBe("Failure");
+        if (sent._tag === "Failure")
+          expect(sent.failure).toBeInstanceOf(
+            ThreadManagementService.ThreadManagementNoSteerableRunError,
+          );
+        expect(dispatched).toEqual([]);
+      }
+    }
   }),
 );

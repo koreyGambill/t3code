@@ -1,6 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
-import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  type BringBackRecord,
+  deriveBringBacks,
+  resolveLatestMergeBackRun,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -8,10 +11,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  type OrchestrationV2MergeBackScope,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Trash2Icon, XIcon } from "lucide-react";
+import * as DateTime from "effect/DateTime";
+import { ChevronDownIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ComposerHandleContext } from "../../composerHandleContext";
@@ -25,10 +30,62 @@ import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatView from "../ChatView";
-import { Button } from "../ui/button";
+import { formatChatTimestampTooltip, formatRelativeTimeLabel } from "../../timestampFormat";
+import { Button, InlineButton } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
+
+const BRING_BACK_ROWS = 3;
+
+const BRING_BACK_STATUS_LABELS: Record<BringBackRecord["status"], string> = {
+  queued: "Queued in main thread",
+  sending: "Sending to main thread",
+  delivered: "Delivered to main thread",
+  skipped: "Already delivered earlier",
+  failed: "Not delivered",
+  rolled_back: "Undone in main thread",
+};
+
+function BringBackRow(props: {
+  readonly record: BringBackRecord;
+  readonly onCancel: (() => void) | null;
+}) {
+  const { record } = props;
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const at = DateTime.formatIso(record.deliveredAt ?? record.requestedAt);
+  const range =
+    record.throughOrdinal === null
+      ? null
+      : `${record.scope === "all" ? "All, through" : "Through"} turn ${record.throughOrdinal}`;
+  return (
+    <li className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+          {range === null ? null : <span className="text-foreground">{range}</span>}
+          {range === null ? "" : " · "}
+          {BRING_BACK_STATUS_LABELS[record.status]} {formatRelativeTimeLabel(at)}
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          {[
+            range,
+            `Requested ${formatChatTimestampTooltip(DateTime.formatIso(record.requestedAt), timestampFormat)}`,
+            record.deliveredAt === null
+              ? null
+              : `Delivered ${formatChatTimestampTooltip(DateTime.formatIso(record.deliveredAt), timestampFormat)}`,
+            record.error,
+          ].map((line) => (line === null ? null : <p key={line}>{line}</p>))}
+        </TooltipPopup>
+      </Tooltip>
+      {props.onCancel === null ? null : (
+        <InlineButton tone="muted" onClick={props.onCancel}>
+          Cancel
+        </InlineButton>
+      )}
+    </li>
+  );
+}
 
 /** A side chat tab: its title, Bring back, Delete and Close, over the side chat's own chat. */
 export default function SideChatPane(props: {
@@ -48,35 +105,52 @@ export default function SideChatPane(props: {
   const parent = useQuietThreadShell(parentRef);
   const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);
   const projection = useQuietThreadProjection(shell === null ? null : threadRef)?.projection;
+  const parentProjection = useQuietThreadProjection(parent === null ? null : parentRef)?.projection;
   const canOperate = useEnvironmentScope(parentRef.environmentId, AuthOrchestrationOperateScope);
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, { reportFailure: false });
+  const cancelQueuedRun = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const [bringingBack, setBringingBack] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
-  // A pending merge-back would fail the main thread's queued message, so the server refuses it.
-  const bringBackBlockedReason = !canOperate
+  const bringBacks =
+    projection && parentProjection ? deriveBringBacks(parentProjection, projection) : null;
+  const unavailableReason = !canOperate
     ? "This connection cannot change threads."
-    : threadRuntimeIsActive(parent?.runtime)
-      ? "Available when the main thread is idle."
-      : mergeRun === null
-        ? "Available after a finished reply."
-        : null;
+    : mergeRun === null
+      ? "Available after a finished reply."
+      : null;
+  const bringBackBlockedReason =
+    unavailableReason ??
+    (bringBacks?.hasNew === false
+      ? `Nothing new since turn ${bringBacks.requestedThroughOrdinal}.`
+      : null);
+  const bringBackHint =
+    bringBackBlockedReason ??
+    (bringBacks !== null && bringBacks.requestedThroughOrdinal > 0
+      ? `Sends turns ${bringBacks.requestedThroughOrdinal + 1}–${mergeRun?.ordinal} to the main thread, after its current work.`
+      : `Sends this side chat through turn ${mergeRun?.ordinal} to the main thread, after its current work.`);
 
-  const bringBack = async () => {
-    if (bringBackBlockedReason !== null || mergeRun === null || bringingBack) return;
+  const bringBack = async (scope: OrchestrationV2MergeBackScope) => {
+    const blocked = scope === "all" ? unavailableReason : bringBackBlockedReason;
+    if (blocked !== null || mergeRun === null || bringingBack) return;
     setBringingBack(true);
     const result = await mergeBack({
       environmentId: parentRef.environmentId,
-      input: { sourceThreadId: threadId, targetThreadId: parentRef.threadId, runId: mergeRun.id },
+      input: {
+        sourceThreadId: threadId,
+        targetThreadId: parentRef.threadId,
+        runId: mergeRun.id,
+        scope,
+      },
     });
     setBringingBack(false);
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Brought back",
-        description: "The main thread gets this side chat with your next message there.",
+        title: scope === "all" ? "Bringing back all of it" : "Bringing back",
+        description: `Through turn ${mergeRun.ordinal}. The main thread gets it after its current work.`,
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -135,16 +209,33 @@ export default function SideChatPane(props: {
                 variant="ghost"
                 size="xs"
                 aria-disabled={bringBackBlockedReason !== null || bringingBack || undefined}
-                onClick={() => void bringBack()}
+                onClick={() => void bringBack("additional")}
               >
                 Bring back
               </Button>
             }
           />
-          <TooltipPopup side="bottom">
-            {bringBackBlockedReason ?? "Adds this side chat to the main thread's next message."}
-          </TooltipPopup>
+          <TooltipPopup side="bottom">{bringBackHint}</TooltipPopup>
         </Tooltip>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="More ways to bring back"
+                disabled={unavailableReason !== null || bringingBack}
+              >
+                <ChevronDownIcon />
+              </Button>
+            }
+          />
+          <MenuPopup align="end">
+            <MenuItem onClick={() => void bringBack("all")}>
+              Bring back all, through turn {mergeRun?.ordinal}
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -158,6 +249,31 @@ export default function SideChatPane(props: {
           <XIcon />
         </Button>
       </div>
+      {bringBacks !== null && bringBacks.records.length > 0 ? (
+        <ul className="flex shrink-0 flex-col gap-0.5 border-b border-border px-3 py-1.5">
+          {bringBacks.records
+            .slice(-BRING_BACK_ROWS)
+            .toReversed()
+            .map((record) => (
+              <BringBackRow
+                key={record.transferId}
+                record={record}
+                onCancel={
+                  record.status === "queued" && record.parentRunId !== null && canOperate
+                    ? () => {
+                        const runId = record.parentRunId;
+                        if (runId === null) return;
+                        void cancelQueuedRun({
+                          environmentId: parentRef.environmentId,
+                          input: { threadId: parentRef.threadId, runId },
+                        });
+                      }
+                    : null
+                }
+              />
+            ))}
+        </ul>
+      ) : null}
       {shell === null ? (
         snapshotLoaded ? (
           <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>

@@ -319,6 +319,9 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  xwingEnvironment: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ id: Schema.String, label: Schema.String })),
+  ),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -412,7 +415,17 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  /**
+   * An Xwing environment chosen for the first send. The server resolves its checkout from the
+   * id; `worktreePath` only mirrors that checkout for display and local terminals.
+   */
+  xwingEnvironment?: DraftXwingEnvironment | null;
   promotedTo?: ScopedThreadRef | null;
+}
+
+export interface DraftXwingEnvironment {
+  readonly id: string;
+  readonly label: string;
 }
 
 export type DraftThreadState = DraftSessionState;
@@ -462,6 +475,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      xwingEnvironment?: DraftXwingEnvironment | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -478,6 +492,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      xwingEnvironment?: DraftXwingEnvironment | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -493,6 +508,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      xwingEnvironment?: DraftXwingEnvironment | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1465,6 +1481,15 @@ function toProjectDraftSession(
   };
 }
 
+function isDraftXwingEnvironment(value: unknown): value is DraftXwingEnvironment {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).id === "string" &&
+    typeof (value as Record<string, unknown>).label === "string"
+  );
+}
+
 function createDraftThreadState(
   projectRef: ScopedProjectRef,
   threadId: ThreadId,
@@ -1477,6 +1502,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    xwingEnvironment?: DraftXwingEnvironment | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1505,6 +1531,12 @@ function createDraftThreadState(
       : options.startFromOrigin;
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
+  const nextXwingEnvironment =
+    options?.xwingEnvironment !== undefined
+      ? options.xwingEnvironment
+      : projectChanged || options?.worktreePath !== undefined
+        ? null
+        : (existingThread?.xwingEnvironment ?? null);
   return {
     threadId,
     environmentId: projectRef.environmentId,
@@ -1529,6 +1561,7 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    ...(nextXwingEnvironment === null ? {} : { xwingEnvironment: nextXwingEnvironment }),
     promotedTo: null,
   };
 }
@@ -1563,6 +1596,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    (left.xwingEnvironment?.id ?? null) === (right.xwingEnvironment?.id ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1711,6 +1745,9 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        ...(isDraftXwingEnvironment(candidateDraftThread.xwingEnvironment)
+          ? { xwingEnvironment: candidateDraftThread.xwingEnvironment }
+          : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2475,6 +2512,9 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    ...(persistedDraftThread.xwingEnvironment
+      ? { xwingEnvironment: persistedDraftThread.xwingEnvironment }
+      : {}),
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -2738,6 +2778,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
+            const nextXwingEnvironment =
+              options.xwingEnvironment !== undefined
+                ? options.xwingEnvironment
+                : projectChanged || options.worktreePath !== undefined
+                  ? null
+                  : (existing.xwingEnvironment ?? null);
             const environmentSelection =
               options.environmentSelection ??
               (options.branch != null || options.worktreePath != null
@@ -2766,6 +2812,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              ...(nextXwingEnvironment === null ? {} : { xwingEnvironment: nextXwingEnvironment }),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2781,6 +2828,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              (nextDraftThread.xwingEnvironment ?? null) === (existing.xwingEnvironment ?? null) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;
