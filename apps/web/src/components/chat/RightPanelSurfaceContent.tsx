@@ -101,6 +101,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <ThreadWorkspacePanel
+            surfaceId={surface.id}
             key={`${threadRef.environmentId}:${threadRef.threadId}`}
             section={surface.workspaceSection ?? "questions"}
             threadRef={threadRef}
@@ -126,6 +127,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <ThreadInspectPanel
+            surfaceId={surface.id}
             key={`${threadRef.environmentId}:${threadRef.threadId}`}
             threadRef={threadRef}
             section={surface.inspectSection ?? "loads"}

@@ -37,6 +37,53 @@ describe("tile geometry", () => {
     expect(directionalTile(geometry.groups, "chat", "left")).toBeNull();
     expect(directionalTile(geometry.groups, "chat", "right")).toBe("terminal");
   });
+  it("visits the adjacent middle column before the aligned far column in uneven seven-pane layouts", () => {
+    const groups = [
+      { id: "left-top", rect: { x: 0, y: 0, width: 1 / 3, height: 0.2 } },
+      { id: "left-bottom", rect: { x: 0, y: 0.2, width: 1 / 3, height: 0.6 } },
+      { id: "middle-top", rect: { x: 1 / 3, y: 0, width: 1 / 3, height: 0.7 } },
+      { id: "middle-bottom", rect: { x: 1 / 3, y: 0.7, width: 1 / 3, height: 0.1 } },
+      { id: "right-top", rect: { x: 2 / 3, y: 0, width: 1 / 3, height: 0.2 } },
+      { id: "right-bottom", rect: { x: 2 / 3, y: 0.2, width: 1 / 3, height: 0.6 } },
+      { id: "wide-bottom", rect: { x: 0, y: 0.8, width: 1, height: 0.2 } },
+    ];
+    const minimal = [groups[0]!, groups[2]!, groups[4]!];
+    const aligned = minimal.map((group) =>
+      group.id === "middle-top" ? { ...group, rect: { ...group.rect, height: 0.2 } } : group,
+    );
+    expect(directionalTile(aligned, "left-top", "right")).toBe("middle-top");
+    expect(directionalTile(minimal.toReversed(), "left-top", "right")).toBe(
+      directionalTile(minimal, "left-top", "right"),
+    );
+    expect(directionalTile(minimal, "left-top", "right")).toBe("middle-top");
+    expect(directionalTile(groups, "left-top", "right")).toBe("middle-top");
+    expect(directionalTile(groups, "right-top", "left")).toBe("middle-top");
+    expect(directionalTile(groups, "middle-top", "right")).toBe("right-bottom");
+    expect(directionalTile(groups, "left-bottom", "down")).toBe("wide-bottom");
+    expect(directionalTile(groups, "left-top", "down")).toBe("left-bottom");
+    const transposed = groups.map((group) => ({
+      id: group.id,
+      rect: {
+        x: group.rect.y,
+        y: group.rect.x,
+        width: group.rect.height,
+        height: group.rect.width,
+      },
+    }));
+    expect(directionalTile(transposed, "left-top", "down")).toBe("middle-top");
+    expect(directionalTile(transposed, "right-top", "up")).toBe("middle-top");
+  });
+
+  it("does not treat a wide pane below as a horizontal neighbor", () => {
+    const groups = [
+      { id: "current", rect: { x: 0, y: 0, width: 0.3, height: 0.8 } },
+      { id: "below", rect: { x: 0, y: 0.8, width: 1, height: 0.2 } },
+    ];
+    expect(directionalTile(groups, "current", "right")).toBeNull();
+    expect(directionalTile(groups, "below", "left")).toBeNull();
+    expect(directionalTile(groups, "current", "down")).toBe("below");
+  });
+
   it("resizes only ancestor dividers bordering the focused tile and chooses the pointer's nearest edges", () => {
     const group = (id: string): TileNode => ({ kind: "group", id, tabs: [id], activeTabId: id });
     const root: TileNode = {
@@ -100,31 +147,34 @@ describe("tile geometry", () => {
     expect(resizeTileRatio(leftEdges[0]!, { x: -1, y: 0 })).toBe(0.1);
     expect(resizeTileRatio(leftEdges[0]!, { x: NaN, y: 0 })).toBe(0.5);
   });
-  it("projects conversation and chosen tile without changing their active tabs or the stored tree", () => {
-    let initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
-    initial = applyTileAction(initial, {
-      type: "move",
-      tabId: "notes",
-      targetGroupId: "conversation-group",
-    });
+  it("projects any two tabs from one group while preserving the real root and active tabs", () => {
+    const initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
     const paired = applyTileAction(initial, { type: "focus-pair", groupId: "panels-group" });
-    const root = displayTileRoot(paired);
+    const chooser = displayTileRoot(paired);
+    expect(
+      getTileGroups(chooser).map((group) => [group.id, group.tabs, group.activeTabId]),
+    ).toEqual([
+      ["focus-left-chooser", [], ""],
+      ["panels-group", ["files", "notes"], "files"],
+    ]);
+    const selected = applyTileAction(paired, { type: "focus-left", tabId: "notes" });
+    const root = displayTileRoot(selected);
     expect(root).toMatchObject({
       kind: "split",
       id: "focus-pair-split",
       axis: "horizontal",
       ratio: 0.55,
     });
-    const groups = getTileGroups(initial);
-    expect(getTileGroups(root)).toEqual(groups);
-    expect(root.kind === "split" && root.first).toBe(groups[0]);
-    expect(root.kind === "split" && root.second).toBe(groups[1]);
-    expect(groups[0]?.activeTabId).toBe("notes");
-    expect(paired.root).toBe(initial.root);
+    expect(getTileGroups(root).map((group) => [group.id, group.tabs, group.activeTabId])).toEqual([
+      ["focus-left-group", ["notes"], "notes"],
+      ["panels-group", ["files"], "files"],
+    ]);
+    expect(getTileGroups(root)[0]?.colorIndex).toBe(getTileGroups(initial)[1]?.colorIndex);
+    expect(selected.root).toBe(initial.root);
+    expect(getTileGroups(initial)[1]?.activeTabId).toBe("files");
     expect(
-      resizeTileSplits(root, "panels-group", { x: 0.8, y: 0.5 }).map((split) => split.id),
+      resizeTileSplits(root, "focus-left-group", { x: 0.3, y: 0.5 }).map((split) => split.id),
     ).toEqual(["focus-pair-split"]);
-    expect(displayTileRoot({ ...paired, focusPairGroupId: "missing" })).toBe(initial.root);
-    expect(displayTileRoot({ ...paired, focusPairGroupId: null })).toBe(initial.root);
+    expect(displayTileRoot({ ...selected, focusPairGroupId: null })).toBe(initial.root);
   });
 });

@@ -346,6 +346,7 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  cornerControls?: React.ReactNode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -3252,13 +3253,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             data-chat-composer-surface="true"
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "rounded-2xl transition-[background-color] duration-200",
+              "relative rounded-2xl transition-[background-color] duration-200",
               "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-primary/70",
               isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            {props.cornerControls && !isComposerCollapsedMobile ? (
+              <div className="absolute top-2 right-2 z-20" data-composer-corner-controls>
+                {props.cornerControls}
+              </div>
+            ) : null}
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
@@ -3325,6 +3331,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 "relative px-4 pb-2",
                 "pt-3.5 sm:pt-4",
                 isComposerCollapsedMobile && "hidden",
+                props.cornerControls && "pr-12",
               )}
             >
               {isStashMenuOpen && !composerMenuOpen && (

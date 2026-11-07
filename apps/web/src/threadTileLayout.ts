@@ -21,10 +21,13 @@ export type ThreadTileLayout = {
   focusedGroupId: string;
   maximizedGroupId: string | null;
   focusPairGroupId?: string | null;
+  focusPairRightTabId?: string | null;
+  focusPairLeftTabId?: string | null;
   focusPairRatio?: number;
 };
 export type TileAction =
   | { type: "focus-pair"; groupId: string | null }
+  | { type: "focus-left"; tabId: string | null }
   | { type: "resize-focus-pair"; ratio: number }
   | { type: "activate"; groupId: string; tabId: string }
   | { type: "focus"; groupId: string }
@@ -121,21 +124,47 @@ function settle(layout: ThreadTileLayout): ThreadTileLayout {
     occupiedColors.add(colorIndex);
     return { ...node, colorIndex };
   });
+  const rightTabId =
+    layout.focusPairRightTabId ??
+    groups.find((group) => group.id === layout.focusPairGroupId)?.activeTabId;
+  const right = layout.focusPairGroupId
+    ? groups.find((group) => group.tabs.includes(rightTabId ?? ""))
+    : undefined;
+  const leftTabId =
+    layout.focusPairLeftTabId &&
+    layout.focusPairLeftTabId !== rightTabId &&
+    groups.some((group) => group.tabs.includes(layout.focusPairLeftTabId!))
+      ? layout.focusPairLeftTabId
+      : null;
+  const virtualLeftId = leftTabId ? "focus-left-group" : "focus-left-chooser";
+  const virtual = (id: string | null) =>
+    right && (id === "focus-left-group" || id === "focus-left-chooser");
   return {
     ...layout,
     root,
-    ...(layout.focusPairGroupId &&
-    !groups.some(
-      (group) => group.id === layout.focusPairGroupId && !group.tabs.includes(CONVERSATION_TAB_ID),
-    )
-      ? { focusPairGroupId: null }
+    ...(layout.focusPairGroupId !== undefined
+      ? {
+          focusPairGroupId: right?.id ?? null,
+          focusPairRightTabId: right ? (rightTabId ?? null) : null,
+          focusPairLeftTabId: right ? leftTabId : null,
+        }
       : {}),
-    focusedGroupId: groups.some((group) => group.id === layout.focusedGroupId)
-      ? layout.focusedGroupId
-      : groups[0]!.id,
-    maximizedGroupId: groups.some((group) => group.id === layout.maximizedGroupId)
-      ? layout.maximizedGroupId
-      : null,
+    focusedGroupId: virtual(layout.focusedGroupId)
+      ? virtualLeftId
+      : right && layout.focusedGroupId !== right.id
+        ? right.id
+        : groups.some((group) => group.id === layout.focusedGroupId)
+          ? layout.focusedGroupId
+          : (right?.id ?? groups[0]!.id),
+    maximizedGroupId: virtual(layout.maximizedGroupId)
+      ? leftTabId
+        ? virtualLeftId
+        : null
+      : right && layout.maximizedGroupId !== right.id
+        ? null
+        : groups.some((group) => group.id === layout.maximizedGroupId)
+          ? layout.maximizedGroupId
+          : null,
   };
 }
 
@@ -200,6 +229,19 @@ export function syncTileLayout(
   const present = new Set(getTileGroups(next).flatMap((group) => group.tabs));
   const missing = [...valid].filter((id) => !present.has(id));
   if (missing.length) {
+    if (
+      next.focusPairGroupId &&
+      (next.focusedGroupId === "focus-left-group" || next.focusedGroupId === "focus-left-chooser")
+    ) {
+      next = {
+        ...next,
+        focusedGroupId: next.focusPairGroupId,
+        focusPairGroupId: null,
+        focusPairRightTabId: null,
+        focusPairLeftTabId: null,
+        maximizedGroupId: null,
+      };
+    }
     next = {
       ...next,
       root: mapNode(next.root, (node) =>
@@ -223,19 +265,52 @@ export function syncTileLayout(
 
 export function applyTileAction(layout: ThreadTileLayout, action: TileAction): ThreadTileLayout {
   const groups = getTileGroups(layout);
+  const virtualLeft = (groupId: string | null) =>
+    Boolean(
+      layout.focusPairGroupId &&
+      (groupId === "focus-left-group" || groupId === "focus-left-chooser"),
+    );
+  const rightSelection = (
+    group: TileGroup,
+    tabId = group.id === layout.focusPairGroupId
+      ? (layout.focusPairRightTabId ?? group.activeTabId)
+      : group.activeTabId,
+  ) =>
+    layout.focusPairGroupId && tabId
+      ? {
+          focusPairGroupId: group.id,
+          focusPairRightTabId: tabId,
+          focusPairLeftTabId:
+            layout.focusPairLeftTabId === tabId ? null : (layout.focusPairLeftTabId ?? null),
+        }
+      : {};
   if (action.type === "focus-pair") {
+    const group = groups.find((entry) => entry.id === action.groupId);
+    if (action.groupId !== null && !group?.tabs.length) return layout;
+    return {
+      ...layout,
+      focusPairGroupId: group?.id ?? null,
+      focusPairRightTabId: group?.activeTabId ?? null,
+      focusPairLeftTabId: null,
+      focusPairRatio: layout.focusPairRatio ?? 0.55,
+      focusedGroupId:
+        group?.id ??
+        (virtualLeft(layout.focusedGroupId) ? layout.focusPairGroupId! : layout.focusedGroupId),
+      maximizedGroupId: null,
+    };
+  }
+  if (action.type === "focus-left") {
     if (
-      action.groupId !== null &&
-      !groups.some(
-        (group) => group.id === action.groupId && !group.tabs.includes(CONVERSATION_TAB_ID),
-      )
+      !layout.focusPairGroupId ||
+      (action.tabId !== null &&
+        (action.tabId === layout.focusPairRightTabId ||
+          !groups.some((group) => group.tabs.includes(action.tabId!))))
     )
       return layout;
     return {
       ...layout,
-      focusPairGroupId: action.groupId,
-      focusPairRatio: layout.focusPairRatio ?? 0.55,
-      focusedGroupId: action.groupId ?? layout.focusedGroupId,
+      focusPairLeftTabId: action.tabId,
+      focusedGroupId: action.tabId ? "focus-left-group" : "focus-left-chooser",
       maximizedGroupId: null,
     };
   }
@@ -247,10 +322,8 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     const group = groups.find((entry) => entry.id === action.groupId);
     return {
       ...layout,
-      ...(layout.focusPairGroupId && group && !group.tabs.includes(CONVERSATION_TAB_ID)
-        ? { focusPairGroupId: group.id }
-        : {}),
-      maximizedGroupId: group?.id ?? null,
+      ...(group ? rightSelection(group) : {}),
+      maximizedGroupId: virtualLeft(action.groupId) ? action.groupId : (group?.id ?? null),
     };
   }
   if (action.type === "resize")
@@ -265,14 +338,31 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
         }
       : layout;
   if (action.type === "focus" || action.type === "activate") {
+    if (
+      virtualLeft(action.groupId) ||
+      (action.type === "activate" &&
+        layout.focusPairGroupId &&
+        action.tabId === layout.focusPairLeftTabId)
+    ) {
+      if (
+        action.type === "activate" &&
+        (action.tabId === layout.focusPairRightTabId ||
+          !groups.some((group) => group.tabs.includes(action.tabId)))
+      )
+        return layout;
+      return {
+        ...layout,
+        ...(action.type === "activate" ? { focusPairLeftTabId: action.tabId } : {}),
+        focusedGroupId: action.type === "activate" ? "focus-left-group" : action.groupId,
+        maximizedGroupId: layout.maximizedGroupId === action.groupId ? action.groupId : null,
+      };
+    }
     const group = groups.find((entry) => entry.id === action.groupId);
     if (!group || (action.type === "activate" && !group.tabs.includes(action.tabId))) return layout;
     return {
       ...layout,
       focusedGroupId: group.id,
-      ...(layout.focusPairGroupId && !group.tabs.includes(CONVERSATION_TAB_ID)
-        ? { focusPairGroupId: group.id }
-        : {}),
+      ...rightSelection(group, action.type === "activate" ? action.tabId : undefined),
       maximizedGroupId: layout.maximizedGroupId === group.id ? group.id : null,
       root:
         action.type === "activate"
@@ -520,6 +610,14 @@ export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
         ...("focusPairGroupId" in value &&
         (typeof value.focusPairGroupId === "string" || value.focusPairGroupId === null)
           ? { focusPairGroupId: value.focusPairGroupId }
+          : {}),
+        ...("focusPairRightTabId" in value &&
+        (typeof value.focusPairRightTabId === "string" || value.focusPairRightTabId === null)
+          ? { focusPairRightTabId: value.focusPairRightTabId }
+          : {}),
+        ...("focusPairLeftTabId" in value &&
+        (typeof value.focusPairLeftTabId === "string" || value.focusPairLeftTabId === null)
+          ? { focusPairLeftTabId: value.focusPairLeftTabId }
           : {}),
         ...("focusPairRatio" in value &&
         typeof value.focusPairRatio === "number" &&

@@ -1,9 +1,4 @@
-import {
-  CONVERSATION_TAB_ID,
-  getTileGroups,
-  type TileNode,
-  type ThreadTileLayout,
-} from "./threadTileLayout";
+import { getTileGroups, type TileNode, type ThreadTileLayout } from "./threadTileLayout";
 
 export interface TileRect {
   x: number;
@@ -15,18 +10,39 @@ export interface TileRect {
 export function displayTileRoot(layout: ThreadTileLayout): TileNode {
   if (!layout.focusPairGroupId) return layout.root;
   const groups = getTileGroups(layout);
-  const conversation = groups.find((group) => group.tabs.includes(CONVERSATION_TAB_ID));
-  const target = groups.find((group) => group.id === layout.focusPairGroupId);
-  return conversation && target && conversation.id !== target.id
+  const right = groups.find((group) => group.id === layout.focusPairGroupId);
+  const rightTabId = layout.focusPairRightTabId ?? right?.activeTabId;
+  if (!right || !right.tabs.includes(rightTabId ?? "")) return layout.root;
+  const leftOwner =
+    layout.focusPairLeftTabId && layout.focusPairLeftTabId !== rightTabId
+      ? groups.find((group) => group.tabs.includes(layout.focusPairLeftTabId!))
+      : undefined;
+  const left: TileNode = leftOwner
     ? {
-        kind: "split",
-        id: "focus-pair-split",
-        axis: "horizontal",
-        ratio: layout.focusPairRatio ?? 0.55,
-        first: conversation,
-        second: target,
+        ...leftOwner,
+        id: "focus-left-group",
+        tabs: [layout.focusPairLeftTabId!],
+        activeTabId: layout.focusPairLeftTabId!,
       }
-    : layout.root;
+    : {
+        kind: "group",
+        id: "focus-left-chooser",
+        tabs: [],
+        activeTabId: "",
+        colorIndex: right.colorIndex ?? 0,
+      };
+  return {
+    kind: "split",
+    id: "focus-pair-split",
+    axis: "horizontal",
+    ratio: layout.focusPairRatio ?? 0.55,
+    first: left,
+    second: {
+      ...right,
+      tabs: right.tabs.filter((tabId) => tabId !== layout.focusPairLeftTabId),
+      activeTabId: rightTabId!,
+    },
+  };
 }
 
 export function tileGeometry(root: TileNode) {
@@ -70,20 +86,37 @@ export function directionalTile(
 ) {
   const current = groups.find((group) => group.id === currentId);
   if (!current) return null;
-  const center = (rect: TileRect) => ({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
-  const origin = center(current.rect);
-  let best: { id: string; score: number } | null = null;
+  const horizontal = direction === "left" || direction === "right";
+  const reverse = direction === "left" || direction === "up";
+  const currentStart = horizontal ? current.rect.x : current.rect.y;
+  const currentSize = horizontal ? current.rect.width : current.rect.height;
+  const currentCrossStart = horizontal ? current.rect.y : current.rect.x;
+  const currentCrossSize = horizontal ? current.rect.height : current.rect.width;
+  let best: { id: string; overlap: boolean; gap: number; cross: number } | null = null;
   for (const group of groups) {
     if (group.id === currentId) continue;
-    const point = center(group.rect);
-    const dx = point.x - origin.x;
-    const dy = point.y - origin.y;
-    const forward =
-      direction === "left" ? -dx : direction === "right" ? dx : direction === "up" ? -dy : dy;
-    if (forward <= 0.001) continue;
-    const cross = direction === "left" || direction === "right" ? Math.abs(dy) : Math.abs(dx);
-    const score = forward + cross * 2;
-    if (!best || score < best.score) best = { id: group.id, score };
+    const start = horizontal ? group.rect.x : group.rect.y;
+    const size = horizontal ? group.rect.width : group.rect.height;
+    const gap = reverse ? currentStart - start - size : start - currentStart - currentSize;
+    if (gap < -1e-9) continue;
+    const crossStart = horizontal ? group.rect.y : group.rect.x;
+    const crossSize = horizontal ? group.rect.height : group.rect.width;
+    const overlap =
+      Math.min(currentCrossStart + currentCrossSize, crossStart + crossSize) -
+        Math.max(currentCrossStart, crossStart) >
+      1e-9;
+    const cross = Math.abs(crossStart + crossSize / 2 - currentCrossStart - currentCrossSize / 2);
+    const candidate = { id: group.id, overlap, gap: Math.max(0, gap), cross };
+    if (
+      !best ||
+      (candidate.overlap && !best.overlap) ||
+      (candidate.overlap === best.overlap &&
+        (candidate.gap < best.gap ||
+          (candidate.gap === best.gap &&
+            (candidate.cross < best.cross ||
+              (candidate.cross === best.cross && candidate.id < best.id)))))
+    )
+      best = candidate;
   }
   return best?.id ?? null;
 }

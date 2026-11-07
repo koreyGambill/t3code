@@ -15,6 +15,8 @@ import {
 } from "react";
 import {
   Columns2,
+  ChevronDown,
+  Ellipsis,
   PanelLeft,
   Rows2,
   Maximize2,
@@ -68,8 +70,6 @@ export function ThreadTileWorkspace(props: {
   threadRef: ScopedThreadRef;
   header: ReactNode;
   conversation: ReactNode;
-  conversationControls?: ReactNode;
-  conversationHeaderRef?: (node: HTMLDivElement | null) => void;
   panels: PanelActions;
   renderSurface: (
     surface: RightPanelSurface,
@@ -115,14 +115,19 @@ export function ThreadTileWorkspace(props: {
       : savedLayout;
   const { resolvedTheme } = useTheme();
   const groups = getTileGroups(layout);
-  const geometry = tileGeometry(displayTileRoot(layout));
+  const displayRoot = displayTileRoot(layout);
+  const displayGroups = getTileGroups(displayRoot);
+  const geometry = tileGeometry(displayRoot);
+  const switchGroups = layout.focusPairGroupId
+    ? displayGroups.filter((group) => group.tabs.length > 0)
+    : groups;
   const maximized = layout.maximizedGroupId;
   const visibleGroups = maximized
     ? geometry.groups
         .filter((group) => group.id === maximized)
         .map((group) => ({ ...group, rect: { x: 0, y: 0, width: 1, height: 1 } }))
     : geometry.groups;
-  const visibleTabIds = groups
+  const visibleTabIds = displayGroups
     .filter((group) => visibleGroups.some((entry) => entry.id === group.id))
     .map((group) => group.activeTabId);
   const [mountedTabIds, setMountedTabIds] = useState<string[]>([]);
@@ -163,9 +168,14 @@ export function ThreadTileWorkspace(props: {
     if (surface) props.panels.onActivate(surface);
   };
   const split = (group: TileGroup, axis: "horizontal" | "vertical") => {
+    const owner = groups.find(
+      (entry) => entry.id === group.id || entry.tabs.includes(group.activeTabId),
+    );
+    if (!owner) return;
+    if (layout.focusPairGroupId) apply({ type: "focus-pair", groupId: null });
     apply({
       type: "new-group",
-      targetGroupId: group.id,
+      targetGroupId: owner.id,
       axis,
       side: "after",
       groupId: randomUUID(),
@@ -183,10 +193,9 @@ export function ThreadTileWorkspace(props: {
     }
     const entries = getTileGroups(current);
     const preferred = entries.find((entry) => entry.id === (groupId ?? current.focusedGroupId));
-    const companion =
-      preferred && !preferred.tabs.includes(CONVERSATION_TAB_ID)
-        ? preferred
-        : entries.find((entry) => !entry.tabs.includes(CONVERSATION_TAB_ID));
+    const companion = preferred?.tabs.length
+      ? preferred
+      : entries.find((entry) => entry.tabs.length);
     if (companion) apply({ type: "focus-pair", groupId: companion.id });
   };
   const focus = (groupId: string) => {
@@ -194,7 +203,7 @@ export function ThreadTileWorkspace(props: {
       useRightPanelStore.getState().byThreadKey,
       props.threadRef,
     );
-    const group = getTileGroups(current).find((entry) => entry.id === groupId);
+    const group = getTileGroups(displayTileRoot(current)).find((entry) => entry.id === groupId);
     if (!group) return;
     if (group.tabs.length === 0) {
       apply({ type: "focus", groupId });
@@ -223,7 +232,9 @@ export function ThreadTileWorkspace(props: {
       selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, props.threadRef);
     const currentGroup = () => {
       const current = currentLayout();
-      return getTileGroups(current).find((entry) => entry.id === current.focusedGroupId);
+      return getTileGroups(displayTileRoot(current)).find(
+        (entry) => entry.id === current.focusedGroupId,
+      );
     };
     const moveFocus = (direction: "left" | "right" | "up" | "down") => {
       const group = currentGroup();
@@ -512,7 +523,57 @@ export function ThreadTileWorkspace(props: {
         }}
       >
         {visibleGroups.map(({ id, rect }) => {
-          const group = groups.find((entry) => entry.id === id)!;
+          const group = displayGroups.find((entry) => entry.id === id)!;
+          if (id === "focus-left-chooser")
+            return (
+              <section
+                key={id}
+                style={
+                  {
+                    ...rectStyle(rect),
+                    "--tile-group-accent": "var(--tile-accent-0)",
+                  } as CSSProperties
+                }
+                className="workspace-tile-frame @container/tile absolute overflow-hidden bg-background"
+                aria-label="Choose left tab"
+              >
+                <div className="workspace-tile-titlebar flex items-center justify-between px-2 text-2xs">
+                  <span>Choose left tab</span>
+                  <TileControl
+                    label="Exit Focus (Ctrl+Alt+F)"
+                    onClick={() => apply({ type: "focus-pair", groupId: null })}
+                  >
+                    <X />
+                  </TileControl>
+                </div>
+                <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
+                  <div className="flex max-w-sm flex-wrap justify-center gap-1">
+                    {groups.flatMap((entry, index) =>
+                      entry.tabs
+                        .filter((tabId) => tabId !== layout.focusPairRightTabId)
+                        .map((tabId) => (
+                          <Button
+                            key={tabId}
+                            size="xs"
+                            variant="outline"
+                            onClick={() => apply({ type: "focus-left", tabId })}
+                            aria-label={`Show ${title(tabId)} on left`}
+                          >
+                            <span className="text-2xs text-muted-foreground">{index + 1}</span>
+                            {title(tabId)}
+                          </Button>
+                        )),
+                    )}
+                  </div>
+                </div>
+              </section>
+            );
+          const numberedGroup = groups.find(
+            (entry) => entry.id === id || entry.tabs.includes(group.activeTabId),
+          );
+          const groupNumber = layout.focusPairGroupId
+            ? displayGroups.findIndex((entry) => entry.id === id) + 1
+            : groups.findIndex((entry) => entry.id === numberedGroup?.id) + 1;
           return (
             <section
               key={id}
@@ -522,18 +583,15 @@ export function ThreadTileWorkspace(props: {
                   "--tile-group-accent": `var(--tile-accent-${group.colorIndex ?? 0})`,
                 } as CSSProperties
               }
-              className="workspace-tile-frame absolute overflow-hidden bg-background"
+              className="workspace-tile-frame @container/tile absolute overflow-hidden bg-background"
               data-focused={layout.focusedGroupId === id}
               aria-label={`Tile: ${title(group.activeTabId)}`}
             >
               <div
                 className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center gap-0.5 px-1 active:cursor-grabbing"
-                ref={
-                  group.tabs.includes(CONVERSATION_TAB_ID) ? props.conversationHeaderRef : undefined
-                }
                 role="toolbar"
                 aria-label={`Move tile: ${title(group.activeTabId)}`}
-                draggable
+                draggable={!layout.focusPairGroupId}
                 onPointerDownCapture={(event) => {
                   headerDragBlocked.current =
                     event.target instanceof Element &&
@@ -541,7 +599,7 @@ export function ThreadTileWorkspace(props: {
                 }}
                 onPointerDown={() => apply({ type: "focus", groupId: id })}
                 onDragStart={(event) => {
-                  if (headerDragBlocked.current) {
+                  if (layout.focusPairGroupId || headerDragBlocked.current) {
                     event.preventDefault();
                     return;
                   }
@@ -555,8 +613,14 @@ export function ThreadTileWorkspace(props: {
                 }}
               >
                 <GripVertical aria-hidden className="workspace-tile-grip size-3 shrink-0" />
+                <span
+                  className="workspace-tile-grip shrink-0 text-2xs tabular-nums"
+                  aria-label={`Group ${groupNumber}`}
+                >
+                  {groupNumber}
+                </span>
                 <div
-                  className="flex min-w-0 flex-1 items-center overflow-x-auto"
+                  className="workspace-tile-tabs flex min-w-0 flex-1 items-center overflow-x-auto"
                   role="tablist"
                   aria-label="Tile tabs"
                 >
@@ -581,9 +645,13 @@ export function ThreadTileWorkspace(props: {
                           aria-selected={group.activeTabId === tabId}
                           aria-label={title(tabId)}
                           className="flex max-w-44 min-w-0 cursor-pointer items-center gap-1 px-1.5 py-0.5 text-2xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                          draggable
+                          draggable={!layout.focusPairGroupId}
                           onDragStart={(event) => {
                             event.stopPropagation();
+                            if (layout.focusPairGroupId) {
+                              event.preventDefault();
+                              return;
+                            }
                             event.dataTransfer.setData(TAB_DRAG_TYPE, tabId);
                             event.dataTransfer.effectAllowed = "move";
                             setDragging({ kind: "tab", id: tabId });
@@ -629,73 +697,124 @@ export function ThreadTileWorkspace(props: {
                     );
                   })}
                 </div>
-                {group.activeTabId === CONVERSATION_TAB_ID ? props.conversationControls : null}
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <Button
-                        size="micro"
-                        variant={maximized || layout.focusPairGroupId ? "secondary" : "ghost-muted"}
-                        aria-label={`Switch tile, ${groups.length} tiles${maximized ? ", maximized" : ""}`}
-                      />
-                    }
-                  >
-                    <Columns2 className="size-3" />
-                    {maximized
-                      ? `${groups.findIndex((entry) => entry.id === id) + 1}/${groups.length} · Maximized`
-                      : layout.focusPairGroupId
-                        ? `2/${groups.length} · Focus`
-                        : `${groups.length}`}
-                  </MenuTrigger>
-                  <MenuPopup align="end">
-                    {groups.map((entry, index) => (
-                      <MenuItem
-                        key={entry.id}
-                        onClick={() => {
-                          focus(entry.id);
-                          if (maximized) apply({ type: "maximize", groupId: entry.id });
-                        }}
-                      >
-                        <span
-                          className="size-2 shrink-0 rounded-full"
-                          style={{ background: `var(--tile-accent-${entry.colorIndex ?? 0})` }}
+                <div className="workspace-tile-tab-picker min-w-0 flex-1">
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          size="micro"
+                          variant="ghost"
+                          className="min-w-0 flex-1"
+                          aria-label={`Tabs: ${title(group.activeTabId)}`}
+                          onMouseDown={(event) => {
+                            if (event.button === 1) event.preventDefault();
+                          }}
+                          onAuxClick={(event) => {
+                            if (event.button !== 1) return;
+                            event.preventDefault();
+                            const surface = props.panels.surfaces.find(
+                              (entry) => entry.id === group.activeTabId,
+                            );
+                            if (surface) props.panels.onCloseSurface(surface);
+                          }}
                         />
-                        {index + 1}. {title(entry.activeTabId)}
-                      </MenuItem>
-                    ))}
-                    {layout.focusPairGroupId && (
-                      <MenuItem onClick={() => apply({ type: "focus-pair", groupId: null })}>
-                        Restore full layout
-                      </MenuItem>
-                    )}
-                    {maximized && (
-                      <MenuItem onClick={() => apply({ type: "maximize", groupId: null })}>
-                        {layout.focusPairGroupId ? "Restore focus layout" : "Restore all tiles"}
-                      </MenuItem>
-                    )}
-                  </MenuPopup>
-                </Menu>
+                      }
+                    >
+                      <span className="min-w-0 flex-1 truncate text-left">
+                        {title(group.activeTabId)}
+                      </span>
+                      <ChevronDown className="size-3" />
+                    </MenuTrigger>
+                    <MenuPopup align="start">
+                      {group.tabs.map((tabId) => (
+                        <MenuItem key={tabId} onClick={() => activate(group, tabId)}>
+                          {title(tabId)}
+                        </MenuItem>
+                      ))}
+                    </MenuPopup>
+                  </Menu>
+                </div>
+                {maximized && (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          size="micro"
+                          variant={
+                            maximized || layout.focusPairGroupId ? "secondary" : "ghost-muted"
+                          }
+                          aria-label={`Switch tile, ${switchGroups.length} tiles${maximized ? ", maximized" : ""}`}
+                        />
+                      }
+                    >
+                      <Columns2 className="size-3" />
+                      {maximized
+                        ? `${switchGroups.findIndex((entry) => entry.id === id) + 1}/${switchGroups.length} · Maximized`
+                        : layout.focusPairGroupId
+                          ? `2/${groups.length} · Focus`
+                          : `${groups.length}`}
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      {switchGroups.map((entry, index) => (
+                        <MenuItem
+                          key={entry.id}
+                          onClick={() => {
+                            focus(entry.id);
+                            if (maximized) apply({ type: "maximize", groupId: entry.id });
+                          }}
+                        >
+                          <span
+                            className="size-2 shrink-0 rounded-full"
+                            style={{ background: `var(--tile-accent-${entry.colorIndex ?? 0})` }}
+                          />
+                          {index + 1}. {title(entry.activeTabId)}
+                        </MenuItem>
+                      ))}
+                      {layout.focusPairGroupId && (
+                        <MenuItem onClick={() => apply({ type: "focus-pair", groupId: null })}>
+                          Restore full layout
+                        </MenuItem>
+                      )}
+                      {maximized && (
+                        <MenuItem onClick={() => apply({ type: "maximize", groupId: null })}>
+                          {layout.focusPairGroupId ? "Restore focus layout" : "Restore all tiles"}
+                        </MenuItem>
+                      )}
+                    </MenuPopup>
+                  </Menu>
+                )}
                 <TileControl
-                  label={
-                    layout.focusPairGroupId
-                      ? "Restore full layout (Ctrl+Alt+F)"
-                      : "Focus with conversation (Ctrl+Alt+F)"
-                  }
-                  disabled={groups.length < 2}
+                  label={layout.focusPairGroupId ? "Exit Focus (Ctrl+Alt+F)" : "Focus (Ctrl+Alt+F)"}
+                  disabled={groups.flatMap((entry) => entry.tabs).length < 2 || !group.tabs.length}
                   onClick={() => toggleFocusPair(id)}
                 >
                   <PanelLeft />
                 </TileControl>
+                {id === "focus-left-group" && (
+                  <TileControl
+                    responsive="secondary"
+                    label="Choose left tab"
+                    onClick={() => apply({ type: "focus-left", tabId: null })}
+                  >
+                    <PanelLeft />
+                  </TileControl>
+                )}
                 <TileControl
+                  responsive="secondary"
                   label="New tile to the right"
                   onClick={() => split(group, "horizontal")}
                 >
                   <Columns2 />
                 </TileControl>
-                <TileControl label="New tile below" onClick={() => split(group, "vertical")}>
+                <TileControl
+                  responsive="secondary"
+                  label="New tile below"
+                  onClick={() => split(group, "vertical")}
+                >
                   <Rows2 />
                 </TileControl>
                 <TileControl
+                  responsive="minor"
                   label={
                     maximized ? "Restore tiles (Ctrl+Alt+Enter)" : "Maximize tile (Ctrl+Alt+Enter)"
                   }
@@ -711,38 +830,112 @@ export function ThreadTileWorkspace(props: {
                     <X />
                   </TileControl>
                 )}
-                <Menu>
-                  <MenuTrigger
-                    render={<Button size="icon-micro" variant="ghost" aria-label="Add area" />}
-                  >
-                    <Plus className="size-3" />
-                  </MenuTrigger>
-                  <MenuPopup align="end">
-                    {addChoices
-                      .filter((choice) => choice.enabled)
-                      .map((choice) => (
-                        <MenuItem
-                          key={choice.label}
-                          onClick={() => {
-                            apply({ type: "focus", groupId: id });
-                            choice.run?.();
-                          }}
-                        >
-                          {choice.label}
-                        </MenuItem>
-                      ))}
-                    <MenuItem
-                      onClick={() =>
-                        activate(
-                          groups.find((entry) => entry.tabs.includes(CONVERSATION_TAB_ID))!,
-                          CONVERSATION_TAB_ID,
-                        )
+                <span className="workspace-tile-add-area inline-flex">
+                  <Menu>
+                    <MenuTrigger
+                      render={<Button size="icon-micro" variant="ghost" aria-label="Add area" />}
+                    >
+                      <Plus className="size-3" />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      {addChoices
+                        .filter((choice) => choice.enabled)
+                        .map((choice) => (
+                          <MenuItem
+                            key={choice.label}
+                            onClick={() => {
+                              if (id === "focus-left-group") {
+                                apply({ type: "focus-pair", groupId: null });
+                                if (numberedGroup)
+                                  apply({ type: "focus", groupId: numberedGroup.id });
+                              } else apply({ type: "focus", groupId: id });
+                              choice.run?.();
+                            }}
+                          >
+                            {choice.label}
+                          </MenuItem>
+                        ))}
+                      <MenuItem
+                        onClick={() =>
+                          activate(
+                            groups.find((entry) => entry.tabs.includes(CONVERSATION_TAB_ID))!,
+                            CONVERSATION_TAB_ID,
+                          )
+                        }
+                      >
+                        Conversation
+                      </MenuItem>
+                    </MenuPopup>
+                  </Menu>
+                </span>
+                <span className="workspace-tile-overflow">
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button size="icon-micro" variant="ghost" aria-label="Tile actions" />
                       }
                     >
-                      Conversation
-                    </MenuItem>
-                  </MenuPopup>
-                </Menu>
+                      <Ellipsis className="size-3" />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuItem
+                        disabled={groups.flatMap((entry) => entry.tabs).length < 2}
+                        onClick={() => toggleFocusPair(id)}
+                      >
+                        {layout.focusPairGroupId ? "Exit Focus" : "Focus"}
+                      </MenuItem>
+                      {id === "focus-left-group" && (
+                        <MenuItem onClick={() => apply({ type: "focus-left", tabId: null })}>
+                          Choose left tab
+                        </MenuItem>
+                      )}
+                      <MenuItem
+                        onClick={() => apply({ type: "maximize", groupId: maximized ? null : id })}
+                      >
+                        {maximized ? "Restore tiles" : "Maximize tile"}
+                      </MenuItem>
+                      <MenuItem
+                        disabled={
+                          !props.panels.surfaces.some((surface) => surface.id === group.activeTabId)
+                        }
+                        onClick={() => {
+                          const surface = props.panels.surfaces.find(
+                            (entry) => entry.id === group.activeTabId,
+                          );
+                          if (surface) props.panels.onCloseSurface(surface);
+                        }}
+                      >
+                        Close tab
+                      </MenuItem>
+                      <MenuItem onClick={() => split(group, "horizontal")}>
+                        New tile to the right
+                      </MenuItem>
+                      <MenuItem onClick={() => split(group, "vertical")}>New tile below</MenuItem>
+                      {group.tabs.length === 0 && (
+                        <MenuItem onClick={() => apply({ type: "close-group", groupId: id })}>
+                          Close empty tile
+                        </MenuItem>
+                      )}
+                      {addChoices
+                        .filter((choice) => choice.enabled)
+                        .map((choice) => (
+                          <MenuItem
+                            key={choice.label}
+                            onClick={() => {
+                              if (id === "focus-left-group") {
+                                apply({ type: "focus-pair", groupId: null });
+                                if (numberedGroup)
+                                  apply({ type: "focus", groupId: numberedGroup.id });
+                              } else apply({ type: "focus", groupId: id });
+                              choice.run?.();
+                            }}
+                          >
+                            Add {choice.label}
+                          </MenuItem>
+                        ))}
+                    </MenuPopup>
+                  </Menu>
+                </span>
               </div>
               {group.tabs.length === 0 && (
                 <div
@@ -778,7 +971,7 @@ export function ThreadTileWorkspace(props: {
             .filter((surface) => mounted.includes(surface.id))
             .map((surface) => surface.id),
         ].map((tabId) => {
-          const group = groups.find((entry) => entry.tabs.includes(tabId));
+          const group = displayGroups.find((entry) => entry.tabs.includes(tabId));
           const placed = visibleGroups.find((entry) => entry.id === group?.id);
           const visible = Boolean(placed && group?.activeTabId === tabId);
           const rect = placed?.rect ?? { x: 0, y: 0, width: 1, height: 1 };
@@ -923,23 +1116,32 @@ function TileControl(props: {
   onClick: () => void;
   children: ReactNode;
   disabled?: boolean;
+  responsive?: "secondary" | "minor";
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-micro"
-            variant="ghost"
-            aria-label={props.label}
-            disabled={props.disabled}
-            onClick={props.onClick}
-          />
-        }
-      >
-        {props.children}
-      </TooltipTrigger>
-      <TooltipPopup>{props.label}</TooltipPopup>
-    </Tooltip>
+    <span
+      className={cn(
+        "inline-flex",
+        props.responsive === "secondary" && "workspace-tile-secondary",
+        props.responsive === "minor" && "workspace-tile-minor",
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-micro"
+              variant="ghost"
+              aria-label={props.label}
+              disabled={props.disabled}
+              onClick={props.onClick}
+            />
+          }
+        >
+          {props.children}
+        </TooltipTrigger>
+        <TooltipPopup>{props.label}</TooltipPopup>
+      </Tooltip>
+    </span>
   );
 }

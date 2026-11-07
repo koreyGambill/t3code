@@ -61,9 +61,9 @@ function EnvironmentReviewReminders({
     const panel = panels[scopedThreadKey(scopeThreadRef(environmentId, review.threadId))];
     return (
       panel?.isOpen &&
-      panel.activeSurfaceId === "reviews" &&
       panel.surfaces.some(
         (surface) =>
+          surface.id === panel.activeSurfaceId &&
           surface.kind === "reviews" &&
           surface.reviewId === review.id &&
           (surface.workspaceSection ?? "questions") === "questions",

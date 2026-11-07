@@ -29,6 +29,27 @@ const snapshot: PreviewSessionSnapshot = {
 };
 
 describe("closedViewStore", () => {
+  it("retains distinct area instances when migrating closed history", async () => {
+    const store = useClosedViewStore.getState();
+    const first = store.remember({
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "notes", id: "notes:first" },
+    });
+    const second = store.remember({
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "notes", id: "notes:second" },
+    });
+    const { storage, name } = useClosedViewStore.persist.getOptions();
+    await storage!.setItem(name!, {
+      state: { entries: useClosedViewStore.getState().entries },
+      version: 2,
+    });
+    await useClosedViewStore.persist.rehydrate();
+    expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([second, first]);
+  });
+
   it.each([
     { id: "bad", kind: "browser", threadRef: refA, snapshot: {} },
     {

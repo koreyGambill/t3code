@@ -5,15 +5,11 @@ import { useThreadShell } from "../../state/entities";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type RunId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentProject,
-  ThreadStructureVisibleTurnItem,
-} from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -50,8 +46,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
-import { WorkspaceHistoryButton } from "../reviews/WorkspaceHistoryButton";
-import { ForkConversationButton } from "./ForkConversationButton";
+import { useWorkspaceVisit } from "../reviews/WorkspaceHistoryButton";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -66,12 +61,6 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
-  forkSource?: ThreadStructureVisibleTurnItem | undefined;
-  onForkFromRun?:
-    | ((input: { sourceThreadId: ThreadId; runId: RunId }) => Promise<void>)
-    | undefined;
-  forkDisabled?: boolean | undefined;
-  showForkControl?: boolean;
 }
 
 function resolveRenameCommit(input: {
@@ -99,10 +88,6 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
-  forkSource,
-  onForkFromRun,
-  forkDisabled,
-  showForkControl = true,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -110,6 +95,7 @@ export const ChatHeader = memo(function ChatHeader({
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
+  useWorkspaceVisit(isServerThread ? activeThreadRef : null, activeThreadTitle);
   const activeThread = useThreadShell(activeThreadRef);
   const glyphSeed = activeThread?.glyphSeed;
   const glyphStatus = activeThread ? resolveSidebarThreadStatus(activeThread) : "ready";
@@ -492,17 +478,7 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       {isServerThread ? (
         <>
-          {showForkControl && forkSource && onForkFromRun ? (
-            <ForkConversationButton
-              key={`${activeThreadEnvironmentId}:${activeThreadId}`}
-              environmentId={activeThreadEnvironmentId}
-              source={forkSource}
-              disabled={!canOperateThread || forkDisabled === true}
-              onFork={onForkFromRun}
-            />
-          ) : null}
           <GuestShareIndicator threadRef={activeThreadRef} />
-          <WorkspaceHistoryButton threadRef={activeThreadRef} title={activeThreadTitle} />
         </>
       ) : null}
     </div>

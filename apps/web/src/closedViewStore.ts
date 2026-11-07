@@ -64,7 +64,7 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     case "files":
     case "notes":
     case "pull-requests":
-      return surface.id === surface.kind;
+      return surface.id === surface.kind || surface.id.startsWith(`${surface.kind}:`);
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";
     case "file":
@@ -88,14 +88,14 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
       return typeof surface.threadId === "string" && surface.id === `side-chat:${surface.threadId}`;
     case "inspect":
       return (
-        surface.id === "inspect" &&
+        (surface.id === "inspect" || surface.id.startsWith("inspect:")) &&
         (surface.inspectSection === undefined ||
           surface.inspectSection === "loads" ||
           surface.inspectSection === "tokens")
       );
     case "reviews":
       return (
-        surface.id === "reviews" &&
+        (surface.id === "reviews" || surface.id.startsWith("reviews:")) &&
         (surface.reviewId === null || typeof surface.reviewId === "string") &&
         (surface.workspaceSection === undefined ||
           [
@@ -153,7 +153,7 @@ export const useClosedViewStore = create<ClosedViewStoreState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const entries = (persisted as Partial<Pick<ClosedViewStoreState, "entries">> | null)
           ?.entries;

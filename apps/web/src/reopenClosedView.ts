@@ -128,27 +128,18 @@ export async function reopenClosedView(
       else panels.openFile(ref, surface.relativePath, surface.revealLine ?? undefined);
       break;
     case "device":
-      if (surface.target) {
-        panels.openDevice(ref, surface.target);
-        if (surface.title) panels.renameDevice(ref, surface.id, surface.title);
-      } else panels.open(ref, "device");
+      panels.restoreSurface(ref, surface);
       break;
     case "pull-request":
-      panels.openPullRequest(ref, surface);
+      panels.restoreSurface(ref, surface);
       break;
     case "side-chat":
       panels.openSideChat(ref, surface.threadId);
       break;
     case "inspect":
-      panels.open(ref, "inspect");
-      if (surface.inspectSection) panels.setInspectSection(ref, surface.inspectSection);
-      break;
     case "reviews":
-      panels.openReviews(ref, surface.reviewId ?? undefined);
-      if (surface.workspaceSection) panels.setWorkspaceSection(ref, surface.workspaceSection);
-      break;
     default:
-      panels.open(ref, surface.kind);
+      panels.restoreSurface(ref, surface);
   }
   return true;
 }

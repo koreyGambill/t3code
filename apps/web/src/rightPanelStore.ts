@@ -17,6 +17,7 @@ import {
 
 import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
+import { randomUUID } from "./lib/utils";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
 
@@ -46,6 +47,10 @@ export type ThreadWorkspaceSection =
 export type ThreadInspectSection = "loads" | "tokens";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
+export type AddableRightPanelKind = Exclude<
+  RightPanelKind,
+  "file" | "preview" | "terminal" | "pull-request" | "side-chat"
+>;
 
 export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code";
 
@@ -68,9 +73,9 @@ export type RightPanelSurface =
       activeTerminalId: string;
       splitDirection?: "horizontal" | "vertical";
     }
-  | { id: "diff"; kind: "diff" }
+  | { id: "diff" | `diff:${string}`; kind: "diff" }
   | {
-      id: "files";
+      id: "files" | `files:${string}`;
       kind: "files";
       /** Set when breadcrumbs moved a folder browser up to the workspace root. */
       folderTrail?: string;
@@ -97,19 +102,19 @@ export type RightPanelSurface =
       url?: string;
       detailTab?: PullRequestDetailTab;
     }
-  | { id: "pull-requests"; kind: "pull-requests" }
+  | { id: "pull-requests" | `pull-requests:${string}`; kind: "pull-requests" }
   | {
-      id: "reviews";
+      id: "reviews" | `reviews:${string}`;
       kind: "reviews";
       reviewId: string | null;
       workspaceSection?: ThreadWorkspaceSection;
     }
-  | { id: "notes"; kind: "notes" }
-  | { id: "inspect"; kind: "inspect"; inspectSection?: ThreadInspectSection }
+  | { id: "notes" | `notes:${string}`; kind: "notes" }
+  | { id: "inspect" | `inspect:${string}`; kind: "inspect"; inspectSection?: ThreadInspectSection }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 15;
+const RIGHT_PANEL_STORAGE_VERSION = 16;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -153,16 +158,34 @@ interface RightPanelStoreState {
     expectedUserActionRevision: number,
     activateExisting?: boolean,
   ) => boolean;
+  add: (ref: ScopedThreadRef, kind: AddableRightPanelKind) => void;
+  restoreSurface: (
+    ref: ScopedThreadRef,
+    surface: Exclude<RightPanelSurface, { kind: "terminal" }>,
+  ) => void;
   open: (
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openReviews: (ref: ScopedThreadRef, reviewId?: string) => void;
-  setWorkspaceSection: (ref: ScopedThreadRef, section: ThreadWorkspaceSection) => void;
-  setInspectSection: (ref: ScopedThreadRef, section: ThreadInspectSection) => void;
+  setWorkspaceSection: (
+    ref: ScopedThreadRef,
+    section: ThreadWorkspaceSection,
+    surfaceId?: string,
+  ) => void;
+  setInspectSection: (
+    ref: ScopedThreadRef,
+    section: ThreadInspectSection,
+    surfaceId?: string,
+  ) => void;
   offerReviews: (ref: ScopedThreadRef, reviewId: string) => void;
-  openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
+  openDevice: (
+    ref: ScopedThreadRef,
+    target: DeviceTabTarget,
+    automatic?: boolean,
+    surfaceId?: string,
+  ) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -175,6 +198,7 @@ interface RightPanelStoreState {
     keepSource?: boolean,
   ) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
+  addPullRequest: (ref: ScopedThreadRef, target: Parameters<typeof pullRequestSurface>[0]) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: {
@@ -263,6 +287,14 @@ const singletonSurface = (
       return { id: "inspect", kind, inspectSection: "loads" };
   }
 };
+
+const instanceSurface = (kind: AddableRightPanelKind): RightPanelSurface => {
+  const surface = singletonSurface(kind);
+  return { ...surface, id: `${kind}:${randomUUID()}` } as RightPanelSurface;
+};
+
+const validAreaId = (id: string, kind: string) =>
+  id === kind || (id.startsWith(`${kind}:`) && id.length > kind.length + 1);
 
 const browserSurface = (tabId: string | null): RightPanelSurface =>
   tabId
@@ -544,9 +576,10 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
-                    if (surface.kind === "notes") return surface.id === "notes" ? [surface] : [];
+                    if (surface.kind === "notes")
+                      return validAreaId(surface.id, "notes") ? [surface] : [];
                     if (surface.kind === "inspect") {
-                      return surface.id === "inspect"
+                      return validAreaId(surface.id, "inspect")
                         ? [
                             {
                               ...surface,
@@ -557,7 +590,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         : [];
                     }
                     if (surface.kind === "reviews") {
-                      return surface.id === "reviews" &&
+                      return validAreaId(surface.id, "reviews") &&
                         (surface.reviewId === null || typeof surface.reviewId === "string")
                         ? [
                             surface.workspaceSection === undefined ||
@@ -609,11 +642,17 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         return [];
                       }
                       const { environmentId, ...rest } = surface;
+                      const restored = pullRequestSurface({
+                        ...rest,
+                        ...(typeof environmentId === "string" ? { environmentId } : {}),
+                      });
                       return [
-                        pullRequestSurface({
-                          ...rest,
-                          ...(typeof environmentId === "string" ? { environmentId } : {}),
-                        }),
+                        {
+                          ...restored,
+                          id: surface.id.startsWith(`${restored.id}:view:`)
+                            ? surface.id
+                            : restored.id,
+                        },
                       ];
                     }
                     if (surface.kind !== "terminal") return [surface];
@@ -801,6 +840,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         });
         return opened;
       },
+      add: (ref, kind) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, instanceSurface(kind)),
+          ),
+        ),
+      restoreSurface: (ref, surface) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => upsertSurface(current, surface)),
+        ),
       open: (ref, kind) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -808,7 +857,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const existing = current.surfaces.find((surface) => surface.kind === "preview");
               return upsertSurface(current, existing ?? browserSurface(null));
             }
-            return upsertSurface(current, singletonSurface(kind));
+            const existing = current.surfaces.find(
+              (surface) => surface.kind === kind && kind !== "device",
+            );
+            return upsertSurface(current, existing ?? singletonSurface(kind));
           }),
         ),
       openReviews: (ref, reviewId) =>
@@ -826,21 +878,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
-      setWorkspaceSection: (ref, section) =>
+      setWorkspaceSection: (ref, section, surfaceId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             surfaces: current.surfaces.map((surface) =>
-              surface.kind === "reviews" ? { ...surface, workspaceSection: section } : surface,
+              surface.kind === "reviews" && surface.id === (surfaceId ?? current.activeSurfaceId)
+                ? { ...surface, workspaceSection: section }
+                : surface,
             ),
           })),
         ),
-      setInspectSection: (ref, section) =>
+      setInspectSection: (ref, section, surfaceId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             surfaces: current.surfaces.map((surface) =>
-              surface.kind === "inspect" ? { ...surface, inspectSection: section } : surface,
+              surface.kind === "inspect" && surface.id === (surfaceId ?? current.activeSurfaceId)
+                ? { ...surface, inspectSection: section }
+                : surface,
             ),
           })),
         ),
@@ -856,9 +912,27 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 },
           ),
         ),
-      openDevice: (ref, target, automatic = false) =>
+      openDevice: (ref, target, automatic = false, surfaceId) =>
         set((state) =>
           (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
+            if (
+              surfaceId !== undefined &&
+              current.surfaces.some(
+                (surface) => surface.id === surfaceId && surface.kind === "device",
+              )
+            ) {
+              return activated(
+                {
+                  ...current,
+                  surfaces: current.surfaces.map((surface) =>
+                    surface.id === surfaceId && surface.kind === "device"
+                      ? { ...surface, target }
+                      : surface,
+                  ),
+                },
+                surfaceId,
+              );
+            }
             const id =
               `device:${encodeURIComponent(target.hostId)}:${encodeURIComponent(target.deviceId)}` as const;
             if (automatic && current.dismissedDeviceSurfaceIds?.includes(id)) return current;
@@ -906,6 +980,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
         ),
+      addPullRequest: (ref, target) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = pullRequestSurface(target);
+            return upsertSurface(current, { ...surface, id: `${surface.id}:view:${randomUUID()}` });
+          }),
+        ),
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -951,7 +1032,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? requestedPath
               : requestedPath.replace(/\/+$/, "") || requestedPath;
             const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
+              (surface) => surface.kind !== "files" || surface.id !== "files",
             );
             const surfaceId = `file:${relativePath}` as const;
             const existing = withoutStandaloneExplorer.find(
@@ -995,7 +1076,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 const kept = keepSource ? [source] : [];
                 return existing ? kept : [...kept, target];
               }
-              return !existing && target.kind === "file" && surface.kind === "files"
+              return !existing &&
+                target.kind === "file" &&
+                surface.kind === "files" &&
+                surface.id === "files"
                 ? []
                 : [surface];
             });
@@ -1006,7 +1090,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
+              (surface) => surface.kind !== "files" || surface.id !== "files",
             );
             return upsertSurface(
               { ...current, surfaces: withoutStandaloneExplorer },
@@ -1265,7 +1349,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const existing = current.surfaces.find((surface) => surface.kind === "preview");
               return upsertSurface(current, existing ?? browserSurface(null));
             }
-            return upsertSurface(current, singletonSurface(kind));
+            const existing = current.surfaces.find(
+              (surface) => surface.kind === kind && kind !== "device",
+            );
+            return upsertSurface(current, existing ?? singletonSurface(kind));
           }),
         ),
       setThreadPanelOpen: (ref, presentation, open) =>

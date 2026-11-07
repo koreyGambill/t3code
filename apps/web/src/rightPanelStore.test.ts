@@ -43,6 +43,130 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("adds independent area instances, retains their placement, and restores closed instances", async () => {
+    const store = useRightPanelStore.getState();
+    store.add(refA, "notes");
+    const first = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).activeSurfaceId!;
+    store.applyTileAction(refA, {
+      type: "new-group",
+      targetGroupId: "panels-group",
+      axis: "horizontal",
+      side: "after",
+      groupId: "extra",
+      splitId: "extra-split",
+    });
+    store.add(refA, "notes");
+    const second = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).activeSurfaceId!;
+    expect(second).not.toBe(first);
+    expect(
+      getTileGroups(selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, refA)).find(
+        (group) => group.id === "extra",
+      )?.tabs,
+    ).toEqual([second]);
+    store.add(refA, "inspect");
+    const inspectA = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).activeSurfaceId!;
+    store.add(refA, "inspect");
+    const inspectB = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).activeSurfaceId!;
+    store.setInspectSection(refA, "tokens", inspectA);
+    store.add(refA, "reviews");
+    const workspaceA = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).activeSurfaceId!;
+    store.add(refA, "reviews");
+    const workspaceB = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).activeSurfaceId!;
+    store.setWorkspaceSection(refA, "action-items", workspaceA);
+    for (const kind of ["files", "diff", "device", "pull-requests"] as const) {
+      store.add(refA, kind);
+      store.add(refA, kind);
+      expect(
+        selectThreadRightPanelState(
+          useRightPanelStore.getState().byThreadKey,
+          refA,
+        ).surfaces.filter((surface) => surface.kind === kind),
+      ).toHaveLength(2);
+    }
+    const devices = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.filter((surface) => surface.kind === "device");
+    store.openDevice(
+      refA,
+      { hostId: "host", deviceId: "phone", platform: "ios", name: "Phone" },
+      false,
+      devices[0]!.id,
+    );
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.find(
+        (surface) => surface.id === devices[0]!.id,
+      ),
+    ).toMatchObject({ target: { deviceId: "phone" } });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.find(
+        (surface) => surface.id === devices[1]!.id,
+      ),
+    ).not.toHaveProperty("target");
+    const target = { projectId: "project", repository: "owner/repo", number: 1 };
+    store.addPullRequest(refA, target);
+    store.addPullRequest(refA, target);
+    await reloadRightPanelStore();
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    expect(surfaces.find((surface) => surface.id === inspectA)).toMatchObject({
+      inspectSection: "tokens",
+    });
+    expect(surfaces.find((surface) => surface.id === inspectB)).toMatchObject({
+      inspectSection: "loads",
+    });
+    expect(surfaces.find((surface) => surface.id === workspaceA)).toMatchObject({
+      workspaceSection: "action-items",
+    });
+    expect(surfaces.find((surface) => surface.id === workspaceB)).not.toHaveProperty(
+      "workspaceSection",
+    );
+    expect(
+      new Set(
+        surfaces.filter((surface) => surface.kind === "pull-request").map((surface) => surface.id),
+      ).size,
+    ).toBe(2);
+    store.openFile(refA, "index.ts");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.filter(
+        (surface) => surface.kind === "files",
+      ),
+    ).toHaveLength(2);
+    store.closeSurface(refA, second);
+    const closed = useClosedViewStore.getState().entries[0]!;
+    await reopenClosedView(closed, {
+      workspaceAvailable: true,
+      openPreview: async () => {
+        throw new Error("unexpected browser");
+      },
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+        .surfaces.filter((surface) => surface.kind === "notes")
+        .map((surface) => surface.id),
+    ).toEqual([first, second]);
+  });
+
   it("persists tab groups per thread and follows external activation without stealing unchanged focus", async () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");

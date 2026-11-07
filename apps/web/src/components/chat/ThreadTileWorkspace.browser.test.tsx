@@ -19,12 +19,11 @@ vi.mock("../RightPanelTabs", () => ({
 }));
 vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 
-it("keeps conversation and editor contents mounted through grouping, splitting and maximizing", async () => {
+async function setup(resizeScenario = false) {
+  await using resources = new AsyncDisposableStack();
   const viewport = { width: window.innerWidth, height: window.innerHeight };
   await page.viewport(1100, 800);
-  await using _viewport = {
-    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
-  };
+  resources.defer(() => page.viewport(viewport.width, viewport.height));
 
   const threadRef = {
     environmentId: EnvironmentId.make("tiles"),
@@ -34,6 +33,24 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   const store = useRightPanelStore.getState();
   store.open(threadRef, "files");
   store.open(threadRef, "inspect");
+  if (resizeScenario) {
+    store.closeSurface(threadRef, "files");
+    store.applyTileAction(threadRef, {
+      type: "move",
+      tabId: "inspect",
+      targetGroupId: "conversation-group",
+    });
+    store.openTerminal(threadRef, "new-terminal");
+    store.applyTileAction(threadRef, {
+      type: "split",
+      tabId: "terminal:new-terminal",
+      targetGroupId: "conversation-group",
+      axis: "horizontal",
+      side: "after",
+      groupId: "terminal-group",
+      splitId: "terminal-split",
+    });
+  }
   const noop = () => {};
   function Harness() {
     const panel = useRightPanelStore((state) =>
@@ -72,7 +89,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
           onAddTerminal: () => store.openTerminal(threadRef, "new-terminal"),
           onAddDiff: noop,
           onAddFiles: noop,
-          onAddNotes: () => store.open(threadRef, "notes"),
+          onAddNotes: () => store.add(threadRef, "notes"),
           onAddPullRequest: noop,
           onAddPullRequests: noop,
           onAddDevice: noop,
@@ -85,28 +102,81 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
           deviceAvailable: false,
         }}
         renderSurface={(surface) => (
-          <textarea aria-label={`Editor ${surface.id}`} defaultValue="" />
+          <textarea
+            aria-label={surface.kind === "notes" ? "Editor notes" : `Editor ${surface.id}`}
+            defaultValue=""
+          />
         )}
       />
     );
   }
   // The layout owns DOM placement and has no navigation.
-  await using screen = await render(
-    <div style={{ display: "flex", width: 900, height: 600 }}>
-      <Harness />
-    </div>,
-    { router: false },
+  const screen = resources.use(
+    await render(
+      <div style={{ display: "flex", width: 900, height: 600 }}>
+        <Harness />
+      </div>,
+      { router: false },
+    ),
   );
+  const selectTab = async (name: string) => {
+    const tab = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+      (element) => element.getAttribute("aria-label") === name,
+    )!;
+    if (tab.getClientRects().length)
+      await userEvent.click(screen.getByRole("tab", { name, exact: true }));
+    else {
+      const region = screen.getByRole("region", {
+        name: tab.closest("section")!.getAttribute("aria-label")!,
+        exact: true,
+      });
+      await userEvent.click(region.getByRole("button", { name: /^Tabs:/ }));
+      await userEvent.click(screen.getByRole("menuitem", { name, exact: true }));
+    }
+  };
+  const newTileRight = async () => {
+    const section = document.querySelector<HTMLElement>("section.workspace-tile-frame")!;
+    const region = screen.getByRole("region", {
+      name: section.getAttribute("aria-label")!,
+      exact: true,
+    });
+    const button = section.querySelector<HTMLElement>('[aria-label="New tile to the right"]')!;
+    if (button.getClientRects().length)
+      await userEvent.click(
+        region.getByRole("button", { name: "New tile to the right", exact: true }),
+      );
+    else {
+      await userEvent.click(region.getByRole("button", { name: "Tile actions", exact: true }));
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "New tile to the right", exact: true }),
+      );
+    }
+  };
+  const layout = () => selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, threadRef);
+  const owned = resources.move();
+  return {
+    screen,
+    store,
+    threadRef,
+    layout,
+    selectTab,
+    newTileRight,
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
+  };
+}
+
+it("keeps conversation and editor contents mounted through grouping, splitting and maximizing", async () => {
+  await using fixture = await setup();
+  const { screen, store, threadRef, layout, selectTab, newTileRight } = fixture;
   await userEvent.fill(
     screen.getByRole("textbox", { name: "Conversation draft" }),
     "unfinished conversation",
   );
-  await userEvent.click(screen.getByRole("tab", { name: "files", exact: true }));
+  await selectTab("files");
   await userEvent.fill(
     screen.getByRole("textbox", { name: "Editor files" }),
     "unsaved editor contents",
   );
-  const layout = () => selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, threadRef);
   const conversation = getTileGroups(layout()).find((group) =>
     group.tabs.includes("conversation"),
   )!;
@@ -153,9 +223,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   await expect
     .element(screen.getByRole("textbox", { name: "Conversation draft" }))
     .toHaveValue("unfinished conversation");
-  await userEvent.click(
-    screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
-  );
+  await newTileRight();
   await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
   const chooser = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
   expect(
@@ -197,9 +265,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
     "files",
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
-  );
+  await newTileRight();
   await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
   const empty = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
   expect(empty).toBeDefined();
@@ -211,7 +277,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   ).toHaveLength(1);
   await userEvent.click(screen.getByRole("button", { name: "Close empty tile", exact: true }));
   expect(getTileGroups(layout()).some((group) => group.id === empty.id)).toBe(false);
-  await userEvent.click(screen.getByRole("tab", { name: "Conversation", exact: true }));
+  await selectTab("Conversation");
   const movedGroup = getTileGroups(layout()).find((group) => group.tabs.includes("files"))!;
   const targetGroup = getTileGroups(layout()).find((group) => group.tabs.includes("conversation"))!;
   await userEvent.dragAndDrop(
@@ -248,15 +314,19 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
       (surface) => surface.id === "files",
     ),
   ).toBe(false);
-  await userEvent.click(
-    screen.getByRole("button", { name: "New tile to the right", exact: true }).nth(0),
-  );
+});
+
+it("resizes, focuses any two tabs and opens independent area views", async () => {
+  await using fixture = await setup(true);
+  const { screen, store, threadRef, layout, selectTab, newTileRight } = fixture;
+  await newTileRight();
   const notesChooser = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
   await userEvent.click(screen.getByRole("button", { name: "Notes", exact: true }));
-  await expect.element(screen.getByRole("tab", { name: "notes", exact: true })).toBeVisible();
-  expect(getTileGroups(layout()).find((group) => group.id === notesChooser.id)?.tabs).toEqual([
-    "notes",
-  ]);
+  await expect
+    .element(screen.getByRole("textbox", { name: "Editor notes", exact: true }))
+    .toBeVisible();
+  const notesId = getTileGroups(layout()).find((group) => group.id === notesChooser.id)!.tabs[0]!;
+  expect(notesId).toMatch(/^notes:/);
   const notesRect = screen
     .getByRole("textbox", { name: "Editor notes" })
     .element()
@@ -291,6 +361,10 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   const fullTree = JSON.stringify(layout().root);
   await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
   expect(layout().focusPairGroupId).toBe(notesChooser.id);
+  await expect
+    .element(screen.getByRole("region", { name: "Choose left tab", exact: true }))
+    .toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Show inspect on left", exact: true }));
   expect(JSON.stringify(layout().root)).toBe(fullTree);
   await expect.element(screen.getByRole("textbox", { name: "Editor notes" })).toBeVisible();
   expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(2);
@@ -318,6 +392,22 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(3);
   expect(JSON.stringify(layout().root)).toBe(fullTree);
 
+  await selectTab("Conversation");
+  const beforeSameGroupFocus = JSON.stringify(layout().root);
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  await userEvent.click(screen.getByRole("button", { name: "Show inspect on left", exact: true }));
+  await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
+  await expect.element(screen.getByRole("textbox", { name: "Editor inspect" })).toBeVisible();
+  await userEvent.click(screen.getByRole("textbox", { name: "Editor inspect" }));
+  expect(layout().focusPairRightTabId).toBe("conversation");
+  expect(layout().focusPairLeftTabId).toBe("inspect");
+  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+  await expect.element(screen.getByRole("textbox", { name: "Editor inspect" })).toBeVisible();
+  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+  await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(JSON.stringify(layout().root)).toBe(beforeSameGroupFocus);
+
   const beforeNativeResize = JSON.stringify(layout().root);
   dispatchMenuAction("workspace.tile.resize");
   await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
@@ -328,4 +418,35 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   );
   await userEvent.keyboard("{/Alt}{/Control}");
   expect(JSON.stringify(layout().root)).not.toBe(beforeNativeResize);
+  await newTileRight();
+  const secondNotesGroup = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
+  await userEvent.click(screen.getByRole("button", { name: "Notes", exact: true }));
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    ).surfaces.filter((surface) => surface.kind === "notes"),
+  ).toHaveLength(2);
+  const secondNotesId = getTileGroups(layout()).find((group) => group.id === secondNotesGroup.id)!
+    .tabs[0]!;
+  expect(secondNotesId).not.toBe(notesId);
+  expect(getTileGroups(layout()).find((group) => group.id === notesChooser.id)?.tabs).toContain(
+    notesId,
+  );
+  const notesGroups = getTileGroups(layout()).filter((group) =>
+    group.tabs.some((tabId) => tabId.startsWith("notes:")),
+  );
+  await userEvent.click(
+    screen
+      .getByRole("region", { name: "Tile: notes", exact: true })
+      .nth(notesGroups.findIndex((group) => group.id === secondNotesGroup.id))
+      .getByRole("button", { name: "Tile actions", exact: true }),
+  );
+  await userEvent.click(screen.getByRole("menuitem", { name: "Close tab", exact: true }));
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    ).surfaces.filter((surface) => surface.kind === "notes"),
+  ).toHaveLength(1);
 });

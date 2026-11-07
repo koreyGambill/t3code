@@ -293,7 +293,6 @@ import {
   PanelLayoutControls,
   type PanelLayoutControlsProps,
   RightPanelMaximizeControl,
-  ThreadPanelHeaderControl,
   WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -3274,7 +3273,10 @@ export default function ChatView(props: ChatViewProps) {
           branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
           onBack:
             pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-              ? addPullRequestsSurfaceStable
+              ? () => {
+                  if (activeThreadRef)
+                    useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
+                }
               : undefined,
         }}
         files={{
@@ -3309,10 +3311,9 @@ export default function ChatView(props: ChatViewProps) {
       {...panelToggleControlProps}
       showTerminalControl={!tiledWorkspace}
       showRightPanelControl={!tiledWorkspace}
-      showThreadPanelControl={!tiledWorkspace && !inlineRightPanelOwnsTitleBar}
+      showThreadPanelControl={false}
     />
   );
-  const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
     <WorkspaceTitlebarControls
       showMaximizeControl={!tiledWorkspace && !shouldUsePlanSidebarSheet}
@@ -3332,7 +3333,6 @@ export default function ChatView(props: ChatViewProps) {
 
   const conversationHeader = embedded ? null : (
     <header
-      ref={tiledWorkspace ? undefined : threadPanelPopoverAnchorRef}
       data-chat-header
       className={cn(
         "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
@@ -3354,9 +3354,7 @@ export default function ChatView(props: ChatViewProps) {
         />
       ) : null}
       {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-      {inlineRightPanelOwnsTitleBar && !tiledWorkspace ? threadPanelHeaderControl : null}
       <ChatHeader
-        showForkControl={!tiledWorkspace}
         activeThreadEnvironmentId={activeThread.environmentId}
         activeThreadId={activeThread.id}
         isServerThread={isServerThread}
@@ -3367,15 +3365,6 @@ export default function ChatView(props: ChatViewProps) {
         onOpenThread={onOpenRelatedThreadStable}
         rightPanelOpen={inlineRightPanelOwnsTitleBar}
         onNewThreadInProject={handleNewThreadInActiveProjectStable}
-        {...(activeThread.lineage.sideChat !== true
-          ? {
-              forkSource: serverVisibleTurnItems.findLast((projectedItem) =>
-                canForkProjectedAssistantItem({ projectedItem }),
-              ),
-              onForkFromRun: onForkFromRunStable,
-              forkDisabled: activeEnvironmentUnavailable,
-            }
-          : {})}
         {...(activeDraftLogicalProjectKey
           ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
           : {})}
@@ -3637,6 +3626,41 @@ export default function ChatView(props: ChatViewProps) {
                         ) : null}
                         {!composerMounted ? null : (
                           <ChatComposer
+                            cornerControls={
+                              isServerThread ? (
+                                <div
+                                  ref={(node) => {
+                                    threadPanelPopoverAnchorRef.current = node;
+                                  }}
+                                  className="flex flex-col items-center gap-1"
+                                >
+                                  {activeThread.lineage.sideChat !== true &&
+                                    (() => {
+                                      const source = serverVisibleTurnItems.findLast((item) =>
+                                        canForkProjectedAssistantItem({ projectedItem: item }),
+                                      );
+                                      return source ? (
+                                        <ForkConversationButton
+                                          compact
+                                          key={activeThreadKey}
+                                          environmentId={activeThread.environmentId}
+                                          source={source}
+                                          disabled={
+                                            !canOperateThread || activeEnvironmentUnavailable
+                                          }
+                                          onFork={onForkFromRunStable}
+                                        />
+                                      ) : null;
+                                    })()}
+                                  <PanelLayoutControls
+                                    {...panelToggleControlProps}
+                                    compact
+                                    showTerminalControl={false}
+                                    showRightPanelControl={false}
+                                  />
+                                </div>
+                              ) : undefined
+                            }
                             canOperateThread={canOperateThread}
                             reportedModelSelection={reportedModelSelection}
                             multipleModelSelections={multipleModelSelections}
@@ -4016,15 +4040,15 @@ export default function ChatView(props: ChatViewProps) {
     onAddFiles: addFilesSurfaceStable,
     onAddNotes:
       isServerThread && activeThreadRef && reviewsSupported
-        ? () => useRightPanelStore.getState().open(activeThreadRef, "notes")
+        ? () => useRightPanelStore.getState().add(activeThreadRef, "notes")
         : undefined,
     onAddInspect:
       isServerThread && activeThreadRef
-        ? () => useRightPanelStore.getState().open(activeThreadRef, "inspect")
+        ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
         : undefined,
     onAddReviews:
       isServerThread && activeThreadRef && reviewsSupported
-        ? () => useRightPanelStore.getState().open(activeThreadRef, "reviews")
+        ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
         : undefined,
     onAddPullRequest: addPullRequestSurfaceStable,
     onAddPullRequests: addPullRequestsSurfaceStable,
@@ -4060,36 +4084,6 @@ export default function ChatView(props: ChatViewProps) {
             key={activeThreadKey}
             threadRef={activeThreadRef}
             header={conversationHeader}
-            conversationHeaderRef={(node) => {
-              threadPanelPopoverAnchorRef.current = node;
-            }}
-            conversationControls={
-              <>
-                {isServerThread &&
-                  activeThread.lineage.sideChat !== true &&
-                  (() => {
-                    const source = serverVisibleTurnItems.findLast((item) =>
-                      canForkProjectedAssistantItem({ projectedItem: item }),
-                    );
-                    return source ? (
-                      <ForkConversationButton
-                        compact
-                        key={activeThreadKey}
-                        environmentId={activeThread.environmentId}
-                        source={source}
-                        disabled={!canOperateThread || activeEnvironmentUnavailable}
-                        onFork={onForkFromRunStable}
-                      />
-                    ) : null;
-                  })()}
-                <PanelLayoutControls
-                  {...panelToggleControlProps}
-                  compact
-                  showTerminalControl={false}
-                  showRightPanelControl={false}
-                />
-              </>
-            }
             conversation={conversationColumn}
             panels={tiledPanels}
             renderSurface={renderPanelSurface}
@@ -4147,17 +4141,17 @@ export default function ChatView(props: ChatViewProps) {
           onAddFiles={addFilesSurfaceStable}
           onAddNotes={
             isServerThread && activeThreadRef && reviewsSupported
-              ? () => useRightPanelStore.getState().open(activeThreadRef, "notes")
+              ? () => useRightPanelStore.getState().add(activeThreadRef, "notes")
               : undefined
           }
           onAddInspect={
             isServerThread && activeThreadRef
-              ? () => useRightPanelStore.getState().open(activeThreadRef, "inspect")
+              ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
               : undefined
           }
           onAddReviews={
             isServerThread && activeThreadRef && reviewsSupported
-              ? () => useRightPanelStore.getState().open(activeThreadRef, "reviews")
+              ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
               : undefined
           }
           onAddPullRequest={addPullRequestSurfaceStable}

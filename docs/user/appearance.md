@@ -43,8 +43,8 @@ within the focused tile on Windows, Linux, and macOS.
 Hold **Ctrl+Alt+R** and move the mouse to resize the focused tile from the pointer’s starting
 position. Release to keep the size or press **Esc** to cancel. Arrow keys also adjust the size
 while holding the resize shortcut.
-Use **Ctrl+Alt+F** to show the selected tile beside the conversation group without rearranging
-the full layout. Toggle it again to restore all tiles. The shared divider can be resized, and
+Use **Ctrl+Alt+F** to focus the selected tab on the right, then choose a tab for the left.
+The two tabs can come from the same group. Toggle Focus again to restore all tiles. The shared divider can be resized, and
 maximize remains separate.
 These commands can be changed in **Settings → Keybindings**. On narrow windows, areas use the
 compact panel presentation while the wider layout stays saved.

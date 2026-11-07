@@ -112,6 +112,36 @@ const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
       when: "composerFocus && draftThreadRoute",
     },
   },
+  {
+    id: "workspace.tile.focusLeft:ctrl+alt+h",
+    alongside: { key: "ctrl+alt+arrowleft", command: "workspace.tile.focusLeft" },
+    rule: { key: "ctrl+alt+h", command: "workspace.tile.focusLeft" },
+  },
+  {
+    id: "workspace.tile.focusDown:ctrl+alt+j",
+    alongside: { key: "ctrl+alt+arrowdown", command: "workspace.tile.focusDown" },
+    rule: { key: "ctrl+alt+j", command: "workspace.tile.focusDown" },
+  },
+  {
+    id: "workspace.tile.focusUp:ctrl+alt+k",
+    alongside: { key: "ctrl+alt+arrowup", command: "workspace.tile.focusUp" },
+    rule: { key: "ctrl+alt+k", command: "workspace.tile.focusUp" },
+  },
+  {
+    id: "workspace.tile.focusRight:ctrl+alt+l",
+    alongside: { key: "ctrl+alt+arrowright", command: "workspace.tile.focusRight" },
+    rule: { key: "ctrl+alt+l", command: "workspace.tile.focusRight" },
+  },
+  {
+    id: "workspace.tile.previousTab:ctrl+shift+tab",
+    alongside: { key: "ctrl+alt+[", command: "workspace.tile.previousTab" },
+    rule: { key: "ctrl+shift+tab", command: "workspace.tile.previousTab" },
+  },
+  {
+    id: "workspace.tile.nextTab:ctrl+tab",
+    alongside: { key: "ctrl+alt+]", command: "workspace.tile.nextTab" },
+    rule: { key: "ctrl+tab", command: "workspace.tile.nextTab" },
+  },
 ];
 
 function keybindingShortcutContext(rule: KeybindingRule): string | null {

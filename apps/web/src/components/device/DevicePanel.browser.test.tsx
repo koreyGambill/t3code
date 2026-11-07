@@ -186,15 +186,15 @@ describe("DevicePanel thread switches", () => {
     await act(async () => second.settle(opened));
 
     expect(startButton()).toBeNull();
-    expect(mocks.openDevice.mock.calls).toEqual([[threadB, phoneTarget]]);
+    expect(mocks.openDevice.mock.calls).toEqual([[threadB, phoneTarget, false, "device"]]);
 
     await act(async () => latest.settle(opened));
 
     expect(startButton()?.disabled).toBe(false);
     expect(errors()).toHaveLength(0);
     expect(mocks.openDevice.mock.calls).toEqual([
-      [threadB, phoneTarget],
-      [threadA, phoneTarget],
+      [threadB, phoneTarget, false, "device"],
+      [threadA, phoneTarget, false, "device"],
     ]);
   });
 });

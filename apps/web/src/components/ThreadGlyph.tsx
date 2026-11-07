@@ -56,12 +56,12 @@ export function ThreadGlyph({
               key={ember}
               className={`thread-glyph-ember thread-glyph-ember-${ember}`}
               stroke="currentColor"
-              strokeWidth="1"
+              strokeWidth="1.5"
             >
-              <path d="M-1.9 4A16 16 0 0 1 0.7 0.7" opacity="0.18" />
-              <path d="M0.7 0.7A16 16 0 0 1 5.9 -2.8" opacity="0.42" />
-              <path d="M5.9 -2.8A16 16 0 0 1 12 -4" opacity="0.8" />
-              <circle cx="12" cy="-4" r="1.5" fill="currentColor" stroke="none" />
+              <path d="M-8.85 0A24 24 0 0 1 -4.95 -4.95" opacity="0.18" />
+              <path d="M-4.95 -4.95A24 24 0 0 1 2.85 -10.2" opacity="0.42" />
+              <path d="M2.85 -10.2A24 24 0 0 1 12 -12" opacity="0.8" />
+              <circle cx="12" cy="-12" r="2.25" fill="currentColor" stroke="none" />
             </g>
           ))}
         </g>

@@ -127,11 +127,13 @@ const useLocalDrafts = create<{
 
 export function ThreadWorkspacePanel({
   threadRef,
+  surfaceId,
   visible,
   startedThread,
   section: storedSection,
 }: {
   readonly threadRef: ScopedThreadRef;
+  readonly surfaceId?: string;
   readonly reviewId: string | null;
   readonly visible: boolean;
   readonly startedThread: boolean;
@@ -179,7 +181,9 @@ export function ThreadWorkspacePanel({
             aria-selected={section === id}
             aria-label={sectionCounts[id] === undefined ? label : `${label} ${sectionCounts[id]}`}
             className="shrink-0 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
-            onClick={() => useRightPanelStore.getState().setWorkspaceSection(threadRef, id)}
+            onClick={() =>
+              useRightPanelStore.getState().setWorkspaceSection(threadRef, id, surfaceId)
+            }
           >
             {label}
             {sectionCounts[id] !== undefined ? (

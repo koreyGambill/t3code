@@ -260,17 +260,47 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const backgroundRules = Effect.map(readKeybindingsConfig(keybindingsConfigPath), (rules) =>
         rules.filter((entry) => entry.command === "composer.sendBackground"),
       );
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [existing]);
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        existing,
+        { key: "ctrl+alt+arrowleft", command: "workspace.tile.focusLeft" },
+        { key: "ctrl+alt+arrowdown", command: "workspace.tile.focusDown" },
+        { key: "ctrl+alt+arrowup", command: "workspace.tile.focusUp" },
+        { key: "ctrl+alt+arrowright", command: "workspace.tile.focusRight" },
+        { key: "ctrl+alt+[", command: "workspace.tile.previousTab" },
+        { key: "ctrl+alt+]", command: "workspace.tile.nextTab" },
+      ]);
 
       yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const upgraded = yield* readKeybindingsConfig(keybindingsConfigPath);
+      for (const [command, key] of [
+        ["workspace.tile.focusLeft", "ctrl+alt+h"],
+        ["workspace.tile.focusDown", "ctrl+alt+j"],
+        ["workspace.tile.focusUp", "ctrl+alt+k"],
+        ["workspace.tile.focusRight", "ctrl+alt+l"],
+        ["workspace.tile.previousTab", "ctrl+shift+tab"],
+        ["workspace.tile.nextTab", "ctrl+tab"],
+      ])
+        assert.isTrue(
+          upgraded.some((rule) => rule.command === command && rule.key === key),
+          `missing ${key}`,
+        );
       assert.deepStrictEqual(yield* backgroundRules, [
         { key: "mod+enter", command: "composer.sendBackground", when },
         existing,
       ]);
 
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [existing]);
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        existing,
+        { key: "ctrl+alt+arrowleft", command: "workspace.tile.focusLeft" },
+      ]);
       yield* keybindings.syncDefaultKeybindingsOnStartup;
       assert.deepStrictEqual(yield* backgroundRules, [existing]);
+      assert.deepStrictEqual(
+        (yield* readKeybindingsConfig(keybindingsConfigPath)).filter(
+          (rule) => rule.command === "workspace.tile.focusLeft",
+        ),
+        [{ key: "ctrl+alt+arrowleft", command: "workspace.tile.focusLeft" }],
+      );
     }).pipe(Effect.provide(layerKeybindings())),
   );
 

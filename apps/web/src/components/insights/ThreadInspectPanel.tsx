@@ -9,11 +9,13 @@ const sections = [
 
 export function ThreadInspectPanel({
   threadRef,
+  surfaceId,
   section,
   visible,
   startedThread,
 }: {
   readonly threadRef: ScopedThreadRef;
+  readonly surfaceId?: string;
   readonly section: ThreadInspectSection;
   readonly visible: boolean;
   readonly startedThread: boolean;
@@ -27,7 +29,7 @@ export function ThreadInspectPanel({
           role="tab"
           aria-selected={section === id}
           className="shrink-0 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
-          onClick={() => useRightPanelStore.getState().setInspectSection(threadRef, id)}
+          onClick={() => useRightPanelStore.getState().setInspectSection(threadRef, id, surfaceId)}
         >
           {label}
         </button>

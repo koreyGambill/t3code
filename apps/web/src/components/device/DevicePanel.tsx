@@ -118,12 +118,17 @@ export function DevicePanel(props: {
     if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
     else {
       // The server opened the device for the starting thread, so its tab opens there.
-      useRightPanelStore.getState().openDevice(props.threadRef, {
-        hostId: result.value.hostId,
-        deviceId: result.value.deviceId,
-        platform: device.platform,
-        name: device.name,
-      });
+      useRightPanelStore.getState().openDevice(
+        props.threadRef,
+        {
+          hostId: result.value.hostId,
+          deviceId: result.value.deviceId,
+          platform: device.platform,
+          name: device.name,
+        },
+        false,
+        props.surface.id,
+      );
       settleOperation(null);
     }
   };
