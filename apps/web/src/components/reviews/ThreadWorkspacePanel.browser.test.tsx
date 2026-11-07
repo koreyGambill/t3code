@@ -18,20 +18,25 @@ import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPa
 const state = vi.hoisted(() => ({
   query: vi.fn(),
   counts: vi.fn(),
+  listWork: vi.fn(),
   marks: vi.fn(),
   command: vi.fn(),
 }));
 vi.mock("../../state/threadWorkspace", () => ({
   threadWorkspaceGet: state.query,
   threadWorkspaceCounts: state.counts,
-  threadWorkspacePatch: "patch",
-  threadWorkspaceSaveDraft: "save",
-  threadWorkspaceSubmit: "submit",
+  threadWorkspaceListWork: state.listWork,
+  threadWorkspacePatch: { name: "patch", permissionAtom: () => Atom.make(true) },
+  threadWorkspaceSaveDraft: { name: "save" },
+  threadWorkspaceSubmit: { name: "submit" },
 }));
 vi.mock("../../state/threadMarks", () => ({ threadMarksGet: state.marks }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/session", async (original) => ({
+  ...(await original<typeof import("../../state/session")>()),
+  useEnvironmentScope: () => true,
+}));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (name: string) => (input: unknown) => state.command(name, input),
+  useAtomCommand: ({ name }: { name: string }) => (input: unknown) => state.command(name, input),
 }));
 vi.mock("./useReviewSupport", () => ({ useReviewSupport: () => true }));
 vi.mock("../insights/ThreadInsightsPanel", () => ({ ThreadInsightsPanel: () => null }));
@@ -147,6 +152,7 @@ function setup(multiSelect = false, retired = false) {
   const atom = Atom.make(AsyncResult.success(workspace)).pipe(Atom.keepAlive);
   const queryAtom = Atom.make((get) => get(atom)).pipe(Atom.keepAlive);
   state.query.mockReset().mockReturnValue(queryAtom);
+  state.listWork.mockReset().mockReturnValue(Atom.make(AsyncResult.success([])).pipe(Atom.keepAlive));
   state.counts.mockReset().mockReturnValue(
     Atom.make((get) => {
       const current = AsyncResult.getOrElse(get(atom), () => workspace);

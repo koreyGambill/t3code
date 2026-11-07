@@ -1,3 +1,9 @@
+import * as NodeOS from "node:os";
+
+// Host hooks and other Git defaults must not change fixture behavior.
+process.env.GIT_CONFIG_GLOBAL = NodeOS.devNull;
+process.env.GIT_CONFIG_NOSYSTEM = "1";
+
 // Override inherited autocrlf, signing and init-branch settings through env so every git child gets stable fixtures.
 const entries: ReadonlyArray<readonly [key: string, value: string]> = [
   ["core.autocrlf", "false"],

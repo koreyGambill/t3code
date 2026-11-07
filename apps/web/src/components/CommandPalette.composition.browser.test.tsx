@@ -24,7 +24,7 @@ vi.mock("../hooks/useSettings", async (original) => ({
   useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
-  useScratchProject: () => ({ scratchEnvironmentId: () => null }),
+  useScratchProject: () => ({ scratchEnvironmentChoice: () => ({ kind: "none" }) }),
 }));
 vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
 vi.mock("../hooks/useHandleNewThread", () => ({
