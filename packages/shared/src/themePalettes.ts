@@ -1,4 +1,4 @@
-export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+export const BUILT_IN_THEME_IDS = ["cyber", "t3-chat", "grove", "ocean", "ember", "iris"] as const;
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
@@ -908,7 +908,66 @@ export const IRIS_THEME: ThemeDefinition = {
   sidebarArtwork: true,
 };
 
+export const CYBER_THEME: ThemeDefinition = {
+  id: "cyber",
+  label: "Cyber",
+  appearance: "dark",
+  colors: {
+    ...T3_CODE_DARK_THEME_COLORS,
+    canvas: "#080808",
+    chrome: "#080808",
+    toolbar: "#101010",
+    toolbarForeground: "#f5f5f5",
+    toolbarBorder: "#292929",
+    toolbarControl: "#171717",
+    toolbarControlHover: "#242424",
+    surface: "#101010",
+    surfaceRaised: "#181818",
+    surfaceOverlay: "#1c1c1c",
+    textMuted: "#a3a3a3",
+    border: "#292929",
+    input: "#404040",
+    focus: "#68dfff",
+    accent: "#53e5b2",
+    accentForeground: "#06130f",
+    secondary: "#1c1c1c",
+    muted: "#181818",
+    mutedForeground: "#a3a3a3",
+    placeholder: "#929292",
+    secondaryLabel: "#a3a3a3",
+    iconMuted: "#a3a3a3",
+    update: "#68dfff",
+    updateForeground: "#68dfff",
+    updateSurface: "#102329",
+    accentSurface: "#142c23",
+    accentSurfaceForeground: "#c0f9e4",
+    messageSurface: "#14241e",
+    messageForeground: "#edf7f2",
+    messageAction: "#53e5b2",
+    messageActionForeground: "#06130f",
+    messageActionHover: "#77edc4",
+    codeBackground: "#101010",
+    codeForeground: "#edf7f2",
+    searchMatchBackground: "#164b3b",
+    searchMatchForeground: "#e8fff5",
+    searchMatchActiveBackground: "#68dfff",
+    searchMatchActiveForeground: "#061318",
+    sidebar: "#000000",
+    sidebarControlSurface: "#101010",
+    sidebarRowHover: "#161b19",
+    sidebarRowActive: "#19382c",
+    sidebarRowSelected: "#152b23",
+    sidebarBorder: "#242424",
+    terminalBackground: "#080808",
+    terminalCursor: "#53e5b2",
+    terminalSelection: "#204b40",
+    terminalScrollbar: "#303030",
+    terminalScrollbarHover: "#484848",
+  },
+};
+
 export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
+  CYBER_THEME,
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,

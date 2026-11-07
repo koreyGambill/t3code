@@ -188,7 +188,7 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
-        weave<span className="text-(--weavewing-orange)">wing</span>
+        weave<span className="text-(--weavewing-green)">wing</span>
       </span>
     </span>
   );

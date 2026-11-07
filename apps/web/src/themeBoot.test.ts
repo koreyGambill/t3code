@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import indexHtml from "../index.html?raw";
+import { readThemePreference } from "./hooks/useTheme";
 import {
+  CYBER_THEME,
   CUSTOM_THEMES_STORAGE_KEY,
   getDefaultThemeColors,
   getThemeColorsForMode,
   invalidateCustomThemes,
-  isKnownThemePreference,
   resolveThemeAppearance,
   T3_CHAT_THEME,
   EMBER_THEME,
@@ -109,8 +110,7 @@ function runtimeResolvedAppearance(
   });
   invalidateCustomThemes();
   try {
-    const raw = storage[THEME_STORAGE_KEY] ?? null;
-    const theme = raw !== null && isKnownThemePreference(raw) ? raw : "system";
+    const theme = readThemePreference();
     const followRaw = storage[THEME_FOLLOW_SYSTEM_STORAGE_KEY] ?? null;
     const appearanceRaw = storage[THEME_APPEARANCE_MODE_STORAGE_KEY] ?? null;
     const appearanceMode =
@@ -152,6 +152,17 @@ describe("index.html boot script", () => {
     prefersDark: boolean;
   }> = [
     { name: "no stored preference on a dark OS", storage: {}, prefersDark: true },
+    { name: "no stored preference on a light OS", storage: {}, prefersDark: false },
+    {
+      name: "Cyber stays dark on a light OS",
+      storage: { [THEME_STORAGE_KEY]: "cyber" },
+      prefersDark: false,
+    },
+    {
+      name: "explicit System follows a light OS",
+      storage: { [THEME_STORAGE_KEY]: "system" },
+      prefersDark: false,
+    },
     {
       name: "T3 Chat follows a dark OS",
       storage: { [THEME_STORAGE_KEY]: "t3-chat", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
@@ -254,6 +265,27 @@ describe("index.html boot script", () => {
     expect(boot.isDark).toBe(runtimeResolvedAppearance(storage, prefersDark) === "dark");
   });
 
+  it("defaults new clients to Cyber and preserves saved preferences", () => {
+    const storage: Record<string, string> = {};
+    vi.stubGlobal("window", {
+      localStorage: { getItem: (key: string) => storage[key] ?? null },
+    });
+    try {
+      expect(readThemePreference()).toBe("cyber");
+      for (const preference of ["system", "light", "dark", "grove", "cyber"]) {
+        storage[THEME_STORAGE_KEY] = preference;
+        expect(readThemePreference()).toBe(preference);
+      }
+      delete storage[THEME_STORAGE_KEY];
+      const boot = runBootScript({ storage, prefersDark: false });
+      expect(boot.themeId).toBe("cyber");
+      expect(boot.isDark).toBe(true);
+      expect(boot.bootVariables["--boot-accent"]).toBe(CYBER_THEME.colors.accent);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("accepts exponent-form OKLCH before the runtime mounts", () => {
     const colors = {
       canvas: "oklch(9.5e-1 1e-2 2.8e2)",
@@ -284,11 +316,17 @@ describe("index.html boot script", () => {
   });
 
   it("keeps every built-in boot splash in sync with the real palettes", () => {
-    for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
-      expect(theme.appearance).toBe("light");
+    for (const theme of [
+      CYBER_THEME,
+      T3_CHAT_THEME,
+      GROVE_THEME,
+      OCEAN_THEME,
+      EMBER_THEME,
+      IRIS_THEME,
+    ]) {
       for (const mode of ["light", "dark"] as const) {
         const colors = getThemeColorsForMode(theme, mode);
-        expect(colors).not.toBeNull();
+        if (colors === null) continue;
         const boot = runBootScript({
           storage: {
             [THEME_STORAGE_KEY]: theme.id,

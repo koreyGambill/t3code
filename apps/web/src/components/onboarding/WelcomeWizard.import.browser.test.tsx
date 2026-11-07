@@ -391,7 +391,7 @@ it.each(["web", "desktop"] as const)(
       </RegistryContext.Provider>,
       { router: false },
     );
-    await click("Import projects");
+    await click("Import conversations and projects");
     await vi.waitFor(() => expect(router.state.location.pathname).toBe("/welcome"));
     if (surface === "desktop") expect(window.location.hash).toBe("#/welcome");
     await click("Continue");
