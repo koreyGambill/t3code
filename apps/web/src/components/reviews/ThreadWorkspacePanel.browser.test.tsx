@@ -36,7 +36,10 @@ vi.mock("../../state/session", async (original) => ({
   useEnvironmentScope: () => true,
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: ({ name }: { name: string }) => (input: unknown) => state.command(name, input),
+  useAtomCommand:
+    ({ name }: { name: string }) =>
+    (input: unknown) =>
+      state.command(name, input),
 }));
 vi.mock("./useReviewSupport", () => ({ useReviewSupport: () => true }));
 vi.mock("../insights/ThreadInsightsPanel", () => ({ ThreadInsightsPanel: () => null }));
@@ -152,7 +155,9 @@ function setup(multiSelect = false, retired = false) {
   const atom = Atom.make(AsyncResult.success(workspace)).pipe(Atom.keepAlive);
   const queryAtom = Atom.make((get) => get(atom)).pipe(Atom.keepAlive);
   state.query.mockReset().mockReturnValue(queryAtom);
-  state.listWork.mockReset().mockReturnValue(Atom.make(AsyncResult.success([])).pipe(Atom.keepAlive));
+  state.listWork
+    .mockReset()
+    .mockReturnValue(Atom.make(AsyncResult.success([])).pipe(Atom.keepAlive));
   state.counts.mockReset().mockReturnValue(
     Atom.make((get) => {
       const current = AsyncResult.getOrElse(get(atom), () => workspace);
