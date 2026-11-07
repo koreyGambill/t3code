@@ -92,7 +92,7 @@ import {
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
-  canForkProjectedAssistantItem,
+  resolveLatestForkableAssistantItem,
   getUserQueuedThreadRuns,
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
@@ -3636,9 +3636,10 @@ export default function ChatView(props: ChatViewProps) {
                                 >
                                   {activeThread.lineage.sideChat !== true &&
                                     (() => {
-                                      const source = serverVisibleTurnItems.findLast((item) =>
-                                        canForkProjectedAssistantItem({ projectedItem: item }),
-                                      );
+                                      const source = resolveLatestForkableAssistantItem({
+                                        visibleTurnItems: serverVisibleTurnItems,
+                                        runs: serverProjection?.runs ?? [],
+                                      });
                                       return source ? (
                                         <ForkConversationButton
                                           compact

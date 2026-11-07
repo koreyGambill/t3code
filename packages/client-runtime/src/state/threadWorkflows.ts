@@ -14,6 +14,13 @@ type ProviderSession = Projection["providerSessions"][number];
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["preparing", "starting", "running", "waiting"]);
 const MERGE_BACK_RUN_STATUSES = new Set<Run["status"]>(["waiting", "completed"]);
+const FORKABLE_RUN_STATUSES = new Set<Run["status"]>([
+  "waiting",
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
 const MERGE_BACK_BLOCKING_RUN_STATUSES = new Set<Run["status"]>([
   "preparing",
   "starting",
@@ -179,12 +186,14 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
 
 export function canForkProjectedAssistantItem(input: {
   readonly projectedItem: ThreadStructureVisibleTurnItem;
+  readonly runStatus?: Run["status"] | undefined;
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
 }): boolean {
   const item = input.projectedItem.item;
   if (item.type !== "assistant_message" || item.runId === null || item.status !== "completed") {
     return false;
   }
+  if (input.runStatus !== undefined && !FORKABLE_RUN_STATUSES.has(input.runStatus)) return false;
   if (input.capabilities === undefined) {
     // Historical and inherited rows may outlive their provider-session record.
     // Keep the portable server-side fallback available when capability evidence
@@ -197,6 +206,21 @@ export function canForkProjectedAssistantItem(input: {
     capabilities.threads.canForkFromTurn &&
     capabilities.identity.nativeThreadIds === "strong";
   return canForkNatively || capabilities.context.supportsFullThreadHandoff;
+}
+
+export function resolveLatestForkableAssistantItem(
+  projection: Pick<Projection, "visibleTurnItems" | "runs">,
+) {
+  const runsById = new Map(projection.runs.map((run) => [run.id, run]));
+  return projection.visibleTurnItems.findLast((projectedItem) =>
+    canForkProjectedAssistantItem({
+      projectedItem,
+      runStatus:
+        projectedItem.item.runId === null
+          ? undefined
+          : runsById.get(projectedItem.item.runId)?.status,
+    }),
+  );
 }
 
 export function canDetachThreadProviderSession(projection: Projection): boolean {

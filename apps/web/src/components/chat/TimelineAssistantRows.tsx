@@ -96,6 +96,7 @@ function AssistantForkButton({
   });
   const canFork = canForkProjectedAssistantItem({
     projectedItem,
+    runStatus: support.run?.status,
     capabilities: support.providerSession?.capabilities,
   });
 

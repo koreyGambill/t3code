@@ -5,6 +5,7 @@ import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
   resolveLatestMergeBackRun,
+  resolveLatestForkableAssistantItem,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
 
@@ -365,6 +366,24 @@ describe("thread workflows", () => {
       }),
     ).toBe(true);
     expect(canForkProjectedAssistantItem({ projectedItem })).toBe(true);
+    for (const runStatus of [
+      "queued",
+      "preparing",
+      "starting",
+      "running",
+      "rolled_back",
+    ] as const) {
+      expect(canForkProjectedAssistantItem({ projectedItem, runStatus })).toBe(false);
+    }
+    for (const runStatus of [
+      "waiting",
+      "completed",
+      "failed",
+      "interrupted",
+      "cancelled",
+    ] as const) {
+      expect(canForkProjectedAssistantItem({ projectedItem, runStatus })).toBe(true);
+    }
     expect(
       canForkProjectedAssistantItem({
         projectedItem: {
@@ -372,6 +391,38 @@ describe("thread workflows", () => {
         } as never,
       }),
     ).toBe(false);
+  });
+
+  it("forks the latest finished turn while a later run has completed response chunks", () => {
+    const previous = {
+      item: { type: "assistant_message", runId: "previous", status: "completed" },
+    };
+    const current = {
+      item: { type: "assistant_message", runId: "current", status: "completed" },
+    };
+    const rolledBack = {
+      item: { type: "assistant_message", runId: "reverted", status: "completed" },
+    };
+    const projection = {
+      visibleTurnItems: [previous, current, rolledBack],
+      runs: [
+        { id: "previous", status: "completed" },
+        { id: "current", status: "running" },
+        { id: "reverted", status: "rolled_back" },
+      ],
+    };
+    expect(resolveLatestForkableAssistantItem(projection as never)).toBe(previous);
+    expect(
+      resolveLatestForkableAssistantItem({
+        ...projection,
+        runs: projection.runs.map((run) =>
+          run.id === "current" ? { ...run, status: "waiting" } : run,
+        ),
+      } as never),
+    ).toBe(current);
+    expect(
+      resolveLatestForkableAssistantItem({ visibleTurnItems: [current], runs: [] } as never),
+    ).toBe(current);
   });
 
   it("merges the newest provider-finished run while checkpoint capture is pending", () => {

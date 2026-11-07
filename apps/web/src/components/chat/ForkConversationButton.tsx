@@ -28,6 +28,7 @@ export function ForkConversationButton({
   });
   const available = canForkProjectedAssistantItem({
     projectedItem: source,
+    runStatus: support.run?.status,
     capabilities: support.providerSession?.capabilities,
   });
   return (
@@ -53,7 +54,7 @@ export function ForkConversationButton({
         <GitForkIcon className="size-4" />
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {busy ? "Forking conversation…" : "Fork conversation from the latest completed response"}
+        {busy ? "Forking conversation…" : "Fork through the last finished turn"}
       </TooltipPopup>
     </Tooltip>
   );

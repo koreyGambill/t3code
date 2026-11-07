@@ -443,6 +443,7 @@ function AssistantForkButton(props: {
   const [busy, setBusy] = useState(false);
   const canFork = canForkProjectedAssistantItem({
     projectedItem: props.projectedItem,
+    runStatus: support.run?.status,
     capabilities: support.providerSession?.capabilities,
   });
   const runId = props.projectedItem.item.runId;
