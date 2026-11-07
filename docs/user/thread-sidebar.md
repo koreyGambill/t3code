@@ -3,6 +3,12 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+On web and desktop, **Settings → General → Thread glyph alerts** controls the
+one-second glyph flash when a thread replies or needs attention. It appears over
+the whole application, including when you are viewing that thread, and respects
+reduced motion. A dot on the thread's glyph marks an unread reply or a request
+that still needs attention. System notifications and sounds have separate controls.
+
 ## Start a thread
 
 On web and desktop, **New thread** opens the project picker when you have multiple

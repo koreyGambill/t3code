@@ -8,11 +8,13 @@ export function ThreadGlyph({
   seed,
   className,
   working = false,
+  attention = false,
 }: {
   threadId: string;
   seed?: number | undefined;
   className?: string | undefined;
   working?: boolean | undefined;
+  attention?: boolean | undefined;
 }) {
   const glyph = resolveThreadGlyph(threadId, seed);
   const colors: CSSProperties & {
@@ -27,7 +29,7 @@ export function ThreadGlyph({
     "--thread-glyph-trace-dark": glyph.traceColor,
     color: "light-dark(var(--thread-glyph-light), var(--thread-glyph-dark))",
   };
-  const label = `${glyph.colorName} ${glyph.name}${working ? ", working" : ""}`;
+  const label = `${glyph.colorName} ${glyph.name}${working ? ", working" : ""}${attention ? ", needs attention" : ""}`;
   return (
     <svg
       ref={working ? observeVisibleAnimation : undefined}
@@ -46,6 +48,7 @@ export function ThreadGlyph({
       {glyph.paths.map((path) => (
         <path key={path} d={path} />
       ))}
+      {attention ? <circle className="thread-glyph-notification-dot" cx="20" cy="4" r="3" /> : null}
       {working ? (
         <g
           aria-hidden="true"

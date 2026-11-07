@@ -521,6 +521,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "thread-glyph-alerts",
+    title: "Thread glyph alerts",
+    to: "/settings/general",
+    searchTerms: ["notification symbol flash popup full window attention glyph"],
+  },
+  {
     id: "in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",

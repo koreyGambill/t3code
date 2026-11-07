@@ -471,6 +471,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.inAppNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled
       ? ["In-app notifications"]
       : []),
+    ...(settings.threadGlyphAlertsEnabled !== DEFAULT_UNIFIED_SETTINGS.threadGlyphAlertsEnabled
+      ? ["Thread glyph alerts"]
+      : []),
     ...(settings.sidebarProjectGroupingMode !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
       ? ["Project Grouping"]
       : []),
@@ -629,6 +632,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
+      threadGlyphAlertsEnabled: DEFAULT_UNIFIED_SETTINGS.threadGlyphAlertsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
@@ -794,6 +798,17 @@ export function GeneralSettingsPanel() {
               checked={settings.inAppNotificationsEnabled}
               onCheckedChange={(checked) => updateSettings({ inAppNotificationsEnabled: checked })}
               aria-label="In-app notifications"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("thread-glyph-alerts")}
+          description="Flash a thread's glyph across the whole application for one second when it replies or needs attention, including the thread you're viewing."
+          control={
+            <Switch
+              checked={settings.threadGlyphAlertsEnabled}
+              onCheckedChange={(checked) => updateSettings({ threadGlyphAlertsEnabled: checked })}
+              aria-label="Thread glyph alerts"
             />
           }
         />

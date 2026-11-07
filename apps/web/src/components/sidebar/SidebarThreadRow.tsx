@@ -711,6 +711,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const needsAttention =
+    isUnread ||
+    status === "input" ||
+    status === "approval" ||
+    status === "request" ||
+    status === "failed" ||
+    status === "limited";
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -1247,6 +1254,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 threadId={thread.id}
                 seed={thread.glyphSeed}
                 working={isThreadGlyphWorking(thread)}
+                attention={needsAttention}
                 className="size-5 shrink-0"
               />
               {draftIndicator}
@@ -1583,6 +1591,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 threadId={thread.id}
                 seed={thread.glyphSeed}
                 working={isThreadGlyphWorking(thread)}
+                attention={needsAttention}
                 className="size-5 shrink-0"
               />
               {title}

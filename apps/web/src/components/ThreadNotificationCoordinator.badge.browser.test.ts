@@ -10,6 +10,8 @@ import { stubGlobal } from "../../test/render";
 const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
+  glyphAlerts: false,
+  glyph: vi.fn(),
   toast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
   navigate: vi.fn(),
@@ -66,6 +68,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
   getClientSettings: (() => ({
     notificationMode: state.mode,
     inAppNotificationsEnabled: state.inApp,
+    threadGlyphAlertsEnabled: state.glyphAlerts,
   })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
@@ -74,6 +77,8 @@ vi.mock(import("../threadNotifications"), async (original) => ({
   unlockNotificationAudio: vi.fn(),
   setNotificationBadge: state.badge,
 }));
+
+vi.mock(import("../threadAttention"), () => ({ showThreadAttention: state.glyph }));
 
 import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
@@ -188,6 +193,7 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
+  state.glyphAlerts = false;
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
@@ -209,6 +215,7 @@ function setup() {
     navigate: state.navigate,
   } as unknown as AnyRouter;
   return {
+    router,
     start: () => {
       stack.defer(startThreadNotifications(testRegistry, router));
     },
@@ -314,5 +321,33 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
     state.shells.set("one", continued ? shell() : completed);
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+  },
+);
+
+it.each([false, true])(
+  "flashes the thread glyph across the app, including the viewed thread: %s",
+  async (viewing) => {
+    await using app = setup();
+    state.mode = "off";
+    state.glyphAlerts = true;
+    focused = true;
+    if (viewing) app.router.state.matches[0]!.params = { environmentId: "one", threadId: "thread" };
+    app.start();
+    expect(state.glyph).not.toHaveBeenCalled();
+    const done = shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    });
+    state.shells.set("one", done);
+    expect(state.glyph).toHaveBeenCalledExactlyOnceWith({
+      threadId: "thread",
+      seed: undefined,
+      title: "Test thread",
+    });
+    state.shells.set("one", done);
+    expect(state.glyph).toHaveBeenCalledTimes(1);
+    state.glyphAlerts = false;
+    app.changeSettings();
+    state.shells.set("two", shell({ hasPendingUserInput: true }));
+    expect(state.glyph).toHaveBeenCalledTimes(1);
   },
 );

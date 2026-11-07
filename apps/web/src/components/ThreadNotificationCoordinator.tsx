@@ -22,6 +22,7 @@ import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
+import { showThreadAttention } from "../threadAttention";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -123,7 +124,14 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const {
+      notificationMode: mode,
+      inAppNotificationsEnabled,
+      threadGlyphAlertsEnabled,
+    } = getClientSettings();
+    if (threadGlyphAlertsEnabled && document.visibilityState === "visible") {
+      showThreadAttention({ threadId: thread.id, seed: thread.glyphSeed, title: thread.title });
+    }
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;
       threadId?: string;
@@ -332,8 +340,10 @@ export function startThreadNotifications(
   };
 
   const syncEnvironments = () => {
-    const { notificationMode, inAppNotificationsEnabled } = getClientSettings();
-    const enabled = notificationMode !== "off" || inAppNotificationsEnabled;
+    const { notificationMode, inAppNotificationsEnabled, threadGlyphAlertsEnabled } =
+      getClientSettings();
+    const enabled =
+      notificationMode !== "off" || inAppNotificationsEnabled || threadGlyphAlertsEnabled;
     const environmentIds = enabled ? registry.get(environmentSummaries.environmentIdsAtom) : [];
     const activeIds = new Set(environmentIds);
     for (const [environmentId, entry] of watched) {
