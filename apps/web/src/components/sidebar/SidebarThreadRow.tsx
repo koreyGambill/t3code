@@ -78,6 +78,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
+  isThreadGlyphWorking,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
@@ -1245,7 +1246,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <ThreadGlyph
                 threadId={thread.id}
                 seed={thread.glyphSeed}
-                working={status === "preparing" || status === "working"}
+                working={isThreadGlyphWorking(thread)}
                 className="size-5 shrink-0"
               />
               {draftIndicator}
@@ -1581,7 +1582,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <ThreadGlyph
                 threadId={thread.id}
                 seed={thread.glyphSeed}
-                working={status === "preparing" || status === "working"}
+                working={isThreadGlyphWorking(thread)}
                 className="size-5 shrink-0"
               />
               {title}

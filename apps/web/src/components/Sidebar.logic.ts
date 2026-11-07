@@ -938,6 +938,19 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+export function isThreadGlyphWorking(
+  thread: SidebarThreadStatusInput & Pick<SidebarThreadSummary, "pendingBackgroundTasks">,
+): boolean {
+  const status = resolveSidebarThreadStatus(thread);
+  return (
+    status === "preparing" ||
+    status === "working" ||
+    (status === "waiting" &&
+      (thread.runtime?.status === "running" ||
+        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks)))
+  );
+}
+
 /**
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.

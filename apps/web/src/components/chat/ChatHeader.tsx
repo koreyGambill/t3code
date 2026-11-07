@@ -23,7 +23,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { isTrailingDoubleClick, resolveSidebarThreadStatus } from "../Sidebar.logic";
+import { isThreadGlyphWorking, isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -98,8 +98,7 @@ export const ChatHeader = memo(function ChatHeader({
   useWorkspaceVisit(isServerThread ? activeThreadRef : null, activeThreadTitle);
   const activeThread = useThreadShell(activeThreadRef);
   const glyphSeed = activeThread?.glyphSeed;
-  const glyphStatus = activeThread ? resolveSidebarThreadStatus(activeThread) : "ready";
-  const glyphWorking = glyphStatus === "preparing" || glyphStatus === "working";
+  const glyphWorking = activeThread ? isThreadGlyphWorking(activeThread) : false;
   const glyph = resolveThreadGlyph(activeThreadId, glyphSeed);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,

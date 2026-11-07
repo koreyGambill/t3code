@@ -4,6 +4,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Clock3Icon } from "lucide-react";
 import { useQuietThreadShell } from "../../state/entities";
 import { ThreadGlyph } from "../ThreadGlyph";
+import { isThreadGlyphWorking } from "../Sidebar.logic";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
@@ -61,5 +62,12 @@ export function WorkspaceHistoryButton() {
 
 function HistoryThreadGlyph({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const thread = useQuietThreadShell(threadRef);
-  return <ThreadGlyph threadId={threadRef.threadId} seed={thread?.glyphSeed} className="size-4" />;
+  return (
+    <ThreadGlyph
+      threadId={threadRef.threadId}
+      seed={thread?.glyphSeed}
+      working={thread ? isThreadGlyphWorking(thread) : false}
+      className="size-4"
+    />
+  );
 }
