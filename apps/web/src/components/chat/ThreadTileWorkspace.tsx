@@ -43,6 +43,7 @@ import {
   directionalTile,
   tileGeometry,
   displayTileRoot,
+  isFocusOverviewGroup,
   type TileRect,
 } from "../../threadTileGeometry";
 import { useTheme } from "../../hooks/useTheme";
@@ -163,6 +164,10 @@ export function ThreadTileWorkspace(props: {
       : "Choose area";
   };
   const activate = (group: TileGroup, tabId: string) => {
+    if (isFocusOverviewGroup(group.id)) {
+      apply({ type: "focus-left", tabId });
+      return;
+    }
     apply({ type: "activate", groupId: group.id, tabId });
     const surface = props.panels.surfaces.find((entry) => entry.id === tabId);
     if (surface) props.panels.onActivate(surface);
@@ -210,6 +215,7 @@ export function ThreadTileWorkspace(props: {
       return;
     }
     activate(group, group.activeTabId);
+    if (isFocusOverviewGroup(group.id)) return;
     const surface = props.panels.surfaces.find((entry) => entry.id === group.activeTabId);
     if (surface?.kind === "terminal") return;
     requestAnimationFrame(() => {
@@ -299,7 +305,23 @@ export function ThreadTileWorkspace(props: {
         },
       ]),
     );
+    const cancelChooser = (event: KeyboardEvent) => {
+      const current = currentLayout();
+      if (
+        event.key !== "Escape" ||
+        !current.focusPairGroupId ||
+        current.focusPairLeftTabId ||
+        event.defaultPrevented ||
+        (event.target instanceof Element &&
+          event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]'))
+      )
+        return;
+      event.preventDefault();
+      apply({ type: "focus-pair", groupId: null });
+    };
+    window.addEventListener("keydown", cancelChooser);
     const disposers = [
+      () => window.removeEventListener("keydown", cancelChooser),
       registerCommands(commands, {
         capture: true,
         keybindings: () => props.panels.keybindings,
@@ -319,7 +341,18 @@ export function ThreadTileWorkspace(props: {
       const nativeId = props.panels.previewRuntimeTabId?.(surface.resourceId) ?? surface.resourceId;
       disposers.push(
         registerMenuAction(`workspace.tile.browserFocused:${nativeId}`, () => {
-          const owner = groups.find((group) => group.tabs.includes(surface.id));
+          const current = currentLayout();
+          if (
+            current.focusPairGroupId &&
+            !current.focusPairLeftTabId &&
+            current.focusPairRightTabId !== surface.id
+          ) {
+            apply({ type: "focus-left", tabId: surface.id });
+            return;
+          }
+          const owner = getTileGroups(displayTileRoot(current)).find((group) =>
+            group.tabs.includes(surface.id),
+          );
           if (owner) activate(owner, surface.id);
         }),
       );
@@ -524,47 +557,44 @@ export function ThreadTileWorkspace(props: {
       >
         {visibleGroups.map(({ id, rect }) => {
           const group = displayGroups.find((entry) => entry.id === id)!;
-          if (id === "focus-left-chooser")
+          if (isFocusOverviewGroup(id) || id === "focus-left-chooser")
             return (
               <section
                 key={id}
                 style={
                   {
                     ...rectStyle(rect),
-                    "--tile-group-accent": "var(--tile-accent-0)",
+                    "--tile-group-accent": `var(--tile-accent-${group.colorIndex ?? 0})`,
                   } as CSSProperties
                 }
                 className="workspace-tile-frame @container/tile absolute overflow-hidden bg-background"
-                aria-label="Choose left tab"
+                aria-label={`Choose tile: ${title(group.activeTabId)}`}
               >
-                <div className="workspace-tile-titlebar flex items-center justify-between px-2 text-2xs">
-                  <span>Choose left tab</span>
-                  <TileControl
-                    label="Exit Focus (Ctrl+Alt+F)"
-                    onClick={() => apply({ type: "focus-pair", groupId: null })}
-                  >
-                    <X />
-                  </TileControl>
-                </div>
-                <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
-                  <div className="flex max-w-sm flex-wrap justify-center gap-1">
-                    {groups.flatMap((entry, index) =>
-                      entry.tabs
-                        .filter((tabId) => tabId !== layout.focusPairRightTabId)
-                        .map((tabId) => (
-                          <Button
-                            key={tabId}
-                            size="xs"
-                            variant="outline"
-                            onClick={() => apply({ type: "focus-left", tabId })}
-                            aria-label={`Show ${title(tabId)} on left`}
-                          >
-                            <span className="text-2xs text-muted-foreground">{index + 1}</span>
-                            {title(tabId)}
-                          </Button>
-                        )),
-                    )}
-                  </div>
+                <div
+                  className="workspace-tile-titlebar flex items-center gap-0.5 overflow-x-auto px-1 [scrollbar-width:none]"
+                  role="toolbar"
+                  aria-label={`Choose from ${title(group.activeTabId)}`}
+                >
+                  {group.tabs.map((tabId) => (
+                    <button
+                      key={tabId}
+                      type="button"
+                      aria-label={`Show ${title(tabId)} on left`}
+                      className="workspace-tile-tab flex shrink-0 cursor-pointer items-center gap-1 px-1.5 py-0.5 text-2xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                      data-active={tabId === group.activeTabId}
+                      onClick={() => apply({ type: "focus-left", tabId })}
+                    >
+                      {title(tabId)}
+                    </button>
+                  ))}
+                  {group.tabs.length === 0 && (
+                    <TileControl
+                      label="Exit Focus (Ctrl+Alt+F)"
+                      onClick={() => apply({ type: "focus-pair", groupId: null })}
+                    >
+                      <X />
+                    </TileControl>
+                  )}
                 </div>
               </section>
             );
@@ -751,7 +781,9 @@ export function ThreadTileWorkspace(props: {
                       {maximized
                         ? `${switchGroups.findIndex((entry) => entry.id === id) + 1}/${switchGroups.length} · Maximized`
                         : layout.focusPairGroupId
-                          ? `2/${groups.length} · Focus`
+                          ? layout.focusPairLeftTabId
+                            ? `2/${groups.length} · Focus`
+                            : "Focus · Choose"
                           : `${groups.length}`}
                     </MenuTrigger>
                     <MenuPopup align="end">
@@ -1000,73 +1032,100 @@ export function ThreadTileWorkspace(props: {
                 display: visible ? undefined : "none",
               }}
               onFocusCapture={() => {
-                if (group && layout.focusedGroupId !== group.id) activate(group, tabId);
+                if (group && !isFocusOverviewGroup(group.id) && layout.focusedGroupId !== group.id)
+                  activate(group, tabId);
               }}
               onPointerDownCapture={() => {
-                if (group && layout.focusedGroupId !== group.id) activate(group, tabId);
+                if (group && !isFocusOverviewGroup(group.id) && layout.focusedGroupId !== group.id)
+                  activate(group, tabId);
               }}
             >
-              {tabId === CONVERSATION_TAB_ID
-                ? props.conversation
-                : surface
-                  ? props.renderSurface(
-                      surface,
-                      contentVisible,
-                      layoutVersion,
-                      layout.focusedGroupId === group?.id,
-                    )
-                  : null}
+              <div className="contents" inert={Boolean(group && isFocusOverviewGroup(group.id))}>
+                {tabId === CONVERSATION_TAB_ID
+                  ? props.conversation
+                  : surface
+                    ? props.renderSurface(
+                        surface,
+                        contentVisible,
+                        layoutVersion,
+                        layout.focusedGroupId === group?.id,
+                      )
+                    : null}
+              </div>
             </div>
           );
         })}
+        {visibleGroups
+          .filter(({ id }) => isFocusOverviewGroup(id))
+          .map(({ id, rect }) => {
+            const tabId = displayGroups.find((group) => group.id === id)!.activeTabId;
+            return (
+              <button
+                key={`choose-${id}`}
+                type="button"
+                aria-label={`Choose tile: ${title(tabId)}`}
+                className="absolute z-40 cursor-pointer bg-transparent outline-none hover:bg-accent/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                style={{
+                  ...rectStyle(rect),
+                  left: `calc(${rect.x * 100}% + var(--tile-border-width))`,
+                  width: `calc(${rect.width * 100}% - 2 * var(--tile-border-width))`,
+                  top: `calc(${rect.y * 100}% + var(--tile-titlebar-height))`,
+                  height: `calc(${rect.height * 100}% - var(--tile-titlebar-height) - var(--tile-border-width))`,
+                }}
+                onClick={() => apply({ type: "focus-left", tabId })}
+              />
+            );
+          })}
         {!maximized &&
-          geometry.splits.map((line) => (
-            <div
-              key={line.id}
-              role="separator"
-              tabIndex={0}
-              aria-label={`Resize ${line.axis === "horizontal" ? "columns" : "rows"}`}
-              aria-orientation={line.axis === "horizontal" ? "vertical" : "horizontal"}
-              aria-valuenow={Math.round(line.ratio * 100)}
-              className={cn(
-                "absolute z-40 touch-none bg-transparent hover:bg-ring/40 focus-visible:bg-ring/40",
-                line.axis === "horizontal"
-                  ? "w-1 -translate-x-1/2 cursor-col-resize"
-                  : "h-1 -translate-y-1/2 cursor-row-resize",
-                gestureResize?.some((change) => change.splitId === line.id) && "bg-ring",
-              )}
-              style={
-                line.axis === "horizontal"
-                  ? {
-                      left: `${(line.rect.x + line.rect.width * line.ratio) * 100}%`,
-                      top: `${line.rect.y * 100}%`,
-                      height: `${line.rect.height * 100}%`,
-                    }
-                  : {
-                      top: `${(line.rect.y + line.rect.height * line.ratio) * 100}%`,
-                      left: `${line.rect.x * 100}%`,
-                      width: `${line.rect.width * 100}%`,
-                    }
-              }
-              onPointerDown={(event) => resize(event, line)}
-              onKeyDown={(event) => {
-                const offset =
-                  event.key === "ArrowLeft" || event.key === "ArrowUp"
-                    ? -0.05
-                    : event.key === "ArrowRight" || event.key === "ArrowDown"
-                      ? 0.05
-                      : 0;
-                if (offset) {
-                  event.preventDefault();
-                  apply({
-                    type: "resize",
-                    splitId: line.id,
-                    ratio: Math.max(0.12, Math.min(0.88, line.ratio + offset)),
-                  });
+          geometry.splits
+            .filter((line) => !line.id.startsWith("focus-overview-split:"))
+            .map((line) => (
+              <div
+                key={line.id}
+                role="separator"
+                tabIndex={0}
+                aria-label={`Resize ${line.axis === "horizontal" ? "columns" : "rows"}`}
+                aria-orientation={line.axis === "horizontal" ? "vertical" : "horizontal"}
+                aria-valuenow={Math.round(line.ratio * 100)}
+                className={cn(
+                  "absolute z-40 touch-none bg-transparent hover:bg-ring/40 focus-visible:bg-ring/40",
+                  line.axis === "horizontal"
+                    ? "w-1 -translate-x-1/2 cursor-col-resize"
+                    : "h-1 -translate-y-1/2 cursor-row-resize",
+                  gestureResize?.some((change) => change.splitId === line.id) && "bg-ring",
+                )}
+                style={
+                  line.axis === "horizontal"
+                    ? {
+                        left: `${(line.rect.x + line.rect.width * line.ratio) * 100}%`,
+                        top: `${line.rect.y * 100}%`,
+                        height: `${line.rect.height * 100}%`,
+                      }
+                    : {
+                        top: `${(line.rect.y + line.rect.height * line.ratio) * 100}%`,
+                        left: `${line.rect.x * 100}%`,
+                        width: `${line.rect.width * 100}%`,
+                      }
                 }
-              }}
-            />
-          ))}
+                onPointerDown={(event) => resize(event, line)}
+                onKeyDown={(event) => {
+                  const offset =
+                    event.key === "ArrowLeft" || event.key === "ArrowUp"
+                      ? -0.05
+                      : event.key === "ArrowRight" || event.key === "ArrowDown"
+                        ? 0.05
+                        : 0;
+                  if (offset) {
+                    event.preventDefault();
+                    apply({
+                      type: "resize",
+                      splitId: line.id,
+                      ratio: Math.max(0.12, Math.min(0.88, line.ratio + offset)),
+                    });
+                  }
+                }}
+              />
+            ))}
         {gestureResize && (
           <div
             className="fixed inset-0 z-50 cursor-move touch-none select-none"

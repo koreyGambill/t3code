@@ -150,7 +150,9 @@ function settle(layout: ThreadTileLayout): ThreadTileLayout {
         }
       : {}),
     focusedGroupId: virtual(layout.focusedGroupId)
-      ? virtualLeftId
+      ? leftTabId
+        ? virtualLeftId
+        : right!.id
       : right && layout.focusedGroupId !== right.id
         ? right.id
         : groups.some((group) => group.id === layout.focusedGroupId)
@@ -310,7 +312,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     return {
       ...layout,
       focusPairLeftTabId: action.tabId,
-      focusedGroupId: action.tabId ? "focus-left-group" : "focus-left-chooser",
+      focusedGroupId: action.tabId ? "focus-left-group" : layout.focusPairGroupId,
       maximizedGroupId: null,
     };
   }

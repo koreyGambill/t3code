@@ -7,6 +7,29 @@ export interface TileRect {
   height: number;
 }
 
+export function isFocusOverviewGroup(id: string) {
+  return id.startsWith("focus-overview:");
+}
+
+function focusOverview(node: TileNode, excludedTabId: string): TileNode | null {
+  if (node.kind === "group") {
+    const tabs = node.tabs.filter((tabId) => tabId !== excludedTabId);
+    return tabs.length
+      ? {
+          ...node,
+          id: `focus-overview:${node.id}`,
+          tabs,
+          activeTabId: tabs.includes(node.activeTabId) ? node.activeTabId : tabs[0]!,
+        }
+      : null;
+  }
+  const first = focusOverview(node.first, excludedTabId);
+  const second = focusOverview(node.second, excludedTabId);
+  return first && second
+    ? { ...node, id: `focus-overview-split:${node.id}`, first, second }
+    : (first ?? second);
+}
+
 export function displayTileRoot(layout: ThreadTileLayout): TileNode {
   if (!layout.focusPairGroupId) return layout.root;
   const groups = getTileGroups(layout);
@@ -24,13 +47,13 @@ export function displayTileRoot(layout: ThreadTileLayout): TileNode {
         tabs: [layout.focusPairLeftTabId!],
         activeTabId: layout.focusPairLeftTabId!,
       }
-    : {
+    : (focusOverview(layout.root, rightTabId!) ?? {
         kind: "group",
         id: "focus-left-chooser",
         tabs: [],
         activeTabId: "",
         colorIndex: right.colorIndex ?? 0,
-      };
+      });
   return {
     kind: "split",
     id: "focus-pair-split",
@@ -39,7 +62,9 @@ export function displayTileRoot(layout: ThreadTileLayout): TileNode {
     first: left,
     second: {
       ...right,
-      tabs: right.tabs.filter((tabId) => tabId !== layout.focusPairLeftTabId),
+      tabs: leftOwner
+        ? right.tabs.filter((tabId) => tabId !== layout.focusPairLeftTabId)
+        : [rightTabId!],
       activeTabId: rightTabId!,
     },
   };
@@ -136,6 +161,7 @@ export function resizeTileSplits(
     y: group.rect.y + group.rect.height / 2,
   };
   const borders = splits.filter((split) => {
+    if (split.id.startsWith("focus-overview-split:")) return false;
     const rect = split.rect;
     if (
       center.x <= rect.x ||

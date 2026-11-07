@@ -154,9 +154,28 @@ describe("tile geometry", () => {
     expect(
       getTileGroups(chooser).map((group) => [group.id, group.tabs, group.activeTabId]),
     ).toEqual([
-      ["focus-left-chooser", [], ""],
-      ["panels-group", ["files", "notes"], "files"],
+      ["focus-overview:conversation-group", ["conversation"], "conversation"],
+      ["focus-overview:panels-group", ["notes"], "notes"],
+      ["panels-group", ["files"], "files"],
     ]);
+    expect(paired.root).toBe(initial.root);
+    const chooserGeometry = tileGeometry(chooser);
+    expect(chooserGeometry.groups.at(-1)?.rect).toEqual({
+      x: 0.55,
+      y: 0,
+      width: 0.44999999999999996,
+      height: 1,
+    });
+    expect(
+      chooserGeometry.groups
+        .filter((entry) => entry.id.startsWith("focus-overview:"))
+        .every((entry) => entry.rect.x + entry.rect.width <= 0.55),
+    ).toBe(true);
+    expect(
+      resizeTileSplits(chooser, "focus-overview:panels-group", { x: 0.3, y: 0.5 }).map(
+        (split) => split.id,
+      ),
+    ).toEqual(["focus-pair-split"]);
     const selected = applyTileAction(paired, { type: "focus-left", tabId: "notes" });
     const root = displayTileRoot(selected);
     expect(root).toMatchObject({

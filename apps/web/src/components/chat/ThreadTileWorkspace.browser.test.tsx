@@ -362,9 +362,50 @@ it("resizes, focuses any two tabs and opens independent area views", async () =>
   await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
   expect(layout().focusPairGroupId).toBe(notesChooser.id);
   await expect
-    .element(screen.getByRole("region", { name: "Choose left tab", exact: true }))
+    .element(screen.getByRole("button", { name: "Choose tile: terminal", exact: true }))
     .toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Show inspect on left", exact: true }));
+  const notesElement = screen.getByRole("textbox", { name: "Editor notes" }).element();
+  await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
+  await userEvent.keyboard("{Control>}{Alt>}{ArrowLeft}{/Alt}{/Control}");
+  expect(layout().focusPairLeftTabId).toBeTruthy();
+  expect(layout().focusPairRightTabId).toBe(notesId);
+  await userEvent.click(screen.getByRole("button", { name: "Choose left tab", exact: true }));
+  const chooseTerminal = screen.getByRole("button", { name: "Choose tile: terminal", exact: true });
+  const guestRect = chooseTerminal.element().getBoundingClientRect();
+  const hostedGuest = document.createElement("button");
+  Object.assign(hostedGuest.style, {
+    position: "fixed",
+    zIndex: "30",
+    left: `${guestRect.x}px`,
+    top: `${guestRect.y}px`,
+    width: `${guestRect.width}px`,
+    height: `${guestRect.height}px`,
+  });
+  let pageClicks = 0;
+  hostedGuest.onclick = () => {
+    pageClicks++;
+  };
+  document.body.append(hostedGuest);
+  using _hostedGuest = { [Symbol.dispose]: () => hostedGuest.remove() };
+  expect(
+    document.elementFromPoint(
+      guestRect.x + guestRect.width / 2,
+      guestRect.y + guestRect.height / 2,
+    ),
+  ).toBe(chooseTerminal.element());
+  await userEvent.click(chooseTerminal);
+  expect(pageClicks).toBe(0);
+  hostedGuest.remove();
+  expect(layout().focusPairLeftTabId).toBe("terminal:new-terminal");
+  await userEvent.click(screen.getByRole("button", { name: "Choose left tab", exact: true }));
+  await userEvent.keyboard("{Escape}");
+  expect(layout().focusPairGroupId).toBeNull();
+  expect(JSON.stringify(layout().root)).toBe(fullTree);
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  screen.getByRole("button", { name: "Show inspect on left", exact: true }).element().focus();
+  await userEvent.keyboard("{Enter}");
+  expect(layout().focusPairLeftTabId).toBe("inspect");
+  expect(screen.getByRole("textbox", { name: "Editor notes" }).element()).toBe(notesElement);
   expect(JSON.stringify(layout().root)).toBe(fullTree);
   await expect.element(screen.getByRole("textbox", { name: "Editor notes" })).toBeVisible();
   expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(2);
@@ -394,6 +435,8 @@ it("resizes, focuses any two tabs and opens independent area views", async () =>
 
   await selectTab("Conversation");
   const beforeSameGroupFocus = JSON.stringify(layout().root);
+  const wrapper = document.querySelector<HTMLElement>("[data-thread-tiling]")!.parentElement!;
+  wrapper.style.width = "520px";
   await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
   await userEvent.click(screen.getByRole("button", { name: "Show inspect on left", exact: true }));
   await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
@@ -407,6 +450,7 @@ it("resizes, focuses any two tabs and opens independent area views", async () =>
   await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
   await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
   expect(JSON.stringify(layout().root)).toBe(beforeSameGroupFocus);
+  wrapper.style.width = "900px";
 
   const beforeNativeResize = JSON.stringify(layout().root);
   dispatchMenuAction("workspace.tile.resize");
