@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Clock3Icon } from "lucide-react";
+import { useQuietThreadShell } from "../../state/entities";
+import { ThreadGlyph } from "../ThreadGlyph";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Popover, PopoverTrigger, PopoverPopup } from "../ui/popover";
@@ -40,13 +42,14 @@ export function WorkspaceHistoryButton() {
             {recent.map((visit) => (
               <button
                 key={`${visit.ref.environmentId}:${visit.ref.threadId}`}
-                className="block h-8 w-full truncate rounded px-2 text-left text-xs hover:bg-muted"
+                className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-muted"
                 onClick={() => {
                   setHistoryOpen(false);
                   open(visit.ref);
                 }}
               >
-                {visit.title}
+                <HistoryThreadGlyph threadRef={visit.ref} />
+                <span className="min-w-0 truncate">{visit.title}</span>
               </button>
             ))}
           </div>
@@ -54,4 +57,9 @@ export function WorkspaceHistoryButton() {
       </Popover>
     </div>
   );
+}
+
+function HistoryThreadGlyph({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const thread = useQuietThreadShell(threadRef);
+  return <ThreadGlyph threadId={threadRef.threadId} seed={thread?.glyphSeed} className="size-4" />;
 }
