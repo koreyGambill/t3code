@@ -728,12 +728,12 @@ it.effect("saves a pasted value with no card where request_secret takes one", ()
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
-const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+const decodeMcpToolUseCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
 const deviceCases = () =>
   NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
     .trim()
     .split("\n")
-    .map((line) => decodeDeviceCase(line));
+    .map((line) => decodeMcpToolUseCase(line));
 
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
@@ -773,7 +773,7 @@ const secretCases = () =>
   NodeFS.readFileSync(new URL("./cases/secrets.ndjson", import.meta.url), "utf8")
     .trim()
     .split("\n")
-    .map((line) => decodeDeviceCase(line));
+    .map((line) => decodeMcpToolUseCase(line));
 
 it.effect("builds the secrets cases, each citing a finding and grading secret handling", () =>
   Effect.gen(function* () {
@@ -4232,4 +4232,94 @@ it.each([
     }),
     [],
   );
+});
+
+it("grades topical workspace placement without forcing groups on standalone content", () => {
+  const cases = NodeFS.readFileSync(
+    new URL("./cases/workspace-grouping.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeMcpToolUseCase(line));
+  const read = { tool: "thread_workspace_read", input: {} };
+  const update = (changes: ReadonlyArray<unknown>, expectedRevision = 7) => ({
+    tool: "thread_workspace_update",
+    input: { changes, expectedRevision },
+  });
+  const design = { kind: "design", title: "Environment options" };
+  const traces = [
+    {
+      id: "workspace-grouping-new-topic",
+      good: [
+        read,
+        update([{ kind: "group", title: "Environment options" }]),
+        update([{ ...design, groupId: "e230c89f-f3ea-4640-bf90-55a80534a67d" }], 8),
+      ],
+      bad: [read, update([design])],
+    },
+    {
+      id: "workspace-grouping-reuse-topic",
+      good: [
+        read,
+        update([{ ...design, title: "Checkout comparison", groupId: "environment-options" }]),
+      ],
+      bad: [read, update([{ ...design, title: "Checkout comparison", groupId: "ungrouped" }])],
+    },
+    {
+      id: "workspace-grouping-explicit-ungrouped",
+      good: [
+        read,
+        update([
+          { kind: "design", title: "Scratch experiment", markdown: "Try a disposable checkout." },
+        ]),
+      ],
+      bad: [
+        read,
+        update([
+          {
+            kind: "design",
+            title: "Scratch experiment",
+            markdown: "Try a disposable checkout.",
+            groupId: "environment-options",
+          },
+        ]),
+      ],
+    },
+    {
+      id: "workspace-grouping-preserve-on-edit",
+      good: [
+        read,
+        update([
+          {
+            kind: "design",
+            id: "D-A1B2C3",
+            markdown: "Prefer managed sessions for multi-repository changes.",
+          },
+        ]),
+      ],
+      bad: [
+        read,
+        update([
+          {
+            kind: "design",
+            id: "D-A1B2C3",
+            markdown: "Prefer managed sessions for multi-repository changes.",
+            groupId: "ungrouped",
+          },
+        ]),
+      ],
+    },
+    { id: "workspace-grouping-chat-control", good: [], bad: [read, update([design])] },
+  ];
+  for (const trace of traces) {
+    const testCase = cases.find((entry) => entry.id === trace.id)!;
+    const run = (calls: typeof trace.good): SampleRun => ({
+      calls: calls.map((call, step) => ({ ...call, step })),
+      text: "Done.",
+      stopReason: "end_turn",
+    });
+    assert.deepEqual(failed(testCase.expect, run(trace.good)), [], trace.id);
+    assert.isNotEmpty(failed(testCase.expect, run(trace.bad)), trace.id);
+  }
 });
