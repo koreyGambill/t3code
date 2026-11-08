@@ -18,8 +18,8 @@ const client: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-const readBare = (existing: ReadonlyArray<ThreadId>) =>
-  readThread(bareId).pipe(
+const readBare = (existing: ReadonlyArray<ThreadId>, threadId = bareId) =>
+  readThread(threadId).pipe(
     Effect.flip,
     Effect.provideService(McpInvocationContext.McpInvocationContext, client),
     Effect.provide(
@@ -30,11 +30,22 @@ const readBare = (existing: ReadonlyArray<ThreadId>) =>
     ),
   );
 
-it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
+it.effect("points an unprefixed id at the live thread it belongs to", () =>
   Effect.gen(function* () {
-    const error = yield* readBare([ThreadId.make(`mcp:${bareId}`)]);
+    const delegatedId = ThreadId.make(
+      "delegated-task:command%3Amcp%3Aparent%3Adelegate-task%3Achild",
+    );
+    for (const [supplied, full] of [
+      [bareId, ThreadId.make(`mcp:${bareId}`)],
+      [delegatedId, ThreadId.make(`thread:${delegatedId}`)],
+    ] as const) {
+      const error = yield* readBare([full], supplied);
 
-    expect(error.code).toBe("thread_not_found");
-    expect(error.message).toBe(`The thread was not found. Did you mean \`mcp:${bareId}\`?`);
+      expect(error.code).toBe("thread_not_found");
+      expect(error.message).toBe(`The thread was not found. Did you mean \`${full}\`?`);
+
+      const missing = yield* readBare([], supplied);
+      expect(missing.message).toBe("The thread was not found.");
+    }
   }),
 );
