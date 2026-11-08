@@ -4,11 +4,13 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CommandId,
   EnvironmentId,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -18,6 +20,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Deferred from "effect/Deferred";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
+import * as DateTime from "effect/DateTime";
+import * as Schedule from "effect/Schedule";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -41,6 +52,7 @@ import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ThreadReplies from "../orchestration-v2/ThreadReplies.ts";
+import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
@@ -86,15 +98,33 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
   );
   const users = { ...liveThreadShell(usersThread, { runtimeMode: "auto" }), projectId: boxProject };
   const run = (status: OrchestrationV2Run["status"]) =>
-    ({ id: boxRun, status }) as unknown as OrchestrationV2Run;
+    ({
+      id: boxRun,
+      status,
+      ordinal: 1,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+      requestedAt: DateTime.makeUnsafe(0),
+      startedAt: null,
+      completedAt: null,
+    }) as unknown as OrchestrationV2Run;
   const shellOf = (threadId: ThreadId): Effect.Effect<OrchestrationV2ThreadShell | null> =>
     threadId === boxThread ? linked : Effect.succeed(threadId === usersThread ? users : null);
   const projectionOf = (threadId: ThreadId) =>
     shellOf(threadId).pipe(
-      Effect.map((thread) => ({ thread, runs: [run("running")], runtimeRequests: [] }) as never),
+      Effect.map(
+        (thread) =>
+          ({
+            thread,
+            runs: [run("completed")],
+            runtimeRequests: [],
+            messages: [],
+            turnItems: [],
+          }) as never,
+      ),
     );
   return Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
+    getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
@@ -269,10 +299,21 @@ const mcpClient = McpSchema.McpServerClient.of({
 
 /**
  * Environment A: its own orchestrator toolkit with forwarding, and a thread
- * caller whose modes the test picks. Its local threads never matter here.
+ * caller whose modes the test picks, optionally backed by a real origin orchestrator.
  */
-const makeLaptop = Effect.gen(function* () {
-  const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+const makeLaptop = Effect.fn(function* (
+  origin?: Orchestrator.OrchestratorV2["Service"],
+  afterDispatch: Effect.Effect<void> = Effect.void,
+) {
+  const baseLinking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+  const peer = Context.get(baseLinking, PeerMcpClient.PeerMcpClient);
+  const peerCalls = yield* Ref.make<
+    ReadonlyArray<{ tool: string; arguments: Record<string, unknown> }>
+  >([]);
+  const linking = Context.add(baseLinking, PeerMcpClient.PeerMcpClient, {
+    call: (input) =>
+      Ref.update(peerCalls, (calls) => [...calls, input]).pipe(Effect.andThen(peer.call(input))),
+  });
   const layerHere = Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
     McpHttpServer.layerProjectRegistration,
@@ -284,7 +325,9 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+        }),
         Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
       ),
     ),
@@ -296,11 +339,17 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer.pipe(Layer.provide(ThreadReplies.layer))),
+    Layer.provideMerge(PeerForwarding.layer.pipe(Layer.provideMerge(ThreadReplies.layer))),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(
       Layer.mock(ThreadManagement.ThreadManagementService)({
+        ...(origin === undefined
+          ? {}
+          : {
+              dispatch: (command) => origin.dispatch(command).pipe(Effect.tap(() => afterDispatch)),
+              getThreadRecords: origin.getThreadRecords,
+            }),
         getThreadShell: (threadId) =>
           Effect.succeed(
             threadId === ThreadId.make("thread:laptop-from-desk")
@@ -338,7 +387,9 @@ const makeLaptop = Effect.gen(function* () {
     ),
     Layer.fresh,
   );
-  const here = yield* Layer.build(layerHere);
+  const serving = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(serving, Exit.void));
+  const here = yield* Layer.buildWithScope(layerHere, serving);
   const server = Context.get(here, McpServer.McpServer);
   const scopeOf = (
     caller: string,
@@ -370,7 +421,31 @@ const makeLaptop = Effect.gen(function* () {
         ),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call };
+  return {
+    links: Context.get(linking, PeerLinks.PeerLinks),
+    call,
+    replies: Context.get(here, ThreadReplies.ThreadReplies),
+    stop: Scope.close(serving, Exit.void),
+    recoverReplies: (afterRecovered: Effect.Effect<void> = Effect.void) =>
+      Effect.gen(function* () {
+        if (origin === undefined) return yield* Effect.die("Origin is required for reply recovery");
+        const recovered = yield* ThreadReplies.layer.pipe(
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadRecords: origin.getThreadRecords,
+              dispatch: (command) =>
+                origin.dispatch(command).pipe(Effect.tap(() => afterRecovered)),
+            }),
+          ),
+          Layer.provide(Layer.succeedContext(linking)),
+          Layer.fresh,
+          Layer.build,
+        );
+        return Context.get(recovered, ThreadReplies.ThreadReplies);
+      }),
+    sql: Context.get(linking, SqlClient.SqlClient),
+    peerCalls,
+  };
 });
 
 const failureOf = (result: McpSchema.CallToolResult) => {
@@ -384,7 +459,7 @@ it.effect("an agent here works on a linked environment's threads within its own 
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const linkSession = yield* Ref.make("");
       const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
+      const a = yield* makeLaptop();
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
 
@@ -456,7 +531,7 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const linkSession = yield* Ref.make("");
       const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
+      const a = yield* makeLaptop();
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
 
@@ -508,7 +583,7 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const linkSession = yield* Ref.make("");
       const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
+      const a = yield* makeLaptop();
       yield* linkTo(a.links, b, "full-access");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
       const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
@@ -560,7 +635,7 @@ it.effect("brings a repository to a linked environment, only through full access
     Effect.gen(function* () {
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const b = yield* serveBox(seen, yield* Ref.make(""));
-      const a = yield* makeLaptop;
+      const a = yield* makeLaptop();
       const clone = { repository: "pingdotgg/t3code", destinationPath: "/home/box/t3code" };
       const register = { title: "t3code", workspaceRoot: "/home/box/t3code" };
 
@@ -611,7 +686,7 @@ it.effect("runs any tool that takes a linked environment there", () =>
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const linkSession = yield* Ref.make("");
       const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
+      const a = yield* makeLaptop();
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
 
@@ -646,7 +721,7 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const linkSession = yield* Ref.make("");
       const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
+      const a = yield* makeLaptop();
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
       yield* Ref.set(b.bearers, []);
@@ -710,4 +785,106 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.live("persists one origin notification for a remote completion across reply recovery", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sender = ThreadId.make("thread:laptop-full");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-reply-origin"),
+        threadId: sender,
+        projectId: ProjectId.make("project:reply-origin"),
+        title: "Origin",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const session = yield* Ref.make("");
+      const b = yield* serveBox(seen, session);
+      const committed = yield* Deferred.make<void>();
+      const a = yield* makeLaptop(
+        orchestrator,
+        Deferred.succeed(committed, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      yield* linkTo(a.links, b, "auto");
+      yield* Ref.set(session, (yield* b.linkedSessions)[0]!.sessionId);
+      const result = yield* a.call(sender, "t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        message: "Finish remotely",
+        clientRequestId: "remote-reply-integration",
+      });
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({ reply: true });
+      yield* Deferred.await(committed);
+      const projection = yield* orchestrator.getThreadProjection(sender);
+      const sequence = yield* orchestrator.getThreadEventSequence(sender);
+      expect(projection.messages).toHaveLength(1);
+      expect(projection.messages[0]).toMatchObject({
+        notification: {
+          source: { kind: "thread_reply", environmentId: box.environmentId, threadId: boxThread },
+          outcome: "completed",
+        },
+      });
+      const sends = (yield* Ref.get(seen)).sends;
+      expect(sends).toHaveLength(1);
+      expect(sends[0]?.replyRequested).toBeUndefined();
+      const rows = yield* a.sql<{
+        message_id: string;
+        delivered_at: string | null;
+        remote_request: string;
+      }>`SELECT message_id, delivered_at, remote_request FROM thread_reply_requests`;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.delivered_at).toBeNull();
+      expect(JSON.parse(rows[0]!.remote_request)).toMatchObject({
+        environmentId: box.environmentId,
+        limits: { runtimeMode: "full-access", interactionMode: "default" },
+      });
+      expect(projection.messages[0]?.text).toContain(
+        "t3-thread://v2/environment-box/thread:box-auto",
+      );
+      expect(rows[0]?.message_id).toContain("message:remote-thread-reply:fwd:");
+      yield* a.stop;
+      const recoveredCommit = yield* Deferred.make<void>();
+      const recovered = yield* a.recoverReplies(
+        Deferred.succeed(recoveredCommit, undefined).pipe(Effect.asVoid),
+      );
+      yield* recovered.start();
+      yield* Deferred.await(recoveredCommit);
+      expect((yield* orchestrator.getThreadProjection(sender)).messages).toHaveLength(1);
+      expect(yield* orchestrator.getThreadEventSequence(sender)).toBe(sequence);
+      const remoteSends = (yield* Ref.get(a.peerCalls)).filter(
+        (call) => call.tool === "t3_thread_send",
+      );
+      expect(remoteSends).toHaveLength(2);
+      expect(remoteSends.map((call) => call.arguments.reply)).toEqual([false, false]);
+      expect(new Set(remoteSends.map((call) => call.arguments.clientRequestId)).size).toBe(1);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "remote-reply-origin" },
+            ProviderAdapterRegistry.layerSingle({
+              instanceId: ProviderInstanceId.make("codex"),
+              driver: ProviderDriverKind.make("codex"),
+              getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+              planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+              openSession: () => Effect.die("Provider work is outside this fixture"),
+            }),
+            { runEffectWorker: false },
+          ),
+          NodeHttpServer.layerTest,
+        ),
+      ),
+      Effect.provideService(ThreadReplies.ReplyRetrySchedule, Schedule.recurs(0)),
+    ),
+  ),
 );
