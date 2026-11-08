@@ -176,7 +176,9 @@ function ProfileEditor({
           }}
         >
           <SelectTrigger id="watcher-project">
-            <SelectValue placeholder="Choose a project" />
+            <SelectValue placeholder="Choose a project">
+              {projects.find((project) => project.id === projectId)?.title}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup>
             {projects.map((project) => (
@@ -456,94 +458,93 @@ export function MonitoringSettings({ environmentId }: { environmentId: Environme
         <p className="text-sm text-muted-foreground">
           This server does not support watchers. Update it to continue.
         </p>
-      ) : (
-        <div className="space-y-4">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!canEdit || editing !== null}
-            onClick={() => setEditing("new")}
-          >
-            <PlusIcon />
-            New watcher
-          </Button>
-          {editing !== null && (
-            <ProfileEditor
-              key={typeof editing === "string" ? editing : editing.id}
-              environmentId={environmentId}
-              profile={editing === "new" ? null : editing}
-              onClose={() => setEditing(null)}
-              onSaved={query.refresh}
-            />
-          )}
-          {query.error ? (
-            <p role="alert" className="text-sm text-destructive-foreground">
-              {query.error}
-            </p>
-          ) : query.data === null ? (
-            <p role="status" className="text-sm text-muted-foreground">
-              Loading watchers…
-            </p>
-          ) : query.data.profiles.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No watchers yet. Add a watcher to choose its model, rules, and schedule.
-            </p>
-          ) : (
-            query.data.profiles.map((profile) => {
-              const run = query.data?.runs.find((entry) => entry.profileId === profile.id);
-              return (
-                <div key={profile.id} className="space-y-2 border-t border-border py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <h3 className="break-words text-sm font-medium">{profile.title}</h3>
-                      <p className="break-words text-xs text-muted-foreground">
-                        {profile.modelSelection.model} · {profile.enabled ? "Enabled" : "Paused"} ·{" "}
-                        {profile.rules.length} rules
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!canEdit || busyId !== null}
-                        onClick={() => setEditing(profile)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!canEnable || busyId !== null}
-                        onClick={() => void action(profile, false)}
-                      >
-                        {profile.enabled ? "Pause" : "Enable"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!canRun || busyId !== null || run?.status === "running"}
-                        onClick={() => void action(profile, true)}
-                      >
-                        {run?.status === "running" ? "Running…" : "Run now"}
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {run
-                      ? `Last run: ${run.status} · ${formatRelativeTimeLabel(run.startedAt)}`
-                      : "Never run"}
-                  </p>
-                  {run?.error && (
-                    <p role="status" className="text-xs text-destructive-foreground">
-                      {run.error}
+      ) : null}
+      <div className="space-y-4" hidden={!connected || !supported}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!canEdit || editing !== null}
+          onClick={() => setEditing("new")}
+        >
+          <PlusIcon />
+          New watcher
+        </Button>
+        {editing !== null && (
+          <ProfileEditor
+            key={typeof editing === "string" ? editing : editing.id}
+            environmentId={environmentId}
+            profile={editing === "new" ? null : editing}
+            onClose={() => setEditing(null)}
+            onSaved={query.refresh}
+          />
+        )}
+        {query.error ? (
+          <p role="alert" className="text-sm text-destructive-foreground">
+            {query.error}
+          </p>
+        ) : query.data === null ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            Loading watchers…
+          </p>
+        ) : query.data.profiles.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No watchers yet. Add a watcher to choose its model, rules, and schedule.
+          </p>
+        ) : (
+          query.data.profiles.map((profile) => {
+            const run = query.data?.runs.find((entry) => entry.profileId === profile.id);
+            return (
+              <div key={profile.id} className="space-y-2 border-t border-border py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="break-words text-sm font-medium">{profile.title}</h3>
+                    <p className="break-words text-xs text-muted-foreground">
+                      {profile.modelSelection.model} · {profile.enabled ? "Enabled" : "Paused"} ·{" "}
+                      {profile.rules.length} rules
                     </p>
-                  )}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!canEdit || busyId !== null}
+                      onClick={() => setEditing(profile)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!canEnable || busyId !== null}
+                      onClick={() => void action(profile, false)}
+                    >
+                      {profile.enabled ? "Pause" : "Enable"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!canRun || busyId !== null || run?.status === "running"}
+                      onClick={() => void action(profile, true)}
+                    >
+                      {run?.status === "running" ? "Running…" : "Run now"}
+                    </Button>
+                  </div>
                 </div>
-              );
-            })
-          )}
-        </div>
-      )}
+                <p className="text-xs text-muted-foreground">
+                  {run
+                    ? `Last run: ${run.status} · ${formatRelativeTimeLabel(run.startedAt)}`
+                    : "Never run"}
+                </p>
+                {run?.error && (
+                  <p role="status" className="text-xs text-destructive-foreground">
+                    {run.error}
+                  </p>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
     </SettingsSection>
   );
 }

@@ -47,7 +47,12 @@ const threadFamilyRead = {
   threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  allScope: false,
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
@@ -55,6 +60,7 @@ function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.allScope = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -71,7 +77,12 @@ function environment() {
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
-      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      ? {
+          environment: {
+            platform: "linux",
+            capabilities: { oneTimeSchedules: true, monitoring: true },
+          },
+        }
       : null,
   };
 }
@@ -87,7 +98,7 @@ vi.mock(import("./SettingsScopeContext"), async (original) => {
           ? [entry, secondaryEnvironment()]
           : [entry]
         : [],
-      environment: entry,
+      environment: state.allScope ? null : entry,
       target: null,
       targets: [],
     };
@@ -125,7 +136,7 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === null || request === threadFamilyRead
         ? request
-        : { tasks: state.tasksLoaded ? [task] : [] },
+        : { tasks: state.tasksLoaded ? [task] : [], profiles: [], findings: [], runs: [] },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -136,6 +147,16 @@ vi.mock(import("../../state/environments"), async (original) => ({
   useEnvironment: ((id: EnvironmentId) =>
     id === secondaryId ? secondaryEnvironment() : environment()) as never,
 }));
+vi.mock(import("../../state/monitoring"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    monitoringUpsert: {
+      ...actual.monitoringUpsert,
+      permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
+    },
+  };
+});
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => [{ id: projectId, environmentId, title: "Project" }]) as never,
@@ -146,6 +167,19 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 }));
 
 describe("ScheduledTasksSettings", () => {
+  it("keeps an unsaved watcher across a disconnect in the all-environments view", async () => {
+    setup();
+    state.allScope = true;
+    await using screen = await render(<ScheduledTasksSettings />);
+    await userEvent.click(screen.getByRole("button", { name: "New watcher" }));
+    const name = screen.getByRole("textbox", { name: "Name", exact: true });
+    await userEvent.fill(name, "Keep this watcher draft");
+    state.connected = false;
+    await screen.rerender(<ScheduledTasksSettings />);
+    state.connected = true;
+    await screen.rerender(<ScheduledTasksSettings />);
+    await expect.element(name).toHaveValue("Keep this watcher draft");
+  });
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;

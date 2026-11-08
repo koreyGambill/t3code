@@ -381,6 +381,8 @@ export function ScheduledTasksSettings(target: {
   };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
   const linkedEnvironmentId = target.environmentId ?? defaultEnvironment?.environmentId;
+  const watcherEnvironmentId =
+    target.environmentId ?? environment?.environmentId ?? environments[0]?.environmentId;
   const linkedEnvironmentConnected = environments.some(
     (entry) =>
       entry.environmentId === linkedEnvironmentId &&
@@ -484,8 +486,8 @@ export function ScheduledTasksSettings(target: {
           </div>
         )}
       </SettingsSection>
-      {linkedEnvironmentId !== undefined && (
-        <MonitoringSettings key={linkedEnvironmentId} environmentId={linkedEnvironmentId} />
+      {watcherEnvironmentId !== undefined && (
+        <MonitoringSettings key={watcherEnvironmentId} environmentId={watcherEnvironmentId} />
       )}
       {editor ? (
         <ScheduledTaskEditorDialog
