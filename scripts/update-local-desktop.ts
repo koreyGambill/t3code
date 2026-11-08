@@ -243,7 +243,7 @@ async function main() {
       "output-dir": { type: "string" },
       "vp-home": { type: "string", default: process.env.VP_HOME },
       "patchelf-dir": { type: "string" },
-      "linux-monitor": { type: "string" },
+      "linux-monitor-dir": { type: "string" },
       "windows-monitor": { type: "string" },
       "wsl-distro": { type: "string", default: process.env.WSL_DISTRO_NAME },
       "wsl-home": { type: "string", default: NodePath.join(NodeOS.homedir(), ".t3") },
@@ -260,7 +260,7 @@ async function main() {
     console.log(`Usage: vp run desktop:update-local --install-dir 'C:\\...\\Weavewing' --output-dir /absolute/evidence/run
   --vp-home PATH               Vite Plus home (or VP_HOME), with current/bin/vp
   --patchelf-dir PATH          Directory containing patchelf (otherwise PATH)
-  --linux-monitor PATH        Matching release's Linux x64 monitor executable
+  --linux-monitor-dir PATH        Matching release's resource-monitor directory
   --windows-monitor PATH      Matching release's Windows x64 monitor executable
   --wsl-distro NAME           WSL distribution (or WSL_DISTRO_NAME)
   --wsl-home PATH             Installed T3 home (default ~/.t3)
@@ -284,7 +284,7 @@ async function main() {
     "install-dir",
     "output-dir",
     "vp-home",
-    "linux-monitor",
+    "linux-monitor-dir",
     "windows-monitor",
     "wsl-distro",
   ] as const) {
@@ -297,7 +297,11 @@ async function main() {
     );
   const vpHome = values["vp-home"]!;
   const vp = NodePath.join(vpHome, "current/bin/vp");
-  for (const file of [vp, values["linux-monitor"]!, values["windows-monitor"]!]) {
+  for (const file of [
+    vp,
+    NodePath.join(values["linux-monitor-dir"]!, "linux-x64/t3-resource-monitor"),
+    values["windows-monitor"]!,
+  ]) {
     if (!NodeFS.statSync(file, { throwIfNoEntry: false })?.isFile())
       throw new Error(`Required toolchain file is missing: ${file}`);
   }
@@ -402,7 +406,7 @@ async function main() {
       "--version",
       version,
       "--resource-monitor-dir",
-      values["linux-monitor"]!,
+      values["linux-monitor-dir"]!,
       "--output-dir",
       NodePath.join(output, "current"),
     ]);

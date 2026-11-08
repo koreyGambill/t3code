@@ -359,7 +359,7 @@ vp run desktop:update-local \
   --output-dir /absolute/path/to/update-evidence \
   --vp-home /absolute/path/to/vite-plus \
   --patchelf-dir /absolute/path/to/patchelf/bin \
-  --linux-monitor /absolute/path/to/linux/resource-monitor \
+  --linux-monitor-dir /absolute/path/to/linux/resource-monitor \
   --windows-monitor /absolute/path/to/t3-resource-monitor.exe \
   --check-only
 ```
