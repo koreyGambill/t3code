@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
+  OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadReadInput,
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -21,6 +23,7 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import * as ThreadReplies from "../orchestration-v2/ThreadReplies.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -35,6 +38,7 @@ const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 
 type Scope = McpInvocationContext.McpInvocationScope;
+const decodeThreadSend = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendInput);
 
 /**
  * Runs T3 MCP tools in a linked environment for an agent here. The tool's own
@@ -93,6 +97,8 @@ export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefi
 
 const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
+  const replies = yield* ThreadReplies.ThreadReplies;
+  const random = yield* SecureRandom.SecureRandom;
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -145,6 +151,21 @@ const make = Effect.gen(function* () {
     }
     if (typeof args.clientRequestId === "string") {
       args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
+    }
+    if (toolName === "t3_thread_send" && scope.thread !== undefined && args.reply !== false) {
+      if (typeof args.clientRequestId !== "string") {
+        args.clientRequestId = yield* scopedRequestId(
+          scope.requestNamespace,
+          yield* random.uuidV4(),
+        );
+      }
+      const input = yield* decodeThreadSend(args).pipe(Effect.mapError(unavailable));
+      return (yield* replies.sendRemote({
+        senderThreadId: scope.thread.threadId,
+        environmentId,
+        limits,
+        input,
+      })) as A;
     }
     return yield* peers.call({
       environmentId,

@@ -1,5 +1,13 @@
 import {
   CommandId,
+  EnvironmentId,
+  OrchestratorMcpFailure,
+  OrchestratorMcpThreadSendInput,
+  OrchestratorMcpThreadSendResult,
+  OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadWaitResult,
+  RuntimeMode,
+  ProviderInteractionMode,
   MessageId,
   type OrchestrationV2Notification,
   type OrchestrationV2Run,
@@ -13,9 +21,11 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -38,16 +48,29 @@ export const ReplyRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
   },
 );
 
+const RemoteRequest = Schema.Struct({
+  environmentId: EnvironmentId,
+  limits: Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  input: OrchestratorMcpThreadSendInput,
+});
+type RemoteRequest = typeof RemoteRequest.Type;
+const decodeRemoteRequest = Schema.decodeEffect(Schema.fromJsonString(RemoteRequest));
+const encodeRemoteRequest = Schema.encodeUnknownEffect(Schema.fromJsonString(RemoteRequest));
+
 export interface ThreadReplyRequest {
   readonly messageId: MessageId;
   readonly senderThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
+  readonly remote?: RemoteRequest;
 }
 
 /** Request-derived ids keep resumed followers from delivering the same reply twice. */
 export class ThreadReplies extends Context.Service<
   ThreadReplies,
   {
+    readonly sendRemote: (
+      request: RemoteRequest & { readonly senderThreadId: ThreadId },
+    ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
     /** Starts following the reply request committed with its message. */
     readonly followCommitted: (messageId: MessageId) => Effect.Effect<boolean>;
     /** Whether `threadId` still owes `to` a reply; a send from it to `to` then answers, not asks. */
@@ -68,6 +91,7 @@ const outcomeOf = (run: OrchestrationV2Run): OrchestrationV2Notification["outcom
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const peers = yield* PeerMcpClient.PeerMcpClient;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const retry = yield* ReplyRetrySchedule;
   const environmentId = yield* ServerEnvironment.ServerEnvironment.pipe(
@@ -191,11 +215,155 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const followOne = (request: ThreadReplyRequest) =>
+  const remoteCall = <S extends Schema.Decoder<unknown>>(
+    remote: RemoteRequest,
+    tool: string,
+    args: Record<string, unknown>,
+    success: S,
+  ) =>
+    peers.call({
+      environmentId: remote.environmentId,
+      limits: remote.limits,
+      tool,
+      arguments: args,
+      success,
+    });
+
+  const sendThere = (remote: RemoteRequest) =>
+    remoteCall(
+      remote,
+      "t3_thread_send",
+      { ...remote.input, reply: false },
+      OrchestratorMcpThreadSendResult,
+    );
+
+  const deliverRemote = Effect.fn("ThreadReplies.deliverRemote")(function* (
+    request: ThreadReplyRequest,
+    remote: RemoteRequest,
+    outcome: OrchestrationV2Notification["outcome"],
+    title: string,
+    answer: string,
+  ) {
+    const sender = yield* threads.getThreadRecords(request.senderThreadId, []);
+    if (sender.thread.deletedAt !== null || sender.thread.archivedAt !== null)
+      return yield* markDelivered(request);
+    const link = formatThreadLink({
+      environmentId: remote.environmentId,
+      threadId: request.targetThreadId,
+    });
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
+      threadId: request.senderThreadId,
+      messageId: replyMessageId(request.messageId),
+      text: `Thread ${link} ${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}. This is its reply to the message you sent it.${answer.length === 0 ? "" : `\n\n${answer}`}`,
+      notification: {
+        source: {
+          kind: "thread_reply",
+          threadId: request.targetThreadId,
+          environmentId: remote.environmentId,
+        },
+        outcome,
+        summary: `Reply from ${title}`,
+      },
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    yield* markDelivered(request);
+  });
+
+  const followRemote = Effect.fn("ThreadReplies.followRemote")(function* (
+    request: ThreadReplyRequest,
+    remote: RemoteRequest,
+    accepted?: OrchestratorMcpThreadSendResult,
+  ) {
+    const sent = accepted ?? (yield* sendThere(remote));
+    let ended;
+    do {
+      ended = yield* remoteCall(
+        remote,
+        "t3_thread_wait",
+        {
+          threadId: request.targetThreadId,
+          runId: sent.runId,
+          timeoutMs: 50_000,
+          untilDelegatedWorkSettled: true,
+        },
+        OrchestratorMcpThreadWaitResult,
+      );
+    } while (ended.timedOut);
+    const resultRunId = ended.resultRun?.runId ?? ended.runId;
+    let afterPosition: number | undefined;
+    let answer = "";
+    let title = "a thread";
+    while (true) {
+      const read = yield* remoteCall(
+        remote,
+        "t3_thread_read",
+        {
+          threadId: request.targetThreadId,
+          view: "messages",
+          limit: 100,
+          maxCharsPerItem: REPLY_TEXT_LIMIT,
+          ...(afterPosition === undefined ? {} : { afterPosition }),
+        },
+        OrchestratorMcpThreadReadResult,
+      );
+      title = read.thread.title.trim() || "a thread";
+      const item = read.items.findLast(
+        (item) => item.type === "assistant_message" && item.runId === resultRunId,
+      );
+      if (item !== undefined) answer = (item.text ?? "").slice(0, REPLY_TEXT_LIMIT);
+      if (!read.hasMore || read.nextPosition === null) break;
+      afterPosition = read.nextPosition;
+    }
+    const status = ended.resultRun?.status ?? ended.status;
+    yield* deliverRemote(
+      request,
+      remote,
+      status === "completed" ? "completed" : status === "failed" ? "failed" : "cancelled",
+      title,
+      answer,
+    );
+  });
+
+  const isFinalRemoteFailure = (error: OrchestratorMcpFailure) =>
+    error.code === "capability_denied" ||
+    error.code === "thread_not_found" ||
+    error.code === "run_not_found" ||
+    error.code === "invalid_request" ||
+    error.code === "runtime_mode_escalation_denied" ||
+    error.code === "interaction_mode_escalation_denied";
+
+  const followOne = (request: ThreadReplyRequest, accepted?: OrchestratorMcpThreadSendResult) =>
     Effect.suspend(() => {
       if (following.has(request.messageId)) return Effect.void;
       following.add(request.messageId);
-      return follow(request).pipe(
+      return Effect.gen(function* () {
+        if (request.remote === undefined) yield* follow(request);
+        else {
+          const remote = request.remote;
+          yield* followRemote(request, remote, accepted).pipe(
+            Effect.catchTags({
+              OrchestratorMcpFailure: Effect.fn("ThreadReplies.remoteFailure")(function* (
+                error: OrchestratorMcpFailure,
+              ) {
+                if (isFinalRemoteFailure(error))
+                  return yield* deliverRemote(
+                    request,
+                    remote,
+                    "failed",
+                    "a thread",
+                    `Unable to receive its reply: ${error.message}`,
+                  );
+                return yield* error;
+              }),
+            }),
+          );
+        }
+      }).pipe(
         Effect.retry(retry),
         Effect.ignoreCause({ log: true }),
         Effect.ensuring(Effect.sync(() => following.delete(request.messageId))),
@@ -204,25 +372,35 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const followCommitted: ThreadReplies["Service"]["followCommitted"] = Effect.fn(
-    "ThreadReplies.followCommitted",
-  )(function* (messageId) {
+  const followCommitted = Effect.fn("ThreadReplies.followCommitted")(function* (
+    messageId: MessageId,
+    accepted?: OrchestratorMcpThreadSendResult,
+  ) {
     const pending = yield* sql<{
       readonly sender_thread_id: string;
       readonly target_thread_id: string;
       readonly delivered_at: string | null;
+      readonly remote_request: string | null;
     }>`
-        SELECT sender_thread_id, target_thread_id, delivered_at FROM thread_reply_requests
+        SELECT sender_thread_id, target_thread_id, delivered_at, remote_request FROM thread_reply_requests
         WHERE message_id = ${messageId}
       `.pipe(Effect.orDie);
     const recorded = pending[0];
     if (recorded === undefined) return false;
     if (recorded.delivered_at === null)
-      yield* followOne({
-        messageId,
-        senderThreadId: ThreadId.make(recorded.sender_thread_id),
-        targetThreadId: ThreadId.make(recorded.target_thread_id),
-      });
+      yield* followOne(
+        {
+          messageId,
+          senderThreadId: ThreadId.make(recorded.sender_thread_id),
+          targetThreadId: ThreadId.make(recorded.target_thread_id),
+          ...(recorded.remote_request === null
+            ? {}
+            : {
+                remote: yield* decodeRemoteRequest(recorded.remote_request).pipe(Effect.orDie),
+              }),
+        },
+        accepted,
+      );
     return true;
   });
 
@@ -231,6 +409,7 @@ const make = Effect.gen(function* () {
       SELECT 1 AS owed FROM thread_reply_requests
       WHERE target_thread_id = ${input.threadId}
         AND sender_thread_id = ${input.to}
+        AND remote_request IS NULL
         AND delivered_at IS NULL
       LIMIT 1
     `.pipe(
@@ -244,18 +423,26 @@ const make = Effect.gen(function* () {
         readonly message_id: string;
         readonly sender_thread_id: string;
         readonly target_thread_id: string;
+        readonly remote_request: string | null;
       }>`
-        SELECT message_id, sender_thread_id, target_thread_id FROM thread_reply_requests
+        SELECT message_id, sender_thread_id, target_thread_id, remote_request FROM thread_reply_requests
         WHERE delivered_at IS NULL
       `.pipe(
         Effect.flatMap((rows) =>
           Effect.forEach(
             rows,
             (row) =>
-              followOne({
-                messageId: MessageId.make(row.message_id),
-                senderThreadId: ThreadId.make(row.sender_thread_id),
-                targetThreadId: ThreadId.make(row.target_thread_id),
+              Effect.gen(function* () {
+                yield* followOne({
+                  messageId: MessageId.make(row.message_id),
+                  senderThreadId: ThreadId.make(row.sender_thread_id),
+                  targetThreadId: ThreadId.make(row.target_thread_id),
+                  ...(row.remote_request === null
+                    ? {}
+                    : {
+                        remote: yield* decodeRemoteRequest(row.remote_request).pipe(Effect.orDie),
+                      }),
+                });
               }),
             { discard: true },
           ),
@@ -264,7 +451,47 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  return ThreadReplies.of({ followCommitted, owes, start });
+  const sendRemote: ThreadReplies["Service"]["sendRemote"] = Effect.fn("ThreadReplies.sendRemote")(
+    function* (request) {
+      if (request.input.clientRequestId === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "A remote reply requires a stable request id.",
+        });
+      const messageId = MessageId.make(
+        `message:remote-thread-reply:${request.input.clientRequestId}`,
+      );
+      const encoded = yield* encodeRemoteRequest(request).pipe(Effect.orDie);
+      const now = yield* DateTime.now;
+      yield* sql`
+      INSERT INTO thread_reply_requests (message_id, sender_thread_id, target_thread_id, created_at, remote_request)
+      VALUES (${messageId}, ${request.senderThreadId}, ${request.input.threadId}, ${DateTime.formatIso(now)}, ${encoded})
+      ON CONFLICT DO NOTHING
+    `.pipe(Effect.orDie);
+      const rows = yield* sql<{
+        readonly remote_request: string;
+      }>`SELECT remote_request FROM thread_reply_requests WHERE message_id = ${messageId}`.pipe(
+        Effect.orDie,
+      );
+      const remote = yield* decodeRemoteRequest(rows[0]!.remote_request).pipe(Effect.orDie);
+      const result = yield* sendThere(remote).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            if (isFinalRemoteFailure(error))
+              yield* sql`UPDATE thread_reply_requests SET delivered_at = ${DateTime.formatIso(now)} WHERE message_id = ${messageId}`.pipe(
+                Effect.orDie,
+              );
+            else yield* followCommitted(messageId);
+            return yield* error;
+          }),
+        ),
+      );
+      yield* followCommitted(messageId, result);
+      return { ...result, reply: true };
+    },
+  );
+
+  return ThreadReplies.of({ sendRemote, followCommitted, owes, start });
 });
 
 export const layer = Layer.effect(ThreadReplies, make);

@@ -1010,6 +1010,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       </WorkLogPressable>
     );
   }
+  const notificationSource =
+    row.projectedItem.item.type === "notification" ? row.projectedItem.item.source : undefined;
   const notifiedSubagentThreadId =
     row.projectedItem.item.type === "notification"
       ? notificationChildThreadId(row.projectedItem.item.source)
@@ -1102,7 +1104,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         onPress={() => {
           if (notifiedSubagentThreadId !== undefined) {
             openLinkedThread({
-              environmentId: String(props.environmentId),
+              environmentId: String(
+                notificationSource?.kind === "thread_reply"
+                  ? (notificationSource.environmentId ?? props.environmentId)
+                  : props.environmentId,
+              ),
               threadId: String(notifiedSubagentThreadId),
             });
             return;

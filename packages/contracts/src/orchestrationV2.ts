@@ -1359,7 +1359,11 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
       kind: Schema.Literal("background_command").transform("command"),
     }),
     /** Another thread's outcome for a message this thread sent it. */
-    Schema.Struct({ kind: Schema.Literal("thread_reply"), threadId: ThreadId }),
+    Schema.Struct({
+      kind: Schema.Literal("thread_reply"),
+      threadId: ThreadId,
+      environmentId: Schema.optional(EnvironmentId),
+    }),
     SubagentNotificationSource,
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),

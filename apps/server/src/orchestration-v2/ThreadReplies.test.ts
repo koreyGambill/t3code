@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   MessageId,
+  OrchestratorMcpFailure,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   ProjectId,
@@ -11,6 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -20,6 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadReplies from "./ThreadReplies.ts";
 
@@ -43,6 +46,7 @@ interface World {
   messageRunId: RunId;
   targetDeleted: boolean;
   crashAfterReplyCommit?: boolean;
+  peerCall?: PeerMcpClient.PeerMcpClient["Service"]["call"];
 }
 
 const threadsFor = (
@@ -131,7 +135,15 @@ const serve = <A, E>(
     const scope = yield* Scope.make();
     const context = yield* Layer.buildWithScope(
       ThreadReplies.layer.pipe(
-        Layer.provide(Layer.mergeAll(threadsFor(world, waited, delivered, sql), environment)),
+        Layer.provide(
+          Layer.mergeAll(
+            threadsFor(world, waited, delivered, sql),
+            environment,
+            Layer.mock(PeerMcpClient.PeerMcpClient)(
+              world.peerCall === undefined ? {} : { call: world.peerCall },
+            ),
+          ),
+        ),
       ),
       scope,
     );
@@ -150,6 +162,130 @@ const admit = Effect.gen(function* () {
 });
 
 describe("ThreadReplies", () => {
+  it.effect("recovers a remote send accepted before its receipt and deduplicates its reply", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE test_reply_deliveries (message_id TEXT PRIMARY KEY)`;
+      const sent = yield* Deferred.make<void>();
+      const accepted = new Set<string>();
+      const remoteEnvironment = EnvironmentId.make("environment:remote");
+      const limits = { runtimeMode: "approval-required", interactionMode: "plan" } as const;
+      const input = { threadId: target, message: "do it", clientRequestId: "fwd:trusted" };
+      const world: World = {
+        waits: [],
+        messageRunId: RunId.make("run:remote"),
+        targetDeleted: false,
+        crashAfterReplyCommit: true,
+        peerCall: ((call) =>
+          Effect.gen(function* () {
+            expect(call.environmentId).toBe(remoteEnvironment);
+            expect(call.limits).toEqual(limits);
+            if (call.tool === "t3_thread_send") {
+              expect(call.arguments.reply).toBe(false);
+              expect(
+                yield* sql`SELECT message_id FROM thread_reply_requests WHERE delivered_at IS NULL`.pipe(
+                  Effect.orDie,
+                ),
+              ).toHaveLength(1);
+              accepted.add(String(call.arguments.clientRequestId));
+              yield* Deferred.succeed(sent, undefined);
+              return yield* Effect.never;
+            }
+            return yield* Effect.die("must recover before waiting");
+          })) as PeerMcpClient.PeerMcpClient["Service"]["call"],
+      };
+      yield* serve(world, (replies) =>
+        Effect.gen(function* () {
+          const fiber = yield* replies
+            .sendRemote({ senderThreadId: sender, environmentId: remoteEnvironment, limits, input })
+            .pipe(Effect.forkScoped);
+          yield* Effect.raceFirst(Deferred.await(sent), Fiber.join(fiber));
+        }),
+      );
+      world.peerCall = ((call) =>
+        Effect.sync(() => {
+          expect(call.limits).toEqual(limits);
+          if (call.tool === "t3_thread_send") {
+            accepted.add(String(call.arguments.clientRequestId));
+            return {
+              threadId: target,
+              messageId: request.messageId,
+              runId: RunId.make("run:remote"),
+              status: "running",
+              delivery: "started",
+            };
+          }
+          if (call.tool === "t3_thread_wait")
+            return {
+              threadId: target,
+              runId: RunId.make("run:remote"),
+              status: "completed",
+              timedOut: false,
+            };
+          return {
+            thread: { title: "Remote builder" },
+            items: [
+              { type: "assistant_message", runId: RunId.make("run:remote"), text: "Remote done." },
+            ],
+            hasMore: false,
+            nextPosition: null,
+          };
+        })) as PeerMcpClient.PeerMcpClient["Service"]["call"];
+      const reply = yield* serve(world, (replies, delivered) =>
+        replies.start().pipe(Effect.andThen(Deferred.await(delivered))),
+      );
+      expect(reply.text).toContain("Remote done.");
+      expect(reply.notification?.source).toMatchObject({
+        environmentId: remoteEnvironment,
+        threadId: target,
+      });
+      expect(reply.text).toContain(`t3-thread://v2/${remoteEnvironment}/${target}`);
+      world.crashAfterReplyCommit = false;
+      yield* serve(world, (replies, delivered) =>
+        replies.start().pipe(Effect.andThen(Deferred.await(delivered))),
+      );
+      expect(accepted.size).toBe(1);
+      expect(yield* sql`SELECT message_id FROM test_reply_deliveries`).toHaveLength(1);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
+
+  it.effect("finishes a definitively refused send without retrying it after restart", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      let calls = 0;
+      const world: World = {
+        waits: [],
+        messageRunId: RunId.make("run:remote"),
+        targetDeleted: false,
+        peerCall: () =>
+          Effect.suspend(() => {
+            calls++;
+            return Effect.fail(
+              new OrchestratorMcpFailure({ code: "capability_denied", message: "Link revoked" }),
+            );
+          }),
+      };
+      yield* serve(world, (replies) =>
+        Effect.gen(function* () {
+          const result = yield* replies
+            .sendRemote({
+              senderThreadId: sender,
+              environmentId: EnvironmentId.make("environment:remote"),
+              limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+              input: { threadId: target, message: "do it", clientRequestId: "fwd:revoked" },
+            })
+            .pipe(Effect.exit);
+          expect(Exit.isFailure(result)).toBe(true);
+          expect(
+            yield* sql`SELECT message_id FROM thread_reply_requests WHERE delivered_at IS NULL`,
+          ).toHaveLength(0);
+        }),
+      );
+      yield* serve(world, (replies) => replies.start());
+      expect(calls).toBe(1);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
+
   it.effect("replies once the run that took a moved message ends", () =>
     Effect.gen(function* () {
       const world: World = {

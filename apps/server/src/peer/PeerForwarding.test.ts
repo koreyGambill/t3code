@@ -40,6 +40,7 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import * as ThreadReplies from "../orchestration-v2/ThreadReplies.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
@@ -295,7 +296,7 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
+    Layer.provide(PeerForwarding.layer.pipe(Layer.provide(ThreadReplies.layer))),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(
@@ -411,6 +412,7 @@ it.effect("an agent here works on a linked environment's threads within its own 
         environmentId: box.environmentId,
         threadId: boxThread,
         message: "Carry on there.",
+        reply: false,
         clientRequestId: "send-1",
       });
       expect(sent.isError).toBe(false);
@@ -422,6 +424,7 @@ it.effect("an agent here works on a linked environment's threads within its own 
         environmentId: box.environmentId,
         threadId: boxThread,
         message: "Change course.",
+        reply: false,
       });
       expect(failureOf(planned)).toMatchObject({ code: "interaction_mode_escalation_denied" });
       expect((yield* Ref.get(seen)).sends).toHaveLength(1);

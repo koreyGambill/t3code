@@ -12,7 +12,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveViewedImageAsset,
@@ -154,7 +154,11 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
-  if (item?.type !== "notification" || childThreadId === undefined) {
+  if (
+    item?.type !== "notification" ||
+    childThreadId === undefined ||
+    (item.source.kind === "thread_reply" && item.source.environmentId !== undefined)
+  ) {
     return <WorkEntryLogRow {...props} />;
   }
   return (
@@ -173,6 +177,11 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
+  const navigate = useNavigate();
+  const notificationSource =
+    workEntry.projectedItem?.item.type === "notification"
+      ? workEntry.projectedItem.item.source
+      : undefined;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
@@ -481,7 +490,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               aria-label="Open subagent thread"
               onClick={(event) => {
                 event.stopPropagation();
-                ctx.onOpenThread(notifiedSubagentThreadId);
+                if (
+                  notificationSource?.kind === "thread_reply" &&
+                  notificationSource.environmentId !== undefined
+                ) {
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: {
+                      environmentId: notificationSource.environmentId,
+                      threadId: notifiedSubagentThreadId,
+                    },
+                  });
+                } else ctx.onOpenThread(notifiedSubagentThreadId);
               }}
               onKeyDown={stopRowToggle}
             >

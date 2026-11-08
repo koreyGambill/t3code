@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
+import Migration0084 from "./Migrations/084_RemoteThreadReplies.ts";
 import Migration0083 from "./Migrations/083_Monitoring.ts";
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -172,6 +173,7 @@ const migrationEntries = [
   [81, "DevelopmentEnvironmentUsage", Migration0081],
   [82, "ThreadReplyRequests", Migration0082],
   [83, "Monitoring", Migration0083],
+  [84, "RemoteThreadReplies", Migration0084],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
