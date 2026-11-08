@@ -11,7 +11,9 @@ import type { AppRouter } from "./router";
 export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
-      <RouterProvider router={router} />
+      <div className="pr-9">
+        <RouterProvider router={router} />
+      </div>
       <ElectronBrowserHost />
       <MonitoringRail
         onOpenThread={(environmentId, threadId) => {
