@@ -348,3 +348,24 @@ passed as `--wsl-runtime`; see the
 Add `--signed` after configuring the platform credentials in the
 [release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+
+### Local Windows candidate staging
+
+In Windows PowerShell, set `$repo` to the checkout's Windows or WSL UNC path and `$install` to the existing
+Weavewing installation. Check destination-volume space using its payload as a pre-build estimate:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo\scripts\stage-windows-desktop.ps1" -Source $install -InstallDirectory $install -CheckOnly
+```
+
+Package with `dist:desktop:artifact --platform win --arch x64 --target dir --output-dir release/local-windows`
+and any required `--wsl-runtime` archive. Reuse that output directory; keep logs and evidence separately. Then stage:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo\scripts\stage-windows-desktop.ps1" -Source "$repo\release\local-windows\win-unpacked" -InstallDirectory $install
+```
+
+Staging requires payload bytes plus 20 GiB free; this local reserve does not guarantee packaging space or
+govern other activity. It replaces only its marked sibling `.<install-name>-candidate` slot and prints its
+`payload` path. Space or copy failure preserves the previous payload. Private state, evidence, unowned slots,
+and running candidates are refused. Activation is separate. Run `scripts/stage-windows-desktop.test.ps1` for fixture checks.
