@@ -351,21 +351,52 @@ Add `--signed` after configuring the platform credentials in the
 
 ### Local Windows candidate staging
 
-In Windows PowerShell, set `$repo` to the checkout's Windows or WSL UNC path and `$install` to the existing
-Weavewing installation. Check destination-volume space using its payload as a pre-build estimate:
+From a clean WSL checkout, build, verify and stage a local Weavewing update:
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo\scripts\stage-windows-desktop.ps1" -Source $install -InstallDirectory $install -CheckOnly
+```sh
+vp run desktop:update-local \
+  --install-dir 'C:\Users\you\Apps\Weavewing' \
+  --output-dir /absolute/path/to/update-evidence \
+  --vp-home /absolute/path/to/vite-plus \
+  --patchelf-dir /absolute/path/to/patchelf/bin \
+  --linux-monitor /absolute/path/to/linux/resource-monitor \
+  --windows-monitor /absolute/path/to/t3-resource-monitor.exe \
+  --check-only
 ```
 
-Package with `dist:desktop:artifact --platform win --arch x64 --target dir --output-dir release/local-windows`
-and any required `--wsl-runtime` archive. Reuse that output directory; keep logs and evidence separately. Then stage:
+Use the repository's pinned Node version and a Vite Plus home containing `current/bin/vp`.
+The driver creates private shims, so archived homes with broken `bin` links work. `VP_HOME` can supply
+`--vp-home`; `patchelf` can come from PATH. Both resource monitors must match the package version's
+release, and their source must be unchanged since that tag. The command targets Windows/WSL x64.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo\scripts\stage-windows-desktop.ps1" -Source "$repo\release\local-windows\win-unpacked" -InstallDirectory $install
-```
+`--check-only` (also `--dry-run`) runs the full build, archive smoke test, Windows native probe,
+staging, drain and state backups while leaving the installed app running. Use a new output directory
+per run. Omit that flag to detach activation onto Windows. It waits up to `--drain-minutes N`
+(default 5, 0 skips) for active turns, then proceeds even if work remains. This wait admits new turns;
+save interactive work before its deadline. `--wsl-distro` defaults to `WSL_DISTRO_NAME` and
+`--wsl-home` to `~/.t3`. The install must already have a healthy runtime and `Start Weavewing.cmd`.
+
+Drain uses `t3_thread_list` across projects and subagents when `--mcp-authorization-file` names a file
+containing an existing MCP Authorization header. Without that credential, the available read-only
+path is SQLite's persisted run projection; the receipt labels it `read-only-sqlite`. Read errors keep
+the drain waiting until its deadline. Waiting-for-input turns do not hold the update open.
+
+Activation snapshots WSL and Windows `statev2.sqlite` with SQLite's backup API and copies settings,
+secrets and thread workspaces. It excludes `server-owner.sqlite`, the live ownership lock.
+It carries over the install's launchers, closes the main window gracefully, waits for the WSL server
+to exit, swaps the app and relaunches through `Start Weavewing.cmd`. Health checks require the process
+under the new archive digest to answer the environment endpoint. `--health-seconds` defaults to 240.
+Failure restores and relaunches the previous app when graceful shutdown succeeds. State snapshots
+are retained for manual recovery; rollback does not overwrite live user data or undo database migrations.
 
 Staging requires payload bytes plus 20 GiB free; this local reserve does not guarantee packaging space or
 govern other activity. It replaces only its marked sibling `.<install-name>-candidate` slot and prints its
 `payload` path. Space or copy failure preserves the previous payload. Private state, evidence, unowned slots,
-and running candidates are refused. Activation is separate. Run `scripts/stage-windows-desktop.test.ps1` for fixture checks.
+and running candidates are refused. Activation keeps one marked `.<install-name>-local-update-rollback`
+directory containing the previous app and state snapshots, replacing only its own older rollback.
+It never force-kills a process. Check `receipt.json` and `activation.log` in the output directory after
+restart. `--notify-thread ID` additionally sends the result with `t3 thread send`.
+
+The staging helper remains available as `scripts/stage-windows-desktop.ps1`. Run its adjacent fixture
+test and `scripts/activate-local-desktop.test.ps1 -WorkerPath <output-directory>\worker.mjs`
+in Windows PowerShell to check staging, drain, rollback and backup behavior.

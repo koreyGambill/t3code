@@ -1,0 +1,101 @@
+param([Parameter(Mandatory)][string]$WorkerPath, [string]$NodeExecutable = 'node.exe')
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'activate-local-desktop.ps1')
+function Assert($condition, $message) { if (-not $condition) { throw $message } }
+function Must-Fail($action) {
+  $failed = $false
+  try { & $action } catch { $failed = $true }
+  Assert $failed 'Expected failure'
+}
+$root = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Path $root | Out-Null
+try {
+  $clock = @{ now = [DateTime]'2026-01-01T00:00:00Z'; reads = 0; delays = 0 }
+  $result = Wait-LocalUpdateDrain 0 { throw 'Zero drain must not read' }
+  Assert ($result.reason -eq 'deadline') 'Zero drain did not skip'
+  $result = Wait-LocalUpdateDrain 5 { $clock.reads++; @{ idle = $false } } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds); $clock.delays++ }
+  Assert ($result.reason -eq 'deadline' -and $clock.reads -eq 60 -and $clock.delays -eq 60) 'Drain did not stop at five minutes'
+  $result = Wait-LocalUpdateDrain 5 { @{ idle = $true } } { $clock.now } { throw 'Idle drain must not wait' }
+  Assert ($result.reason -eq 'idle') 'Idle drain failed'
+  $clock.now = [DateTime]'2026-01-01T00:00:00Z'
+  $result = Wait-LocalUpdateDrain 1 { $clock.now = $clock.now.AddSeconds(65); @{ idle = $false } } { $clock.now } { throw 'Read over deadline must not add a wait' }
+  Assert ($result.reason -eq 'deadline') 'Slow drain read ignored deadline'
+
+  foreach ($case in @('healthy', 'unhealthy', 'promotion-failed', 'close-refused')) {
+    $fixture = Join-Path $root $case
+    $install = Join-Path $fixture 'installed'
+    $payload = Join-Path $fixture 'payload'
+    $rollback = Join-Path $fixture 'rollback'
+    New-Item -ItemType Directory -Path $install,$payload,$rollback | Out-Null
+    Set-Content (Join-Path $install 'version') 'old'
+    Set-Content (Join-Path $payload 'version') 'new'
+    $calls = @{ starts = 0; closes = 0 }
+    $start = { $calls.starts++ }
+    $healthy = { $case -eq 'healthy' }
+    $close = { $calls.closes++; if ($case -eq 'close-refused') { throw 'Refused graceful close' } }
+    if ($case -eq 'promotion-failed') {
+      function Move-Item {
+        param($LiteralPath, $Destination)
+        if ($LiteralPath -eq $payload) { throw 'Fixture promotion failure' }
+        Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+      }
+    }
+    try {
+      if ($case -eq 'healthy') { Invoke-LocalUpdateSwap $install $payload $rollback $start $healthy $close }
+      else { Must-Fail { Invoke-LocalUpdateSwap $install $payload $rollback $start $healthy $close } }
+    } finally { if ($case -eq 'promotion-failed') { Remove-Item Function:Move-Item } }
+    if ($case -eq 'healthy') {
+      Assert ((Get-Content (Join-Path $install 'version')) -eq 'new') 'Healthy candidate not installed'
+      Assert ((Get-Content (Join-Path $rollback 'app/version')) -eq 'old') 'Rollback lost old application'
+      Assert ($calls.starts -eq 1 -and $calls.closes -eq 0) 'Healthy candidate rolled back'
+    } elseif ($case -eq 'close-refused') {
+      Assert ((Get-Content (Join-Path $install 'version')) -eq 'new') 'Moved a candidate that refused close'
+      Assert ((Get-Content (Join-Path $rollback 'app/version')) -eq 'old') 'Lost rollback after refused close'
+    } else {
+      Assert ((Get-Content (Join-Path $install 'version')) -eq 'old') 'Failure did not restore previous application'
+      Assert (-not (Test-Path (Join-Path $rollback 'app'))) 'Restored application still in rollback slot'
+      if ($case -eq 'unhealthy') {
+        Assert ((Get-Content (Join-Path $payload 'version')) -eq 'new') 'Lost failed candidate'
+        Assert ($calls.closes -eq 1 -and $calls.starts -eq 1) 'Rollback did not close the failed candidate'
+      }
+    }
+  }
+  $fixtureHome = Join-Path $root 'home'
+  $userdata = Join-Path $fixtureHome 'userdata'
+  New-Item -ItemType Directory -Path $userdata | Out-Null
+  $configPath = Join-Path $root 'backup-config.json'
+  @{ wslHome = $fixtureHome; output = $root } | ConvertTo-Json | Set-Content $configPath
+  $fixtureScript = Join-Path $root 'backup-fixture.mjs'
+  @'
+import { DatabaseSync } from 'node:sqlite';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, worker, config] = process.argv.slice(2);
+const db = new DatabaseSync(path.join(root, 'statev2.sqlite'));
+db.exec("CREATE TABLE saved(value TEXT); INSERT INTO saved VALUES ('preserved')");
+db.close();
+// A locked ownership database made the manual updater's backup retry forever.
+const lock = new DatabaseSync(path.join(root, 'server-owner.sqlite'));
+lock.exec('CREATE TABLE owner(id); BEGIN EXCLUSIVE');
+fs.writeFileSync(path.join(root, 'settings.json'), '{"saved":true}');
+fs.mkdirSync(path.join(root, 'secrets'));
+fs.writeFileSync(path.join(root, 'secrets', 'fixture'), 'secret');
+fs.mkdirSync(path.join(root, 'thread-workspaces'));
+fs.writeFileSync(path.join(root, 'thread-workspaces', 'fixture'), 'workspace');
+process.argv = [process.execPath, worker, '--worker', 'backup', config];
+await import(pathToFileURL(worker).href);
+const snapshot = new DatabaseSync(path.join(path.dirname(root), '..', 'backup-wsl', 'statev2.sqlite'), {readOnly: true});
+if (snapshot.prepare('SELECT value FROM saved').get().value !== 'preserved') throw new Error('Snapshot lost data');
+snapshot.close();
+lock.close();
+'@ | Set-Content $fixtureScript
+  & $NodeExecutable $fixtureScript $userdata $WorkerPath $configPath
+  Assert ($LASTEXITCODE -eq 0) 'State backup worker failed'
+  $backup = Join-Path $root 'backup-wsl'
+  Assert (Test-Path (Join-Path $backup 'statev2.sqlite')) 'State snapshot missing'
+  Assert ((Get-Content (Join-Path $backup 'secrets/fixture')) -eq 'secret') 'Secrets missing'
+  Assert ((Get-Content (Join-Path $backup 'thread-workspaces/fixture')) -eq 'workspace') 'Workspace missing'
+  Assert (-not (Test-Path (Join-Path $backup 'server-owner.sqlite'))) 'Ownership lock entered backup'
+  'PASS: drain deadline, healthy swap, failed promotion, unhealthy rollback, refused close, read-only state backup excluding ownership lock'
+} finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
