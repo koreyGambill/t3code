@@ -253,7 +253,7 @@ const reasonMessages: Record<DevelopmentEnvironmentLifecycleReason, string> = {
   "state-unreadable": "T3 Code could not read its threads or schedules for this environment.",
 };
 
-/** Carries no cause: Xwing's output can hold paths and secrets. The server logs it instead. */
+/** App-start failures include bounded diagnostics; other operations keep output in the server log. */
 export class DevelopmentEnvironmentLifecycleError extends Schema.TaggedError<DevelopmentEnvironmentLifecycleError>()(
   "DevelopmentEnvironmentLifecycleError",
   {
@@ -262,9 +262,13 @@ export class DevelopmentEnvironmentLifecycleError extends Schema.TaggedError<Dev
     xwingEnvironmentId: Schema.optional(Schema.String),
     /** Xwing's refusal reasons for a blocked deletion. */
     blockers: Schema.optional(Schema.Array(Schema.String)),
+    /** Bounded app-start stderr for diagnosing the declared command. */
+    diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   },
 ) {
   override get message(): string {
-    return reasonMessages[this.reason];
+    return this.diagnostics
+      ? `${reasonMessages[this.reason]}\n${this.diagnostics}`
+      : reasonMessages[this.reason];
   }
 }

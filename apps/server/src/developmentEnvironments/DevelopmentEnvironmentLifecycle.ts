@@ -93,12 +93,14 @@ const lifecycleError = (
   reason: DevelopmentEnvironmentLifecycleError["reason"],
   xwingEnvironmentId?: string,
   blockers?: ReadonlyArray<string>,
+  diagnostics?: string,
 ) =>
   new DevelopmentEnvironmentLifecycleError({
     operation,
     reason,
     ...(xwingEnvironmentId === undefined ? {} : { xwingEnvironmentId }),
     ...(blockers === undefined ? {} : { blockers }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
   });
 
 const reasonOf = (error: XwingOperationError): DevelopmentEnvironmentLifecycleError["reason"] => {
@@ -114,7 +116,7 @@ const reasonOf = (error: XwingOperationError): DevelopmentEnvironmentLifecycleEr
   }
 };
 
-/** Logs Xwing's error with its output and returns one that carries neither. */
+/** Logs the cause and forwards app-start diagnostics to the client. */
 const sanitized =
   (operation: DevelopmentEnvironmentLifecycleOperation, xwingEnvironmentId?: string) =>
   (error: XwingOperationError) =>
@@ -131,6 +133,7 @@ const sanitized =
             ? (error.environmentId ?? xwingEnvironmentId)
             : xwingEnvironmentId,
           error._tag === "XwingOperationFailedError" ? error.blockers : undefined,
+          error._tag === "XwingOperationFailedError" ? error.diagnostics : undefined,
         ),
       ),
     );

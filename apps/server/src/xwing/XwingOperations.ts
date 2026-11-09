@@ -33,6 +33,8 @@ import {
   XwingStopAppInput,
   XwingUnavailableError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isServerRuntimeEnvKey } from "../runtimeEnvironment.ts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -342,6 +344,16 @@ const stderrTail = (output: ProcessRunner.ProcessRunOutput) =>
 /** Builds the service around an Xwing executable name or path. */
 export const make = Effect.fn("XwingOperations.make")(function* (command = "xwing") {
   const runner = yield* ProcessRunner.ProcessRunner;
+  const environment = yield* HostProcess.Environment;
+  // Undefined overrides remove inherited keys when ProcessRunner extends the host environment.
+  const env = {
+    ...Object.fromEntries(
+      Object.keys(environment)
+        .filter(isServerRuntimeEnvKey)
+        .map((key) => [key, undefined]),
+    ),
+    ...WITHOUT_AGENT_IDENTITY,
+  };
 
   const validate = <S extends Schema.Top & { readonly DecodingServices: never }>(
     operation: XwingOperationName,
@@ -365,7 +377,7 @@ export const make = Effect.fn("XwingOperations.make")(function* (command = "xwin
       .run({
         command,
         args,
-        env: WITHOUT_AGENT_IDENTITY,
+        env,
         ...(options.unbounded ? { timeout: UNBOUNDED } : {}),
         ...(options.maxOutputBytes === undefined ? {} : { maxOutputBytes: options.maxOutputBytes }),
       })
@@ -405,6 +417,7 @@ export const make = Effect.fn("XwingOperations.make")(function* (command = "xwin
       exitCode: output.code,
       blockers: extra.blockers,
       runIds: extra.runIds,
+      ...(operation === "startApp" ? { diagnostics: output.stderr.trim().slice(-2_000) } : {}),
       cause,
     });
   };

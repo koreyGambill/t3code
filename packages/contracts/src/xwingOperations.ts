@@ -392,13 +392,15 @@ export class XwingOperationFailedError extends Schema.TaggedError<XwingOperation
     exitCode: Schema.NullOr(Schema.Number),
     /** Xwing's own blocker lines for a refused deletion. */
     blockers: Schema.optional(Schema.Array(Schema.String)),
+    /** Bounded app-start stderr for diagnosing the declared command. */
+    diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
     /** Runs Xwing recorded before a start failed. */
     runIds: Schema.optional(Schema.Array(Schema.String)),
     cause: XwingDiagnosticCause,
   },
 ) {
   override get message(): string {
-    return `Xwing ${this.operation}: ${failureMessages[this.category]}`;
+    return `Xwing ${this.operation}: ${failureMessages[this.category]}${this.diagnostics ? `\n${this.diagnostics}` : ""}`;
   }
 }
 

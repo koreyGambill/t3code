@@ -80,6 +80,17 @@ const makeXwing = (initial: { readonly dirty?: boolean; readonly holds?: Array<X
       cause: new Error(`fatal: remote https://user@example.com ${SECRET}`),
     });
   const operations = Layer.mock(XwingOperations.XwingOperations)({
+    startApp: () =>
+      Effect.fail(
+        new XwingOperationFailedError({
+          operation: "startApp",
+          category: "failed",
+          environmentId: ID,
+          exitCode: 1,
+          diagnostics: "error: fixture app could not start",
+          cause: new Error("stderr"),
+        }),
+      ),
     create: (input) =>
       Effect.sync(() => {
         state.calls.push(`create ${input.name}`);
@@ -333,6 +344,18 @@ const lifecycle = DevelopmentEnvironmentLifecycle.DevelopmentEnvironmentLifecycl
 const encodeError = Schema.encodeSync(Schema.fromJsonString(DevelopmentEnvironmentLifecycleError));
 
 describe("DevelopmentEnvironmentLifecycle", () => {
+  it.effect("forwards app-start diagnostics through the client error", () => {
+    const xwing = makeXwing({});
+    return Effect.gen(function* () {
+      const service = yield* lifecycle;
+      const error = yield* Effect.flip(
+        service.startApp({ xwingEnvironmentId: ID, repository: "app" }),
+      );
+      assert.include(error.message, "error: fixture app could not start");
+      assert.include(encodeError(error), "error: fixture app could not start");
+    }).pipe(Effect.provide(makeLayer({ xwing })));
+  });
+
   it.effect("keeps a created environment when checkout fails and retries into the same id", () => {
     const xwing = makeXwing({});
     xwing.state.attachFailures = 1;

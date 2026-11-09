@@ -1,3 +1,4 @@
+import { isServerRuntimeEnvKey } from "../runtimeEnvironment.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
 
@@ -114,9 +115,6 @@ const DEFAULT_OPEN_ROWS = 30;
 // The tmux/screen/Zellij keys name the multiplexer pane that launched the server,
 // so inheriting them points multiplexer-aware tools at that unrelated pane.
 const TERMINAL_ENV_BLOCKLIST = new Set([
-  "PORT",
-  "ELECTRON_RENDERER_PORT",
-  "ELECTRON_RUN_AS_NODE",
   "TMUX",
   "TMUX_PANE",
   "STY",
@@ -1323,13 +1321,7 @@ function toSessionKey(threadId: string, terminalId: string): string {
 
 function shouldExcludeTerminalEnvKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("T3CODE_")) {
-    return true;
-  }
-  if (normalizedKey.startsWith("VITE_")) {
-    return true;
-  }
-  return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
+  return isServerRuntimeEnvKey(key) || TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
 }
 
 const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;

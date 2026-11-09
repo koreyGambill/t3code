@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   XwingEnvironmentId,
   XwingInvalidInputError,
@@ -31,12 +32,14 @@ here=$(dirname "$0")
 n=$(( $(cat "$here/count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$here/count"
 for arg in "$@"; do printf '%s\\n' "$arg"; done > "$here/argv-$n"
+if [ -f "$here/script-$n" ]; then . "$here/script-$n"; fi
 if [ -f "$here/err-$n" ]; then cat "$here/err-$n" >&2; fi
 if [ -f "$here/out-$n" ]; then cat "$here/out-$n"; fi
 exit "$(cat "$here/code-$n" 2>/dev/null || echo 0)"
 `;
 
 interface FakeResponse {
+  readonly script?: string;
   readonly out?: string;
   readonly err?: string;
   readonly code?: number;
@@ -55,6 +58,9 @@ const withFakeXwing = Effect.fn("test.withFakeXwing")(function* (
   yield* fileSystem.chmod(command, 0o755);
   for (const [index, response] of responses.entries()) {
     const n = index + 1;
+    if (response.script !== undefined) {
+      yield* fileSystem.writeFileString(path.join(directory, `script-${n}`), response.script);
+    }
     if (response.out !== undefined) {
       yield* fileSystem.writeFileString(path.join(directory, `out-${n}`), response.out);
     }
@@ -147,6 +153,53 @@ const epoch16DeletePreview = JSON.stringify({
 });
 
 it.layer(NodeServices.layer)("XwingOperations protocol", (it) => {
+  it.effect.skipIf(windowsHost)(
+    "starts apps without inheriting the server runtime environment",
+    () =>
+      Effect.gen(function* () {
+        for (const key of [
+          "T3CODE_PORT",
+          "T3CODE_HOME",
+          "VITE_DEV_SERVER_URL",
+          "PORT",
+          "ELECTRON_RUN_AS_NODE",
+        ]) {
+          vi.stubEnv(key, "server-only");
+        }
+        vi.stubEnv("XWING_APP_TEST_VALUE", "preserved");
+        const { service } = yield* withFakeXwing([
+          {
+            script: `if env | grep -Eq '^(T3CODE_|VITE_|PORT=|ELECTRON_RUN_AS_NODE=)'; then
+  echo 'error: T3CODE_PORT is managed by the application network; unset the conflicting environment override' >&2
+  exit 1
+fi
+[ "$XWING_APP_TEST_VALUE" = preserved ] || exit 2
+[ -n "$PATH" ] || exit 3`,
+            out: '{"kind":"application_run","id":"run-fixture","name":"fixture","repo":"app","status":"running"}\n',
+          },
+        ]);
+        expect(yield* service.startApp({ id: ID, repository: "app" })).toMatchObject([
+          { status: "running" },
+        ]);
+      }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs()))),
+  );
+
+  it.effect.skipIf(windowsHost)("returns a bounded stderr tail when an app fails to start", () =>
+    Effect.gen(function* () {
+      const message =
+        "error: T3CODE_PORT is managed by the application network; unset the conflicting environment override";
+      const { service } = yield* withFakeXwing([
+        { err: "x".repeat(3000) + "\n" + message + "\n", code: 1 },
+      ]);
+      const error = yield* Effect.flip(service.startApp({ id: ID, repository: "app" }));
+      expect(error.message).toContain(message);
+      if (!isOperationFailure(error)) return yield* error;
+      const encoded = yield* encodeOperationFailure(error);
+      expect(encoded).toMatchObject({ diagnostics: expect.stringContaining(message) });
+      expect(error.message.length).toBeLessThan(2100);
+    }),
+  );
+
   it.effect.skipIf(windowsHost)("reads full pages of JSON-expanded application log records", () =>
     Effect.gen(function* () {
       const text = "\u0001".repeat(32 * 1024);
