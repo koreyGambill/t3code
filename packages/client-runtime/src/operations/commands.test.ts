@@ -108,6 +108,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     client,
     initialConfig: Effect.succeed({
       environment: {
+        environmentId: TARGET.environmentId,
         capabilities: {
           repositoryIdentity: true,
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
@@ -210,6 +211,40 @@ describe("V2 environment commands", () => {
           scopeId,
           checkpointId,
         },
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("checks an offline message's destination when it executes, before dispatch", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const input = {
+        commandId: CommandId.make("offline-command"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("offline-message"),
+          role: "user" as const,
+          text: "Queued while offline",
+          attachments: [],
+        },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+      };
+      const rejected = yield* startThreadTurn({
+        ...input,
+        expectedEnvironmentId: EnvironmentId.make("another-server"),
+      }).pipe(
+        Effect.flip,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(rejected.message).toContain("different environment");
+      expect(commands).toEqual([]);
+      yield* startThreadTurn({ ...input, expectedEnvironmentId: TARGET.environmentId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(commands).toMatchObject([
+        { commandId: "offline-command", messageId: "offline-message" },
       ]);
     }).pipe(Effect.provide(layerTestRandom)),
   );

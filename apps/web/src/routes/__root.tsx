@@ -60,6 +60,21 @@ import { readProject } from "../state/entities";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import {
+  isTransientBootstrapError,
+  PrimaryEnvironmentRequestError,
+} from "../environments/primary/auth";
+import { environmentCatalog } from "../connection/catalog";
+import { BootstrapReconnect } from "../components/auth/BootstrapReconnect";
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { Atom } from "effect/reactivity";
+
+const bootstrapConnectionGenerationAtom = Atom.make((get) => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  return environmentId === null
+    ? 0
+    : 1 + get(environmentCatalog.sessionGenerationAtom(environmentId));
+});
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -232,6 +247,17 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const report = errorReport(error, pathname);
+
+  if (error instanceof PrimaryEnvironmentRequestError && isTransientBootstrapError(error)) {
+    return (
+      <BootstrapReconnect
+        generationAtom={bootstrapConnectionGenerationAtom}
+        onReconnect={() => {
+          void router.invalidate();
+        }}
+      />
+    );
+  }
 
   return (
     <StandalonePage>

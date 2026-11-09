@@ -9,6 +9,7 @@ import {
   OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
   type ChatAttachment,
+  type EnvironmentId,
   MessageId,
   type ModelSelection,
   type NodeId,
@@ -36,6 +37,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
 import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { ConnectionBlockedError } from "../connection/model.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -172,6 +174,7 @@ interface StartThreadBootstrap {
 }
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
+  readonly expectedEnvironmentId?: EnvironmentId;
   readonly manualContinuationOfRunId?: RunId;
   readonly message: {
     readonly messageId: MessageId;
@@ -681,6 +684,17 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
+  if (input.expectedEnvironmentId !== undefined) {
+    const config = yield* getInitialServerConfig();
+    if (config.environment.environmentId !== input.expectedEnvironmentId) {
+      return yield* Effect.fail(
+        new ConnectionBlockedError({
+          reason: "configuration",
+          detail: "Connected to a different environment. Message was not sent.",
+        }),
+      );
+    }
+  }
   const commandId = yield* allocateCommandId(input);
   const attachments = yield* persistAttachments(
     input.threadId,

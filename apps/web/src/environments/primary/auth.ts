@@ -289,9 +289,13 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
   });
 }
 
-function isTransientBootstrapError(error: unknown): boolean {
+export function isTransientBootstrapError(error: unknown): boolean {
   if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+    return (
+      TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status) ||
+      (HttpClientError.isHttpClientError(error.cause) && error.cause.response === undefined) ||
+      error.cause instanceof TypeError
+    );
   }
 
   if (error instanceof TypeError) {

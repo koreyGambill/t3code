@@ -38,6 +38,7 @@ interface ComposerPrimaryActionsProps {
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isEnvironmentUnavailable: boolean;
+  canQueueOffline?: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   canResume?: boolean;
@@ -89,6 +90,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isSendBusy,
   sendDisabledReason,
   isEnvironmentUnavailable,
+  canQueueOffline = false,
   isPreparingWorktree,
   hasSendableContent,
   canResume = false,
@@ -267,18 +269,21 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         : isRunning
           ? "Steer message"
           : "Submit message";
-  const submitStatus = isEnvironmentUnavailable
-    ? "Environment disconnected"
-    : (sendDisabledReason ??
-      (isPreparingWorktree
-        ? "Preparing worktree"
-        : isSendBusy
-          ? isEditingQueuedMessage
-            ? "Updating queued message"
-            : "Submitting message"
-          : null));
+  const queuesOffline = isEnvironmentUnavailable && canQueueOffline && !showResume;
+  const submitStatus =
+    isEnvironmentUnavailable && !queuesOffline
+      ? "Environment disconnected"
+      : (sendDisabledReason ??
+        (isPreparingWorktree
+          ? "Preparing worktree"
+          : isSendBusy
+            ? isEditingQueuedMessage
+              ? "Updating queued message"
+              : "Submitting message"
+            : null));
   const submitTooltip =
     submitStatus ??
+    (queuesOffline ? "Queue until reconnected" : null) ??
     (isRunning && !isEditingQueuedMessage && canSteer
       ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
       : submitLabel);
@@ -297,10 +302,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       disabled={
         isSendBusy ||
         isSendDisabled ||
-        isEnvironmentUnavailable ||
+        (isEnvironmentUnavailable && !queuesOffline) ||
         (!hasSendableContent && !showResume)
       }
-      aria-label={submitStatus ?? submitLabel}
+      aria-label={submitStatus ?? (queuesOffline ? "Queue until reconnected" : submitLabel)}
     >
       {stageBackdropVariant ? (
         <span className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">

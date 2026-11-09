@@ -269,6 +269,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isEnvironmentUnavailable: boolean;
+  canQueueOffline?: boolean;
   hasSendableContent: boolean;
   canResume: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
@@ -309,6 +310,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+        canQueueOffline={props.canQueueOffline ?? false}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         canResume={props.canResume}

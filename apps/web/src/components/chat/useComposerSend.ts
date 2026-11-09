@@ -19,6 +19,7 @@ import {
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -115,6 +116,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
+import { enqueueOfflineSubmission, offlineOutbox } from "../../state/offlineOutbox";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -147,8 +149,6 @@ import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
-
-const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
 const selectPlanModeEnabled = (settings: UnifiedSettings) => settings.planModeEnabled;
 
@@ -392,7 +392,6 @@ export function useComposerSend(input: ComposerSendInput) {
   });
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
-  const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
@@ -469,19 +468,88 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (activeEnvironmentUnavailable) {
-      const toastSlot = environmentUnavailableSendToastSlotRef.current;
-      environmentUnavailableSendToastSlotRef.current =
-        (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
-      toastManager.add({
-        ...stackedThreadToast({
-          type: "warning",
-          title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
-        }),
-        id: `chat-send-environment-unavailable:${toastSlot}`,
+      const context = composerRef.current?.getSendContext();
+      const serverId =
+        readEnvironmentPresentation(environmentId)?.serverConfig?.environment.environmentId;
+      const reason =
+        !isServerThread || !context || !serverId
+          ? "Offline queue is available for existing threads after connecting once."
+          : context.images.length > 0 || context.files.length > 0 || directAnnotation
+            ? "Attachments cannot be queued offline. Your draft is saved; send it after reconnecting."
+            : activePendingProgress ||
+                pendingApprovalsRef.current.length > 0 ||
+                queuedRunEdit.isEditing ||
+                showPlanFollowUpPrompt ||
+                readFreshSessionArm(routeThreadKey) !== undefined ||
+                promptAtSend.trimStart().startsWith("/")
+              ? "This action needs a connection. Your draft is saved; send it after reconnecting."
+              : runtimeMode !== activeThread.runtimeMode ||
+                  context.interactionMode !== activeThread.interactionMode ||
+                  localCheckoutBranchMismatch !== null
+                ? "Mode and workspace changes need a connection. Your draft is saved; send it after reconnecting."
+                : null;
+      if (reason || !context || !serverId) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Message kept as a draft",
+            description: reason ?? undefined,
+          }),
+        );
+        return;
+      }
+      if (!promptAtSend.trim()) return;
+      const text = formatOutgoingPrompt({
+        provider: context.selectedProvider,
+        model: context.selectedModel,
+        models: context.selectedProviderModels,
+        effort: context.selectedPromptEffort,
+        text: promptAtSend,
       });
+      if (composerRef.current?.validateProviderInput(text) === false) return;
+      enqueueOfflineSubmission(
+        {
+          environmentId,
+          serverId,
+          input: {
+            commandId: CommandId.make(crypto.randomUUID()),
+            threadId: activeThread.id,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              attachments: [],
+              ...withMessageContext({
+                text,
+                context: buildMessageContext({
+                  terminalContexts: filterTerminalContextsWithText(context.terminalContexts),
+                  reviewComments: context.reviewComments,
+                  previewAnnotations: context.previewAnnotations,
+                  threadContexts: context.threadContexts,
+                  environmentContexts: context.environmentContexts,
+                  attachments: [],
+                }),
+              }),
+            },
+            modelSelection: context.selectedModelSelection,
+            runtimeMode,
+            interactionMode: context.interactionMode,
+            dispatchMode: "queue",
+            createdAt: new Date().toISOString(),
+          },
+        },
+        composerDraftTarget,
+      );
       return;
     }
+    if (
+      offlineOutbox
+        .getSnapshot()
+        .some(
+          (entry) =>
+            entry.environmentId === environmentId && entry.input.threadId === activeThread.id,
+        )
+    )
+      return;
     const sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -392,6 +393,25 @@ describe("EnvironmentSupervisor", () => {
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
         expect(yield* Ref.get(harness.prepareCount)).toBe(2);
       }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("caps reconnect waits at five seconds even after a long outage", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: () => Effect.fail(transient()) });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      for (let attempt = 1; attempt <= 10; attempt++) {
+        const state = yield* awaitState(
+          supervisor.state,
+          (value) => value.phase === "backoff" && value.attempt === attempt,
+        );
+        const now = yield* Clock.currentTimeMillis;
+        expect(state.retryAt! - now).toBeLessThanOrEqual(5_000);
+        expect(state.retryAt! - now).toBeGreaterThanOrEqual(1_000);
+        yield* TestClock.adjust("5 seconds");
+      }
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>

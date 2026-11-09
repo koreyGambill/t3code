@@ -4626,7 +4626,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           branch: null,
           worktreePath: "/tmp/runtime-layer-restart",
         });
-        yield* orchestrator.dispatch({
+        const originalMessageCommand = {
           type: "message.dispatch",
           createdBy: "user",
           creationSource: "web",
@@ -4637,7 +4637,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "start_immediately" },
-        });
+        } as const;
+        const accepted = yield* orchestrator.dispatch(originalMessageCommand);
+        const replayed = yield* orchestrator.dispatch(originalMessageCommand);
+        assert.equal(replayed.sequence, accepted.sequence);
+        assert.isTrue(replayed.replayed);
+        const afterRetry = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(afterRetry.messages, 1);
+        assert.lengthOf(afterRetry.runs, 1);
         const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
         const now = yield* DateTime.now;
         yield* eventSink.commitCommand({

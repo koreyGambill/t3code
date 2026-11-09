@@ -120,6 +120,8 @@ import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
+import { useOfflineOutbox } from "../../state/offlineOutbox";
+import { offlineOutboxBannerItem } from "./ComposerOfflineOutbox";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   composerOtherFilesForPresentation,
@@ -934,7 +936,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  const offlineEntry = useOfflineOutbox().find(
+    (entry) => entry.environmentId === environmentId && entry.input.threadId === activeThreadId,
+  );
+  const canQueueOffline =
+    routeKind === "server" &&
+    activePendingProgress === null &&
+    !isEditingQueuedMessage &&
+    !showPlanFollowUpPrompt;
   const sendDisabledReason =
+    (offlineEntry ? "Message already queued locally" : null) ??
+    (environmentUnavailable !== null &&
+    canQueueOffline &&
+    (composerImages.length > 0 || composerFiles.length > 0)
+      ? "Attachments cannot be queued offline. Your draft is saved; send it after reconnecting."
+      : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -1259,9 +1275,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendDisabled ||
     noProviderAvailable ||
     projectSelectionRequired ||
-    environmentUnavailable !== null ||
+    (environmentUnavailable !== null && !canQueueOffline) ||
     (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction ? "Resume thread" : "Send message";
+  const collapsedComposerPrimaryActionLabel = showResumeAction
+    ? "Resume thread"
+    : environmentUnavailable !== null && canQueueOffline
+      ? "Queue until reconnected"
+      : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2373,7 +2393,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
-  const bannerItems: readonly ComposerBannerStackItem[] =
+  const policyBannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
       ? props.bannerItems
       : [
@@ -2398,6 +2418,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }),
           },
         ];
+  const bannerItems = offlineEntry
+    ? [...policyBannerItems, offlineOutboxBannerItem(offlineEntry)]
+    : policyBannerItems;
   const shelfItems = hasBlockingComposerTopDrawer
     ? bannerItems.filter(
         (item) =>
@@ -3552,6 +3575,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       noProviderAvailable ||
                       projectSelectionRequired
                     }
+                    canQueueOffline={canQueueOffline}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     canResume={showResumeAction}

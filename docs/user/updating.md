@@ -64,6 +64,13 @@ checks.
 Server updates restart the connection and can interrupt active agents and
 terminal commands. Saved threads, settings, and project files remain.
 
+On web and desktop, you can queue a text message in an existing thread while its
+environment reconnects. Keep the page open: the message sends once that same
+environment returns. Cancel the queued message to keep it as a draft. Reloading
+keeps the draft but cancels automatic sending. Attachments, new threads, approval
+responses, slash commands, and changes to modes or workspaces need a connection.
+A refused queued message shows the error and keeps your draft.
+
 **Settings → Maintenance → Continue threads after restarts** is on by default.
 It resumes supported active threads after an update, crash, or machine
 restart. Changes are saved to connected environments that support this setting;
