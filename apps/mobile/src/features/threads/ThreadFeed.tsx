@@ -1434,6 +1434,9 @@ function OpenSenderThreadButton(props: {
   readonly senderThreadId: ThreadId;
 }) {
   const openLinkedThread = useOpenLinkedThread();
+  const senderShell = useQuietThreadShell(
+    scopeThreadRef(props.environmentId, props.senderThreadId),
+  );
   return (
     <Pressable
       accessibilityRole="link"
@@ -1445,7 +1448,9 @@ function OpenSenderThreadButton(props: {
         })
       }
     >
-      <Text className="font-t3-medium text-xs text-foreground-secondary">Open thread</Text>
+      <Text className="font-t3-medium text-xs text-foreground-secondary">
+        {senderShell?.title.trim() || "Open thread"}
+      </Text>
     </Pressable>
   );
 }
@@ -2046,7 +2051,7 @@ function renderFeedEntry(
           ) : null}
           {hasBubble ? (
             <View
-              className="min-w-0 rounded-[20px]"
+              className={cn("min-w-0 rounded-[20px]", foldRowId !== null && "border border-border")}
               style={{
                 backgroundColor: userBubbleColor,
                 maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
@@ -2166,6 +2171,14 @@ function renderFeedEntry(
                   ) : null}
                 </View>
               ) : null}
+            </View>
+          ) : null}
+          {!bubbleBodyVisible && message.senderThreadId ? (
+            <View className="mt-1 flex-row justify-end pr-0.5">
+              <OpenSenderThreadButton
+                environmentId={props.environmentId}
+                senderThreadId={message.senderThreadId}
+              />
             </View>
           ) : null}
           {bubbleBodyVisible ? (

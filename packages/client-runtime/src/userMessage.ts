@@ -64,6 +64,8 @@ export function resolveUserMessagePresentation(message: {
   readonly text: string;
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
+  readonly senderThreadId?: string | undefined;
+  readonly delegatedCompletion?: { readonly taskIds: ReadonlyArray<string> } | undefined;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
   readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
 }): {
@@ -106,11 +108,17 @@ export function resolveUserMessagePresentation(message: {
   }
   return {
     // The agent needs words to start a turn; people sent only the attachments.
-    text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+    text: isAttachmentOnlyBootstrapPrompt(message.text)
+      ? ""
+      : message.createdBy === "agent" && message.senderThreadId !== undefined
+        ? message.text.replace(/^\[Thread: "(?:[^"\\]|\\.)*"\]\n\n/, "")
+        : message.text,
     attribution:
       message.createdBy !== "agent"
         ? null
-        : message.creationSource === "server"
+        : message.creationSource === "server" &&
+            message.senderThreadId === undefined &&
+            message.delegatedCompletion === undefined
           ? "t3code"
           : "agent",
     scheduledTaskId: undefined,

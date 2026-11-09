@@ -859,7 +859,13 @@ function delegatedCompletionWakeDetail(
   return taskIds
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
-      const title = task?.title == null ? "" : ` (${task.title})`;
+      const threadLabel = task?.title?.trim() || "Untitled";
+      const title =
+        task?.childThreadId == null
+          ? task?.title == null
+            ? ""
+            : ` (${task.title})`
+          : ` ([${threadLabel.replace(/[[\]\\]/g, "\\$&")}](t3-thread://v1/${task.childThreadId}))`;
       const status = task === undefined ? " reached a terminal state" : ` [${task.status}]`;
       const label =
         task?.originalTaskId === undefined
@@ -2504,6 +2510,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           title: null,
           type: "user_message",
           messageId: queuedMessage.id,
+          ...(queuedMessage.delegatedCompletion
+            ? { delegatedCompletion: queuedMessage.delegatedCompletion }
+            : {}),
           text: queuedMessage.text,
           attachments: queuedMessage.attachments,
           ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
@@ -5574,6 +5583,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
           type: "user_message",
           messageId: input.messageId,
+          ...(input.delegatedCompletion ? { delegatedCompletion: input.delegatedCompletion } : {}),
           inputIntent:
             input.command.type === "queued-message.promote-to-steer"
               ? "promoted_queued_to_steer"
@@ -6513,10 +6523,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
     }
+    if (
+      command.senderThreadId === undefined &&
+      command.notification?.source.kind === "delegated_task"
+    ) {
+      command = { ...command, senderThreadId: command.notification.source.childThreadId };
+    }
+    const completionSenders = delegatedCompletion?.taskIds.flatMap((id) => {
+      const task = projection.subagents.find((candidate) => candidate.id === id);
+      return task?.childThreadId == null ? [] : [task.childThreadId];
+    });
+    if (command.senderThreadId === undefined && completionSenders?.length === 1) {
+      command = { ...command, senderThreadId: completionSenders[0]! };
+    }
+    const senderTitles =
+      command.createdBy === "agent" && command.senderThreadId !== undefined
+        ? yield* projectionStore
+            .getThreadTitles([command.senderThreadId])
+            .pipe(mapDispatchError(command))
+        : undefined;
+    const senderHeader =
+      senderTitles === undefined || command.senderThreadId === undefined
+        ? ""
+        : `[Thread: ${JSON.stringify((senderTitles[command.senderThreadId]?.trim() || command.senderThreadId).slice(0, 200))}]\n\n`;
     const dispatchText =
-      delegatedCompletion === undefined
+      senderHeader +
+      (delegatedCompletion === undefined
         ? command.text
-        : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
+        : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents));
     const sourcePlanProjection =
       command.sourcePlanRef === undefined
         ? null
@@ -7276,6 +7310,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
         type: "user_message",
         messageId: command.messageId,
+        ...(delegatedCompletion ? { delegatedCompletion } : {}),
         inputIntent: "turn_start",
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
@@ -7990,6 +8025,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       updatedAt: now,
       type: "user_message",
       messageId: command.messageId,
+      ...(delegatedCompletion ? { delegatedCompletion } : {}),
       inputIntent: "turn_start",
       text: dispatchText,
       ...(command.context ? { context: command.context } : {}),
@@ -13215,6 +13251,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? undefined
               : {
                   ...message,
+                  senderThreadId: undefined,
                   text: delegatedCompletionWakeDetail(
                     taskIds,
                     input.parentProjection.subagents.map((task) =>

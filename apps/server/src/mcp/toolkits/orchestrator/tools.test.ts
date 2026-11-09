@@ -3,7 +3,13 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
+import { advertisedJsonSchema } from "../../advertisedJsonSchema.ts";
+
 import { OrchestratorToolkit } from "./tools.ts";
+
+const decodeThreadSend = Schema.decodeUnknownSync(
+  OrchestratorToolkit.tools.t3_thread_send.parametersSchema,
+);
 
 // Oversized page sizes clamp on decode, so the schema has no `maximum`; Codex also drops
 // bounds from its TypeScript view. The description is the only place a model sees a limit.
@@ -26,4 +32,20 @@ it("refuses a t3_thread_update whose fields do not fit its action", () => {
   expect(Exit.isSuccess(decode({ action: "rename", title: "New", environmentId: undefined }))).toBe(
     true,
   );
+});
+
+it("advertises and decodes no-reply informational sends", () => {
+  const tool = OrchestratorToolkit.tools.t3_thread_send;
+  const schema = advertisedJsonSchema(tool) as {
+    properties: Record<string, { type?: string }>;
+    required?: string[];
+  };
+  expect(schema.properties.reply?.type).toBe("boolean");
+  expect(schema.required).not.toContain("reply");
+  const decoded = decodeThreadSend({
+    threadId: "thread:target",
+    message: "FYI: check lock released.",
+    reply: false,
+  });
+  expect(decoded.reply).toBe(false);
 });

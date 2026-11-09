@@ -1713,6 +1713,11 @@ it.effect("commits a reply request with its accepted send and deduplicates retri
     );
     yield* sql`DROP TRIGGER fail_reply_admission`;
     yield* orchestrator.dispatch(command);
+    const accepted = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+      threadId,
+    );
+    assert.include(accepted.messages[0]!.text, '[Thread: "thread:reply-sender"]');
+    assert.include(accepted.messages[0]!.text, "Please reply");
     // No caller-side follower registration runs before the server goes away.
     assert.deepEqual(
       yield* sql`SELECT message_id, sender_thread_id, target_thread_id FROM thread_reply_requests`,

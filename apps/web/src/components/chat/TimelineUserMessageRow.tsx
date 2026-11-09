@@ -783,9 +783,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         floatActions ? "flex-wrap" : "shrink-0",
       )}
     >
-      {senderThreadId ? (
+      {senderThreadId && !folded ? (
         <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
-          {!folded && senderShell?.lineage.sideChat ? "Open side chat" : "Open thread"}
+          {senderShell?.lineage.sideChat ? "Open side chat" : "Open thread"}
         </InlineButton>
       ) : null}
       <Tooltip>
@@ -829,6 +829,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
+      {folded && senderThreadId ? (
+        <InlineButton role="link" onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+          {senderLabel}
+        </InlineButton>
+      ) : null}
       {userMessage.attribution === "t3code" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
@@ -865,6 +870,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ? guestBubbleClassName(false)
             : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
           !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
+          folded && "border border-primary/20 bg-primary/5",
           folded && expanded && "w-full",
         )}
       >

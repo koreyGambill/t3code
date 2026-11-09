@@ -217,6 +217,27 @@ describe("resolveUserMessagePresentation", () => {
     }
   });
 
+  it("attributes server-delivered thread messages to their sender", () => {
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "agent",
+        creationSource: "server",
+        senderThreadId: "thread:helper",
+        text: '[Thread: "Helper"]\n\nDone.',
+      }),
+    ).toMatchObject({ attribution: "agent", text: "Done." });
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: { taskIds: [] },
+        text: "Delegated tasks finished.",
+      }),
+    ).toMatchObject({ attribution: "agent" });
+  });
+
   it("recovers the triggering automation from older scheduler message ids", () => {
     for (const trigger of ["scheduled", "manual"]) {
       expect(

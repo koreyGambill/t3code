@@ -2163,10 +2163,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           );
           assert.lengthOf(notices, 1);
           assert.equal(notices[0]?.id, delivery.messageId);
-          assert.include(
-            notices[0]?.text,
-            `Delegated task ${child.taskId} (Original brief), follow-up ${followup.id} [completed]`,
-          );
+          assert.include(notices[0]?.text, `follow-up ${followup.id} [completed]`);
+          assert.equal(notices[0]?.senderThreadId, child.childThreadId);
+          assert.include(notices[0]?.text, `t3-thread://v1/${child.childThreadId}`);
           assert.include(notices[0]?.text, followup.result ?? "");
         }),
     );

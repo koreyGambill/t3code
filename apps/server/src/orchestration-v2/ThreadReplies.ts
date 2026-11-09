@@ -169,7 +169,7 @@ const make = Effect.gen(function* () {
       commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
       threadId: request.senderThreadId,
       messageId: replyMessageId(request.messageId),
-      text: `Thread ${link} ${status}. This is its reply to the message you sent it.${
+      text: `Thread ${JSON.stringify(target.thread.title.trim() || "Untitled")} ${link} ${status}.${
         reply.length === 0 ? "" : `\n\n${reply}`
       }`,
       notification: {
@@ -256,7 +256,7 @@ const make = Effect.gen(function* () {
       commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
       threadId: request.senderThreadId,
       messageId: replyMessageId(request.messageId),
-      text: `Thread ${link} ${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}. This is its reply to the message you sent it.${answer.length === 0 ? "" : `\n\n${answer}`}`,
+      text: `Thread ${JSON.stringify(title)} ${link} ${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}.${answer.length === 0 ? "" : `\n\n${answer}`}`,
       notification: {
         source: {
           kind: "thread_reply",

@@ -1710,6 +1710,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
     messageId: MessageId,
+    delegatedCompletion: OrchestrationV2ConversationMessage.fields.delegatedCompletion,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
