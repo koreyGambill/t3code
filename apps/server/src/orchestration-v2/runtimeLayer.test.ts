@@ -2767,6 +2767,62 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("records discovered environments without moving the thread and replays links", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
+      const threadId = ThreadId.make("discovered-environment-thread");
+      const projectId = ProjectId.make("discovered-environment-project");
+      yield* seedProject({
+        projectId,
+        title: "Scratch",
+        workspaceRoot: "/home/user/code",
+        defaultModelSelection: null,
+        createdAt: "2026-11-09T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("discovered-environment-create"),
+        threadId,
+        projectId,
+        title: "Scratch thread",
+        modelSelection,
+        runtimeMode: "auto-accept-edits",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/home/user/code",
+      });
+      const checkout = {
+        xwingEnvironmentId: "aaaaaaaa",
+        repositorySource: "/repos/app",
+        checkoutPath: "/xwing/envs/1/app",
+        number: 1,
+        name: "Work",
+      };
+      for (const suffix of ["first", "repeat"]) {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`discovered-environment-${suffix}`),
+          threadId,
+          linkDevelopmentEnvironments: [checkout],
+        });
+      }
+      const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.equal(thread.worktreePath, "/home/user/code");
+      assert.isNull(thread.developmentEnvironment ?? null);
+      assert.lengthOf(thread.linkedDevelopmentEnvironments ?? [], 1);
+      const usage = yield* projections.listDevelopmentEnvironmentUsage({ threadId });
+      assert.lengthOf(usage, 1);
+      assert.isTrue(usage[0]?.current);
+      assert.equal(usage[0]?.checkoutPath, checkout.checkoutPath);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* projections.listDevelopmentEnvironmentUsage({ threadId }), usage);
+    }),
+  );
+
   it.effect(
     "moves a stopped thread between Xwing checkouts and keeps every period in replayable history",
     () =>

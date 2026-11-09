@@ -1,3 +1,7 @@
+// Streaming directory reads enforce the scratch entry cap without allocating the whole directory.
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 
 import type {
@@ -15,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -25,6 +30,11 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
@@ -337,10 +347,91 @@ const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(fu
   }
 });
 
+const isSharedScratchDirectory = Effect.fn("WorkspaceSearchIndex.isSharedScratchDirectory")(
+  function* (cwd: string) {
+    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+    const configured = Option.isSome(settings)
+      ? (yield* settings.value.getSettings).scratchStartDirectory
+      : "~/code";
+    const startDirectory = NodePath.resolve(
+      expandHomePath(configured, yield* HostProcess.HomeDirectory),
+    );
+    return (
+      NodePath.resolve(cwd) === startDirectory ||
+      (Option.isSome(config) &&
+        NodePath.resolve(cwd) === NodePath.resolve(config.value.baseDir, "scratch"))
+    );
+  },
+  Effect.catch(() => Effect.succeed(false)),
+);
+
+// Shared scratch roots can contain many repositories; never scan or watch their descendants.
+const makeSharedScratchIndex = (cwd: string) => {
+  const list = Effect.fn("WorkspaceSearchIndex.listSharedScratch")(function* () {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const entries: ProjectEntry[] = [];
+        let visited = 0;
+        let truncated = false;
+        for await (const entry of await NodeFSP.opendir(cwd)) {
+          if (++visited > WORKSPACE_INDEX_MAX_ENTRIES) {
+            truncated = true;
+            break;
+          }
+          if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+          if (entry.isFile() || entry.isDirectory()) {
+            entries.push({ path: entry.name, kind: entry.isDirectory() ? "directory" : "file" });
+          }
+        }
+        entries.sort((a, b) => a.path.localeCompare(b.path));
+        return { entries, truncated };
+      },
+      catch: (cause) =>
+        new WorkspaceSearchIndexSearchFailed({
+          cwd,
+          queryLength: 0,
+          pageSize: WORKSPACE_INDEX_MAX_ENTRIES,
+          reason: "Could not list the shared scratch folder.",
+          cause,
+        }),
+    });
+  });
+  return WorkspaceSearchIndex.of({
+    list,
+    search: Effect.fn("WorkspaceSearchIndex.searchSharedScratch")(
+      function* (query, limit, kind, imageOnly) {
+        const result = yield* list();
+        const entries = result.entries.filter(
+          (entry) =>
+            (kind === undefined || entry.kind === kind) &&
+            (!imageOnly || (entry.kind === "file" && isProjectFaviconPath(entry.path))) &&
+            scoreSubsequenceMatch(entry.path.toLowerCase(), query.toLowerCase()) !== null,
+        );
+        return {
+          entries: entries.slice(0, limit),
+          truncated: result.truncated || entries.length > limit,
+        };
+      },
+    ),
+    searchContents: (input) =>
+      Effect.fail(
+        new WorkspaceSearchIndexSearchFailed({
+          cwd,
+          queryLength: input.query.length,
+          pageSize: input.limit,
+          reason: "Choose a repository folder to search file contents.",
+        }),
+      ),
+    refresh: () => Effect.void,
+  });
+};
+
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  if (yield* isSharedScratchDirectory(cwd)) return makeSharedScratchIndex(cwd);
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),

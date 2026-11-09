@@ -508,6 +508,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   developmentEnvironment: Schema.optional(
     Schema.NullOr(OrchestrationV2ThreadDevelopmentEnvironment),
   ),
+  linkedDevelopmentEnvironments: Schema.optional(
+    Schema.Array(OrchestrationV2ThreadDevelopmentEnvironment),
+  ),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2405,6 +2408,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
       }),
     ),
   ),
+  linkedDevelopmentEnvironments: Schema.optional(
+    Schema.Array(
+      OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
+        ...environment,
+        selectedAt: Schema.DateTimeUtcFromString,
+      })),
+    ),
+  ),
   developmentEnvironment: Schema.optional(
     Schema.NullOr(
       OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
@@ -3193,6 +3204,9 @@ export const OrchestrationV2Command = Schema.Union([
      * from its own turn, may move a thread that is not stopped; any other checkout change must.
      */
     workspaceChange: Schema.optional(Schema.Literals(["preparation", "agent-handoff"])),
+    linkDevelopmentEnvironments: Schema.optional(
+      Schema.Array(OrchestrationV2DevelopmentEnvironmentCheckout),
+    ),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),

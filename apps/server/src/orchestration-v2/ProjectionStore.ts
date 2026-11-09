@@ -2121,12 +2121,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
             `;
-              const environment = payload["developmentEnvironment"] as
-                | Record<string, unknown>
-                | null
-                | undefined;
+              const environments = [
+                payload["developmentEnvironment"],
+                ...((payload["linkedDevelopmentEnvironments"] as
+                  | ReadonlyArray<unknown>
+                  | undefined) ?? []),
+              ].filter(
+                (entry): entry is Record<string, unknown> =>
+                  entry != null && typeof entry === "object",
+              );
               // Replays and later thread writes repeat selectedAt, so min/max keeps them idempotent.
-              if (environment != null) {
+              for (const environment of environments) {
                 const selectedAt = stringField(environment, "selectedAt");
                 yield* sql`
                 INSERT INTO orchestration_v2_projection_development_environment_usage (
@@ -5429,6 +5434,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   = usage.xwing_environment_id
                 AND json_extract(thread.payload_json, '$.developmentEnvironment.repositorySource')
                   = usage.repository_source
+                OR EXISTS (
+                  SELECT 1 FROM json_each(thread.payload_json, '$.linkedDevelopmentEnvironments') AS link
+                  WHERE json_extract(link.value, '$.xwingEnvironmentId') = usage.xwing_environment_id
+                    AND json_extract(link.value, '$.repositorySource') = usage.repository_source
+                )
               THEN 1 ELSE 0
             END AS "current"
           FROM orchestration_v2_projection_development_environment_usage AS usage

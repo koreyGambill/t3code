@@ -29,6 +29,8 @@ import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as DevelopmentEnvironmentDiscovery from "../developmentEnvironments/DevelopmentEnvironmentDiscovery.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
@@ -161,6 +163,10 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const discovery = yield* Effect.serviceOption(
+      DevelopmentEnvironmentDiscovery.DevelopmentEnvironmentDiscovery,
+    );
+    const managedFolders = yield* Effect.serviceOption(ManagedProjectFolders.ManagedProjectFolders);
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
@@ -721,7 +727,18 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const resolvedRuntimePolicy = resolvedPolicy.success;
+      if (Option.isSome(discovery)) yield* discovery.value.refresh(input.threadId);
+      const resolvedRuntimePolicy = {
+        ...resolvedPolicy.success,
+        ...(Option.isSome(discovery)
+          ? {
+              writableRoots: yield* discovery.value.writableRoots(
+                input.threadId,
+                resolvedPolicy.success.cwd,
+              ),
+            }
+          : {}),
+      };
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
@@ -1676,11 +1693,30 @@ export const layer: Layer.Layer<
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
+      const isScratch =
+        Option.isSome(managedFolders) &&
+        (yield* managedFolders.value.isScratchProject(projection.thread.projectId));
+      const scratchSession = isScratch
+        ? {
+            ...deliverySession,
+            startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+              deliverySession.startTurn({
+                ...turnInput,
+                appContext: [
+                  ...(turnInput.appContext ?? []),
+                  {
+                    key: "scratch-folder",
+                    text: "Put throwaway files in /tmp, not the thread folder; create or reuse an Xwing environment for real changes.",
+                  },
+                ],
+              }),
+          }
+        : deliverySession;
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
         providerSessionId,
-        session: deliverySession,
+        session: scratchSession,
         run: runningRun,
         rootNode: runningRootNode,
         checkpointScope,
@@ -1742,7 +1778,12 @@ export const layer: Layer.Layer<
           const providerTurn = yield* cwd === undefined
             ? start(input)
             : withWorkspaceLease(path.resolve(cwd), start(input));
-          if (providerTurn !== undefined) yield* providerTurn;
+          if (providerTurn !== undefined)
+            yield* providerTurn.pipe(
+              Effect.ensuring(
+                Option.isSome(discovery) ? discovery.value.refresh(input.threadId) : Effect.void,
+              ),
+            );
         },
         (effect, input) =>
           effect.pipe(

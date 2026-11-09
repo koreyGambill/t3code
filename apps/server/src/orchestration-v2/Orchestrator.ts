@@ -4273,6 +4273,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.glyphSeed === undefined ? {} : { glyphSeed: command.glyphSeed }),
+            ...(command.linkDevelopmentEnvironments === undefined
+              ? {}
+              : {
+                  linkedDevelopmentEnvironments: [
+                    ...(thread.linkedDevelopmentEnvironments ?? []).filter(
+                      (existing) =>
+                        !command.linkDevelopmentEnvironments!.some(
+                          (link) =>
+                            link.xwingEnvironmentId === existing.xwingEnvironmentId &&
+                            link.repositorySource === existing.repositorySource,
+                        ),
+                    ),
+                    ...command.linkDevelopmentEnvironments.map((link) => ({
+                      ...link,
+                      selectedAt:
+                        (thread.linkedDevelopmentEnvironments ?? []).find(
+                          (existing) =>
+                            existing.xwingEnvironmentId === link.xwingEnvironmentId &&
+                            existing.repositorySource === link.repositorySource &&
+                            existing.checkoutPath === link.checkoutPath,
+                        )?.selectedAt ?? now,
+                    })),
+                  ],
+                }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&

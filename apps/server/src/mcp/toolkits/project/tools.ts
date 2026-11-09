@@ -132,7 +132,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     scratch: Schema.optional(
       Schema.Boolean.annotate({
         description:
-          "No project: a new Scratch folder. Not with `projectId` or `workspaceStrategy`.",
+          "No project: use the configured scratch start folder. Not with `projectId` or `workspaceStrategy`.",
       }),
     ),
     title: TrimmedNonEmptyString,

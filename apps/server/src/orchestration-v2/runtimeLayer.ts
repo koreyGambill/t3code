@@ -69,6 +69,9 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as DevelopmentEnvironmentDiscovery from "../developmentEnvironments/DevelopmentEnvironmentDiscovery.ts";
+import * as XwingEnvironments from "../xwing/XwingEnvironments.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -279,6 +282,19 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
 const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
   Layer.provide(layerProjectService),
 );
+export const layerDevelopmentEnvironmentDiscoveryProvided =
+  DevelopmentEnvironmentDiscovery.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        XwingEnvironments.layer.pipe(Layer.provide(ProcessRunner.layer)),
+        layerOrchestratorProvided,
+        ProjectionStore.layer,
+        GitVcsDriver.layer,
+        ProcessRunner.layer,
+      ),
+    ),
+  );
+
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -410,7 +426,11 @@ export const layerProduction = Layer.mergeAll(
   WorktreeBranchSync.layer.pipe(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
   ),
-  layer.pipe(Layer.provide(layerProjectService)),
+  layer.pipe(
+    Layer.provide(layerProjectService),
+    Layer.provide(layerManagedProjectFoldersProvided),
+    Layer.provide(layerDevelopmentEnvironmentDiscoveryProvided),
+  ),
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,

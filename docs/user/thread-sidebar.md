@@ -38,13 +38,16 @@ list. It starts on your current machine; before sending, pick another machine
 from the machine menu to move it there. To move a draft into a project, pick the
 project in the heading.
 
-Each thread without a project works in its own folder under `~/.t3/scratch` (the
-`scratch` folder of your T3 data directory), named after its date, the first words
-of its first message, and a short id, like
-`2026-09-25-convert-these-pngs-to-webp-a1b2c3d4`. Deleting a thread keeps its
-folder, so the files the agent wrote stay until you delete them. Branch, worktree, and diff controls stay hidden because
-these folders are not Git repositories. This is unavailable when the data
-directory itself sits inside a Git checkout.
+Threads without a project start in the server machine's `~/code` folder. Set
+`scratchStartDirectory` in that server's settings to use another existing folder.
+If the folder does not exist, T3 Code uses the `scratch` folder in its data directory.
+The start folder must sit outside a Git repository. Threads share it without
+creating a separate folder per thread. Older threads keep their existing folders.
+Deleting a thread keeps its files.
+
+File search in the shared start folder lists only its immediate files and folders.
+Choose a repository folder to search inside it. Ask the agent to create or reuse an
+Xwing environment for code changes and to keep throwaway files in `/tmp`.
 
 Choose **Change folder** from a thread's menu or details to work somewhere else.
 Pick a recent folder, a project, or a linked Xwing environment, or enter a path.

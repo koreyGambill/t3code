@@ -54,6 +54,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
+  readonly scratchStartDirectory?: string;
   readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
@@ -76,7 +77,11 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(
+      ServerSettings.layerTest({
+        scratchStartDirectory: options?.scratchStartDirectory ?? `${baseDir}/missing-code`,
+      }),
+    ),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
@@ -209,56 +214,52 @@ it.effect("recreates the Scratch folder after it is deleted", () =>
   ),
 );
 
-it.effect("gives each Scratch thread its own folder, named from its message", () =>
+it.effect("starts scratch threads in the shared folder without creating thread folders", () =>
   withScratch(() =>
     Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const { projectId } = yield* scratch.ensureScratchProject;
       const root = yield* requireRoot;
-      const text = "Convert these PNGs to WebP, please!";
-      const first = Option.getOrThrow(
-        yield* scratch.folderForThread({
-          projectId,
-          threadId: ThreadId.make("thread:a:0123456789abcdef"),
-          text,
-        }),
-      );
-      const second = Option.getOrThrow(
-        yield* scratch.folderForThread({
-          projectId,
-          threadId: ThreadId.make("thread:b:0123456789abcdef"),
-          text,
-        }),
-      );
-
-      const third = Option.getOrThrow(
-        yield* scratch.folderForThread({
-          projectId,
-          threadId: ThreadId.make("thread:b0123456789abcdef"),
-          text,
-        }),
-      );
-
-      assert.equal(new Set([first, second, third]).size, 3);
-      for (const folder of [first, second, third]) {
-        assert.equal(path.dirname(folder), root);
-        assert.match(path.basename(folder), /^\d{4}-\d{2}-\d{2}-convert-these-pngs-to-webp-/);
-        assert.isTrue(yield* fileSystem.exists(folder));
+      for (const threadId of ["first", "second"]) {
+        assert.equal(
+          Option.getOrThrow(
+            yield* scratch.folderForThread({
+              projectId,
+              threadId: ThreadId.make(threadId),
+              text: "Hello",
+            }),
+          ),
+          root,
+        );
       }
-
-      const pasted = Option.getOrThrow(
-        yield* scratch.folderForThread({
-          projectId,
-          threadId: ThreadId.make("thread-pasted"),
-          text: `${"word ".repeat(10_000)}../../etc`,
-        }),
-      );
-      assert.equal(path.dirname(pasted), root);
-      assert.isAtMost(path.basename(pasted).length, 80);
+      assert.deepEqual(yield* fileSystem.readDirectory(root), []);
     }),
   ),
+);
+
+it.effect("uses an existing configured folder and rejects a configured Git checkout", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-config-" });
+    const folder = path.join(baseDir, "code");
+    yield* fileSystem.makeDirectory(folder);
+    yield* Effect.gen(function* () {
+      assert.equal(yield* requireRoot, folder);
+    }).pipe(
+      Effect.provide(layer(baseDir, { scratchStartDirectory: "~/code" })),
+      Effect.provideService(HostProcess.HomeDirectory, baseDir),
+    );
+    yield* git(folder, ["init", "--quiet"]);
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+    }).pipe(
+      Effect.provide(layer(baseDir, { scratchStartDirectory: "~/code" })),
+      Effect.provideService(HostProcess.HomeDirectory, baseDir),
+    );
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("leaves threads in other projects alone", () =>

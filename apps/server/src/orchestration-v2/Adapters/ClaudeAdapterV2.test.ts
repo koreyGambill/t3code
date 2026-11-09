@@ -304,6 +304,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       resume: false,
       cwd: "/workspace",
       attachmentsDir: "/attachments",
+      additionalDirectories: ["/linked/repo", "/source/.git", "/workspace"],
       settings: {
         ...AUTO_COMPACT_CLAUDE_SETTINGS,
         launchArgs: "--add-dir ../apps ../lib --verbose --add-dir=/shared",
@@ -315,6 +316,8 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       "../apps",
       "../lib",
       "/shared",
+      "/linked/repo",
+      "/source/.git",
     ]);
     assert.isUndefined(options.extraArgs?.["add-dir"]);
   });
@@ -418,28 +421,33 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
-  it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
-    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: "/workspace",
-        approvalPolicy: "never",
-        sandboxPolicy: {
-          type: "readOnly",
-          access: { type: "fullAccess" },
-          networkAccess: false,
-        },
-      }),
-    );
+  it.each(["full-access", "auto-accept-edits"] as const)(
+    "maps canonical read-only never policy to Claude dontAsk with read-only tools in %s",
+    (runtimeMode) => {
+      const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode,
+          interactionMode: "default",
+          cwd: "/workspace",
+          approvalPolicy: "never",
+          writableRoots: ["/linked/repo"],
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        }),
+      );
 
-    assert.deepEqual(queryPolicy, {
-      permissionMode: "dontAsk",
-      tools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-      allowedTools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-      installPermissionCallback: false,
-    });
-  });
+      assert.deepEqual(queryPolicy, {
+        permissionMode: "dontAsk",
+        ...(runtimeMode === "full-access" ? {} : { additionalDirectories: ["/linked/repo"] }),
+        tools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
+        allowedTools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
+        installPermissionCallback: false,
+      });
+    },
+  );
 
   it("does not auto-allow reads for canonical restricted read-only never policy", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -3421,6 +3429,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each(["auto-accept-edits", "full-access"] as const)(
+    "refreshes linked directory permissions between turns in %s",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const turnInput = {
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attachments: [],
+        };
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            ...turnInput,
+            attemptId: RunAttemptId.make("attempt-linked-dirs-1"),
+            text: "Hello.",
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, runtimeMode },
+          }),
+        );
+        const initialOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            ...turnInput,
+            attemptId: RunAttemptId.make("attempt-linked-dirs-2"),
+            providerTurnOrdinal: 2,
+            text: "Continue in the environment.",
+            runtimePolicy: {
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              runtimeMode,
+              writableRoots: ["/linked/repo", "/source/.git"],
+            },
+          }),
+        );
+        const resumedOptions = harness.getOpenedOptions();
+        if (runtimeMode === "full-access") {
+          assert.strictEqual(resumedOptions, initialOptions);
+          assert.lengthOf(harness.processQueues, 1);
+        } else {
+          assert.notStrictEqual(resumedOptions, initialOptions);
+          assert.equal(resumedOptions?.resume, WAKE_NATIVE_SESSION);
+          assert.deepEqual(resumedOptions?.additionalDirectories, [
+            "/workspace",
+            harness.attachmentsDir,
+            "/linked/repo",
+            "/source/.git",
+          ]);
+          assert.lengthOf(harness.processQueues, 2);
+        }
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000821",
+            result: "Environment ready.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            ...turnInput,
+            attemptId: RunAttemptId.make("attempt-linked-dirs-3"),
+            providerTurnOrdinal: 3,
+            text: "The environment is unlinked.",
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, runtimeMode, writableRoots: [] },
+          }),
+        );
+        assert.deepEqual(harness.getOpenedOptions()?.additionalDirectories, [
+          "/workspace",
+          harness.attachmentsDir,
+        ]);
+        assert.lengthOf(harness.processQueues, runtimeMode === "full-access" ? 1 : 3);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+          ),
+        ),
+      ),
+  );
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",

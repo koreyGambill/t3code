@@ -5,12 +5,12 @@ import {
   type ThreadId,
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -21,6 +21,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -110,16 +111,6 @@ export class ManagedProjectFolders extends Context.Service<
   }
 >()("t3/project/ManagedProjectFolders") {}
 
-const folderWords = (text: string) =>
-  text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-    .slice(0, 5)
-    .join("-")
-    .slice(0, 48)
-    .replace(/-+$/, "");
-
 const ICON_BACKGROUNDS = [
   "#dc2626",
   "#ea580c",
@@ -203,6 +194,8 @@ const isGitMissing = (error: GitManagerServiceError) =>
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const home = yield* HostProcess.HomeDirectory;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
@@ -230,20 +223,22 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Scratch inside a checkout would inherit its git status and checkpoints; require a data dir outside work trees.
-  const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.isRepository(config.baseDir).pipe(
+  const legacyScratchRoot = path.resolve(config.baseDir, "scratch");
+  // A shared start folder must not inherit a parent repository's status or checkpoints.
+  const scratchRoot = Effect.gen(function* () {
+    const configured = path.resolve(
+      expandHomePath((yield* settings.getSettings).scratchStartDirectory, home),
+    );
+    const root = (yield* fileSystem.exists(configured)) ? configured : legacyScratchRoot;
+    return yield* gitWorkflow.isRepository(root === legacyScratchRoot ? config.baseDir : root).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-      Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
-      ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
-      ),
+      Effect.map((isRepository) => (isRepository ? Option.none<string>() : Option.some(root))),
+    );
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
     ),
-    Duration.infinity,
   );
-  const scratchRoot = probe.pipe(Effect.onInterrupt(() => invalidate));
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -304,41 +299,21 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = (projectId) =>
-    scratchRoot.pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.succeed(false),
-          onSome: (root) => isScratchRoot(projectId, root),
-        }),
-      ),
-    );
+  const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = Effect.fn(
+    "ManagedProjectFolders.isScratchProject",
+  )(function* (projectId) {
+    if (yield* isScratchRoot(projectId, legacyScratchRoot)) return true;
+    const root = yield* scratchRoot;
+    return Option.isSome(root) && (yield* isScratchRoot(projectId, root.value));
+  });
 
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
     "ManagedProjectFolders.folderForThread",
   )(function* (input) {
     const root = yield* scratchRoot;
-    if (Option.isNone(root)) return Option.none();
-    if (!(yield* isScratchRoot(input.projectId, root.value))) return Option.none();
-    const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
-    const words = folderWords(input.text);
-    const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const folderFor = (idPart: string) =>
-      path.join(root.value, [date, words, idPart].filter(Boolean).join("-"));
+    if (Option.isNone(root) || !(yield* isScratchProject(input.projectId))) return Option.none();
     yield* makeScratchFolder(root.value);
-    const fullFolder = folderFor(id);
-    return yield* claimFreeFolder(
-      (attempt) =>
-        attempt === 1
-          ? Effect.succeedSome(folderFor(id.slice(-8)))
-          : attempt === 2
-            ? Effect.succeedSome(fullFolder)
-            : random.uuidV4().pipe(
-                Effect.map((uuid) => Option.some(`${fullFolder}-${uuid.slice(0, 8)}`)),
-                Effect.mapError((cause) => new ScratchFolderError({ folder: fullFolder, cause })),
-              ),
-      (folder, cause) => new ScratchFolderError({ folder, cause }),
-    );
+    return root;
   });
 
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");

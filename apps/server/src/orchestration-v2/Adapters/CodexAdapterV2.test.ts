@@ -152,6 +152,43 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
+  it.effect("refreshes linked writable roots without widening other sandbox policies", () =>
+    Effect.gen(function* () {
+      const build = (sandboxPolicy: unknown, writableRoots: ReadonlyArray<string>) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-linked-workspaces",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode: "auto-accept-edits",
+            interactionMode: "default",
+            cwd: "/workspace",
+            sandboxPolicy,
+            writableRoots,
+          },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        });
+
+      const first = yield* build(undefined, ["/linked/repo", "/linked/repo", "/source/.git"]);
+      assert.deepEqual(first.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/workspace", "/linked/repo", "/source/.git"],
+      });
+      const next = yield* build(
+        { type: "workspaceWrite", writableRoots: ["/explicit", "/workspace"], networkAccess: true },
+        ["/linked/next"],
+      );
+      assert.deepEqual(next.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/explicit", "/workspace", "/linked/next"],
+        networkAccess: true,
+      });
+      for (const type of ["readOnly", "dangerFullAccess"] as const) {
+        const params = yield* build({ type }, ["/linked/repo"]);
+        assert.deepEqual(params.sandboxPolicy, { type });
+      }
+    }),
+  );
+
   it.effect.each([undefined, false, true])(
     "selects native collaboration modes without prompt overrides with hasT3Mcp=%s",
     (hasT3Mcp) =>

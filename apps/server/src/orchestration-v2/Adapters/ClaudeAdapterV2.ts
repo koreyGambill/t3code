@@ -1783,6 +1783,7 @@ export function makeClaudeQueryOptions(input: {
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
   readonly attachmentsDir?: string;
+  readonly additionalDirectories?: ReadonlyArray<string>;
   readonly settings?: ClaudeSettings;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
@@ -1926,9 +1927,12 @@ export function makeClaudeQueryOptions(input: {
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
-    ...(input.cwd === null ? [] : [input.cwd]),
-    ...(input.attachmentsDir === undefined ? [] : [input.attachmentsDir]),
-    ...claudeLaunchArgDirectories(input.settings?.launchArgs),
+    ...new Set([
+      ...(input.cwd === null ? [] : [input.cwd]),
+      ...(input.attachmentsDir === undefined ? [] : [input.attachmentsDir]),
+      ...claudeLaunchArgDirectories(input.settings?.launchArgs),
+      ...(input.additionalDirectories ?? []),
+    ]),
   ];
   const withDirectories =
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
@@ -2881,6 +2885,7 @@ function permissionModeForClaudeRuntimePolicy(
 
 export interface ClaudeRuntimeQueryPolicy {
   readonly permissionMode: PermissionMode;
+  readonly additionalDirectories?: ReadonlyArray<string>;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: true;
@@ -2902,6 +2907,14 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   availability: ClaudeBypassAvailability = CLAUDE_BYPASS_FULLY_AVAILABLE,
 ): ClaudeRuntimeQueryPolicy {
   const requestedMode = permissionModeForClaudeRuntimePolicy(runtimePolicy);
+  const sandboxKind = sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy);
+  const additionalDirectories =
+    runtimePolicy.runtimeMode !== "full-access" &&
+    sandboxKind !== "dangerFullAccess" &&
+    sandboxKind !== "externalSandbox" &&
+    runtimePolicy.writableRoots?.length
+      ? [...new Set(runtimePolicy.writableRoots)].sort()
+      : undefined;
   const downgraded = requestedMode === "bypassPermissions" && availability.bypassDisabled;
   const permissionMode = downgraded
     ? availability.autoDisabled
@@ -2927,6 +2940,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   if (permissionMode === "plan") {
     return {
       permissionMode,
+      ...(additionalDirectories === undefined ? {} : { additionalDirectories }),
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       // Claude routes Plan-mode writes to the callback even in Auto or Full access.
@@ -2936,6 +2950,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 
   return {
     permissionMode,
+    ...(additionalDirectories === undefined ? {} : { additionalDirectories }),
     ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
     ...(allowedTools === undefined ? {} : { allowedTools }),
     ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
@@ -3035,6 +3050,7 @@ function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
   return JSON.stringify({
     permissionMode: policy.permissionMode,
+    additionalDirectories: policy.additionalDirectories,
     tools: policy.tools,
     allowedTools: policy.allowedTools,
     allowDangerouslySkipPermissions: policy.allowDangerouslySkipPermissions,
@@ -10895,6 +10911,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
+            ...(queryPolicy.additionalDirectories === undefined
+              ? {}
+              : { additionalDirectories: queryPolicy.additionalDirectories }),
             settings: adapterOptions.settings,
             ...(launchArgSettings === undefined
               ? {}

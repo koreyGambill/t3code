@@ -7,6 +7,10 @@ import {
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -138,4 +142,42 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
   ),
+);
+
+it.effect("keeps shared scratch search shallow and skips dependency trees", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-scratch-index-" });
+      const cwd = path.join(home, "code");
+      yield* fs.makeDirectory(path.join(cwd, "repo", "node_modules"), { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, "repo", "source.ts"), "nested content");
+      yield* fs.writeFileString(
+        path.join(cwd, "repo", "node_modules", "dependency.js"),
+        "dependency",
+      );
+      yield* fs.writeFileString(path.join(cwd, "notes.txt"), "scratch note");
+      const create = vi.spyOn(FileFinder, "create");
+      const index = yield* WorkspaceSearchIndex.make(cwd).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+      );
+      expect(create).not.toHaveBeenCalled();
+      expect((yield* index.list()).entries).toEqual([
+        { path: "notes.txt", kind: "file" },
+        { path: "repo", kind: "directory" },
+      ]);
+      expect((yield* index.search("source", 20)).entries).toEqual([]);
+      const failure = yield* Effect.flip(
+        index.searchContents({
+          query: "scratch",
+          limit: 20,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: false,
+        }),
+      );
+      expect(failure.reason).toBe("Choose a repository folder to search file contents.");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

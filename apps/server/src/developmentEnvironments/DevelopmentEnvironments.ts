@@ -37,6 +37,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as DevelopmentEnvironmentCheckouts from "./DevelopmentEnvironmentCheckouts.ts";
 import * as DevelopmentEnvironmentHolds from "./DevelopmentEnvironmentHolds.ts";
+import * as DevelopmentEnvironmentDiscovery from "./DevelopmentEnvironmentDiscovery.ts";
 
 export {
   DevelopmentEnvironmentPersistenceError,
@@ -181,6 +182,9 @@ const make = Effect.gen(function* () {
           (yield* ownership.ownerOf(worktreePath)) === null,
       };
     });
+  const discovery = yield* Effect.serviceOption(
+    DevelopmentEnvironmentDiscovery.DevelopmentEnvironmentDiscovery,
+  );
 
   const bindLaunch: DevelopmentEnvironments["Service"]["bindLaunch"] = (binding, launch) =>
     holds.retain(
@@ -390,7 +394,8 @@ const make = Effect.gen(function* () {
   });
 
   const listUsage: DevelopmentEnvironments["Service"]["listUsage"] = (filter) =>
-    projections.listDevelopmentEnvironmentUsage(filter).pipe(
+    (Option.isSome(discovery) ? discovery.value.refresh(filter.threadId) : Effect.void).pipe(
+      Effect.andThen(projections.listDevelopmentEnvironmentUsage(filter)),
       Effect.tapError((cause) =>
         Effect.logWarning("Development environment usage read failed", cause),
       ),
