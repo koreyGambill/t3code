@@ -56,6 +56,7 @@ export interface ResolvedPeerLink {
   /** The first address that answered as this peer. */
   readonly url: string;
   readonly token: string;
+  readonly secretName: string;
 }
 
 /** What a call records when the peer refuses the link's token; listing reads it back as `unauthorized`. */
@@ -97,9 +98,9 @@ export class PeerLinks extends Context.Service<
     readonly resolve: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<ResolvedPeerLink, PeerLinkError>;
-    /** Records the outcome of a call, so listing shows whether the peer answered last time. */
+    /** Records a call's outcome only while its credential is still current. */
     readonly recordOutcome: (
-      environmentId: EnvironmentId,
+      resolved: ResolvedPeerLink,
       outcome: { readonly error: string | null },
     ) => Effect.Effect<void>;
   }
@@ -616,22 +617,27 @@ const make = Effect.gen(function* () {
         link: yield* withLabel(link, label),
         url: url.value,
         token: new TextDecoder().decode(stored.value),
+        secretName: row.value.secret_name,
       };
     },
   );
 
-  const recordOutcome: PeerLinks["Service"]["recordOutcome"] = (environmentId, outcome) =>
+  const recordOutcome: PeerLinks["Service"]["recordOutcome"] = (resolved, outcome) =>
     DateTime.now.pipe(
       Effect.flatMap((now) =>
         outcome.error === null
           ? sql`
               UPDATE peer_environment_links
               SET last_reached_at = ${DateTime.formatIso(now)}, last_error = NULL
-              WHERE environment_id = ${environmentId}
+              WHERE environment_id = ${resolved.link.environmentId}
+                AND secret_name = ${resolved.secretName}
             `
           : sql`
-              UPDATE peer_environment_links SET last_error = ${outcome.error}
-              WHERE environment_id = ${environmentId}
+              UPDATE peer_environment_links
+              SET last_error = CASE WHEN last_error = ${LINK_CREDENTIAL_REFUSED}
+                THEN last_error ELSE ${outcome.error} END
+              WHERE environment_id = ${resolved.link.environmentId}
+                AND secret_name = ${resolved.secretName}
             `,
       ),
       Effect.asVoid,

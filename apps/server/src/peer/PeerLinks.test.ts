@@ -480,6 +480,58 @@ it.effect("a linked peer that is renamed shows its new name", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("ignores outcomes using the credential replaced by relinking", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const hold = yield* Ref.make(false);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holdMcp = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.url === "/mcp" && (yield* Ref.getAndSet(hold, false))) {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+              return HttpServerResponse.empty({ status: 401 });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), holdMcp),
+      );
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const oldCredential = yield* a.links.resolve(box.environmentId);
+      yield* Ref.set(hold, true);
+      const stale = yield* probe(a).pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      yield* probe(a);
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(stale)).code).toBe("capability_denied");
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(Option.getOrThrow(yield* a.links.get(box.environmentId)).lastError).toBeNull();
+      yield* a.links.recordOutcome(yield* a.links.resolve(box.environmentId), {
+        error: PeerLinks.LINK_CREDENTIAL_REFUSED,
+      });
+      yield* a.links.recordOutcome(oldCredential, { error: null });
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["unauthorized"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -495,6 +547,15 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
       expect(revoked.code).toBe("capability_denied");
       expect(revoked.message).toContain("revoked there");
       // B still answers, but it refuses the link's credential.
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["unauthorized"]);
+
+      yield* Ref.set(b.descriptor, laptop);
+      expect((yield* probe(a).pipe(Effect.flip)).code).toBe("orchestration_error");
+      yield* Ref.set(b.descriptor, box);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["unauthorized"]);
+      yield* a.links.recordOutcome(yield* a.links.resolve(box.environmentId), {
+        error: "A later transport failure.",
+      });
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["unauthorized"]);
 
       yield* a.links.link({

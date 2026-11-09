@@ -158,106 +158,111 @@ const make = Effect.gen(function* () {
       const resolved = yield* links
         .resolve(input.environmentId)
         .pipe(Effect.mapError(fromLinkError));
-      const limitHeader = {
-        [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
-      };
-      const sessionKey = `${input.environmentId} ${resolved.url}`;
-      const callOnce = (sessionId: string) =>
-        post(
-          resolved.url,
-          resolved.token,
-          {
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: { name: input.tool, arguments: input.arguments },
-          },
-          { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
-        );
-      const existing = (yield* Ref.get(sessions)).get(sessionKey);
-      const sessionId = existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));
-      // The initialized session outlives a tool request, including a long wait or cancellation.
-      if (existing === undefined) {
-        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
-      }
-      let response = yield* callOnce(sessionId);
-      if (response.status === 404) {
-        const renewed = yield* openSession(resolved.url, resolved.token, limitHeader);
-        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));
-        response = yield* callOnce(renewed);
-      }
-      if (response.status === 401) {
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: PeerLinks.LINK_CREDENTIAL_REFUSED,
-        });
-      }
-      if (response.status === 403) return yield* linkedEnvironmentsOffThere;
-      if (response.status !== 200) {
-        return yield* new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: `The linked environment answered HTTP ${response.status}.`,
-        });
-      }
-      const body = yield* decodeToolCallResponse(
-        responseJson(response.headers["content-type"], yield* response.text),
-      ).pipe(
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: "The linked environment answered in an unexpected shape.",
-            }),
-        ),
-      );
-      if (body.error !== undefined) {
-        return Result.fail(
-          new OrchestratorMcpFailure({ code: "invalid_request", message: body.error.message }),
-        );
-      }
-      if (body.result === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "The linked environment returned no result.",
-        });
-      }
-      const text = body.result.content.map((part) => part.text ?? "").join("");
-      if (body.result.isError === true) {
-        // A refusal keeps the peer's own code, so the agent sees why it was refused.
-        const refused = decodeFailure(text);
-        return Result.fail(
-          refused._tag === "Some"
-            ? new OrchestratorMcpFailure({
-                code: refused.value.code,
-                message: refused.value.message,
-              })
-            : new OrchestratorMcpFailure({
+      return yield* Effect.gen(function* () {
+        const limitHeader = {
+          [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
+        };
+        const sessionKey = `${input.environmentId} ${resolved.url}`;
+        const callOnce = (sessionId: string) =>
+          post(
+            resolved.url,
+            resolved.token,
+            {
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: { name: input.tool, arguments: input.arguments },
+            },
+            {
+              ...limitHeader,
+              "mcp-session-id": sessionId,
+              "mcp-protocol-version": PROTOCOL_VERSION,
+            },
+          );
+        const existing = (yield* Ref.get(sessions)).get(sessionKey);
+        const sessionId =
+          existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));
+        // The initialized session outlives a tool request, including a long wait or cancellation.
+        if (existing === undefined) {
+          yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
+        }
+        let response = yield* callOnce(sessionId);
+        if (response.status === 404) {
+          const renewed = yield* openSession(resolved.url, resolved.token, limitHeader);
+          yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));
+          response = yield* callOnce(renewed);
+        }
+        if (response.status === 401) {
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: PeerLinks.LINK_CREDENTIAL_REFUSED,
+          });
+        }
+        if (response.status === 403) return yield* linkedEnvironmentsOffThere;
+        if (response.status !== 200) {
+          return yield* new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: `The linked environment answered HTTP ${response.status}.`,
+          });
+        }
+        const body = yield* decodeToolCallResponse(
+          responseJson(response.headers["content-type"], yield* response.text),
+        ).pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
                 code: "orchestration_error",
-                message: text || "The linked environment refused the call.",
+                message: "The linked environment answered in an unexpected shape.",
               }),
+          ),
         );
-      }
-      const success = Schema.fromJsonString(input.success);
-      return yield* Schema.decodeEffect(success)(text).pipe(
-        Effect.map(Result.succeed),
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message:
-                "The linked environment's answer did not match this version. Update both environments.",
-            }),
-        ),
+        if (body.error !== undefined) {
+          return Result.fail(
+            new OrchestratorMcpFailure({ code: "invalid_request", message: body.error.message }),
+          );
+        }
+        if (body.result === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The linked environment returned no result.",
+          });
+        }
+        const text = body.result.content.map((part) => part.text ?? "").join("");
+        if (body.result.isError === true) {
+          // A refusal keeps the peer's own code, so the agent sees why it was refused.
+          const refused = decodeFailure(text);
+          return Result.fail(
+            refused._tag === "Some"
+              ? new OrchestratorMcpFailure({
+                  code: refused.value.code,
+                  message: refused.value.message,
+                })
+              : new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: text || "The linked environment refused the call.",
+                }),
+          );
+        }
+        const success = Schema.fromJsonString(input.success);
+        return yield* Schema.decodeEffect(success)(text).pipe(
+          Effect.map(Result.succeed),
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message:
+                  "The linked environment's answer did not match this version. Update both environments.",
+              }),
+          ),
+        );
+      }).pipe(
+        Effect.tapError((error) => links.recordOutcome(resolved, { error: error.message })),
+        // A tool refusal still proves that the peer accepted the credential.
+        Effect.tap(() => links.recordOutcome(resolved, { error: null })),
       );
     },
-    (effect, input) =>
+    (effect) =>
       effect.pipe(
-        Effect.tapError((error) =>
-          links.recordOutcome(input.environmentId, { error: error.message }),
-        ),
-        // A refusal is still an answer: the link works, so only this call fails.
-        Effect.tap(() => links.recordOutcome(input.environmentId, { error: null })),
-        // Recorded above with the transport's own message; the agent hears it plainly.
         Effect.catchTags({
           HttpClientError: () =>
             Effect.fail(

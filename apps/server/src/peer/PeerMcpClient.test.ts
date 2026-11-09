@@ -120,7 +120,9 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
       const links = Context.get(context, PeerLinks.PeerLinks);
       const client = Context.get(context, PeerMcpClient.PeerMcpClient);
       yield* linkTo(links, b);
-      yield* links.recordOutcome(box.environmentId, { error: "earlier outage" });
+      yield* links.recordOutcome(yield* links.resolve(box.environmentId), {
+        error: PeerLinks.LINK_CREDENTIAL_REFUSED,
+      });
       const refused = yield* client
         .call({
           environmentId: box.environmentId,
@@ -183,6 +185,7 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
             Layer.mock(PeerLinks.PeerLinks)({
               resolve: () =>
                 Effect.succeed({
+                  secretName: "peer-link-test",
                   link: {
                     environmentId: box.environmentId,
                     label: box.label,
