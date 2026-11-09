@@ -47,7 +47,7 @@ export type ThreadWorkspaceSection =
   | "marks"
   | "threads"
   | "notes";
-export type ThreadInspectSection = "loads" | "tokens";
+export type ThreadInspectSection = "loads" | "tokens" | "context";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 export type AddableRightPanelKind = Exclude<
@@ -625,7 +625,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                             {
                               ...surface,
                               inspectSection:
-                                surface.inspectSection === "tokens" ? "tokens" : "loads",
+                                surface.inspectSection === "context"
+                                  ? "context"
+                                  : surface.inspectSection === "tokens"
+                                    ? "tokens"
+                                    : "loads",
                             },
                           ]
                         : [];

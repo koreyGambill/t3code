@@ -1,3 +1,4 @@
+import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import { assert, it } from "@effect/vitest";
 import {
   MonitoringProfileId,
@@ -5,6 +6,7 @@ import {
   ProviderInstanceId,
   ScheduledTaskId,
   ThreadId,
+  RunId,
   MessageId,
   type MonitoringReviewOutput,
   type MonitoringProfile,
@@ -94,6 +96,38 @@ it.effect(
         ["Tests 3 passed"],
       );
       assert.equal(snap.truncated, false);
+      const context = yield* (yield* Snapshot.MonitoringSnapshot).capture({
+        ...profile,
+        kind: "context-review",
+      });
+      assert.equal(context.threads[0]?.messages[0]?.id, "context:run");
+      assert.include(context.threads[0]?.messages[0]?.text ?? "", '"repeatedReads":5');
+      assert.notInclude(context.threads[0]?.messages[0]?.text ?? "", "Tests 3 passed");
+      assert.equal(
+        Snapshot.validateMonitoringEvidence(
+          {
+            findings: [
+              {
+                ruleId: "r",
+                threadId: ThreadId.make("chosen"),
+                summary: "Repeated reads",
+                detail: "Consider a summary",
+                confidence: 0.6,
+                evidence: [
+                  {
+                    threadId: ThreadId.make("chosen"),
+                    messageId: MessageId.make("context:run"),
+                    excerpt: '"repeatedReads":5',
+                  },
+                ],
+              },
+            ],
+          },
+          profile,
+          context,
+        ),
+        true,
+      );
       assert.include(snap.coverage, "files were not inspected");
       assert.deepEqual(
         yield* sql`SELECT count(*) AS count FROM orchestration_v2_projection_messages`,
@@ -137,5 +171,38 @@ it.effect(
         ),
         false,
       );
-    }).pipe(Effect.provide(Snapshot.layer.pipe(Layer.provideMerge(Sqlite.layerMemory)))),
+    }).pipe(
+      Effect.provide(
+        Snapshot.layer.pipe(
+          Layer.provide(
+            Layer.mock(ContextRecords.ContextRecords)({
+              get: ({ threadId }) =>
+                Effect.succeed({
+                  threadId,
+                  records: [
+                    {
+                      runId: RunId.make("run"),
+                      ordinal: 1,
+                      model: "haiku",
+                      providerInstanceId: ProviderInstanceId.make("claude"),
+                      startedAt: at,
+                      instructions: [],
+                      reads: [],
+                      repeatedReads: 5,
+                      inputTokens: null,
+                      cachedInputTokens: null,
+                      outputTokens: null,
+                      usageStatus: "unavailable",
+                      truncated: false,
+                    },
+                  ],
+                  nextBeforeOrdinal: null,
+                  coverage: "Fixture context records",
+                }),
+            }),
+          ),
+          Layer.provideMerge(Sqlite.layerMemory),
+        ),
+      ),
+    ),
 );

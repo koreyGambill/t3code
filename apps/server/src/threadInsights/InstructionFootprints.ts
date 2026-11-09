@@ -26,6 +26,8 @@ import * as ServerConfig from "../config.ts";
 
 export interface PreparedContext {
   readonly source: string;
+  readonly injectedTools?: ReadonlyArray<string> | undefined;
+  readonly instructionSources?: ReadonlyArray<string> | undefined;
   readonly entries: ReadonlyArray<{ readonly key: string; readonly text: string }>;
 }
 interface RecordInput extends PreparedContext {
@@ -176,6 +178,29 @@ const make = Effect.gen(function* () {
         attemptId: input.attemptId,
         capturedAt: DateTime.formatIso(yield* DateTime.now),
         parts: measurePreparedContext(input.entries),
+        ...(input.injectedTools === undefined
+          ? {}
+          : {
+              injectedTools: input.injectedTools.slice(0, 256).map((name) => name.slice(0, 256)),
+              injectedToolCount: input.injectedTools.length,
+              truncated:
+                input.injectedTools.length > 256 || (input.instructionSources?.length ?? 0) > 64,
+            }),
+        ...(input.instructionSources === undefined
+          ? {}
+          : {
+              instructionSources: yield* Effect.forEach(
+                input.instructionSources.slice(0, 64),
+                (source) =>
+                  fs.stat(source).pipe(
+                    Effect.map((stat) => ({
+                      path: source.slice(0, 512),
+                      bytes: Number(stat.size),
+                    })),
+                    Effect.orElseSucceed(() => ({ path: source.slice(0, 512), bytes: null })),
+                  ),
+              ),
+            }),
       };
       const contents = yield* encode({ formatVersion: 1, footprint }).pipe(
         Effect.mapError(

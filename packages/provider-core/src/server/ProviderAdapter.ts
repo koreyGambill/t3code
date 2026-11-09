@@ -492,6 +492,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
   readonly onContextPrepared?: (context: {
     readonly source: string;
+    readonly injectedTools?: ReadonlyArray<string> | undefined;
+    readonly instructionSources?: ReadonlyArray<string> | undefined;
     readonly entries: ReadonlyArray<{ readonly key: string; readonly text: string }>;
   }) => Effect.Effect<void>;
 }

@@ -2022,6 +2022,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_project_list",
   "mcp__t3-code__t3_project_read",
   "mcp__t3-code__t3_thread_search",
+  "mcp__t3-code__t3_context_read",
   "mcp__t3-code__t3_preview_list",
   "mcp__t3-code__t3_environment_read",
   "mcp__t3-code__t3_environment_links",
@@ -11026,6 +11027,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
                     context.capabilities = new Set(message.capabilities ?? []);
+                    if (turnInput.onContextPrepared) {
+                      const prompt = queryOptions.systemPrompt;
+                      const append =
+                        typeof prompt === "object" && prompt !== null && "append" in prompt
+                          ? (prompt.append ?? "")
+                          : typeof prompt === "string"
+                            ? prompt
+                            : "";
+                      return turnInput.onContextPrepared({
+                        source:
+                          "Claude SDK systemPrompt.append and init.tools; preset harness text unavailable",
+                        entries: claudePreparedContextEntries(append),
+                        injectedTools: message.tools,
+                      });
+                    }
                   }
                   if (
                     message.type === "system" &&

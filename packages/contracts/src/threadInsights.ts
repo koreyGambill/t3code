@@ -21,6 +21,17 @@ export const InstructionFootprint = Schema.Struct({
   attemptId: Schema.optional(Schema.String),
   source: Schema.String,
   parts: Schema.Array(InstructionFootprintPart),
+  injectedTools: Schema.optional(Schema.Array(Schema.String)),
+  injectedToolCount: Schema.optional(NonNegativeInt),
+  truncated: Schema.optional(Schema.Boolean),
+  instructionSources: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        bytes: Schema.NullOr(NonNegativeInt),
+      }),
+    ),
+  ),
 });
 export type InstructionFootprint = typeof InstructionFootprint.Type;
 
@@ -28,7 +39,7 @@ export const ThreadLoadEvent = Schema.Struct({
   itemId: TurnItemId,
   runId: Schema.NullOr(RunId),
   at: IsoDateTime,
-  kind: Schema.Literals(["file", "skill", "instructions", "search", "resource"]),
+  kind: Schema.Literals(["file", "skill", "instructions", "search", "resource", "knowledge"]),
   label: Schema.String,
   paths: Schema.Array(Schema.String),
   toolName: Schema.String,
@@ -81,3 +92,41 @@ export class ThreadInsightsError extends Schema.TaggedError<ThreadInsightsError>
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export const ThreadContextRead = Schema.Struct({
+  kind: ThreadLoadEvent.fields.kind,
+  label: Schema.String,
+  count: NonNegativeInt,
+  outputBytes: Schema.NullOr(NonNegativeInt),
+  evidence: ThreadLoadEvent.fields.evidence,
+});
+export type ThreadContextRead = typeof ThreadContextRead.Type;
+export const TurnContextRecord = Schema.Struct({
+  runId: RunId,
+  ordinal: NonNegativeInt,
+  model: Schema.String,
+  providerInstanceId: ProviderInstanceId,
+  startedAt: IsoDateTime,
+  instructions: Schema.Array(InstructionFootprint),
+  reads: Schema.Array(ThreadContextRead),
+  repeatedReads: NonNegativeInt,
+  inputTokens: Schema.NullOr(NonNegativeInt),
+  cachedInputTokens: Schema.NullOr(NonNegativeInt),
+  outputTokens: Schema.NullOr(NonNegativeInt),
+  usageStatus: Schema.Literals(["complete", "partial", "unavailable"]),
+  truncated: Schema.Boolean,
+});
+export type TurnContextRecord = typeof TurnContextRecord.Type;
+export const ThreadContextGetInput = Schema.Struct({
+  threadId: ThreadId,
+  beforeOrdinal: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(NonNegativeInt.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
+});
+export type ThreadContextGetInput = typeof ThreadContextGetInput.Type;
+export const ThreadContextResult = Schema.Struct({
+  threadId: ThreadId,
+  records: Schema.Array(TurnContextRecord),
+  nextBeforeOrdinal: Schema.NullOr(NonNegativeInt),
+  coverage: Schema.String,
+});
+export type ThreadContextResult = typeof ThreadContextResult.Type;

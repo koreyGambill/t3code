@@ -110,6 +110,31 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect("caps a context review outside the checkout and disables MCP tools", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { findings: [] }, total_cost_usd: 0.0042 }),
+        argsMustContain: "--max-budget-usd 0.05 --max-turns 2",
+        cwdMustNotBe: process.cwd(),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          expect(
+            yield* textGeneration.generateMonitoringReview!({
+              cwd: process.cwd(),
+              prompt: "Review bounded context records",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("claudeAgent"),
+                SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+              ),
+              maxOutputTokens: 3000,
+              maxBudgetUsd: 0.05,
+            }),
+          ).toEqual({ findings: [], costUsd: 0.0042 });
+        }),
+    ),
+  );
+
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>

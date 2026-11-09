@@ -16,7 +16,13 @@ import {
   MonitoringRespondResult,
 } from "./monitoring.ts";
 import { ThreadMark, ThreadMarksGetInput, ThreadMarksError } from "./threadMarks.ts";
-import { ThreadInsights, ThreadInsightsGetInput, ThreadInsightsError } from "./threadInsights.ts";
+import {
+  ThreadInsights,
+  ThreadInsightsGetInput,
+  ThreadInsightsError,
+  ThreadContextGetInput,
+  ThreadContextResult,
+} from "./threadInsights.ts";
 import {
   ThreadNote,
   ThreadNotesSettings,
@@ -511,6 +517,7 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   threadMarksGet: "threadMarks.get",
   threadInsightsGet: "threadInsights.get",
+  threadContextGet: "threadInsights.context",
   threadNotesGet: "threadNotes.get",
   threadNotesSave: "threadNotes.save",
   threadNotesSettings: "threadNotes.settings",
@@ -1510,6 +1517,12 @@ const WsThreadMarksGetRpc = Rpc.make(WS_METHODS.threadMarksGet, {
   error: Schema.Union([ThreadMarksError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadContextGetRpc = Rpc.make(WS_METHODS.threadContextGet, {
+  payload: ThreadContextGetInput,
+  success: ThreadContextResult,
+  error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
+});
+
 const WsThreadInsightsGetRpc = Rpc.make(WS_METHODS.threadInsightsGet, {
   payload: ThreadInsightsGetInput,
   success: ThreadInsights,
@@ -2501,6 +2514,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsThreadMarksGetRpc,
   WsThreadInsightsGetRpc,
+  WsThreadContextGetRpc,
   WsThreadNotesGetRpc,
   WsThreadNotesSaveRpc,
   WsThreadNotesSettingsRpc,

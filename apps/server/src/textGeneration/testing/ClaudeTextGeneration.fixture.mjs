@@ -36,6 +36,12 @@ const settingsIndex = argv.indexOf("--settings");
 if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
 }
+if (argv.includes("--max-budget-usd")) {
+  if (process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS !== "3000")
+    fail("review output tokens must be capped", 19);
+  const denied = argv.indexOf("--disallowedTools");
+  if (denied < 0 || argv[denied + 1] !== "mcp__*") fail("review MCP tools must be disabled", 20);
+}
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {
   fail("text generation ran in the project directory", 11);

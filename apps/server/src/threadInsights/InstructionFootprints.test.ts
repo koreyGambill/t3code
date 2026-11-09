@@ -30,6 +30,8 @@ it.effect(
       const service = yield* open();
       const threadId = ThreadId.make("thread/../../safe");
       const runId = RunId.make("run/../../safe");
+      const source = path.join(root, "AGENTS.md");
+      yield* fs.writeFileString(source, "source instructions");
       const secretText = "Private custom instructions 🔒";
       const orchestration = T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n");
       const entries = [
@@ -45,6 +47,8 @@ it.effect(
         providerTurnOrdinal: 1,
         attemptId: "attempt/one",
         source: "actual test payload",
+        injectedTools: ["t3_context_read", "thread_workspace_read"],
+        instructionSources: [source],
         entries,
       });
       yield* service.record({
@@ -56,11 +60,25 @@ it.effect(
         providerTurnOrdinal: 1,
         attemptId: "attempt/two",
         source: "actual test payload",
+        injectedTools: Array.from({ length: 300 }, (_, index) => `tool-${index}`),
+        instructionSources: [source],
         entries,
       });
       const reopened = yield* open();
       const saved = yield* reopened.list(threadId, runId);
       expect(saved).toHaveLength(2);
+      expect(saved.find((item) => item.attemptId === "attempt/one")?.injectedTools).toEqual([
+        "t3_context_read",
+        "thread_workspace_read",
+      ]);
+      expect(saved.find((item) => item.attemptId === "attempt/two")).toMatchObject({
+        injectedToolCount: 300,
+        truncated: true,
+      });
+      expect(saved.find((item) => item.attemptId === "attempt/two")?.injectedTools).toHaveLength(
+        256,
+      );
+      expect(saved[0]?.instructionSources).toEqual([{ path: source, bytes: 19 }]);
       expect(saved[0]?.parts.reduce((sum, part) => sum + part.bytes, 0)).toBe(
         Buffer.byteLength(orchestration + secretText),
       );

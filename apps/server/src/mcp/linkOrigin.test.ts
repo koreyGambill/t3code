@@ -1,3 +1,4 @@
+import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -118,7 +119,9 @@ const layerLaunches = Layer.effect(
 
 const layerTools = Layer.mergeAll(
   McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
-  McpHttpServer.layerThreadToolkit,
+  McpHttpServer.layerThreadToolkit.pipe(
+    Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
+  ),
   McpHttpServer.layerProjectRegistration,
 ).pipe(
   Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),

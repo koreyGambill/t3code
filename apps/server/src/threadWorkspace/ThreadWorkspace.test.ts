@@ -1,3 +1,4 @@
+import * as MonitoringDelivery from "../monitoring/MonitoringDelivery.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import { expect, it } from "@effect/vitest";
@@ -7,6 +8,11 @@ import {
   EventId,
   isIndependentVerification,
   MessageId,
+  MonitoringProfileId,
+  MonitoringFindingId,
+  ScheduledTaskId,
+  type MonitoringProfile,
+  type MonitoringFinding,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -138,7 +144,10 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),
     }),
-    Layer.mock(ThreadManagement.ThreadManagementService)({ sendToThread: send }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      sendToThread: send,
+      getProjectThreadRecords: () => Effect.succeed(projection),
+    }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadRecords: (requestedThreadId) =>
         threadFailure !== null
@@ -165,6 +174,7 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   });
   return {
     service: yield* open(),
+    dependencies,
     addRun: (run: OrchestrationV2Run) => runs.push(run),
     attempts,
     sendFromComposer: (
@@ -203,6 +213,75 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
     },
   };
 });
+
+it.effect(
+  "persists context review suggestions as deduplicated proposed decisions without waking an agent",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* harness();
+      const profile: MonitoringProfile = {
+        id: MonitoringProfileId.make("context"),
+        title: "Context",
+        kind: "context-review",
+        enabled: false,
+        projectId: ProjectId.make("project"),
+        modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "haiku" },
+        schedule: { type: "interval", everyMs: 3600000 },
+        targets: {
+          state: "all",
+          threadIds: [threadId],
+          includeChildren: false,
+          minAgeMs: 0,
+          updatedWithinMs: null,
+        },
+        rules: [{ id: "context", title: "Context", instructions: "Suggest improvements" }],
+        scheduledTaskId: ScheduledTaskId.make("review"),
+        createdAt: "2026-11-09T00:00:00Z",
+        updatedAt: "2026-11-09T00:00:00Z",
+      };
+      const finding: MonitoringFinding = {
+        id: MonitoringFindingId.make("repeat"),
+        profileId: profile.id,
+        runId: "review-run",
+        threadId,
+        ruleId: "context",
+        summary: "Summarize repeated instruction reads",
+        detail: "AGENTS.md was read six times. Consider a smaller summary.",
+        confidence: 0.7,
+        evidence: [{ threadId, messageId: MessageId.make("context:run"), excerpt: "count:6" }],
+        createdAt: profile.createdAt,
+        updatedAt: profile.updatedAt,
+        disposition: "open",
+        readAt: null,
+        snoozedUntil: null,
+        exchanges: [],
+        outcome: null,
+      };
+      const delivery = yield* MonitoringDelivery.MonitoringDelivery.pipe(
+        Effect.provide(
+          MonitoringDelivery.layer.pipe(
+            Layer.provide(Layer.succeed(Workspaces.ThreadWorkspace, h.service)),
+            Layer.provide(h.dependencies),
+          ),
+        ),
+      );
+      expect(yield* delivery.deliver({ profile, finding })).toEqual({
+        delivery: "workspace",
+        messageId: null,
+      });
+      yield* delivery.deliver({ profile, finding });
+      const reopened = yield* h.open();
+      const workspace = yield* reopened.get({ threadId });
+      expect(workspace.decisions).toHaveLength(1);
+      expect(workspace.decisions[0]).toMatchObject({
+        title: finding.summary,
+        status: "proposed",
+        decidedBy: "agent",
+      });
+      expect(workspace.decisions[0]?.rationale).toContain("AGENTS.md was read six times");
+      expect(h.attempts).toHaveLength(0);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
 
 it.effect("context marks persist a fixed run through renames and later turns", () =>
   Effect.gen(function* () {

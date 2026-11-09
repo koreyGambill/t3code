@@ -126,6 +126,20 @@ explanation, unresolved or unverified. Agreement alone does not count as a
 verified correction. The report stays available even if the thread is idle and
 cannot receive the advisory.
 
+## Context reviews
+
+Open **Inspect → Context** in a thread to see each turn's instruction sizes,
+injected tools, file and knowledge reads, repeated reads and reported token usage.
+Read counts from shell commands are inferred. Missing provider telemetry stays
+unknown. Use **Older turns** to page through the history.
+
+In **Settings → Scheduled tasks → Watchers**, choose **Context management** and
+select Claude Haiku. New context watchers start paused. Enable one to opt in, or
+run it once manually. Each run reviews recent context records with a 3,000-token
+output limit and a $0.05 budget. Suggestions appear as proposed Workspace
+decisions. Accept or reject them before asking an agent to change instructions,
+skills or knowledge. The reviewer never edits those files itself.
+
 ## Webhook automations
 
 In **Settings → Scheduled tasks**, choose **On webhook**

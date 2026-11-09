@@ -1878,6 +1878,17 @@ export const layerWithOptions = (
                                 yield* instructionFootprints.value
                                   .record({
                                     ...prepared,
+                                    entries: [
+                                      ...prepared.entries,
+                                      ...[
+                                        ...input.message.text.matchAll(
+                                          /<child_preamble[^>]*>([\s\S]*?)<\/child_preamble>/g,
+                                        ),
+                                      ].map((match) => ({
+                                        key: "workspace_child_preamble",
+                                        text: match[1] ?? "",
+                                      })),
+                                    ],
                                     threadId: input.threadId,
                                     runId: input.runId,
                                     providerInstanceId: runtime.instanceId,

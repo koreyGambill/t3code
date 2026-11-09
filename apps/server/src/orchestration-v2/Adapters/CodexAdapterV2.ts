@@ -1441,7 +1441,10 @@ function codexThreadRuntimeParams(input: {
 }
 
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
-  Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
+  Schema.Struct({
+    thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }),
+    instructionSources: Schema.optional(Schema.Array(Schema.String)),
+  }),
 );
 
 const CodexChildSelection = Schema.Struct({
@@ -1754,6 +1757,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
+        const instructionSourcesByThread = new Map<string, ReadonlyArray<string>>();
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -6796,8 +6800,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });
             if (turnInput.onContextPrepared) {
+              const tools = yield* client
+                .request("mcpServerStatus/list", {
+                  threadId,
+                  detail: "toolsAndAuthOnly",
+                  limit: 100,
+                })
+                .pipe(
+                  Effect.map((response) =>
+                    response.data
+                      .toSorted(
+                        (a, b) => Number(b.name.startsWith("t3")) - Number(a.name.startsWith("t3")),
+                      )
+                      .flatMap((server) =>
+                        Object.keys(server.tools).map((name) => `mcp__${server.name}__${name}`),
+                      ),
+                  ),
+                  Effect.timeout("2 seconds"),
+                  Effect.orElseSucceed(() => undefined),
+                );
               yield* turnInput.onContextPrepared({
-                source: "Codex turn/start.additionalContext",
+                injectedTools: tools,
+                source:
+                  "Codex turn/start.additionalContext; instructionSources reported by thread start/resume",
+                instructionSources: instructionSourcesByThread.get(threadId),
                 entries: Object.entries(turnStartParams.additionalContext ?? {}).map(
                   ([key, entry]) => ({
                     key: entry.kind === "untrusted" ? `app_context:${key}` : key,
@@ -7118,6 +7144,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
                 ),
               ),
+              Effect.tap((response) =>
+                Effect.sync(() =>
+                  instructionSourcesByThread.set(
+                    response.thread.id,
+                    response.instructionSources ?? [],
+                  ),
+                ),
+              ),
               Effect.map((response): OrchestrationV2ProviderThread =>
                 providerThreadFromCodexThread({
                   appThreadId: threadInput.threadId,
@@ -7158,6 +7192,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
+              instructionSourcesByThread.set(response.thread.id, response.instructionSources ?? []);
               return {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,

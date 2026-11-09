@@ -53,7 +53,7 @@ const make = Effect.gen(function* () {
     yield* decodeUpsert(input).pipe(
       Effect.mapError((cause) => new MonitoringError({ operation: "validate profile", cause })),
     );
-    yield* runner.validateModel(input.modelSelection);
+    yield* runner.validateModel(input.modelSelection, input.kind);
     const id =
       input.id ??
       MonitoringProfileId.make(
@@ -70,6 +70,7 @@ const make = Effect.gen(function* () {
     const scheduledTaskId = previous?.scheduledTaskId ?? ScheduledTaskId.make(`monitoring:${id}`);
     const profile: MonitoringProfile = {
       ...input,
+      enabled: input.kind === "context-review" && !previous ? false : input.enabled,
       id,
       scheduledTaskId,
       createdAt: previous?.createdAt ?? now,

@@ -8,3 +8,10 @@ export const threadInsightsGet = createEnvironmentRpcQueryAtomFamily(connectionA
   staleTimeMs: 0,
   idleTtlMs: 0,
 });
+
+export const threadContextGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadInsights:context",
+  tag: WS_METHODS.threadContextGet,
+  staleTimeMs: 30_000,
+  idleTtlMs: 0,
+});

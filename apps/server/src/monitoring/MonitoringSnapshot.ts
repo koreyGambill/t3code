@@ -1,3 +1,4 @@
+import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import {
   MonitoringError,
   OrchestrationV2AppThreadJson,
@@ -94,6 +95,7 @@ export class MonitoringSnapshot extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const contexts = yield* ContextRecords.ContextRecords;
   return MonitoringSnapshot.of({
     capture: Effect.fn("MonitoringSnapshot.capture")(function* (profile) {
       const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -109,6 +111,89 @@ const make = Effect.gen(function* () {
       const selected = threads
         .filter((thread) => monitoringTargetMatches(profile, thread, now))
         .slice(0, 20);
+      if (profile.kind === "context-review") {
+        const contextThreads: MonitoringSnapshotData["threads"][number][] = [];
+        let remaining = 24000;
+        let truncated = selected.length > 5;
+        const targets: Array<{ id: ThreadId; title: string; parentThreadId: ThreadId | null }> = [];
+        for (const root of selected.slice(0, 5)) {
+          if (!targets.some((target) => target.id === root.id))
+            targets.push({ id: root.id, title: root.title, parentThreadId: null });
+          if (profile.targets.includeChildren) {
+            const children = yield* sql<{
+              child_thread_id: string;
+              title: string;
+            }>`SELECT s.child_thread_id,t.title FROM orchestration_v2_projection_subagents s JOIN orchestration_v2_projection_threads t ON t.thread_id=s.child_thread_id WHERE s.thread_id=${root.id} AND t.project_id=${profile.projectId} AND t.deleted_at IS NULL ORDER BY s.updated_at DESC LIMIT 3`.pipe(
+              NodeSqliteClient.readOnly,
+              Effect.mapError(
+                (cause) => new MonitoringError({ operation: "read context children", cause }),
+              ),
+            );
+            if (children.length > 2) truncated = true;
+            for (const child of children.slice(0, 2)) {
+              const id = ThreadId.make(child.child_thread_id);
+              if (!targets.some((target) => target.id === id))
+                targets.push({ id, title: child.title, parentThreadId: root.id });
+            }
+          }
+        }
+        if (targets.length > 5) truncated = true;
+        for (const thread of targets.slice(0, 5)) {
+          const result = yield* contexts
+            .get({ threadId: thread.id, limit: 5 })
+            .pipe(
+              Effect.mapError(
+                (cause) => new MonitoringError({ operation: "read context records", cause }),
+              ),
+            );
+          const messages = result.records.flatMap((record) => {
+            const text = JSON.stringify({
+              ...record,
+              reads: record.reads.toSorted((a, b) => b.count - a.count).slice(0, 20),
+              instructions: record.instructions.slice(-2).map((item) => ({
+                ...item,
+                parts: item.parts.slice(0, 16),
+                injectedTools: item.injectedTools?.slice(0, 32),
+                instructionSources: item.instructionSources?.slice(0, 16),
+              })),
+            });
+            if (text.length > remaining) {
+              truncated = true;
+              return [];
+            }
+            remaining -= text.length;
+            return [{ id: `context:${record.runId}`, role: "context record", text }];
+          });
+          if (
+            result.nextBeforeOrdinal !== null ||
+            result.records.some(
+              (record) =>
+                record.truncated ||
+                record.reads.length > 20 ||
+                record.instructions.length > 2 ||
+                record.instructions.some(
+                  (item) =>
+                    (item.injectedTools?.length ?? 0) > 32 ||
+                    (item.instructionSources?.length ?? 0) > 16 ||
+                    item.parts.length > 16,
+                ),
+            )
+          )
+            truncated = true;
+          contextThreads.push({
+            id: thread.id,
+            title: thread.title.slice(0, 256),
+            parentThreadId: thread.parentThreadId,
+            messages,
+          });
+        }
+        return {
+          threads: contextThreads.some((thread) => thread.messages.length) ? contextThreads : [],
+          truncated,
+          coverage:
+            "Recent context records only, at most five threads and five turns each within 24,000 characters. Inferred reads and estimates are uncertain; automatic harness loads may be missing. No file contents were read for this review.",
+        };
+      }
       const result: Array<MonitoringSnapshotData["threads"][number]> = [];
       let remaining = 80_000;
       let truncated =

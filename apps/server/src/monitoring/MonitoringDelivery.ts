@@ -1,3 +1,4 @@
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import {
   CommandId,
   MessageId,
@@ -24,7 +25,10 @@ export class MonitoringDelivery extends Context.Service<
       readonly finding: MonitoringFinding;
       readonly exchangeId?: string;
     }) => Effect.Effect<
-      { readonly delivery: "steered" | "alert_only"; readonly messageId: MessageId | null },
+      {
+        readonly delivery: "steered" | "alert_only" | "workspace";
+        readonly messageId: MessageId | null;
+      },
       MonitoringError
     >;
   }
@@ -34,9 +38,55 @@ export const layer = Layer.effect(
   MonitoringDelivery,
   Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
+    const workspace = yield* ThreadWorkspace.ThreadWorkspace;
     const deliver: MonitoringDelivery["Service"]["deliver"] = Effect.fn(
       "MonitoringDelivery.deliver",
     )(function* ({ profile, finding, exchangeId }) {
+      if (profile.kind === "context-review") {
+        const target = yield* threads
+          .getProjectThreadRecords({ projectId: profile.projectId, threadId: finding.threadId }, [])
+          .pipe(
+            Effect.mapError(
+              (cause) => new MonitoringError({ operation: "resolve context review target", cause }),
+            ),
+          );
+        if (
+          target.thread.deletedAt !== null ||
+          (profile.targets.threadIds.length &&
+            !profile.targets.threadIds.includes(finding.threadId))
+        )
+          return { delivery: "alert_only", messageId: null };
+        const current = yield* workspace
+          .get({ threadId: finding.threadId })
+          .pipe(
+            Effect.mapError(
+              (cause) => new MonitoringError({ operation: "read review workspace", cause }),
+            ),
+          );
+        const source = `Context review ${finding.id}`;
+        if (!current.decisions.some((decision) => decision.source === source))
+          yield* workspace
+            .mutate({
+              threadId: finding.threadId,
+              expectedRevision: current.revision,
+              changes: [
+                {
+                  kind: "decision",
+                  title: finding.summary,
+                  rationale: `${finding.detail}\n\nEvidence:\n${finding.evidence.map((item) => `${item.messageId}: ${item.excerpt}`).join("\n")}\n\nAdvisory from ${profile.modelSelection.model}. Accept or reject before changing instructions, skills or knowledge.`,
+                  status: "proposed",
+                  decidedBy: "agent",
+                  source,
+                },
+              ],
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new MonitoringError({ operation: "propose context improvement", cause }),
+              ),
+            );
+        return { delivery: "workspace", messageId: null };
+      }
       if (
         !profile.enabled ||
         profile.id !== finding.profileId ||

@@ -1,3 +1,4 @@
+import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
@@ -241,7 +242,9 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
     Layer.mergeAll(
       McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
       McpHttpServer.layerProjectRegistration,
-      McpHttpServer.layerThreadToolkit,
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
+      ),
     ).pipe(
       Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Layer.provide(NodeCrypto.layer),
@@ -317,7 +320,9 @@ const makeLaptop = Effect.fn(function* (
   const layerHere = Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
     McpHttpServer.layerProjectRegistration,
-    McpHttpServer.layerThreadToolkit,
+    McpHttpServer.layerThreadToolkit.pipe(
+      Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
+    ),
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),

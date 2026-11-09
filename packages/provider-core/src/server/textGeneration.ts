@@ -106,10 +106,12 @@ export interface ProviderTextGeneration {
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<MonitoringAssessment, TextGenerationError>;
   readonly generateMonitoringReview?: (input: {
+    readonly maxOutputTokens?: number;
+    readonly maxBudgetUsd?: number;
     readonly cwd: string;
     readonly prompt: string;
     readonly modelSelection: ModelSelection;
-  }) => Effect.Effect<MonitoringReviewOutput, TextGenerationError>;
+  }) => Effect.Effect<MonitoringReviewOutput & { readonly costUsd?: number }, TextGenerationError>;
 
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,

@@ -1,3 +1,4 @@
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as MonitoringFollowup from "./MonitoringFollowup.ts";
 import * as MonitoringSnapshot from "./MonitoringSnapshot.ts";
@@ -166,6 +167,7 @@ it.effect("keeps an alert without waking idle or unsupported agents and steers a
     const status = yield* Ref.make("idle");
     const sends = yield* Ref.make<ThreadManagement.ThreadManagementSendInput[]>([]);
     const layer = MonitoringDelivery.layer.pipe(
+      Layer.provide(ThreadWorkspace.layerTest),
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getProjectThreadRecords: () =>

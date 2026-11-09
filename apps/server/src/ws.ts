@@ -1,3 +1,4 @@
+import * as ContextRecords from "./threadInsights/ContextRecords.ts";
 import * as MonitoringService from "./monitoring/MonitoringService.ts";
 import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
@@ -1464,6 +1465,7 @@ export const layerWsRpc = (
       const reviewArtifacts = yield* ReviewArtifacts.ReviewArtifacts;
       const threadWorkspace = yield* ThreadWorkspace.ThreadWorkspace;
       const threadMarks = yield* ThreadMarks.ThreadMarks;
+      const contextRecords = yield* ContextRecords.ContextRecords;
       const threadInsights = yield* ThreadInsights.ThreadInsights;
       const threadNotes = yield* ThreadNotes.ThreadNotes;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -3031,6 +3033,7 @@ export const layerWsRpc = (
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.threadMarksGet]: (input) => threadMarks.get(input),
         [WS_METHODS.threadInsightsGet]: (input) => threadInsights.get(input),
+        [WS_METHODS.threadContextGet]: (input) => contextRecords.get(input),
         [WS_METHODS.threadNotesGet]: (input) => threadNotes.get(input),
         [WS_METHODS.threadNotesSave]: (input) => threadNotes.save(input),
         [WS_METHODS.threadNotesSettings]: () => threadNotes.settings(),

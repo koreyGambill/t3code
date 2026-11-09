@@ -1,3 +1,4 @@
+import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import * as MonitoringStore from "../monitoring/MonitoringStore.ts";
 import * as MonitoringSnapshot from "../monitoring/MonitoringSnapshot.ts";
 import * as MonitoringRunner from "../monitoring/MonitoringRunner.ts";
@@ -294,20 +295,31 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerContextRecordsProvided = ContextRecords.layer.pipe(
+  Layer.provide(InstructionFootprints.layer),
+);
+const layerMonitoringSnapshotProvided = MonitoringSnapshot.layer.pipe(
+  Layer.provide(layerContextRecordsProvided),
+);
 const layerMonitoringDeliveryProvided = MonitoringDelivery.layer.pipe(
+  Layer.provide(
+    ThreadWorkspace.layer.pipe(
+      Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
+    ),
+  ),
   Layer.provide(layerThreadManagementProvided),
 );
 const layerMonitoringRunnerProvided = MonitoringRunner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       MonitoringStore.layer,
-      MonitoringSnapshot.layer,
+      layerMonitoringSnapshotProvided,
       layerMonitoringDeliveryProvided,
     ),
   ),
 );
 const layerMonitoringFollowupProvided = MonitoringFollowup.layer.pipe(
-  Layer.provide(Layer.mergeAll(layerMonitoringRunnerProvided, MonitoringSnapshot.layer)),
+  Layer.provide(Layer.mergeAll(layerMonitoringRunnerProvided, layerMonitoringSnapshotProvided)),
 );
 const layerMonitoringDialogueProvided = MonitoringDialogue.layer.pipe(
   Layer.provide(
@@ -433,6 +445,7 @@ export const layerProduction = Layer.mergeAll(
   ThreadMarks.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, ProjectionStore.layer)),
   ),
+  layerContextRecordsProvided,
   ThreadInsights.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, InstructionFootprints.layer)),
   ),
