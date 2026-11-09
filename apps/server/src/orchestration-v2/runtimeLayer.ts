@@ -327,9 +327,6 @@ const layerThreadWorkspaceProvided = ThreadWorkspace.layer.pipe(
     ),
   ),
 );
-const layerTicketRefreshProvided = ThreadWorkspace.layerTicketRefresh.pipe(
-  Layer.provide(Layer.merge(layerThreadWorkspaceProvided, layerOrchestratorProvided)),
-);
 const layerMonitoringDeliveryProvided = MonitoringDelivery.layer.pipe(
   Layer.provide(layerThreadWorkspaceProvided),
   Layer.provide(layerThreadManagementProvided),
@@ -482,7 +479,6 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
   ),
   layerThreadWorkspaceProvided,
-  layerTicketRefreshProvided,
   ReviewArtifacts.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
   ),

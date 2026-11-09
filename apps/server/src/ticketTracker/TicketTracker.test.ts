@@ -81,14 +81,15 @@ it.effect("parses Bitwing state labels and workflow dispositions from CLI fixtur
         workflow_metadata: { name: "cancelled", label: "cancelled", order: 60, terminal: true },
       }),
     );
-    const cancelled = yield* h.tracker.get("BW-42", { refresh: true });
+    yield* TestClock.adjust("31 seconds");
+    const cancelled = yield* h.tracker.get("BW-42");
     expect(cancelled?.workflow?.find((step) => step.stage === "acme/app / Release")?.done).toBe(
       false,
     );
   }).pipe(Effect.scoped),
 );
 
-it.effect("shares per-key reads, expires after a short TTL, and supports turn-end refresh", () =>
+it.effect("shares per-key reads and expires after a short TTL", () =>
   Effect.gen(function* () {
     const h = yield* harness;
     yield* Effect.all([h.tracker.get("BW-42"), h.tracker.get("BW-42")], { concurrency: 2 });
@@ -96,8 +97,6 @@ it.effect("shares per-key reads, expires after a short TTL, and supports turn-en
     yield* TestClock.adjust("31 seconds");
     yield* h.tracker.get("BW-42");
     expect(h.reads()).toBe(2);
-    yield* h.tracker.get("BW-42", { refresh: true });
-    expect(h.reads()).toBe(3);
   }).pipe(Effect.scoped),
 );
 
@@ -108,9 +107,11 @@ it.effect("reports unavailable for absent Bitwing, invalid JSON, or mismatched k
     expect(h.reads()).toBe(0);
     for (const output of ["not json", JSON.stringify({ ...ticket, id: "BW-43" }), "{}"]) {
       h.output(output);
-      expect(yield* h.tracker.get("BW-42", { refresh: true })).toBeNull();
+      yield* TestClock.adjust("31 seconds");
+      expect(yield* h.tracker.get("BW-42")).toBeNull();
     }
     h.missing();
-    expect(yield* h.tracker.get("BW-42", { refresh: true })).toBeNull();
+    yield* TestClock.adjust("31 seconds");
+    expect(yield* h.tracker.get("BW-42")).toBeNull();
   }).pipe(Effect.scoped),
 );

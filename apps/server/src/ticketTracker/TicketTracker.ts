@@ -52,11 +52,8 @@ const decodeStatus = Schema.decodeOption(Schema.fromJsonString(Status));
 export class TicketTracker extends Context.Service<
   TicketTracker,
   {
-    /** Null means the provider or ticket is unavailable; refresh bypasses the short view cache. */
-    readonly get: (
-      key: string,
-      options?: { readonly refresh?: boolean },
-    ) => Effect.Effect<TicketData | null>;
+    /** Null means the provider or ticket is unavailable. */
+    readonly get: (key: string) => Effect.Effect<TicketData | null>;
   }
 >()("t3/ticketTracker/TicketTracker") {}
 
@@ -125,9 +122,8 @@ const make = Effect.gen(function* () {
   });
   const cache = yield* Cache.make({ capacity: 256, timeToLive: "30 seconds", lookup });
   return TicketTracker.of({
-    get: Effect.fn("TicketTracker.get")(function* (key, options) {
+    get: Effect.fn("TicketTracker.get")(function* (key) {
       if (!bitwingKey.test(key)) return null;
-      if (options?.refresh) yield* Cache.invalidate(cache, key);
       return yield* Cache.get(cache, key);
     }),
   });

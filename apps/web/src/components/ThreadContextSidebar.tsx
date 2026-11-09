@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { AuthOrchestrationReadScope, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  type ScopedThreadRef,
+  type TicketData,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { PanelRightIcon, PinIcon, PinOffIcon, XIcon } from "lucide-react";
 import { useState, type CSSProperties, type ReactNode } from "react";
@@ -235,8 +240,54 @@ function SidebarSection({
     case "context":
       return <ThreadContextPanel threadRef={threadRef} visible tabs={null} />;
     case "ticket":
-      return <p className="px-3 pb-3 text-xs text-muted-foreground">no linked ticket</p>;
+      return <SidebarTickets threadRef={threadRef} />;
   }
+}
+
+function SidebarTickets({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
+  const workspace = useEnvironmentQuery(
+    canRead
+      ? sidebarWorkspaceGet({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  const tickets = new Map<string, TicketData | null>();
+  for (const item of workspace.data?.agentWork ?? []) {
+    if (item.ticket && !tickets.has(item.ticket)) tickets.set(item.ticket, item.ticketData ?? null);
+  }
+  if (tickets.size === 0)
+    return <p className="px-3 pb-3 text-xs text-muted-foreground">No linked ticket.</p>;
+  return (
+    <ul className="space-y-2 px-3 pb-3 text-xs">
+      {[...tickets].map(([key, data]) => (
+        <li key={key} className="space-y-1">
+          {data ? (
+            <a href={data.url} target="_blank" rel="noreferrer" className="block hover:underline">
+              <span className="font-medium">{data.key}</span> · {data.stage}
+              <span className="block truncate text-muted-foreground">{data.title}</span>
+            </a>
+          ) : (
+            <p>
+              <span className="font-medium">{key}</span>{" "}
+              <span className="text-muted-foreground">· unavailable</span>
+            </p>
+          )}
+          {data?.workflow?.length ? (
+            <ul className="space-y-0.5 text-muted-foreground">
+              {data.workflow.map((step) => (
+                <li key={step.stage}>
+                  {step.done ? "✓" : "○"} {step.stage}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function SidebarEnvironments({ threadRef }: { threadRef: ScopedThreadRef }) {

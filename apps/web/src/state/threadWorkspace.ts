@@ -27,7 +27,8 @@ const workspaceRefresh = Atom.family((key: string) => {
 export const threadWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "threadWorkspace:get",
   tag: WS_METHODS.threadWorkspaceGet,
-  staleTimeMs: 0,
+  staleTimeMs: 5_000,
+  refreshIntervalMs: 5_000,
   refreshTrigger: ({ environmentId, input }) =>
     workspaceRefresh(JSON.stringify({ environmentId, threadId: input.threadId })),
   idleTtlMs: 0,
@@ -51,7 +52,8 @@ export const threadWorkspaceCounts = createEnvironmentRpcQueryAtomFamily(connect
 export const threadWorkspaceListWork = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "threadWorkspace:listWork",
   tag: WS_METHODS.threadWorkspaceListWork,
-  staleTimeMs: 0,
+  staleTimeMs: 10_000,
+  refreshIntervalMs: 10_000,
   refreshTrigger: ({ environmentId }) => workspaceRefresh(JSON.stringify({ environmentId })),
   idleTtlMs: 0,
 });

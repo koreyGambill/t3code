@@ -39,8 +39,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
-import { forkParked } from "../serverActivation.ts";
 import * as TicketTracker from "../ticketTracker/TicketTracker.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -63,7 +61,6 @@ export class ThreadWorkspace extends Context.Service<
   {
     readonly get: (
       input: ThreadWorkspaceGetInput,
-      options?: { readonly refreshTickets?: boolean },
     ) => Effect.Effect<Workspace, ThreadWorkspaceError>;
     readonly listWork: (
       input: ThreadWorkspaceListWorkInput,
@@ -811,13 +808,12 @@ const make = Effect.gen(function* () {
   const tracker = yield* TicketTracker.TicketTracker;
   const enrichWork = Effect.fn("ThreadWorkspace.enrichWork")(function* (
     items: Workspace["agentWork"],
-    refresh = false,
   ) {
     const keys = [...new Set(items.flatMap((item) => (item.ticket ? [item.ticket] : [])))];
     const tickets = new Map(
       yield* Effect.forEach(
         keys,
-        (key) => tracker.get(key, { refresh }).pipe(Effect.map((data) => [key, data] as const)),
+        (key) => tracker.get(key).pipe(Effect.map((data) => [key, data] as const)),
         { concurrency: 2 },
       ),
     );
@@ -825,11 +821,8 @@ const make = Effect.gen(function* () {
       item.ticket ? { ...item, ticketData: tickets.get(item.ticket) ?? null } : item,
     );
   });
-  const enrich = Effect.fn("ThreadWorkspace.enrich")(function* (
-    workspace: Workspace,
-    refresh = false,
-  ) {
-    return { ...workspace, agentWork: yield* enrichWork(workspace.agentWork, refresh) };
+  const enrich = Effect.fn("ThreadWorkspace.enrich")(function* (workspace: Workspace) {
+    return { ...workspace, agentWork: yield* enrichWork(workspace.agentWork) };
   });
   const lock = yield* Semaphore.make(1);
   const directory = path.join(config.stateDir, "thread-workspaces");
@@ -1169,15 +1162,12 @@ const make = Effect.gen(function* () {
       ...(input.summaryNotes !== undefined ? { summaryNotes: after.summaryNotes } : {}),
     };
   });
-  const get = Effect.fn("ThreadWorkspace.get")(function* (
-    input: ThreadWorkspaceGetInput,
-    options?: { readonly refreshTickets?: boolean },
-  ) {
+  const get = Effect.fn("ThreadWorkspace.get")(function* (input: ThreadWorkspaceGetInput) {
     const workspace = yield* Effect.gen(function* () {
       yield* requireThread(input.threadId);
       return (yield* read(input.threadId)).workspace;
     }).pipe(lock.withPermit);
-    return yield* enrich(workspace, options?.refreshTickets);
+    return yield* enrich(workspace);
   });
   const saveDraft = Effect.fn("ThreadWorkspace.saveDraft")(function* (
     input: ThreadWorkspaceSaveDraftInput,
@@ -1434,23 +1424,6 @@ const make = Effect.gen(function* () {
   });
 });
 export const layer = Layer.effect(ThreadWorkspace, make);
-
-export const layerTicketRefresh = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const workspace = yield* ThreadWorkspace;
-    yield* forkParked(
-      Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-        event.type === "run.updated" &&
-        ["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status)
-          ? workspace
-              .get({ threadId: event.threadId }, { refreshTickets: true })
-              .pipe(Effect.ignore)
-          : Effect.void,
-      ),
-    );
-  }),
-);
 
 /** Every thread reads as an empty workspace; for services that only read it. */
 export const layerTest = Layer.mock(ThreadWorkspace)({
