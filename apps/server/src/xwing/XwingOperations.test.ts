@@ -612,6 +612,9 @@ describe.skipIf(realXwing === undefined)("XwingOperations against a real Xwing",
         expect(archivedAgain).toEqual({ ...archived, outcome: "alreadyArchived" });
         expect(releasedAgain).toMatchObject({ result: "absent", environmentStatus: "archived" });
         expect(onArchive.hold.environmentStatus).toBe("archived");
+        yield* release("t3:one");
+        expect((yield* service.restore({ id })).outcome).toBe("restored");
+        expect((yield* service.restore({ id })).outcome).toBe("alreadyActive");
       }),
     );
 

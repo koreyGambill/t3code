@@ -687,6 +687,7 @@ export interface ProjectionStoreV2Shape {
   readonly listDevelopmentEnvironmentUsage: (filter: {
     readonly xwingEnvironmentId?: string | undefined;
     readonly threadId?: ThreadId | undefined;
+    readonly includeDescendants?: boolean | undefined;
   }) => Effect.Effect<
     ReadonlyArray<OrchestrationV2DevelopmentEnvironmentUsage>,
     ProjectionStoreV2Error
@@ -5376,6 +5377,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const listDevelopmentEnvironmentUsage: ProjectionStoreV2Shape["listDevelopmentEnvironmentUsage"] =
       (filter) =>
         sql<Record<string, unknown>>`
+          WITH RECURSIVE thread_tree(thread_id) AS (
+            SELECT ${filter.threadId ?? null}
+            UNION
+            SELECT task.child_thread_id
+            FROM orchestration_v2_projection_subagents AS task
+            JOIN thread_tree AS parent ON parent.thread_id = task.thread_id
+            WHERE ${filter.includeDescendants === true ? 1 : 0} = 1
+              AND task.child_thread_id IS NOT NULL
+          )
           SELECT usage.thread_id AS "threadId",
             thread.project_id AS "projectId",
             usage.xwing_environment_id AS "xwingEnvironmentId",
@@ -5400,7 +5410,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE thread.deleted_at IS NULL
             AND (${filter.xwingEnvironmentId ?? null} IS NULL
               OR usage.xwing_environment_id = ${filter.xwingEnvironmentId ?? null})
-            AND (${filter.threadId ?? null} IS NULL OR usage.thread_id = ${filter.threadId ?? null})
+            AND (${filter.threadId ?? null} IS NULL OR usage.thread_id IN (SELECT thread_id FROM thread_tree))
           ORDER BY usage.last_selected_at DESC, usage.thread_id ASC
         `.pipe(
           Effect.flatMap(decodeDevelopmentEnvironmentUsageRows),

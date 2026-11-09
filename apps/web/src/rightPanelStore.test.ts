@@ -1475,13 +1475,15 @@ describe("rightPanelStore", () => {
     ).toEqual([]);
   });
 
-  it("tracks split panes and the active pane within a terminal surface", () => {
-    useRightPanelStore.getState().openTerminal(refA, "term-1");
+  it("tracks split panes and the active pane within a terminal surface", async () => {
+    const launchContext = { cwd: "/xwing/envs/7/repo", worktreePath: "/thread/root" };
+    useRightPanelStore.getState().openTerminal(refA, "term-1", launchContext);
     useRightPanelStore.getState().splitTerminal(refA, "terminal:term-1", "term-2");
 
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       id: "terminal:term-1",
       kind: "terminal",
+      launchContext,
       resourceId: "term-1",
       terminalIds: ["term-1", "term-2"],
       activeTerminalId: "term-2",
@@ -1492,10 +1494,15 @@ describe("rightPanelStore", () => {
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       id: "terminal:term-1",
       kind: "terminal",
+      launchContext,
       resourceId: "term-1",
       terminalIds: ["term-2"],
       activeTerminalId: "term-2",
     });
+    await useRightPanelStore.persist.rehydrate();
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ launchContext });
   });
 
   it("closing the final terminal pane removes its surface and closes the panel", () => {

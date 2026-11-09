@@ -205,12 +205,13 @@ export const DevelopmentEnvironmentCleanUpInput = Schema.Struct({
   xwingEnvironmentId: XwingEnvironmentId,
   /** The assessment the user confirmed. */
   fingerprint: TrimmedNonEmptyString,
+  action: Schema.Literals(["archive", "delete"]),
 });
 export type DevelopmentEnvironmentCleanUpInput = typeof DevelopmentEnvironmentCleanUpInput.Type;
 
 export const DevelopmentEnvironmentCleanUpResult = Schema.Struct({
   xwingEnvironmentId: XwingEnvironmentId,
-  outcome: Schema.Literals(["deleted", "absent"]),
+  outcome: Schema.Literals(["deleted", "absent", "archived", "alreadyArchived"]),
   releasedHolds: Schema.Array(Schema.String),
   stoppedApplications: Schema.Array(Schema.String),
   retainedPaths: Schema.Array(Schema.String),
@@ -221,6 +222,7 @@ export const DevelopmentEnvironmentLifecycleOperation = Schema.Literals([
   "create",
   "attach",
   "repair",
+  "restore",
   "list-app-commands",
   "start-app",
   "stop-app",

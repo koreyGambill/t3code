@@ -172,6 +172,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <PersistentThreadTerminalPanel
           {...props.terminal}
+          launchContext={surface.launchContext ?? props.terminal.launchContext}
           visible={visible}
           threadRef={threadRef}
           surface={surface}

@@ -1,5 +1,8 @@
 import {
   type CommandId,
+  type ThreadChangeFolderInput,
+  type ThreadChangeFolderError,
+  ThreadFolderUnavailableError,
   type DevelopmentEnvironmentCheckoutChoice,
   DevelopmentEnvironmentPersistenceError,
   DevelopmentEnvironmentProjectNotFoundError,
@@ -18,6 +21,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -34,7 +39,7 @@ export {
 
 /** Where a stopped thread should work next. `native` leaves Xwing and keeps T3's own checkout rules. */
 export type DevelopmentEnvironmentSelectionTarget =
-  | { readonly type: "xwing"; readonly xwingEnvironmentId: string }
+  | { readonly type: "xwing"; readonly xwingEnvironmentId: string; readonly workspaceRoot?: string }
   | {
       readonly type: "native";
       readonly worktreePath: string | null;
@@ -82,6 +87,9 @@ export interface DevelopmentEnvironmentLaunchWorkspace {
 export class DevelopmentEnvironments extends Context.Service<
   DevelopmentEnvironments,
   {
+    readonly changeFolder: (
+      input: ThreadChangeFolderInput,
+    ) => Effect.Effect<DevelopmentEnvironmentSelectionResult, ThreadChangeFolderError>;
     readonly selectCheckout: (
       input: DevelopmentEnvironmentSelectionInput,
     ) => Effect.Effect<
@@ -128,6 +136,7 @@ export class DevelopmentEnvironments extends Context.Service<
     readonly listUsage: (filter: {
       readonly xwingEnvironmentId?: string | undefined;
       readonly threadId?: ThreadId | undefined;
+      readonly includeDescendants?: boolean | undefined;
     }) => Effect.Effect<
       ReadonlyArray<OrchestrationV2DevelopmentEnvironmentUsage>,
       DevelopmentEnvironmentPersistenceError
@@ -144,6 +153,8 @@ const make = Effect.gen(function* () {
   const checkouts = yield* DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckouts;
   const terminals = yield* TerminalManager.TerminalManager;
   const holds = yield* DevelopmentEnvironmentHolds.DevelopmentEnvironmentHolds;
+  const paths = yield* WorkspacePaths.WorkspacePaths;
+  const git = yield* GitVcsDriver.GitVcsDriver;
 
   const bindLaunch: DevelopmentEnvironments["Service"]["bindLaunch"] = (binding, launch) =>
     holds.retain(
@@ -219,9 +230,11 @@ const make = Effect.gen(function* () {
       requested.type === "native"
         ? { ...requested, developmentEnvironment: null }
         : yield* Effect.gen(function* () {
-            const workspaceRoot = yield* projectRoot(thread.projectId).pipe(
-              Effect.mapError(() => reject("project-missing")),
-            );
+            const workspaceRoot =
+              requested.workspaceRoot ??
+              (yield* projectRoot(thread.projectId).pipe(
+                Effect.mapError(() => reject("project-missing")),
+              ));
             const { branch, ...developmentEnvironment } = yield* checkouts.resolve({
               xwingEnvironmentId: requested.xwingEnvironmentId,
               workspaceRoot,
@@ -292,6 +305,38 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const changeFolder: DevelopmentEnvironments["Service"]["changeFolder"] = Effect.fn(
+    "DevelopmentEnvironments.changeFolder",
+  )(function* (input) {
+    const folder = yield* paths
+      .normalizeWorkspaceRoot(input.folder)
+      .pipe(
+        Effect.mapError(
+          (cause) => new ThreadFolderUnavailableError({ folder: input.folder, cause }),
+        ),
+      );
+    const branch = yield* git
+      .execute({
+        operation: "change-folder",
+        cwd: folder,
+        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
+        Effect.orElseSucceed(() => null),
+      );
+    return yield* selectCheckout({
+      threadId: input.threadId,
+      commandId: input.commandId,
+      expected: input.expected,
+      target:
+        input.xwingEnvironmentId === undefined
+          ? { type: "native", worktreePath: folder, branch }
+          : { type: "xwing", xwingEnvironmentId: input.xwingEnvironmentId, workspaceRoot: folder },
+    });
+  });
+
   const listCheckouts: DevelopmentEnvironments["Service"]["listCheckouts"] = Effect.fn(
     "DevelopmentEnvironments.listCheckouts",
   )(function* (input) {
@@ -311,6 +356,7 @@ const make = Effect.gen(function* () {
 
   return DevelopmentEnvironments.of({
     bindLaunch,
+    changeFolder,
     selectCheckout,
     resolveLaunchWorkspace,
     listCheckouts,

@@ -1,3 +1,5 @@
+import { XwingRestoreResult } from "./xwingOperations.ts";
+import { ThreadChangeFolderInput, ThreadChangeFolderError } from "./developmentEnvironments.ts";
 import {
   MonitoringStatusResult,
   MonitoringError,
@@ -285,8 +287,6 @@ import {
 import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
-  ProjectCreateFromThreadInput,
-  ProjectCreateFromThreadResult,
   ProjectEnsureScratchResult,
   ProjectListEntriesError,
   ProjectListEntriesInput,
@@ -503,7 +503,7 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
-  projectsCreateFromThread: "projects.createFromThread",
+  threadsChangeFolder: "threads.changeFolder",
 
   shellOpenInEditor: "shell.openInEditor",
 
@@ -535,6 +535,7 @@ export const WS_METHODS = {
   developmentEnvironmentsSelectCheckout: "developmentEnvironments.selectCheckout",
   developmentEnvironmentsCreate: "developmentEnvironments.create",
   developmentEnvironmentsAttach: "developmentEnvironments.attach",
+  developmentEnvironmentsRestore: "developmentEnvironments.restore",
   developmentEnvironmentsRepair: "developmentEnvironments.repair",
   developmentEnvironmentsListAppCommands: "developmentEnvironments.listAppCommands",
   developmentEnvironmentsStartApp: "developmentEnvironments.startApp",
@@ -1480,10 +1481,10 @@ const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
-const WsProjectsCreateFromThreadRpc = Rpc.make(WS_METHODS.projectsCreateFromThread, {
-  payload: ProjectCreateFromThreadInput,
-  success: ProjectCreateFromThreadResult,
-  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+const WsThreadsChangeFolderRpc = Rpc.make(WS_METHODS.threadsChangeFolder, {
+  payload: ThreadChangeFolderInput,
+  success: DevelopmentEnvironmentSelectCheckoutResult,
+  error: Schema.Union([ThreadChangeFolderError, EnvironmentAuthorizationError]),
 });
 
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -1649,6 +1650,12 @@ const WsDevelopmentEnvironmentsAttachRpc = Rpc.make(WS_METHODS.developmentEnviro
   success: DevelopmentEnvironmentSetupResult,
   error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
 });
+const WsDevelopmentEnvironmentsRestoreRpc = Rpc.make(WS_METHODS.developmentEnvironmentsRestore, {
+  payload: DevelopmentEnvironmentRef,
+  success: XwingRestoreResult,
+  error: Schema.Union([DevelopmentEnvironmentLifecycleError, EnvironmentAuthorizationError]),
+});
+
 const WsDevelopmentEnvironmentsRepairRpc = Rpc.make(WS_METHODS.developmentEnvironmentsRepair, {
   payload: DevelopmentEnvironmentRef,
   success: DevelopmentEnvironmentRepairResult,
@@ -2486,7 +2493,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
-  WsProjectsCreateFromThreadRpc,
+  WsThreadsChangeFolderRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
@@ -2519,6 +2526,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDevelopmentEnvironmentsCreateRpc,
   WsDevelopmentEnvironmentsAttachRpc,
   WsDevelopmentEnvironmentsRepairRpc,
+  WsDevelopmentEnvironmentsRestoreRpc,
   WsDevelopmentEnvironmentsListAppCommandsRpc,
   WsDevelopmentEnvironmentsStartAppRpc,
   WsDevelopmentEnvironmentsStopAppRpc,

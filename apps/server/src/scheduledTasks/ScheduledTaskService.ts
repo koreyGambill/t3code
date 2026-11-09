@@ -268,11 +268,6 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
-    /** Points tasks bound to these threads at the project the threads moved to. */
-    readonly moveThreadTasks: (input: {
-      readonly threadIds: ReadonlyArray<ThreadId>;
-      readonly projectId: ProjectId;
-    }) => Effect.Effect<void, ScheduledTaskError>;
     /** The dispatched thread, or null if dispatch failed; leaves the task's binding unchanged. */
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
@@ -1614,22 +1609,6 @@ export const layer = Layer.effect(
       if (removed.length > 0) yield* notifyChanged;
     });
 
-    const moveThreadTasks: ScheduledTaskService["Service"]["moveThreadTasks"] = Effect.fn(
-      "ScheduledTaskService.moveThreadTasks",
-    )(function* (input) {
-      if (input.threadIds.length === 0) return;
-      const moved = yield* sql<{ task_id: ScheduledTaskId }>`
-        UPDATE scheduled_tasks SET project_id = ${input.projectId}
-        WHERE project_id != ${input.projectId} AND thread_id IN ${sql.in(input.threadIds)}
-        RETURNING task_id
-      `.pipe(
-        Effect.mapError((cause) =>
-          taskError("Could not move the thread's schedule tasks.", { cause }),
-        ),
-      );
-      if (moved.length > 0) yield* notifyChanged;
-    });
-
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
     )(function* (input: ScheduledTaskRunNowInput) {
@@ -2563,7 +2542,6 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       deleteForThread,
-      moveThreadTasks,
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries,

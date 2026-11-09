@@ -597,9 +597,10 @@ const layerOrchestrationApplication = Layer.mergeAll(
     Layer.provide(
       Layer.mergeAll(
         DevelopmentEnvironmentCheckouts.layerXwing,
+        WorkspacePaths.layer,
         ProjectionStoreV2.layer,
         layerXwingOperations,
-      ),
+      ).pipe(Layer.provideMerge(GitVcsDriver.layer)),
     ),
   ),
   DevelopmentEnvironmentLifecycle.layer.pipe(

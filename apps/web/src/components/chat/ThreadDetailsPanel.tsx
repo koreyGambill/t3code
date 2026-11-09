@@ -1,3 +1,8 @@
+import { ThreadEnvironmentsDetails } from "../xwing/ThreadEnvironments";
+import { openChangeThreadFolder } from "./changeThreadFolderDialogState";
+import { useAtomValue } from "@effect/atom-react";
+import { changeThreadFolder } from "../../state/xwingEnvironments";
+import { FolderIcon } from "lucide-react";
 import type {
   EditorId,
   EnvironmentId,
@@ -88,6 +93,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const canChangeFolder = useAtomValue(changeThreadFolder.permissionAtom(props.environmentId));
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
@@ -238,6 +244,24 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
+              {!props.draftId ? (
+                <ThreadDetailsSection
+                  headingId="thread-details-folder-heading"
+                  title="Folder"
+                  showHeading={false}
+                >
+                  <ThreadDetailsControl
+                    disabled={!canChangeFolder}
+                    onClick={() => openChangeThreadFolder(activeThreadRef)}
+                  >
+                    <FolderIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                    Change folder…
+                  </ThreadDetailsControl>
+                </ThreadDetailsSection>
+              ) : null}
+              {density === "full" && !props.draftId && visible.environments ? (
+                <ThreadEnvironmentsDetails threadRef={activeThreadRef} />
+              ) : null}
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
               ) : null}

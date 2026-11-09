@@ -64,6 +64,11 @@ export interface DeviceTabTarget {
   name: string;
 }
 
+type TerminalSurfaceLaunchContext = {
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+};
+
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
@@ -75,6 +80,7 @@ export type RightPanelSurface =
       terminalIds: string[];
       activeTerminalId: string;
       splitDirection?: "horizontal" | "vertical";
+      launchContext?: TerminalSurfaceLaunchContext;
     }
   | { id: "diff" | `diff:${string}`; kind: "diff" }
   | {
@@ -232,7 +238,11 @@ interface RightPanelStoreState {
     surfaceId: string,
     detailTab: PullRequestDetailTab,
   ) => void;
-  openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  openTerminal: (
+    ref: ScopedThreadRef,
+    terminalId: string,
+    launchContext?: TerminalSurfaceLaunchContext,
+  ) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -340,12 +350,16 @@ const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface =>
   attachment,
 });
 
-const terminalSurface = (terminalId: string): RightPanelSurface => ({
+const terminalSurface = (
+  terminalId: string,
+  launchContext?: TerminalSurfaceLaunchContext,
+): RightPanelSurface => ({
   id: `terminal:${terminalId}`,
   kind: "terminal",
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+  ...(launchContext ? { launchContext } : {}),
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
@@ -691,6 +705,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       surface.id !== `terminal:${surface.resourceId}`
                     ) {
                       return [];
+                    }
+                    if ("launchContext" in surface) {
+                      const context = surface.launchContext;
+                      if (
+                        context === null ||
+                        typeof context !== "object" ||
+                        typeof context.cwd !== "string" ||
+                        (context.worktreePath !== null && typeof context.worktreePath !== "string")
+                      ) {
+                        const { launchContext: _invalid, ...rest } = surface;
+                        surface = rest;
+                      }
                     }
                     const terminalIds =
                       "terminalIds" in surface && Array.isArray(surface.terminalIds)
@@ -1156,10 +1182,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
           }),
         ),
-      openTerminal: (ref, terminalId) =>
+      openTerminal: (ref, terminalId, launchContext) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, terminalSurface(terminalId)),
+            upsertSurface(current, terminalSurface(terminalId, launchContext)),
           ),
         ),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>

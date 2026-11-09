@@ -2835,6 +2835,24 @@ describe("orchestration v2 provider switching", () => {
           const moved = yield* orchestrator.getThreadProjection(threadId);
           assert.equal(moved.thread.worktreePath, `${cwd}-other-checkout`);
           assert.deepEqual(yield* Ref.get(closedSessions), [session.id]);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:checkout-change-background-work:next"),
+            threadId,
+            messageId: MessageId.make("message:checkout-change-background-work:next"),
+            text: "What did we do before changing folder?",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          const continued = yield* waitForIdle(threadId);
+          assert.notEqual(continued.runs[1]?.providerThreadId, idle.runs[0]?.providerThreadId);
+          assert.lengthOf(continued.messages, 2);
+          assert.equal(continued.contextHandoffs[0]?.strategy, "full_thread_summary");
+          assert.include(continued.contextHandoffs[0]?.summaryText, "Start background agents");
+          assert.include(continued.contextHandoffs[0]?.summaryText, "Background agents started");
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
@@ -2856,7 +2874,11 @@ describe("orchestration v2 provider switching", () => {
                   driver: CLAUDE_DRIVER,
                   capabilities: ClaudeProviderCapabilitiesV2,
                   modelSelection: CLAUDE_MODEL_SELECTION,
-                  responseByRunOrdinal: { 1: "Background agents started" },
+                  responseByRunOrdinal: {
+                    1: "Background agents started",
+                    2: "Earlier context retained",
+                  },
+                  nativeThreadGeneration: yield* Ref.make(0),
                   capturedTurns,
                   backgroundWork,
                   closedSessions,

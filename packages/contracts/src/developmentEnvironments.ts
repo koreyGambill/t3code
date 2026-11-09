@@ -29,6 +29,7 @@ export type DevelopmentEnvironmentListCheckoutsInput =
 export const DevelopmentEnvironmentListUsageInput = Schema.Struct({
   xwingEnvironmentId: Schema.optional(XwingEnvironmentId),
   threadId: Schema.optional(ThreadId),
+  includeDescendants: Schema.optional(Schema.Boolean),
 });
 export type DevelopmentEnvironmentListUsageInput = typeof DevelopmentEnvironmentListUsageInput.Type;
 
@@ -163,3 +164,28 @@ export const DevelopmentEnvironmentListCheckoutsError = Schema.Union([
 ]);
 export type DevelopmentEnvironmentListCheckoutsError =
   typeof DevelopmentEnvironmentListCheckoutsError.Type;
+
+/** Changes an idle thread's next working folder, retaining its conversation. */
+export const ThreadChangeFolderInput = Schema.Struct({
+  threadId: ThreadId,
+  commandId: CommandId,
+  expected: DevelopmentEnvironmentSelectCheckoutInput.fields.expected,
+  folder: TrimmedNonEmptyString,
+  xwingEnvironmentId: Schema.optional(XwingEnvironmentId),
+});
+export type ThreadChangeFolderInput = typeof ThreadChangeFolderInput.Type;
+
+export class ThreadFolderUnavailableError extends Schema.TaggedError<ThreadFolderUnavailableError>()(
+  "ThreadFolderUnavailableError",
+  { folder: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Choose an existing folder on this machine.";
+  }
+}
+
+export const ThreadChangeFolderError = Schema.Union([
+  ...DevelopmentEnvironmentSelectError.members,
+  ThreadFolderUnavailableError,
+]);
+export type ThreadChangeFolderError = typeof ThreadChangeFolderError.Type;

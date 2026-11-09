@@ -24,6 +24,7 @@ import {
   type XwingEnvironmentId,
   type XwingOperationError,
   type XwingRepairResult,
+  type XwingRestoreResult,
 } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the assessment fingerprint is a plain digest.
 import * as NodeCrypto from "node:crypto";
@@ -69,6 +70,7 @@ export class DevelopmentEnvironmentLifecycle extends Context.Service<
     readonly attach: (
       input: DevelopmentEnvironmentAttachInput,
     ) => Failure<DevelopmentEnvironmentSetupResult>;
+    readonly restore: (input: DevelopmentEnvironmentRef) => Failure<XwingRestoreResult>;
     readonly repair: (input: DevelopmentEnvironmentRef) => Failure<XwingRepairResult>;
     readonly listAppCommands: (
       input: DevelopmentEnvironmentAppCommandsInput,
@@ -81,7 +83,7 @@ export class DevelopmentEnvironmentLifecycle extends Context.Service<
     readonly assessCleanup: (
       input: DevelopmentEnvironmentRef,
     ) => Failure<DevelopmentEnvironmentCleanupAssessment>;
-    /** Deletes the environment only if a fresh assessment still matches `fingerprint` and allows it. */
+    /** Archives or deletes only if a fresh assessment still matches `fingerprint` and allows it. */
     readonly cleanUp: (
       input: DevelopmentEnvironmentCleanUpInput,
     ) => Failure<DevelopmentEnvironmentCleanUpResult>;
@@ -553,7 +555,13 @@ const make = Effect.gen(function* () {
               if (!refreshed.assessment.canClean) {
                 return yield* lifecycleError("clean-up", "assessment-changed", id);
               }
-              return yield* operations.delete({ id, confirmId: id });
+              if (input.action === "delete") return yield* operations.delete({ id, confirmId: id });
+              const archived = yield* operations.archive({ id });
+              return {
+                outcome: archived.outcome,
+                stoppedApplications: assessment.runningApps,
+                retainedPaths: [archived.archivePath],
+              };
             }).pipe(
               Effect.onExit((exit) => (Exit.isFailure(exit) ? restore : Effect.void)),
               Effect.catch((error) =>
@@ -575,10 +583,26 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const restore: DevelopmentEnvironmentLifecycle["Service"]["restore"] = Effect.fn(
+    "DevelopmentEnvironmentLifecycle.restore",
+  )(function* (input) {
+    return yield* holds.exclusive(
+      input.xwingEnvironmentId,
+      operations
+        .restore({ id: input.xwingEnvironmentId })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.flip(sanitized("restore", input.xwingEnvironmentId)(error)),
+          ),
+        ),
+    );
+  });
+
   return DevelopmentEnvironmentLifecycle.of({
     create,
     attach,
     repair,
+    restore,
     listAppCommands,
     startApp,
     stopApp,

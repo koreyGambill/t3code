@@ -59,6 +59,7 @@ const makeXwing = (initial: { readonly dirty?: boolean; readonly holds?: Array<X
     holds: [...(initial.holds ?? [])],
     dirty: initial.dirty ?? false,
     deleted: false,
+    archived: false,
     calls: [] as Array<string>,
     attachFailures: 0,
     refuseDelete: false,
@@ -175,6 +176,18 @@ const makeXwing = (initial: { readonly dirty?: boolean; readonly holds?: Array<X
           environmentStatus: "active" as const,
           result: "released" as const,
         };
+      }),
+    archive: () =>
+      Effect.suspend(() => {
+        state.calls.push("archive");
+        if (state.refuseDelete || blockers().length > 0)
+          return Effect.fail(failed("delete", "blocked"));
+        state.archived = true;
+        return Effect.succeed({
+          environmentId: ID,
+          outcome: "archived" as const,
+          archivePath: "/home/dev/.xwing/archives/7",
+        });
       }),
     delete: () =>
       Effect.suspend(() => {
@@ -476,46 +489,52 @@ describe("DevelopmentEnvironmentLifecycle", () => {
     );
   });
 
-  it.effect("deletes after the last thread settled, releasing only this server's holds", () => {
-    const xwing = makeXwing({
-      holds: [bindingHold("idle", "select-1"), bindingHold("gone", "launch-1")],
-    });
-    return Effect.gen(function* () {
-      const service = yield* lifecycle;
-      const assessment = yield* service.assessCleanup({
-        xwingEnvironmentId: ID,
+  it.effect.each(["delete", "archive"] as const)(
+    "%s after the last thread settled, releasing only this server's holds",
+    (action) => {
+      const xwing = makeXwing({
+        holds: [bindingHold("idle", "select-1"), bindingHold("gone", "launch-1")],
       });
-      const result = yield* service.cleanUp({
-        xwingEnvironmentId: ID,
-        fingerprint: assessment.fingerprint,
-      });
+      return Effect.gen(function* () {
+        const service = yield* lifecycle;
+        const assessment = yield* service.assessCleanup({
+          xwingEnvironmentId: ID,
+        });
+        const result = yield* service.cleanUp({
+          xwingEnvironmentId: ID,
+          fingerprint: assessment.fingerprint,
+          action,
+        });
 
-      assert.isTrue(assessment.canClean);
-      assert.deepEqual(
-        assessment.threads.map((thread) => thread.threadId),
-        ["moved", "idle"],
+        assert.isTrue(assessment.canClean);
+        assert.deepEqual(
+          assessment.threads.map((thread) => thread.threadId),
+          ["moved", "idle"],
+        );
+        assert.deepEqual(result, {
+          xwingEnvironmentId: ID,
+          outcome: action === "delete" ? "deleted" : "archived",
+          releasedHolds: assessment.ownHolds.map((own) => own.key),
+          stoppedApplications: action === "delete" ? ["web"] : [],
+          retainedPaths:
+            action === "delete" ? [`/home/dev/.xwing/runs/${ID}`] : ["/home/dev/.xwing/archives/7"],
+        });
+        assert.equal(xwing.state.deleted, action === "delete");
+        assert.equal(xwing.state.archived, action === "archive");
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            xwing,
+            threads: [
+              { id: "idle", worktreePath: `${ROOT}/app`, settled: true },
+              { id: "moved", worktreePath: "/elsewhere", runStatus: "running" },
+            ],
+            usage: [usage("moved", false)],
+          }),
+        ),
       );
-      assert.deepEqual(result, {
-        xwingEnvironmentId: ID,
-        outcome: "deleted",
-        releasedHolds: assessment.ownHolds.map((own) => own.key),
-        stoppedApplications: ["web"],
-        retainedPaths: [`/home/dev/.xwing/runs/${ID}`],
-      });
-      assert.isTrue(xwing.state.deleted);
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          xwing,
-          threads: [
-            { id: "idle", worktreePath: `${ROOT}/app`, settled: true },
-            { id: "moved", worktreePath: "/elsewhere", runStatus: "running" },
-          ],
-          usage: [usage("moved", false)],
-        }),
-      ),
-    );
-  });
+    },
+  );
 
   it.effect("refuses a confirmation once a newer binding holds the environment", () => {
     const xwing = makeXwing({ holds: [bindingHold("idle", "select-1")] });
@@ -543,6 +562,7 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         .cleanUp({
           xwingEnvironmentId: ID,
           fingerprint: reviewed.fingerprint,
+          action: "delete",
         })
         .pipe(Effect.flip, Effect.forkChild);
       yield* Deferred.succeed(finish, undefined);
@@ -596,6 +616,7 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         .cleanUp({
           xwingEnvironmentId: ID,
           fingerprint: assessment.fingerprint,
+          action: "delete",
         })
         .pipe(Effect.flip);
 
@@ -621,11 +642,11 @@ describe("DevelopmentEnvironmentLifecycle", () => {
       const assessment = yield* service.assessCleanup({ xwingEnvironmentId: ID });
       xwing.state.refuseDelete = true;
       const refused = yield* service
-        .cleanUp({ xwingEnvironmentId: ID, fingerprint: assessment.fingerprint })
+        .cleanUp({ xwingEnvironmentId: ID, fingerprint: assessment.fingerprint, action: "delete" })
         .pipe(Effect.flip);
 
       const retried = yield* service
-        .cleanUp({ xwingEnvironmentId: ID, fingerprint: assessment.fingerprint })
+        .cleanUp({ xwingEnvironmentId: ID, fingerprint: assessment.fingerprint, action: "delete" })
         .pipe(Effect.flip);
       assert.equal(refused.reason, "blocked");
       assert.equal(retried.reason, "blocked");

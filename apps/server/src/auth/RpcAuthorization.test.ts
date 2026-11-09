@@ -62,6 +62,12 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.developmentEnvironmentsListUsage,
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.threadsChangeFolder)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.developmentEnvironmentsRestore)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
     expect(requiredScopeForRpcMethod(WS_METHODS.developmentEnvironmentsSelectCheckout)).toBe(
       AuthOrchestrationOperateScope,
     );

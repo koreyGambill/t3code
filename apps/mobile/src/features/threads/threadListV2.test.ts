@@ -113,7 +113,7 @@ describe("layoutThreadListV2RowMenuActions", () => {
       direct: actions("new-thread-on-branch", "copy-thread", "copy-thread-id", "settle", "snooze"),
       reorder: actions("arrange", "move-up", "move-down"),
       pin: actions("unpin"),
-      secondary: actions("rename", "regenerate-title", "turn-into-project", "archive", "delete"),
+      secondary: actions("rename", "regenerate-title", "archive", "delete"),
     };
     const flat = layoutThreadListV2RowMenuActions({ ...full, nested: false });
     const nested = layoutThreadListV2RowMenuActions({ ...full, nested: true });
@@ -134,7 +134,6 @@ describe("layoutThreadListV2RowMenuActions", () => {
       "arrange-menu",
       "rename",
       "regenerate-title",
-      "turn-into-project",
       "archive",
       "delete",
     ]);

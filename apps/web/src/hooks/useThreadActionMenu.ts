@@ -1,3 +1,4 @@
+import { openChangeThreadFolder } from "../components/chat/changeThreadFolderDialogState";
 import { nextThreadGlyphSeed } from "../threadGlyphs";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
@@ -47,7 +48,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
-import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
+import { useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -87,7 +88,6 @@ export function useThreadActionMenu(input: {
     archiveThread,
     deleteThread,
     markThreadUnread,
-    turnThreadIntoProject,
   } = useThreadActions();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -149,7 +149,7 @@ export function useThreadActionMenu(input: {
         supports,
         snoozePresets,
         canShareWithGuest,
-        canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        canChangeFolder: true,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -274,19 +274,9 @@ export function useThreadActionMenu(input: {
         case "share-guest":
           openGuestShareDialog(threadRef);
           return;
-        case "turn-into-project": {
-          const result = await turnThreadIntoProject(threadRef);
-          if (result._tag === "Success") {
-            toastManager.add({
-              type: "success",
-              title: "Project created",
-              description: thread.title,
-            });
-          } else if (!isAtomCommandInterrupted(result)) {
-            failureToast("Could not turn thread into a project", squashAtomCommandFailure(result));
-          }
+        case "change-folder":
+          openChangeThreadFolder(threadRef);
           return;
-        }
         case "copy-path": {
           const workspacePath = thread.worktreePath ?? projectCwd;
           if (!workspacePath) {

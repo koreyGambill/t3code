@@ -220,9 +220,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const addTerminalSurface = () => {
     if (!activeThreadRef) return;
+    const location =
+      activeRightPanelSurface?.kind === "terminal"
+        ? activeRightPanelSurface.launchContext
+        : undefined;
     const launched = terminalActions.launchTerminal({
+      ...(location ? { location } : {}),
       place: (terminalId) =>
-        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId),
+        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId, location),
     });
     if (!launched) return;
     focusTerminal(activeThreadRef, launched.terminalId);
@@ -241,6 +246,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     if (surface?.kind !== "terminal" || surface.terminalIds.length >= MAX_TERMINALS_PER_GROUP)
       return;
     const launched = terminalActions.launchTerminal({
+      ...(surface.launchContext ? { location: surface.launchContext } : {}),
       place: (terminalId) =>
         useRightPanelStore
           .getState()

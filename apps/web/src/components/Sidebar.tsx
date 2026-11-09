@@ -1,3 +1,4 @@
+import { openChangeThreadFolder } from "./chat/changeThreadFolderDialogState";
 import { nextThreadGlyphSeed } from "../threadGlyphs";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -115,11 +116,7 @@ import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
 } from "../threadSelectionStore";
-import {
-  canTurnThreadIntoProject,
-  useAcknowledgeThreadWoke,
-  useThreadActions,
-} from "../hooks/useThreadActions";
+import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
@@ -871,7 +868,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     unpinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
-    turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
     markThreadUnread,
@@ -2559,7 +2555,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
-              canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canChangeFolder: true,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2640,26 +2636,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "unpin":
             attemptUnpin(threadRef);
             return;
-          case "turn-into-project": {
-            const result = await turnThreadIntoProject(threadRef);
-            if (result._tag === "Success") {
-              toastManager.add({
-                type: "success",
-                title: "Project created",
-                description: thread.title,
-              });
-            } else if (!isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Could not turn thread into a project",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                }),
-              );
-            }
+          case "change-folder":
+            openChangeThreadFolder(threadRef);
             return;
-          }
           case "auto-settle:enabled":
           case "auto-settle:disabled": {
             const result = await setThreadAutoSettle(

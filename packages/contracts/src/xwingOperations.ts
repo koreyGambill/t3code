@@ -295,6 +295,13 @@ export const XwingArchiveResult = Schema.Struct({
 });
 export type XwingArchiveResult = typeof XwingArchiveResult.Type;
 
+export const XwingRestoreResult = Schema.Struct({
+  environmentId: XwingEnvironmentId,
+  outcome: Schema.Literals(["restored", "alreadyActive"]),
+  rootPath: Schema.String,
+});
+export type XwingRestoreResult = typeof XwingRestoreResult.Type;
+
 export const XwingDeleteResult = Schema.Struct({
   environmentId: XwingEnvironmentId,
   /** `absent` means Xwing has no environment with this id, deleted earlier or never present. */
@@ -340,6 +347,7 @@ export const XwingOperationName = Schema.Literals([
   "listHolds",
   "previewCleanup",
   "archive",
+  "restore",
   "delete",
   "startApp",
   "stopApp",

@@ -1,6 +1,7 @@
 import {
   type XwingApplicationRun,
   type XwingArchiveResult,
+  type XwingRestoreResult,
   type XwingAttachedRepository,
   XwingAttachRepositoryInput,
   type XwingCleanupPreview,
@@ -258,6 +259,9 @@ export class XwingOperations extends Context.Service<
     readonly archive: (
       input: XwingEnvironmentInput,
     ) => Effect.Effect<XwingArchiveResult, XwingOperationError>;
+    readonly restore: (
+      input: XwingEnvironmentInput,
+    ) => Effect.Effect<XwingRestoreResult, XwingOperationError>;
     readonly delete: (
       input: XwingDeleteInput,
     ) => Effect.Effect<XwingDeleteResult, XwingOperationError>;
@@ -760,6 +764,45 @@ export const make = Effect.fn("XwingOperations.make")(function* (command = "xwin
     } satisfies XwingArchiveResult;
   });
 
+  const restore = Effect.fn("XwingOperations.restore")(function* (input: XwingEnvironmentInput) {
+    const { id } = yield* validate("restore", XwingEnvironmentInput, input);
+    const entry = yield* catalogEntry("restore", id);
+    if (Option.isNone(entry))
+      return yield* new XwingOperationFailedError({
+        operation: "restore",
+        category: "environmentNotFound",
+        environmentId: id,
+        exitCode: null,
+        cause: new Error("environment is not in the catalog"),
+      });
+    if (entry.value.status === "active")
+      return {
+        environmentId: id,
+        outcome: "alreadyActive",
+        rootPath: entry.value.path,
+      } satisfies XwingRestoreResult;
+    // Restore prints a path rather than JSON; verify the catalog after it succeeds.
+    const output = yield* run("restore", ["env", "restore", "--session", id], {
+      unbounded: true,
+      environmentId: id,
+    });
+    if (output.code !== 0) return yield* failure("restore", output, { environmentId: id });
+    const restored = yield* catalogEntry("restore", id);
+    if (Option.isNone(restored) || restored.value.status !== "active")
+      return yield* new XwingOperationFailedError({
+        operation: "restore",
+        category: "unreadableOutput",
+        environmentId: id,
+        exitCode: 0,
+        cause: new Error("restored environment is not active"),
+      });
+    return {
+      environmentId: id,
+      outcome: "restored",
+      rootPath: restored.value.path,
+    } satisfies XwingRestoreResult;
+  });
+
   const deleteEnvironment = Effect.fn("XwingOperations.delete")(function* (
     input: XwingDeleteInput,
   ) {
@@ -933,6 +976,7 @@ export const make = Effect.fn("XwingOperations.make")(function* (command = "xwin
     listHolds,
     previewCleanup,
     archive,
+    restore,
     delete: deleteEnvironment,
     startApp,
     stopApp,

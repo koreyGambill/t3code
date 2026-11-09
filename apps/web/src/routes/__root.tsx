@@ -1,3 +1,4 @@
+import { ChangeThreadFolderDialogHost } from "../components/chat/ChangeThreadFolderDialog";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -188,6 +189,7 @@ function RootRouteBranch() {
       <>
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <ChangeThreadFolderDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />
@@ -229,6 +231,7 @@ function RootRouteBranch() {
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <ChangeThreadFolderDialogHost />
         <ProjectCloneToastCoordinator />
         <ReviewReminderCoordinator />
         <AddProjectToMachineDialogHost />

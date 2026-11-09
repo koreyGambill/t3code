@@ -34,6 +34,9 @@ function recordEffect(action: string) {
   state.completed.resolve();
 }
 
+vi.mock("../components/chat/changeThreadFolderDialogState", () => ({
+  openChangeThreadFolder: () => recordEffect("change-folder"),
+}));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
@@ -119,7 +122,6 @@ vi.mock("./useSettings", () => ({
     }),
 }));
 vi.mock("./useThreadActions", () => ({
-  canTurnThreadIntoProject: () => false,
   useThreadActions: () =>
     Object.fromEntries(
       [

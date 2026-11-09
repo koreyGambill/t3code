@@ -1,5 +1,8 @@
+import { ThreadEnvironmentRows, useThreadEnvironmentUsage } from "./ThreadEnvironments";
+import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import {
   AuthOrchestrationReadScope,
+  AuthTerminalOperateScope,
   type EnvironmentId,
   type ScopedThreadRef,
   XwingEnvironmentId,
@@ -10,7 +13,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
-import { ArrowLeftIcon, Boxes, PlusIcon, SearchIcon } from "lucide-react";
+import { ArrowLeftIcon, Boxes, PlusIcon, SearchIcon, TerminalSquareIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -38,6 +41,7 @@ import {
   CleanupReview,
   CreateEnvironmentForm,
   RepairControl,
+  RestoreControl,
 } from "./XwingEnvironmentLifecycle";
 import { filterXwingEnvironments, xwingEnvironmentLabel } from "./xwingEnvironments.logic";
 
@@ -58,6 +62,8 @@ export function XwingEnvironmentsPanel({
   const supported = useXwingEnvironmentsSupport(environmentId);
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const [query, setQuery] = useState("");
+  const [allEnvironments, setAllEnvironments] = useState(false);
+  const linked = useThreadEnvironmentUsage(threadRef, visible);
   const shell = useThreadShell(threadRef);
   const draftWorktreePath = useComposerDraftStore(
     (store) => store.getDraftThreadByRef(threadRef)?.worktreePath ?? null,
@@ -92,6 +98,7 @@ export function XwingEnvironmentsPanel({
   const active = inspecting ? detail : list;
   const refresh = () => {
     list.refresh();
+    linked.refresh();
     if (inspecting) detail.refresh();
   };
 
@@ -125,6 +132,11 @@ export function XwingEnvironmentsPanel({
             />
           </label>
         )}
+        {enabled && !validSelection ? (
+          <Button size="micro" variant="ghost" onClick={() => setAllEnvironments((all) => !all)}>
+            {allEnvironments ? "Linked" : "All"}
+          </Button>
+        ) : null}
         {enabled && !validSelection && projectId !== null ? (
           <ToolbarButton label="New environment" onClick={() => setCreating(true)}>
             <PlusIcon />
@@ -163,14 +175,22 @@ export function XwingEnvironmentsPanel({
           <ArchivedEnvironmentDetail
             environment={archived}
             cleanup={
-              <CleanupReview
-                environmentId={environmentId}
-                xwingEnvironmentId={archived.id}
-                onDeleted={() => {
-                  list.refresh();
-                  select(null);
-                }}
-              />
+              <>
+                <RestoreControl
+                  threadRef={threadRef}
+                  xwingEnvironmentId={archived.id}
+                  onRestored={refresh}
+                />
+                <CleanupReview
+                  archived
+                  environmentId={environmentId}
+                  xwingEnvironmentId={archived.id}
+                  onDeleted={() => {
+                    list.refresh();
+                    select(null);
+                  }}
+                />
+              </>
             }
           />
         ) : validSelection ? (
@@ -188,6 +208,8 @@ export function XwingEnvironmentsPanel({
           ) : (
             <Notice>Inspecting…</Notice>
           )
+        ) : !allEnvironments ? (
+          <ThreadEnvironmentRows threadRef={threadRef} query={query} onSelect={select} />
         ) : list.data === null ? (
           <Notice>Loading…</Notice>
         ) : (
@@ -527,6 +549,8 @@ function EnvironmentDetail({
   readonly onChanged: () => void;
   readonly onDeleted: () => void;
 }) {
+  const terminals = useThreadTerminalActions(threadRef);
+  const canTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const problems = detail.health.checks.filter((check) => check.status !== "ok");
   return (
     <div className="divide-y divide-border">
@@ -565,6 +589,19 @@ function EnvironmentDetail({
               key={repository.path}
               repository={repository}
               current={repository.path === currentWorkspacePath}
+              onOpenTerminal={
+                canTerminal
+                  ? () =>
+                      terminals.launchTerminal({
+                        location: { cwd: repository.path, worktreePath: currentWorkspacePath },
+                        place: (terminalId) =>
+                          useRightPanelStore.getState().openTerminal(threadRef, terminalId, {
+                            cwd: repository.path,
+                            worktreePath: currentWorkspacePath,
+                          }),
+                      })
+                  : undefined
+              }
             />
           ))
         )}
@@ -651,9 +688,11 @@ function Section(props: {
 function RepositoryRow({
   repository,
   current,
+  onOpenTerminal,
 }: {
   readonly repository: XwingRepositoryDetail;
   readonly current: boolean;
+  readonly onOpenTerminal?: (() => void) | undefined;
 }) {
   return (
     <div className="flex flex-col gap-0.5 px-2 py-1">
@@ -668,11 +707,9 @@ function RepositoryRow({
             ↑{repository.ahead} ↓{repository.behind}
           </span>
         ) : null}
-        {repository.dirty ? (
-          <Badge size="sm" variant="warning">
-            changes
-          </Badge>
-        ) : null}
+        <Badge size="sm" variant={repository.dirty ? "warning" : "outline"}>
+          {repository.dirty ? "dirty" : "clean"}
+        </Badge>
         {repository.published ? (
           <Badge size="sm" variant="secondary">
             pushed
@@ -699,6 +736,14 @@ function RepositoryRow({
           </span>
         ) : null}
       </div>
+      {onOpenTerminal ? (
+        <div>
+          <Button size="micro" variant="outline" onClick={onOpenTerminal}>
+            <TerminalSquareIcon />
+            Open terminal here
+          </Button>
+        </div>
+      ) : null}
       {repository.refreshResult ? (
         <div className="text-muted-foreground">
           refresh {repository.refreshResult}

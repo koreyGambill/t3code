@@ -314,7 +314,11 @@ it.effect.each([
         const assessment = yield* lifecycle.assessCleanup({ xwingEnvironmentId: id });
         yield* Deferred.succeed(resumeDelete, undefined);
         yield* lifecycle
-          .cleanUp({ xwingEnvironmentId: id, fingerprint: assessment.fingerprint })
+          .cleanUp({
+            xwingEnvironmentId: id,
+            fingerprint: assessment.fingerprint,
+            action: "delete",
+          })
           .pipe(Effect.result);
         assert.isFalse(deleted);
         assert.isFalse(assessment.canClean);
@@ -343,7 +347,7 @@ it.effect.each([
         yield* Deferred.succeed(resumeDelete, undefined);
       }
       const cleaning = yield* lifecycle
-        .cleanUp({ xwingEnvironmentId: id, fingerprint: assessment.fingerprint })
+        .cleanUp({ xwingEnvironmentId: id, fingerprint: assessment.fingerprint, action: "delete" })
         .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
       if (leaseHolder === undefined) yield* Deferred.await(released);
       if (actor === "interrupted hold release") {

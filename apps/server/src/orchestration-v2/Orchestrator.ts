@@ -643,7 +643,6 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request-watch.sync":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
-    case "thread.project.adopt-folder":
     case "thread.workspace.select":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
@@ -1226,6 +1225,7 @@ function rootProviderThreadsForProvider(
         providerThread.providerInstanceId === providerInstanceId &&
         providerThread.appThreadId === projection.thread.id &&
         providerThread.ownerNodeId === null &&
+        providerThread.status !== "closed" &&
         !providerThreadPredatesBoundary(providerThread, boundary),
     )
     .toSorted(
@@ -4663,6 +4663,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
+    if (
+      command.type === "thread.workspace.select" &&
+      command.worktreePath !== thread.worktreePath
+    ) {
+      // Native conversations belong to a working folder; keep their rows for history and restore.
+      const previousThreads = (yield* projectionStore
+        .getThreadRecords(command.threadId, ["providerThreads"])
+        .pipe(mapDispatchError(command))).providerThreads.filter((row) => row.ownerNodeId === null);
+      for (const previous of previousThreads.toSorted(
+        (a, b) =>
+          Number(a.id === thread.activeProviderThreadId) -
+          Number(b.id === thread.activeProviderThreadId),
+      )) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "provider-thread.updated",
+          threadId: command.threadId,
+          providerInstanceId: previous.providerInstanceId,
+          occurredAt: now,
+          payload: { ...previous, status: "closed", updatedAt: now },
+        });
+      }
+    }
+
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -4934,56 +4960,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
     },
   );
-
-  const dispatchThreadProjectAdoptFolder = Effect.fn(
-    "orchestrationV2.dispatch.threadProjectAdoptFolder",
-  )(function* (
-    command: Extract<
-      OrchestrationV2ServerCommand,
-      { readonly type: "thread.project.adopt-folder" }
-    >,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) {
-    const reject = (cause: string) =>
-      new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Thread ${command.threadId} ${cause}`,
-      });
-    const projection = yield* projectionStore
-      .getThreadRecords(command.threadId, ["runs", "runtimeRequests"], { turnItemTypes: [] })
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-        ),
-      );
-    const thread = projection.thread;
-    if (thread.deletedAt !== null) return yield* reject("is deleted.");
-    if (threadHasUnfinishedWork(projection)) {
-      return yield* reject("still has work in progress. Finish or stop it first.");
-    }
-    const current = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
-    const target = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
-    if (Option.isNone(target) || target.value.deletedAt !== null) {
-      return yield* reject(`cannot move to missing project ${command.projectId}.`);
-    }
-    // The thread always lands in the project root, so the move must not change its cwd.
-    const cwd = thread.worktreePath ?? Option.getOrUndefined(current)?.workspaceRoot;
-    if (cwd !== target.value.workspaceRoot) {
-      return yield* reject(`does not work in ${target.value.workspaceRoot}.`);
-    }
-    const now = yield* DateTime.now;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.metadata-updated",
-      threadId: command.threadId,
-      providerInstanceId: thread.providerInstanceId,
-      occurredAt: now,
-      payload: { ...thread, projectId: command.projectId, worktreePath: null, updatedAt: now },
-    });
-  });
 
   const refuseAboveDispatchModeLimit = Effect.fn("orchestrationV2.dispatch.refuseAboveModeLimit")(
     function* (
@@ -6986,6 +6962,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.historyOrigin === "v1_import" && contextBoundary === 0
         ? yield* readHandoffItems(command.threadId, [null])
         : [];
+    const workspaceChanged = activeProviderThread?.status === "closed";
     const isProviderSwitch =
       activeProviderThread !== undefined &&
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;
@@ -7010,6 +6987,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : null;
     const canResumeAcrossInstances =
       !freshContext &&
+      !workspaceChanged &&
       isProviderSwitch &&
       activeProviderThread.nativeThreadRef !== null &&
       providerSwitchPlan?.transition.type === "restart_and_resume";
@@ -7037,7 +7015,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       pendingForkTransfer === undefined &&
       pendingMergeBackTransfer === undefined &&
-      (!isProviderSwitch || freshContext)
+      ((!isProviderSwitch && !workspaceChanged) || freshContext)
     ) {
       const reusableProviderThread = freshContext ? undefined : activeProviderThread;
       const adapter = yield* providerAdapters.get(modelSelection.instanceId).pipe(
@@ -7461,8 +7439,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
-    const targetProviderThread =
-      isProviderSwitch && !canResumeAcrossInstances
+    const targetProviderThread = workspaceChanged
+      ? undefined
+      : isProviderSwitch && !canResumeAcrossInstances
         ? rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0]
         : activeProviderThread;
     const providerSessionId =
@@ -7662,7 +7641,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? undefined
         : lastDeliveredRunForProviderThread(projection, targetProviderThread.id);
     const providerSwitchCoveredRuns =
-      !isProviderSwitch || canResumeAcrossInstances || latestHandoffRun === undefined
+      (!isProviderSwitch && !workspaceChanged) ||
+      canResumeAcrossInstances ||
+      latestHandoffRun === undefined
         ? []
         : projection.runs.filter(
             (run) =>
@@ -7676,6 +7657,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerSwitchCoveredRuns.length === 0
         ? []
         : [
+            ...(workspaceChanged && contextBoundary === 0
+              ? yield* readInheritedItems(projection.thread)
+              : []),
             ...(latestCompletedRun !== undefined &&
             (targetProviderThread === undefined || requiresFullProviderSwitchContext)
               ? legacyImportItems
@@ -7750,7 +7734,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
             );
     const legacyImportRecoveryHandoff =
-      isProviderSwitch &&
+      (isProviderSwitch || workspaceChanged) &&
       !canResumeAcrossInstances &&
       latestCompletedRun === undefined &&
       legacyImportItems.length > 0
@@ -14267,9 +14251,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
-        break;
-      case "thread.project.adopt-folder":
-        yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
       case "message.dispatch": {
         if (command.advisoryOnly) yield* assertAdvisory(command);

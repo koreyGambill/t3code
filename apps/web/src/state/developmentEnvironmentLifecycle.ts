@@ -66,3 +66,8 @@ export const cleanUpDevelopmentEnvironment = createEnvironmentRpcCommand(connect
   label: "development-environments:clean-up",
   tag: WS_METHODS.developmentEnvironmentsCleanUp,
 });
+
+export const restoreDevelopmentEnvironment = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "development-environments:restore",
+  tag: WS_METHODS.developmentEnvironmentsRestore,
+});

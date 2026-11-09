@@ -25,6 +25,7 @@ import {
   developmentEnvironmentAppLogs,
   developmentEnvironmentCleanupAssessment,
   repairDevelopmentEnvironment,
+  restoreDevelopmentEnvironment,
   startDevelopmentEnvironmentApp,
   stopDevelopmentEnvironmentApp,
 } from "../../state/developmentEnvironmentLifecycle";
@@ -540,15 +541,17 @@ export function CleanupReview({
   environmentId,
   xwingEnvironmentId,
   onDeleted,
+  archived = false,
 }: {
   readonly environmentId: ScopedThreadRef["environmentId"];
   readonly xwingEnvironmentId: XwingEnvironmentId;
   readonly onDeleted: () => void;
+  readonly archived?: boolean;
 }) {
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const canClean = useAtomValue(cleanUpDevelopmentEnvironment.permissionAtom(environmentId));
   const [reviewing, setReviewing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<"archive" | "delete" | null>(null);
   const [deleting, setDeleting] = useState(false);
   const cleanUp = useAtomCommand(cleanUpDevelopmentEnvironment, "Delete Xwing environment");
   const assessment = useEnvironmentQuery(
@@ -591,7 +594,7 @@ export function CleanupReview({
           label="Check again"
           disabled={assessment.isPending}
           onClick={() => {
-            setConfirming(false);
+            setConfirming(null);
             assessment.refresh();
           }}
         >
@@ -636,11 +639,11 @@ export function CleanupReview({
       ) : null}
       {data.canClean && canClean ? (
         <div className="flex items-center gap-1.5">
-          {confirming ? (
+          {confirming !== null ? (
             <>
               <Button
                 size="micro"
-                variant="destructive"
+                variant={confirming === "delete" ? "destructive" : "outline"}
                 disabled={deleting}
                 onClick={async () => {
                   setDeleting(true);
@@ -649,27 +652,78 @@ export function CleanupReview({
                     input: {
                       xwingEnvironmentId,
                       fingerprint: data.fingerprint,
+                      action: confirming,
                     },
                   });
                   setDeleting(false);
-                  setConfirming(false);
+                  setConfirming(null);
                   if (result._tag === "Success") onDeleted();
                   else assessment.refresh();
                 }}
               >
-                {deleting ? "Deleting…" : `Delete ${data.name}`}
+                {deleting
+                  ? "Working…"
+                  : `${confirming === "delete" ? "Delete" : "Archive"} ${data.name}`}
               </Button>
-              <Button size="micro" variant="ghost" onClick={() => setConfirming(false)}>
+              <Button size="micro" variant="ghost" onClick={() => setConfirming(null)}>
                 Cancel
               </Button>
             </>
           ) : (
-            <Button size="micro" variant="destructive-outline" onClick={() => setConfirming(true)}>
-              Delete environment…
-            </Button>
+            <>
+              {!archived ? (
+                <Button size="micro" variant="outline" onClick={() => setConfirming("archive")}>
+                  Archive environment…
+                </Button>
+              ) : null}
+              <Button
+                size="micro"
+                variant="destructive-outline"
+                onClick={() => setConfirming("delete")}
+              >
+                Delete environment…
+              </Button>
+            </>
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+export function RestoreControl({
+  threadRef,
+  xwingEnvironmentId,
+  onRestored,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly xwingEnvironmentId: XwingEnvironmentId;
+  readonly onRestored: () => void;
+}) {
+  const restore = useAtomCommand(restoreDevelopmentEnvironment, "Restore Xwing environment");
+  const canRestore = useAtomValue(
+    restoreDevelopmentEnvironment.permissionAtom(threadRef.environmentId),
+  );
+  const [pending, setPending] = useState(false);
+  if (!canRestore) return null;
+  return (
+    <div className="p-2">
+      <Button
+        size="compact"
+        variant="outline"
+        disabled={pending}
+        onClick={async () => {
+          setPending(true);
+          const result = await restore({
+            environmentId: threadRef.environmentId,
+            input: { xwingEnvironmentId },
+          });
+          setPending(false);
+          if (result._tag === "Success") onRestored();
+        }}
+      >
+        {pending ? "Restoring…" : "Restore environment"}
+      </Button>
     </div>
   );
 }

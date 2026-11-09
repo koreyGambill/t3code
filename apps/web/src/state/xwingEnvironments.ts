@@ -56,3 +56,8 @@ export function useXwingEnvironmentsSupport(environmentId: EnvironmentId | null)
     configs.get(environmentId)?.environment.capabilities.xwingEnvironments === true
   );
 }
+
+export const changeThreadFolder = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "threads:change-folder",
+  tag: WS_METHODS.threadsChangeFolder,
+});

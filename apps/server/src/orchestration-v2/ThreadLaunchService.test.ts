@@ -1,3 +1,4 @@
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
@@ -1074,6 +1075,8 @@ it.effect(
       [];
     const holds: Array<{ readonly id: string; readonly key: string }> = [];
     const layerEnvironments = DevelopmentEnvironments.layer.pipe(
+      Layer.provide(Layer.mock(WorkspacePaths.WorkspacePaths)({})),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provide(DevelopmentEnvironmentHolds.layer),
       Layer.provide(
         Layer.mergeAll(

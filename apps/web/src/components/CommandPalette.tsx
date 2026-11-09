@@ -1,3 +1,5 @@
+import { openChangeThreadFolder } from "./chat/changeThreadFolderDialogState";
+import { changeThreadFolder } from "../state/xwingEnvironments";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -483,6 +485,9 @@ function OpenCommandPaletteDialog(props: {
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
+  );
+  const canChangeActiveThreadFolder = useAtomValue(
+    changeThreadFolder.permissionAtom(activeThread?.environmentId ?? preferredEnvironmentId),
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
@@ -1451,6 +1456,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:change-thread-folder",
+      title: "Change folder…",
+      searchTerms: ["folder", "directory", "move", "cwd", "location"],
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      disabled: !canChangeActiveThreadFolder,
+      run: async () => {
+        openChangeThreadFolder(threadRef);
       },
     });
   }
