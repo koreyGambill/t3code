@@ -381,12 +381,14 @@ containing an existing MCP Authorization header. Without that credential, the av
 path is SQLite's persisted run projection; the receipt labels it `read-only-sqlite`. Read errors keep
 the drain waiting until its deadline. Waiting-for-input turns do not hold the update open.
 
-Activation snapshots WSL and Windows `statev2.sqlite` with `VACUUM INTO` on a read-only connection,
-then copies settings, secrets and thread workspaces. WAL writers can continue during the snapshot.
-Each snapshot helper has a four-minute deadline and removes partial output on failure.
-It excludes `server-owner.sqlite`, the live ownership lock. Check-only snapshots live in command
-scratch and are removed afterwards. Real activation prepares state beside the install, then retains
-it in the rollback directory. Keep logs and receipts separate from private state.
+Activation snapshots WSL and Windows `statev2.sqlite` with SQLite's backup API in one step on a
+read-only connection, then copies settings, secrets and thread workspaces. WAL writers can continue
+during the snapshot. Each snapshot helper has a four-minute deadline and removes partial output on
+failure. It excludes `server-owner.sqlite`, the live ownership lock. Check-only snapshots live in
+command scratch and are removed afterwards. Real activation keeps the WSL snapshot on the Linux disk
+under `~/.local/share/weavewing-update-backups/<commit>` (writing it through `/mnt/c` is too slow) and
+retains the Windows snapshot in the rollback directory; each keeps only the latest update's copy.
+Keep logs and receipts separate from private state.
 It carries over the install's launchers, closes the main window gracefully, waits for the WSL server
 to exit, swaps the app and relaunches through `Start Weavewing.cmd`. Health checks require the process
 under the new archive digest to answer the environment endpoint. `--health-seconds` defaults to 240.

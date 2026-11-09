@@ -243,12 +243,24 @@ async function worker(mode: string, configFile: string, extra: string[]) {
   const config = JSON.parse(NodeFS.readFileSync(configFile, "utf8"));
   helperReceiptDirectory = NodePath.join(NodePath.dirname(configFile), "helpers");
   recordHelper(process.pid, `worker:${mode}`);
-  if (mode === "backup")
-    return backupState(
+  if (mode === "backup") {
+    // WSL state stays on the Linux disk: writing it through /mnt/c timed out at 240 s for 3 GB.
+    const destination = NodePath.join(config.wslBackupRoot, "backup-wsl");
+    NodeFS.mkdirSync(config.wslBackupRoot, { mode: 0o700, recursive: true });
+    const result = await backupState(
       NodePath.join(config.wslHome, "userdata"),
-      NodePath.join(config.backupRoot, "backup-wsl"),
+      destination,
       config.backupTimeoutMs,
     );
+    if (!config.checkOnly) {
+      // Keep only this update's backup, matching the single Windows rollback.
+      const parent = NodePath.dirname(config.wslBackupRoot);
+      for (const entry of NodeFS.readdirSync(parent))
+        if (/^[0-9a-f]{40}$/.test(entry) && entry !== NodePath.basename(config.wslBackupRoot))
+          NodeFS.rmSync(NodePath.join(parent, entry), { recursive: true, force: true });
+    }
+    return result;
+  }
   if (mode === "backup-windows")
     return backupState(
       config.windowsUserdata ?? NodePath.join(NodeOS.homedir(), ".t3/userdata"),
@@ -467,6 +479,13 @@ async function main() {
       checkOnly,
       backupRoot,
       backupRootWindows: await windowsPath(backupRoot),
+      wslBackupRoot: checkOnly
+        ? backupRoot
+        : NodePath.join(
+            NodeOS.homedir(),
+            ".local/share/weavewing-update-backups",
+            await git("rev-parse", "HEAD"),
+          ),
       notifyThread: values["notify-thread"],
       authorizationFile: values["mcp-authorization-file"],
       source: await windowsPath(NodePath.join(output, "windows/win-unpacked")),

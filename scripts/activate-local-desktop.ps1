@@ -206,9 +206,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     if (Test-Path -LiteralPath $rollback) { Remove-Item -LiteralPath $rollback -Recurse -Force }
     New-Item -ItemType Directory -Path $rollback | Out-Null
     Set-Content -LiteralPath $marker -Value $install
-    foreach ($name in @('backup-wsl', 'backup-windows')) { Move-Item -LiteralPath (Join-Path $config.backupRootWindows $name) -Destination (Join-Path $rollback $name) }
+    Move-Item -LiteralPath (Join-Path $config.backupRootWindows 'backup-windows') -Destination (Join-Path $rollback 'backup-windows')
     Remove-Item -LiteralPath $config.backupRootWindows -Recurse -Force
-    $details.wslBackup.path = Join-Path $rollback 'backup-wsl'
     $details.windowsBackup.path = Join-Path $rollback 'backup-windows'
     Save-UpdateStatus 'activating'
     Invoke-LocalUpdateSwap $install $payload $rollback { Start-UpdateDesktop } { Wait-UpdateHealthy $config.digest } {
