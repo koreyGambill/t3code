@@ -68,6 +68,9 @@ import { environmentCatalog } from "../connection/catalog";
 import { BootstrapReconnect } from "../components/auth/BootstrapReconnect";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { Atom } from "effect/reactivity";
+import * as Schema from "effect/Schema";
+
+const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
 
 const bootstrapConnectionGenerationAtom = Atom.make((get) => {
   const environmentId = get(primaryEnvironmentIdAtom);
@@ -248,7 +251,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   const pathname = useLocation({ select: (location) => location.pathname });
   const report = errorReport(error, pathname);
 
-  if (error instanceof PrimaryEnvironmentRequestError && isTransientBootstrapError(error)) {
+  if (isPrimaryEnvironmentRequestError(error) && isTransientBootstrapError(error)) {
     return (
       <BootstrapReconnect
         generationAtom={bootstrapConnectionGenerationAtom}

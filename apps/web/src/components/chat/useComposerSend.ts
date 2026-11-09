@@ -65,7 +65,7 @@ import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { type ChatMessage } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { newMessageId, newThreadId } from "~/lib/utils";
+import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -512,7 +512,7 @@ export function useComposerSend(input: ComposerSendInput) {
           environmentId,
           serverId,
           input: {
-            commandId: CommandId.make(crypto.randomUUID()),
+            commandId: CommandId.make(randomUUID()),
             threadId: activeThread.id,
             message: {
               messageId: newMessageId(),

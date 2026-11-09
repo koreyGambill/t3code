@@ -4,6 +4,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { CommandId, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -12,6 +13,7 @@ import { threadEnvironment } from "./threads";
 import { useComposerDraftStore, type ComposerThreadTarget } from "../composerDraftStore";
 
 export const offlineOutbox = createOfflineOutbox();
+const isEnvironmentRpcUnavailableError = Schema.is(EnvironmentRpcUnavailableError);
 const drafts = new Map<
   CommandId,
   {
@@ -54,7 +56,7 @@ const send = async (submission: OfflineSubmission) => {
     return "sent" as const;
   }
   const error = squashAtomCommandFailure(result);
-  if (isRpcClientError(error) || error instanceof EnvironmentRpcUnavailableError) {
+  if (isRpcClientError(error) || isEnvironmentRpcUnavailableError(error)) {
     return "disconnected" as const;
   }
   return {
