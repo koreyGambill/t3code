@@ -94,6 +94,7 @@ const withScratch = <A, E>(
     E,
     | ManagedProjectFolders.ManagedProjectFolders
     | ProjectService.ProjectService
+    | ServerSettings.ServerSettingsService
     | NodeServices.NodeServices
     | Scope.Scope
   >,

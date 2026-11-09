@@ -950,7 +950,7 @@ function makeLocalCommandHarness(input: {
           ? Layer.empty
           : Layer.mock(ManagedFolders.ManagedProjectFolders)({
               namedProjectsRoot: "/tmp/projects",
-              scratchRoot: Effect.succeed(Option.some("/home/user/code")),
+              scratchRoot: Effect.succeedSome("/home/user/code"),
               isScratchProject: () => Effect.succeed(true),
               sandboxFolderForThread: () => Effect.succeed("/tmp/isolated-scratch/thread"),
             }),
