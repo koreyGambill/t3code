@@ -22,6 +22,8 @@ import {
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
+  MCP_PEER_LINK_SUBJECT_PREFIX,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
@@ -75,6 +77,8 @@ export interface IssuedBearerSession {
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
+const isMcpClientSubject = (subject: string) =>
+  subject === MCP_CLIENT_SUBJECT || subject.startsWith(MCP_PEER_LINK_SUBJECT_PREFIX);
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export interface McpClientSession {
@@ -550,6 +554,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
+      readonly peerEnvironmentId?: EnvironmentId;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<
       {
@@ -610,7 +615,7 @@ function toBootstrapExchangeError(
 }
 
 const rejectMcpClientAudience = <S extends { readonly subject: string }>(session: S) =>
-  session.subject === MCP_CLIENT_SUBJECT
+  isMcpClientSubject(session.subject)
     ? Effect.fail(
         new ServerAuthInvalidCredentialError({
           diagnostic: "MCP client sessions are only accepted by the MCP endpoint.",
@@ -1301,7 +1306,7 @@ export const make = Effect.gen(function* () {
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
-        session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
+        isMcpClientSubject(session.subject) && session.method === "bearer-access-token"
           ? Effect.succeed({
               sessionId: session.sessionId,
               label: session.client.label ?? "MCP client",
@@ -1323,7 +1328,11 @@ export const make = Effect.gen(function* () {
   const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
     sessions
       .issue({
-        subject: MCP_CLIENT_SUBJECT,
+        subject:
+          input.peerLink && input.peerEnvironmentId
+            ? `${MCP_PEER_LINK_SUBJECT_PREFIX}${input.peerEnvironmentId}`
+            : MCP_CLIENT_SUBJECT,
+        replaceActiveForSubjectAndMethod: input.peerLink && input.peerEnvironmentId !== undefined,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
         ttl: MCP_CLIENT_SESSION_TTL,

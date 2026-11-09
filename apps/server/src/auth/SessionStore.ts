@@ -833,6 +833,28 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (
+        claims.method !== "browser-session-cookie" &&
+        (row.value.lastConnectedAt === null ||
+          observedAt.epochMilliseconds - row.value.lastConnectedAt.epochMilliseconds >= 60_000)
+      ) {
+        yield* authSessions
+          .setLastConnectedAt({
+            sessionId: claims.sid,
+            lastConnectedAt: observedAt,
+            onlyIfBefore: DateTime.subtract(observedAt, { minutes: 1 }),
+          })
+          .pipe(
+            Effect.andThen(loadActiveSession(claims.sid)),
+            Effect.flatMap((session) =>
+              Option.isSome(session) ? emitUpsert(session.value) : Effect.void,
+            ),
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to record session last use.", { cause }),
+            ),
+          );
+      }
+
       return {
         sessionId: claims.sid,
         token,

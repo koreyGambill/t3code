@@ -89,6 +89,7 @@ export type RevokeOtherAuthSessionsInput = typeof RevokeOtherAuthSessionsInput.T
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
   lastConnectedAt: Schema.DateTimeUtcFromString,
+  onlyIfBefore: Schema.optionalKey(Schema.DateTimeUtcFromString),
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
@@ -312,12 +313,13 @@ export const make = Effect.gen(function* () {
 
   const setLastConnectedAtRow = SqlSchema.void({
     Request: SetAuthSessionLastConnectedAtInput,
-    execute: ({ sessionId, lastConnectedAt }) =>
+    execute: ({ sessionId, lastConnectedAt, onlyIfBefore }) =>
       sql`
         UPDATE auth_sessions
         SET last_connected_at = ${lastConnectedAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
+          ${onlyIfBefore === undefined ? sql`` : sql`AND (last_connected_at IS NULL OR last_connected_at <= ${onlyIfBefore})`}
       `,
   });
 

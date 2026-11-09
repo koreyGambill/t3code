@@ -363,6 +363,9 @@ and the access, then approve.
   scripts.
 - The link shows up in that machine's **Settings → Sharing & access** as
   **Linked environment ·** this machine's name. Revoke it there to end it.
+  Linking again replaces this machine's previous session there. Recently used
+  links show their last use and ask for confirmation before you revoke them.
+  Older sessions may remain listed after an upgrade; revoke those you no longer use.
   **Forget** on this machine only removes it here.
 - Once the other machine refuses the link, after a revoke, it shows here as no
   longer accepted, even though that machine still answers.

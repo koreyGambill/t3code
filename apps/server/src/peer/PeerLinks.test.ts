@@ -117,6 +117,57 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
     Effect.flatMap((server) => serveB(descriptor).pipe(Effect.provideContext(server))),
   );
 
+it.effect("relinking replaces only the same peer's sessions, including after a rename", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const other = yield* makeA(descriptorOf("other-laptop", laptop.label));
+      const ordinary = yield* b.auth.issueMcpClientSession({
+        label: `Linked environment · ${laptop.label}`,
+        access: "auto",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      });
+      const desktop = yield* b.auth.issueSession({ subject: "desktop-bootstrap" });
+      const cli = yield* b.auth.issueSession();
+      yield* b.auth.createBrowserSession((yield* b.auth.issuePairingCredential()).credential, {
+        label: "Browser",
+        deviceType: "desktop",
+      });
+      const link = (client: typeof a) =>
+        b.auth
+          .issuePairingCredential()
+          .pipe(
+            Effect.flatMap((pairing) =>
+              client.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" }),
+            ),
+          );
+      yield* link(a);
+      const previous = (yield* b.linkedSessions).find(
+        (session) => session.sessionId !== ordinary.sessionId,
+      )!;
+      yield* link(other);
+      const renamed = yield* makeA({ ...laptop, label: "Renamed laptop" });
+      yield* link(renamed);
+      const active = yield* b.auth.listSessions();
+      expect(active.some((session) => session.sessionId === previous.sessionId)).toBe(false);
+      expect(active).toHaveLength(6);
+      expect(active.find((session) => session.client.label === "Browser")?.method).toBe(
+        "browser-session-cookie",
+      );
+      expect((yield* probe(a).pipe(Effect.flip)).code).toBe("capability_denied");
+      for (const sessionId of [ordinary.sessionId, desktop.sessionId, cli.sessionId]) {
+        expect(active.some((session) => session.sessionId === sessionId)).toBe(true);
+      }
+      expect(yield* probe(other)).toMatchObject({ caller: `Linked environment · ${laptop.label}` });
+      expect(yield* probe(renamed)).toMatchObject({
+        caller: "Linked environment · Renamed laptop",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
   Effect.scoped(
     Effect.gen(function* () {

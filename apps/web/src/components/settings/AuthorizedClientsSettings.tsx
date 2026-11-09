@@ -22,7 +22,11 @@ import {
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
-import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
+import {
+  formatElapsedDurationLabel,
+  formatExpiresInLabel,
+  formatRelativeTimeLabel,
+} from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
   canRevokeOtherClients,
@@ -508,13 +512,18 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   const nowMs = useNowSecond();
   const isLive = clientSession.current || clientSession.connected;
   const lastConnectedAt = clientSession.lastConnectedAt;
-  const statusTooltip = isLive
+  const tracksLastUse = clientSession.method !== "browser-session-cookie";
+  const statusTooltip = tracksLastUse
     ? lastConnectedAt
-      ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
-      : "Connected"
-    : lastConnectedAt
-      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
-      : "Not connected yet.";
+      ? `Last used at ${formatAccessTimestamp(lastConnectedAt)}`
+      : "Not used yet."
+    : isLive
+      ? lastConnectedAt
+        ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
+        : "Connected"
+      : lastConnectedAt
+        ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
+        : "Not connected yet.";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
       ? clientSession.client.deviceType[0]?.toUpperCase() + clientSession.client.deviceType.slice(1)
@@ -553,6 +562,17 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
               </>
             ) : null}
             <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
+            {tracksLastUse && lastConnectedAt ? (
+              <>
+                <span aria-hidden> · </span>
+                <Tooltip>
+                  <TooltipTrigger render={<span />}>
+                    Last used {formatRelativeTimeLabel(lastConnectedAt, nowMs)}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{formatAccessTimestamp(lastConnectedAt)}</TooltipPopup>
+                </Tooltip>
+              </>
+            ) : null}
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">

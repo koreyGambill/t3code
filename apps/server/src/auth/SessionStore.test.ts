@@ -532,6 +532,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("records bearer last use at most once per minute per session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE session_use_writes (session_id TEXT)`;
+      yield* sql`CREATE TRIGGER count_session_use AFTER UPDATE OF last_connected_at ON auth_sessions
+        BEGIN INSERT INTO session_use_writes VALUES (NEW.session_id); END`;
+      const bearer = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "mcp-client",
+      });
+      const other = yield* sessions.issue({ method: "bearer-access-token" });
+      const browser = yield* sessions.issue();
+      yield* sessions.verify(bearer.token);
+      const first = (yield* sessions.listActive()).find(
+        (session) => session.sessionId === bearer.sessionId,
+      )?.lastConnectedAt;
+      expect(first).not.toBeNull();
+      yield* TestClock.adjust(Duration.seconds(59));
+      yield* sessions.verify(bearer.token);
+      yield* sessions.verify(browser.token);
+      yield* sessions.verify(other.token);
+      expect(yield* sql`SELECT session_id FROM session_use_writes`).toHaveLength(2);
+      expect(
+        (yield* sessions.listActive()).find((session) => session.sessionId === bearer.sessionId)
+          ?.lastConnectedAt,
+      ).toEqual(first);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Effect.all([sessions.verify(bearer.token), sessions.verify(bearer.token)], {
+        concurrency: "unbounded",
+      });
+      expect(yield* sql`SELECT session_id FROM session_use_writes`).toHaveLength(3);
+      expect(
+        (yield* sessions.listActive()).find((session) => session.sessionId === browser.sessionId)
+          ?.lastConnectedAt,
+      ).toBeNull();
+      yield* sessions.revoke(bearer.sessionId);
+      yield* sessions.verify(bearer.token).pipe(Effect.flip);
+      expect(yield* sql`SELECT session_id FROM session_use_writes`).toHaveLength(3);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory, TestClock.layer()),
+      ),
+    ),
+  );
+
   it.effect("lists active sessions, tracks connectivity, and revokes other sessions", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

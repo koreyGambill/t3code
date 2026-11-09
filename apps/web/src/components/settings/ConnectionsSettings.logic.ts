@@ -10,6 +10,7 @@ import {
 import {
   type AdvertisedEndpoint,
   type AuthClientSession,
+  MCP_PEER_LINK_SUBJECT_PREFIX,
   type AuthGrantScope,
   type AuthPairingLink,
   AuthTerminalOperateScope,
@@ -49,6 +50,34 @@ export function canRevokeOtherClients(
   clientSessions: ReadonlyArray<{ readonly current: boolean }> | null,
 ): boolean {
   return clientSessions === null || clientSessions.some((session) => !session.current);
+}
+
+export function recentPeerLinkRevokeWarning(
+  sessions: ReadonlyArray<ServerClientSessionRecord>,
+  nowMs: number = Date.now(),
+): string | undefined {
+  const links = sessions.filter(
+    (session) =>
+      !session.current &&
+      (session.subject.startsWith(MCP_PEER_LINK_SUBJECT_PREFIX) ||
+        (session.subject === "mcp-client" &&
+          // oxlint-disable-next-line t3code/no-rpc-permission-bypass -- This client is auth metadata, not an RPC transport.
+          /^(Linked environment|T3 Code) · /.test(session.client.label ?? ""))) &&
+      session.lastConnectedAt !== null &&
+      nowMs - Date.parse(session.lastConnectedAt) <= 5 * 60_000,
+  );
+  if (links.length === 0) return undefined;
+  return (
+    links
+      .map((session) => {
+        const name =
+          // oxlint-disable-next-line t3code/no-rpc-permission-bypass -- This client is auth metadata, not an RPC transport.
+          session.client.label?.replace(/^(Linked environment|T3 Code) · /, "") ??
+          "This environment";
+        return `${name}'s link to this machine stops working.`;
+      })
+      .join(" ") + " Revoke access?"
+  );
 }
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;

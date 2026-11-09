@@ -28,6 +28,7 @@ import * as Cause from "effect/Cause";
 
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
+  recentPeerLinkRevokeWarning,
   applyWslEnableSelection,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
@@ -606,6 +607,10 @@ function ConnectionsSettingsContent({
       !readEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope)
     )
       return;
+    const warning = recentPeerLinkRevokeWarning(
+      (desktopClientSessions ?? []).filter((session) => session.sessionId === sessionId),
+    );
+    if (warning && !(await requestConfirmDialog(warning, { variant: "destructive" }))) return;
     setRevokingDesktopClientSessionId(sessionId);
     setDesktopAccessManagementMutationError(null);
     const result = await revokeClient({ environmentId: accessEnvironmentId, input: { sessionId } });
@@ -630,6 +635,8 @@ function ConnectionsSettingsContent({
       !readEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope)
     )
       return;
+    const warning = recentPeerLinkRevokeWarning(desktopClientSessions ?? []);
+    if (warning && !(await requestConfirmDialog(warning, { variant: "destructive" }))) return;
     setIsRevokingOtherDesktopClients(true);
     setDesktopAccessManagementMutationError(null);
     const result = await revokeOtherClients({ environmentId: accessEnvironmentId, input: null });

@@ -3,6 +3,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import {
   AuthSessionId,
+  EnvironmentId,
   ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
@@ -451,10 +452,12 @@ export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServ
  * within that link. Claiming it only ever adds limits.
  */
 export const MCP_PEER_LINK_SOFTWARE_ID = "t3code-peer-link";
+export const MCP_PEER_LINK_SUBJECT_PREFIX = "mcp-peer-link:";
 
 export const AuthMcpClientRegistration = Schema.Struct({
   client_name: Schema.optionalKey(Schema.String),
   software_id: Schema.optionalKey(Schema.String),
+  t3_environment_id: Schema.optionalKey(EnvironmentId),
   redirect_uris: Schema.optionalKey(Schema.Array(Schema.String)),
   token_endpoint_auth_method: Schema.optionalKey(Schema.String),
 });
