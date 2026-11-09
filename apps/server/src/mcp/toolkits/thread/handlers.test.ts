@@ -127,8 +127,8 @@ it.effect("defaults to compact context pages and lets callers request full tool 
             ),
           ),
         ),
+        Layer.provideMerge(Sqlite.layerMemory),
       ),
     ),
-    Effect.provide(Sqlite.layerMemory),
   ),
 );
