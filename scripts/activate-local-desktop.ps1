@@ -51,6 +51,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   }
   function Quote-UpdateArgument([string]$value) {
     if ($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")) { throw 'Arguments must not contain quotes or newlines.' }
+    if ($value -notmatch '\s') { return $value }
     return '"' + $value + '"'
   }
   function Invoke-UpdateProcess($executable, [string[]]$arguments, $label, [double]$seconds = 60) {
@@ -58,6 +59,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     $stderr = Join-Path $root ($label + '.stderr')
     # Detached wsl.exe waits forever on inherited stdin after its parent exits.
     $process = Start-Process -FilePath $executable -ArgumentList ($arguments | ForEach-Object { Quote-UpdateArgument $_ }) -RedirectStandardInput $empty -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -PassThru
+    $null = $process.Handle
     if (-not $process.WaitForExit($seconds * 1000)) { throw "$label exceeded ${seconds}s; no process was force-killed. Inspect $stdout and $stderr." }
     if ($process.ExitCode -ne 0) { throw "$label failed ($($process.ExitCode)). $(Get-Content -LiteralPath $stderr -Raw)" }
     return (Get-Content -LiteralPath $stdout -Raw | ConvertFrom-Json)
