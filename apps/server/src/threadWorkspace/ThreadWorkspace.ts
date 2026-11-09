@@ -39,6 +39,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import { forkParked } from "../serverActivation.ts";
+import * as TicketTracker from "../ticketTracker/TicketTracker.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -60,6 +63,7 @@ export class ThreadWorkspace extends Context.Service<
   {
     readonly get: (
       input: ThreadWorkspaceGetInput,
+      options?: { readonly refreshTickets?: boolean },
     ) => Effect.Effect<Workspace, ThreadWorkspaceError>;
     readonly listWork: (
       input: ThreadWorkspaceListWorkInput,
@@ -231,7 +235,14 @@ function indexEntries(
 ): IndexEntry[] {
   const entry = (
     kind: string,
-    item: { id: string; ref?: string | undefined; groupId?: string | undefined; title: string },
+    item: {
+      id: string;
+      ref?: string | undefined;
+      groupId?: string | undefined;
+      title: string;
+      ticket?: string | null | undefined;
+      ticketData?: Workspace["agentWork"][number]["ticketData"];
+    },
     status?: string,
   ): IndexEntry => ({
     id: item.id,
@@ -240,6 +251,8 @@ function indexEntries(
     kind,
     title: item.title,
     ...(status === undefined ? {} : { status }),
+    ...(item.ticket === undefined ? {} : { ticket: item.ticket }),
+    ...(item.ticketData === undefined ? {} : { ticketData: item.ticketData }),
   });
   return [
     ...workspace.questions.map((item) =>
@@ -563,13 +576,22 @@ function buildItem(
     const completedAt = (old?.completedAt as string | null | undefined) ?? null;
     const finished = status === "done" || status === "landed";
     const userQa = pick("userQa", "none");
+    const title = pick("title", "Work");
+    const source = pick("source", "");
+    const ticket =
+      change.ticket === undefined
+        ? old?.ticket === undefined
+          ? TicketTracker.inferTicketKey(title, source)
+          : old.ticket
+        : change.ticket;
     return {
       id,
       ref,
-      title: pick("title", "Work"),
+      title,
+      ...(ticket === undefined ? {} : { ticket }),
       status: status as "queued" | "active" | "blocked" | "done" | "landed",
       remaining: pick("remaining", ""),
-      source: pick("source", ""),
+      source,
       details: pick("details", ""),
       changed: pick("changed", ""),
       qaSteps: pick("qaSteps", ""),
@@ -786,6 +808,29 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+  const tracker = yield* TicketTracker.TicketTracker;
+  const enrichWork = Effect.fn("ThreadWorkspace.enrichWork")(function* (
+    items: Workspace["agentWork"],
+    refresh = false,
+  ) {
+    const keys = [...new Set(items.flatMap((item) => (item.ticket ? [item.ticket] : [])))];
+    const tickets = new Map(
+      yield* Effect.forEach(
+        keys,
+        (key) => tracker.get(key, { refresh }).pipe(Effect.map((data) => [key, data] as const)),
+        { concurrency: 2 },
+      ),
+    );
+    return items.map((item) =>
+      item.ticket ? { ...item, ticketData: tickets.get(item.ticket) ?? null } : item,
+    );
+  });
+  const enrich = Effect.fn("ThreadWorkspace.enrich")(function* (
+    workspace: Workspace,
+    refresh = false,
+  ) {
+    return { ...workspace, agentWork: yield* enrichWork(workspace.agentWork, refresh) };
+  });
   const lock = yield* Semaphore.make(1);
   const directory = path.join(config.stateDir, "thread-workspaces");
   const filePath = (threadId: Workspace["threadId"]) =>
@@ -1065,7 +1110,7 @@ const make = Effect.gen(function* () {
     const next = applyChanges(current, { ...input, changes }, actor, stamps, now, writerThreadId);
     if (isWorkspaceError(next)) return yield* next;
     return { before: current, after: yield* commit(current, stamps, next, input.expectedRevision) };
-  });
+  }, lock.withPermit);
   const sentFeedback = Effect.fn("ThreadWorkspace.sentFeedback")(function* (
     threadId: Workspace["threadId"],
   ) {
@@ -1085,8 +1130,8 @@ const make = Effect.gen(function* () {
     return submittedFeedback(threadId, records.messages);
   });
   const patch = Effect.fn("ThreadWorkspace.patch")(function* (input: ThreadWorkspaceMutateInput) {
-    return (yield* change(input, "user", null)).after;
-  }, lock.withPermit);
+    return yield* enrich((yield* change(input, "user", null)).after);
+  });
   // Returns only what this write changed unless the caller asks for the full index.
   const mutate = Effect.fn("ThreadWorkspace.mutate")(function* (
     input: ThreadWorkspaceMutateInput,
@@ -1115,14 +1160,25 @@ const make = Effect.gen(function* () {
       revision: after.revision,
       groups: after.groups.filter((group) => groupIds.has(group.id)),
       items: indexEntries(after, submitted).filter((item) => itemIds.has(item.id)),
+      ...(after.agentWork.some((item) => itemIds.has(item.id))
+        ? {
+            agentWork: yield* enrichWork(after.agentWork.filter((item) => itemIds.has(item.id))),
+          }
+        : {}),
       ...(removedIds.length ? { removedIds } : {}),
       ...(input.summaryNotes !== undefined ? { summaryNotes: after.summaryNotes } : {}),
     };
-  }, lock.withPermit);
-  const get = Effect.fn("ThreadWorkspace.get")(function* (input: ThreadWorkspaceGetInput) {
-    yield* requireThread(input.threadId);
-    return (yield* read(input.threadId)).workspace;
-  }, lock.withPermit);
+  });
+  const get = Effect.fn("ThreadWorkspace.get")(function* (
+    input: ThreadWorkspaceGetInput,
+    options?: { readonly refreshTickets?: boolean },
+  ) {
+    const workspace = yield* Effect.gen(function* () {
+      yield* requireThread(input.threadId);
+      return (yield* read(input.threadId)).workspace;
+    }).pipe(lock.withPermit);
+    return yield* enrich(workspace, options?.refreshTickets);
+  });
   const saveDraft = Effect.fn("ThreadWorkspace.saveDraft")(function* (
     input: ThreadWorkspaceSaveDraftInput,
   ) {
@@ -1317,8 +1373,10 @@ const make = Effect.gen(function* () {
           ),
         );
         if (thread === null) continue;
-        for (const item of workspace.agentWork) {
-          if (input.userQa !== undefined && !input.userQa.includes(item.userQa)) continue;
+        const items = workspace.agentWork.filter(
+          (item) => input.userQa === undefined || input.userQa.includes(item.userQa),
+        );
+        for (const item of yield* enrichWork(items)) {
           entries.push({
             threadId: workspace.threadId,
             threadTitle: thread.title,
@@ -1333,7 +1391,8 @@ const make = Effect.gen(function* () {
       );
     }),
     counts: Effect.fn("ThreadWorkspace.counts")(function* (input) {
-      const workspace = yield* get(input);
+      yield* requireThread(input.threadId);
+      const workspace = (yield* read(input.threadId)).workspace;
       return {
         questions: workspace.questions.length,
         unansweredQuestions: workspace.questions.filter((question) => {
@@ -1351,7 +1410,7 @@ const make = Effect.gen(function* () {
         pendingQa: workspace.agentWork.filter((item) => item.userQa === "pending").length,
         records: workspace.decisions.length + workspace.contextItems.length,
       };
-    }),
+    }, lock.withPermit),
     patch,
     saveDraft,
     submit,
@@ -1375,6 +1434,23 @@ const make = Effect.gen(function* () {
   });
 });
 export const layer = Layer.effect(ThreadWorkspace, make);
+
+export const layerTicketRefresh = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const workspace = yield* ThreadWorkspace;
+    yield* forkParked(
+      Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
+        event.type === "run.updated" &&
+        ["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status)
+          ? workspace
+              .get({ threadId: event.threadId }, { refreshTickets: true })
+              .pipe(Effect.ignore)
+          : Effect.void,
+      ),
+    );
+  }),
+);
 
 /** Every thread reads as an empty workspace; for services that only read it. */
 export const layerTest = Layer.mock(ThreadWorkspace)({

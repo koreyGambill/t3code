@@ -39,6 +39,7 @@ import {
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Workspaces from "./ThreadWorkspace.ts";
+import * as TicketTracker from "../ticketTracker/TicketTracker.ts";
 
 const threadId = ThreadId.make("import:claude:../../workspace");
 const at = DateTime.makeUnsafe("2026-11-05T12:00:00.000Z");
@@ -140,6 +141,15 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
     };
   });
   const dependencies = Layer.mergeAll(
+    Layer.succeed(TicketTracker.TicketTracker, {
+      get: (key) =>
+        Effect.succeed({
+          key,
+          title: "Live ticket title",
+          stage: "in flight",
+          url: `https://tracker.example.com/tasks/${key}`,
+        }),
+    }),
     Layer.succeed(ServerConfig.ServerConfig, config),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),
@@ -990,6 +1000,54 @@ it.effect(
       expect(record.decisions).toHaveLength(2);
       expect(done.revision).toBe(user.revision + 1);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("round trips ticket links, enriches reads without persisting status, and unlinks", () =>
+  Effect.gen(function* () {
+    const h = yield* harness();
+    const created = yield* h.service.patch({
+      threadId,
+      expectedRevision: 0,
+      changes: [
+        { kind: "work", title: "Implement feature", ticket: "BW-42" },
+        { kind: "work", title: "Fix BW-43", source: "BW-43" },
+        { kind: "work", title: "Compare BW-44 with BW-45" },
+      ],
+    });
+    const reopened = yield* h.open();
+    const result = yield* reopened.query({ threadId, section: "work" });
+    expect(result.agentWork).toMatchObject([
+      { ticket: "BW-42", ticketData: { title: "Live ticket title", stage: "in flight" } },
+      { ticket: "BW-43", ticketData: { key: "BW-43" } },
+      { title: "Compare BW-44 with BW-45" },
+    ]);
+    expect(result.agentWork?.[2]?.ticket).toBeUndefined();
+    expect(
+      JSON.parse(yield* h.fs.readFileString(h.file)).workspace.agentWork[0],
+    ).not.toHaveProperty("ticketData");
+    const saved = yield* reopened.patch({
+      threadId,
+      expectedRevision: created.revision,
+      changes: [{ kind: "work", id: created.agentWork[1]!.id, ticket: null }],
+    });
+    expect(saved.agentWork[1]?.ticket).toBeNull();
+    const unlinked = yield* reopened.patch({
+      threadId,
+      expectedRevision: saved.revision,
+      changes: [{ kind: "work", id: created.agentWork[1]!.id, details: "Still unlinked" }],
+    });
+    expect(unlinked.agentWork[1]?.ticket).toBeNull();
+    const updated = yield* reopened.mutate({
+      threadId,
+      expectedRevision: unlinked.revision,
+      changes: [{ kind: "work", id: created.agentWork[0]!.id, ticket: "BW-46" }],
+    });
+    expect(updated.agentWork).toMatchObject([{ ticket: "BW-46", ticketData: { key: "BW-46" } }]);
+    const work = yield* reopened.listWork({});
+    expect(work.find((entry) => entry.item.ticket === "BW-46")?.item.ticketData?.title).toBe(
+      "Live ticket title",
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("marks a question answered only once the user sends its feedback from the composer", () =>

@@ -11,6 +11,7 @@ import * as ThreadInsights from "../threadInsights/ThreadInsights.ts";
 import * as InstructionFootprints from "../threadInsights/InstructionFootprints.ts";
 import * as ThreadNotes from "../threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as TicketTracker from "../ticketTracker/TicketTracker.ts";
 import * as ReviewArtifacts from "../reviewArtifacts/ReviewArtifacts.ts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
@@ -317,12 +318,20 @@ const layerContextRecordsProvided = ContextRecords.layer.pipe(
 const layerMonitoringSnapshotProvided = MonitoringSnapshot.layer.pipe(
   Layer.provide(layerContextRecordsProvided),
 );
-const layerMonitoringDeliveryProvided = MonitoringDelivery.layer.pipe(
+const layerThreadWorkspaceProvided = ThreadWorkspace.layer.pipe(
   Layer.provide(
-    ThreadWorkspace.layer.pipe(
-      Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
+    Layer.mergeAll(
+      layerOrchestratorProvided,
+      layerThreadManagementProvided,
+      TicketTracker.layer.pipe(Layer.provide(ProcessRunner.layer)),
     ),
   ),
+);
+const layerTicketRefreshProvided = ThreadWorkspace.layerTicketRefresh.pipe(
+  Layer.provide(Layer.merge(layerThreadWorkspaceProvided, layerOrchestratorProvided)),
+);
+const layerMonitoringDeliveryProvided = MonitoringDelivery.layer.pipe(
+  Layer.provide(layerThreadWorkspaceProvided),
   Layer.provide(layerThreadManagementProvided),
 );
 const layerMonitoringRunnerProvided = MonitoringRunner.layer.pipe(
@@ -472,9 +481,8 @@ export const layerProduction = Layer.mergeAll(
   ThreadNotes.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
   ),
-  ThreadWorkspace.layer.pipe(
-    Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
-  ),
+  layerThreadWorkspaceProvided,
+  layerTicketRefreshProvided,
   ReviewArtifacts.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),
   ),

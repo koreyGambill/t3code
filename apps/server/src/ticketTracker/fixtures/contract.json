@@ -1,0 +1,191 @@
+{
+  "ticket": "BW-42",
+  "pins": [
+    {
+      "ticket": "BW-42",
+      "repository": "acme/app",
+      "profile_key": "acme/app-default",
+      "profile_version": 1,
+      "definition": {
+        "key": "acme/app-default",
+        "version": 1,
+        "title": "Xwing risk-based delivery",
+        "selector": {
+          "repository": "acme/app"
+        },
+        "stages": [
+          {
+            "key": "delivery-decision",
+            "title": "Delivery decisions",
+            "required": true,
+            "actor_profile": "lead",
+            "prompt": "Record one concise decision summary for tests, review, documentation, changelog, merge, release, and independent verification. Each must be performed with evidence, waived with a reason, or not applicable with a reason. Choose checks by risk rather than ceremony.",
+            "policy_refs": [
+              {
+                "ref": "repo://DELIVERY.md",
+                "visibility": "public"
+              }
+            ],
+            "evidence_kinds": ["delivery-decision"]
+          },
+          {
+            "key": "independent-review",
+            "title": "Independent review",
+            "actor_profile": "reviewer",
+            "policy_refs": [
+              {
+                "ref": "repo://DELIVERY.md",
+                "visibility": "public"
+              }
+            ],
+            "evidence_kinds": ["review-pass"]
+          },
+          {
+            "key": "release",
+            "title": "Release",
+            "actor_profile": "lead",
+            "policy_refs": [
+              {
+                "ref": "repo://DELIVERY.md",
+                "visibility": "public"
+              }
+            ],
+            "evidence_kinds": ["release"]
+          },
+          {
+            "key": "independent-verification",
+            "title": "Independent verification",
+            "actor_profile": "verifier",
+            "policy_refs": [
+              {
+                "ref": "repo://DELIVERY.md",
+                "visibility": "public"
+              }
+            ],
+            "evidence_kinds": ["verification"]
+          }
+        ],
+        "created_at": "2026-08-06T22:11:21Z"
+      },
+      "pinned_at": "2026-11-08T22:28:31Z"
+    }
+  ],
+  "opt_outs": [],
+  "obligations": [
+    {
+      "repository": "acme/app",
+      "profile_key": "acme/app-default",
+      "profile_version": 1,
+      "stage": {
+        "key": "delivery-decision",
+        "title": "Delivery decisions",
+        "required": true,
+        "actor_profile": "lead",
+        "prompt": "Record one concise decision summary for tests, review, documentation, changelog, merge, release, and independent verification. Each must be performed with evidence, waived with a reason, or not applicable with a reason. Choose checks by risk rather than ceremony.",
+        "policy_refs": [
+          {
+            "ref": "repo://DELIVERY.md",
+            "visibility": "public"
+          }
+        ],
+        "evidence_kinds": ["delivery-decision"]
+      },
+      "satisfied": true,
+      "disposition": "success",
+      "run_id": 912
+    },
+    {
+      "repository": "acme/app",
+      "profile_key": "acme/app-default",
+      "profile_version": 1,
+      "stage": {
+        "key": "independent-review",
+        "title": "Independent review",
+        "actor_profile": "reviewer",
+        "policy_refs": [
+          {
+            "ref": "repo://DELIVERY.md",
+            "visibility": "public"
+          }
+        ],
+        "evidence_kinds": ["review-pass"]
+      },
+      "satisfied": false
+    },
+    {
+      "repository": "acme/app",
+      "profile_key": "acme/app-default",
+      "profile_version": 1,
+      "stage": {
+        "key": "release",
+        "title": "Release",
+        "actor_profile": "lead",
+        "policy_refs": [
+          {
+            "ref": "repo://DELIVERY.md",
+            "visibility": "public"
+          }
+        ],
+        "evidence_kinds": ["release"]
+      },
+      "satisfied": false
+    },
+    {
+      "repository": "acme/app",
+      "profile_key": "acme/app-default",
+      "profile_version": 1,
+      "stage": {
+        "key": "independent-verification",
+        "title": "Independent verification",
+        "actor_profile": "verifier",
+        "policy_refs": [
+          {
+            "ref": "repo://DELIVERY.md",
+            "visibility": "public"
+          }
+        ],
+        "evidence_kinds": ["verification"]
+      },
+      "satisfied": false
+    }
+  ],
+  "runs": [
+    {
+      "id": 912,
+      "ticket": "BW-42",
+      "repository": "acme/app",
+      "stage": "delivery-decision",
+      "attempt": 1,
+      "holder": "example-agent",
+      "started_at": "2026-11-08T22:28:40Z",
+      "completed_at": "2026-11-08T22:28:40Z",
+      "outcome": "success",
+      "evidence_ids": [1202],
+      "evidence": [
+        {
+          "id": 1202,
+          "ticket": "BW-42",
+          "kind": "delivery-decision",
+          "payload": {
+            "decisions": "Focused tests passed; independent review pending."
+          },
+          "actor": "example-agent",
+          "created_at": "2026-11-08T22:28:40Z"
+        }
+      ],
+      "duration_ms": 0
+    }
+  ],
+  "stage_durations": [
+    {
+      "key": "acme/app/delivery-decision",
+      "duration_ms": 0
+    }
+  ],
+  "actor_durations": [
+    {
+      "key": "example-agent",
+      "duration_ms": 0
+    }
+  ]
+}

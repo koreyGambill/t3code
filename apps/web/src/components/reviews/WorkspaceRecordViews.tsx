@@ -88,6 +88,22 @@ export function WorkRow({
         ) : null}
         <span className="text-3xs text-muted-foreground">{item.ref}</span>
         <span className={finished(item) ? "text-muted-foreground" : ""}>{item.title}</span>
+        {item.ticket ? (
+          item.ticketData ? (
+            <Badge
+              size="sm"
+              variant="outline"
+              title={item.ticketData.title}
+              render={<a href={item.ticketData.url} target="_blank" rel="noreferrer" />}
+            >
+              {item.ticketData.key} · {item.ticketData.stage}
+            </Badge>
+          ) : (
+            <Badge size="sm" variant="outline">
+              {item.ticket} · unavailable
+            </Badge>
+          )
+        ) : null}
         {item.userQa !== "none" ? (
           <span className="ml-auto flex shrink-0 gap-1">
             {item.userQa === "pending" ? (

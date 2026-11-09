@@ -62,10 +62,29 @@ export type WorkspaceDesignDocument = typeof WorkspaceDesignDocument.Type;
 export const AgentWorkStatus = Schema.Literals(["queued", "active", "blocked", "done", "landed"]);
 // Human QA is tracked apart from the agent's status and never gates authorized landing.
 export const UserQaStatus = Schema.Literals(["none", "pending", "passed", "issues"]);
+export const TicketData = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  stage: TrimmedNonEmptyString,
+  url: Schema.String,
+  workflow: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        stage: TrimmedNonEmptyString,
+        done: Schema.Boolean,
+        evidence: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+export type TicketData = typeof TicketData.Type;
 export const AgentWorkItem = Schema.Struct({
   id: TrimmedNonEmptyString,
   ref: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  ticket: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Resolved on reads; tracker data is never written to the workspace record.
+  ticketData: Schema.optional(Schema.NullOr(TicketData)),
   status: AgentWorkStatus,
   remaining: Schema.String,
   source: Schema.String,
@@ -253,6 +272,7 @@ export const WorkspaceMutation = Schema.Struct({
   parentId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupId: Schema.optional(TrimmedNonEmptyString),
   title: Schema.optional(TrimmedNonEmptyString),
+  ticket: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   details: Schema.optional(Schema.String),
   options: Schema.optional(Schema.Array(WorkspaceOption)),
   recommendedOptionIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
@@ -345,6 +365,8 @@ export const WorkspaceQueryResult = Schema.Struct({
       kind: Schema.String,
       title: Schema.String,
       status: Schema.optional(Schema.String),
+      ticket: AgentWorkItem.fields.ticket,
+      ticketData: AgentWorkItem.fields.ticketData,
     }),
   ),
   removedIds: Schema.optional(Schema.Array(Schema.String)),
