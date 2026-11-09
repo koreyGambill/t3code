@@ -17,6 +17,7 @@ import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
+import * as StatusSources from "../../../statusSources/StatusSources.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
@@ -32,6 +33,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     const updates = yield* Ref.make(0);
     const checked = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
+      Layer.mock(StatusSources.StatusSources)({ list: () => Effect.succeed([]) }),
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,

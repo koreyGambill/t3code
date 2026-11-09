@@ -148,6 +148,9 @@ import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
+import * as StatusSources from "./statusSources/StatusSources.ts";
+import * as StatusSourceProbe from "./statusSources/StatusSourceProbe.ts";
+import * as StatusSourcesHttp from "./statusSources/http.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
@@ -767,6 +770,12 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 );
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+  Layer.provideMerge(
+    StatusSources.layer.pipe(
+      Layer.provide(StatusSourceProbe.layer),
+      Layer.provide(ServerSecretStore.layer),
+    ),
+  ),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
@@ -808,6 +817,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
+    StatusSourcesHttp.layer,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     DeviceHubProxy.layer,

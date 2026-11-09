@@ -6,6 +6,7 @@ import {
   OrchestratorMcpFailure,
   ServerSettings,
   ServerSettingsPatch,
+  StatusSourceList,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -13,6 +14,7 @@ import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
+import * as StatusSources from "../../../statusSources/StatusSources.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const PreferenceFields = {
@@ -67,4 +69,20 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+
+const StatusSourcesTool = Tool.make("t3_status_sources", {
+  ...shared,
+  dependencies: [...shared.dependencies, StatusSources.StatusSources],
+  description:
+    "Read configured external tool status sources, their current state, items, and last transition. History stays in each tool. Source configuration and snoozing are available in Settings → Status sources; agents have read-only access.",
+  parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
+  success: StatusSourceList,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  StatusSourcesTool,
+);

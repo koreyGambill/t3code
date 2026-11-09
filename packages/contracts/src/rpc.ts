@@ -435,6 +435,16 @@ import {
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
+  StatusSource,
+  StatusSourceList,
+  StatusSourceUpsertInput,
+  StatusSourceDeleteInput,
+  StatusSourceSnoozeInput,
+  StatusSourceRotateWebhookSecretInput,
+  StatusSourceRotateWebhookSecretResult,
+  StatusSourcesError,
+} from "./statusSources.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -671,6 +681,11 @@ export const WS_METHODS = {
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
+  statusSourcesSubscribe: "statusSources.subscribe",
+  statusSourcesUpsert: "statusSources.upsert",
+  statusSourcesDelete: "statusSources.delete",
+  statusSourcesSnooze: "statusSources.snooze",
+  statusSourcesRotateWebhookSecret: "statusSources.rotateWebhookSecret",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   monitoringStatus: "monitoring.status",
   monitoringList: "monitoring.list",
@@ -2295,6 +2310,36 @@ const WsMonitoringRespondRpc = Rpc.make(WS_METHODS.monitoringRespond, {
   error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
 });
 
+const WsStatusSourcesSubscribeRpc = Rpc.make(WS_METHODS.statusSourcesSubscribe, {
+  payload: Schema.Struct({}),
+  success: StatusSourceList,
+  error: Schema.Union([StatusSourcesError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+const WsStatusSourcesUpsertRpc = Rpc.make(WS_METHODS.statusSourcesUpsert, {
+  payload: StatusSourceUpsertInput,
+  success: StatusSource,
+  error: Schema.Union([StatusSourcesError, EnvironmentAuthorizationError]),
+});
+const WsStatusSourcesDeleteRpc = Rpc.make(WS_METHODS.statusSourcesDelete, {
+  payload: StatusSourceDeleteInput,
+  success: Schema.Void,
+  error: Schema.Union([StatusSourcesError, EnvironmentAuthorizationError]),
+});
+const WsStatusSourcesSnoozeRpc = Rpc.make(WS_METHODS.statusSourcesSnooze, {
+  payload: StatusSourceSnoozeInput,
+  success: StatusSource,
+  error: Schema.Union([StatusSourcesError, EnvironmentAuthorizationError]),
+});
+const WsStatusSourcesRotateWebhookSecretRpc = Rpc.make(
+  WS_METHODS.statusSourcesRotateWebhookSecret,
+  {
+    payload: StatusSourceRotateWebhookSecretInput,
+    success: StatusSourceRotateWebhookSecretResult,
+    error: Schema.Union([StatusSourcesError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2448,6 +2493,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsMonitoringSetDispositionRpc,
   WsMonitoringRespondRpc,
   WsScheduledTasksSubscribeRpc,
+  WsStatusSourcesSubscribeRpc,
+  WsStatusSourcesUpsertRpc,
+  WsStatusSourcesDeleteRpc,
+  WsStatusSourcesSnoozeRpc,
+  WsStatusSourcesRotateWebhookSecretRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
   WsScheduledTasksDeleteRpc,

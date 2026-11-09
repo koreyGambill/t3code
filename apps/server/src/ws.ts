@@ -133,6 +133,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as StatusSources from "./statusSources/StatusSources.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1418,6 +1419,7 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const statusSources = yield* StatusSources.StatusSources;
       const monitoring = yield* MonitoringService.MonitoringService;
       const monitoringDialogue = yield* MonitoringDialogue.MonitoringDialogue;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2339,6 +2341,12 @@ export const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
+        [WS_METHODS.statusSourcesSubscribe]: () => statusSources.subscribe(),
+        [WS_METHODS.statusSourcesUpsert]: (input) => statusSources.upsert(input),
+        [WS_METHODS.statusSourcesDelete]: (input) => statusSources.remove(input),
+        [WS_METHODS.statusSourcesSnooze]: (input) => statusSources.snooze(input),
+        [WS_METHODS.statusSourcesRotateWebhookSecret]: (input) =>
+          statusSources.rotateWebhookSecret(input),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.monitoringStatus]: () => monitoring.status(),

@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  ActivityIcon,
   FlaskConicalIcon,
   BotIcon,
   createLucideIcon,
@@ -104,6 +105,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": ServerIcon,
   "/settings/access": ShieldCheckIcon,
   "/settings/secrets": KeyRoundIcon,
+  "/settings/status-sources": ActivityIcon,
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,

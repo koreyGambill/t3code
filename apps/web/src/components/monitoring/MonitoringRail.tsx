@@ -28,6 +28,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { StatusSourcesStrip } from "../statusSources/StatusSourcesStrip";
 
 import { visibleMonitoringFindings } from "./monitoring.logic";
 
@@ -463,9 +464,11 @@ function EnvironmentAlerts({
 export function MonitoringRail({
   onOpenThread,
   onConfigure,
+  onConfigureSources,
 }: {
   onOpenThread: (environmentId: EnvironmentId, threadId: ThreadId) => void;
   onConfigure: (environmentId: EnvironmentId) => void;
+  onConfigureSources: (environmentId: EnvironmentId) => void;
 }) {
   const environmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
@@ -527,30 +530,33 @@ export function MonitoringRail({
           />
         </aside>
       )}
-      <div className="pointer-events-auto relative border-y border-l border-border bg-background p-1">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Watcher alerts${unread > 0 ? `, ${unread} unread` : ""}`}
-                aria-expanded={open}
-                onClick={() => setOpen(!open)}
-              />
-            }
-          >
-            <BellIcon />
-          </TooltipTrigger>
-          <TooltipPopup side="left">
-            Watcher alerts{unread > 0 ? ` · ${unread} unread` : ""}
-          </TooltipPopup>
-        </Tooltip>
-        {unread > 0 && (
-          <span className="pointer-events-none absolute right-0 top-0 min-w-3 rounded-full bg-primary px-0.5 text-center text-3xs text-primary-foreground">
-            {unread}
-          </span>
-        )}
+      <div className="pointer-events-auto flex items-center border-y border-l border-border bg-background p-1">
+        <StatusSourcesStrip onConfigureSources={onConfigureSources} />
+        <div className="relative">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Watcher alerts${unread > 0 ? `, ${unread} unread` : ""}`}
+                  aria-expanded={open}
+                  onClick={() => setOpen(!open)}
+                />
+              }
+            >
+              <BellIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="left">
+              Watcher alerts{unread > 0 ? ` · ${unread} unread` : ""}
+            </TooltipPopup>
+          </Tooltip>
+          {unread > 0 && (
+            <span className="pointer-events-none absolute right-0 top-0 min-w-3 rounded-full bg-primary px-0.5 text-center text-3xs text-primary-foreground">
+              {unread}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

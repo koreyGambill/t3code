@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
+import * as StatusSources from "../../../statusSources/StatusSources.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller, unavailable } from "../../threadAccess.ts";
@@ -41,6 +42,18 @@ const access = Effect.gen(function* () {
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
+  t3_status_sources: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      yield* readCaller();
+      const sources = yield* StatusSources.StatusSources;
+      return yield* sources.list().pipe(
+        Effect.map((entries) =>
+          entries.map(({ config, latest, lastTransition }) => ({ config, latest, lastTransition })),
+        ),
+        Effect.mapError(unavailable),
+      );
+    }),
+  ),
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;

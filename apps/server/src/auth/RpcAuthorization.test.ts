@@ -79,6 +79,18 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("allows status observation with read scope and requires operate for source changes", () => {
+    expect(requiredScopeForRpcMethod("statusSources.subscribe")).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      "statusSources.upsert",
+      "statusSources.delete",
+      "statusSources.snooze",
+      "statusSources.rotateWebhookSecret",
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
     for (const method of [
       WS_METHODS.scheduledTasksListWebhookDeliveries,
@@ -176,6 +188,71 @@ describe("RPC scope middleware", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect(
+  "rejects status source mutations before executing a configured command or changing secrets",
+  () =>
+    Effect.gen(function* () {
+      const tested = [
+        WS_METHODS.statusSourcesSubscribe,
+        WS_METHODS.statusSourcesUpsert,
+        WS_METHODS.statusSourcesDelete,
+        WS_METHODS.statusSourcesSnooze,
+        WS_METHODS.statusSourcesRotateWebhookSecret,
+      ] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+            !(tested as ReadonlyArray<string>).includes(tag),
+        ),
+      );
+      const handled: Array<string> = [];
+      const mutation = Effect.sync(() => handled.push("mutation")).pipe(
+        Effect.andThen(Effect.never),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.statusSourcesSubscribe, () => Stream.succeed([])),
+            group.toLayerHandler(WS_METHODS.statusSourcesUpsert, () => mutation),
+            group.toLayerHandler(WS_METHODS.statusSourcesDelete, () => mutation),
+            group.toLayerHandler(WS_METHODS.statusSourcesSnooze, () => mutation),
+            group.toLayerHandler(WS_METHODS.statusSourcesRotateWebhookSecret, () => mutation),
+            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+          ),
+        ),
+      );
+      expect(yield* Stream.runHead(client[WS_METHODS.statusSourcesSubscribe]({}))).toMatchObject({
+        value: [],
+      });
+      const denied = {
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      };
+      expect(
+        yield* client[WS_METHODS.statusSourcesUpsert]({
+          name: "Checks",
+          kind: "command",
+          icon: "terminal",
+          target: "check",
+        }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* client[WS_METHODS.statusSourcesDelete]({ id: "checks" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* client[WS_METHODS.statusSourcesSnooze]({ id: "checks", until: null }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject(denied);
+      expect(
+        yield* client[WS_METHODS.statusSourcesRotateWebhookSecret]({ id: "checks" }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject(denied);
+      expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+);
 
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(

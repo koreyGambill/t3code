@@ -25,6 +25,12 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
         onConfigure={(environmentId) => {
           void router.navigate({ to: "/settings/scheduled-tasks", search: { environmentId } });
         }}
+        onConfigureSources={(environmentId) => {
+          void router.navigate({
+            to: "/settings/status-sources",
+            search: { machine: environmentId },
+          });
+        }}
       />
       <QuitHoldOverlay />
       <ThreadAttentionOverlay />

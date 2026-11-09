@@ -34,6 +34,7 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/access"
   | "/settings/secrets"
+  | "/settings/status-sources"
   | "/settings/maintenance"
   | "/settings/labs"
   | "/settings/about"
@@ -104,6 +105,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/connections": "Environments",
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
+  "/settings/status-sources": "Status sources",
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
@@ -145,6 +147,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/connections",
       "/settings/access",
+      "/settings/status-sources",
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
     ],
   },
@@ -216,6 +219,13 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .join(" ");
 
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "status-sources",
+    title: "Status sources",
+    to: "/settings/status-sources",
+    scope: "environment",
+    searchTerms: ["external tools stormwing health checks webhook command alerts snooze favicon"],
+  },
   {
     id: "watchers",
     title: "Watchers and alerts",
@@ -1224,6 +1234,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/secrets": null,
+  "/settings/status-sources": "environment",
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
