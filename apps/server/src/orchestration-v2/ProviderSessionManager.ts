@@ -1880,14 +1880,9 @@ export const layerWithOptions = (
                                     ...prepared,
                                     entries: [
                                       ...prepared.entries,
-                                      ...[
-                                        ...input.message.text.matchAll(
-                                          /<child_preamble[^>]*>([\s\S]*?)<\/child_preamble>/g,
-                                        ),
-                                      ].map((match) => ({
-                                        key: "workspace_child_preamble",
-                                        text: match[1] ?? "",
-                                      })),
+                                      ...InstructionFootprints.childPreambleEntries(
+                                        input.message.text,
+                                      ),
                                     ],
                                     threadId: input.threadId,
                                     runId: input.runId,
