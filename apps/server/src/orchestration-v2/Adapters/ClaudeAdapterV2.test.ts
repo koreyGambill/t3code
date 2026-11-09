@@ -457,6 +457,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       );
 
       assert.deepEqual(queryPolicy, {
+        cwd: "/workspace",
         permissionMode: "dontAsk",
         ...(runtimeMode === "full-access" ? {} : { additionalDirectories: ["/linked/repo"] }),
         tools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
@@ -486,6 +487,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
 
     assert.deepEqual(queryPolicy, {
+      cwd: "/workspace",
       permissionMode: "dontAsk",
       tools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
       installPermissionCallback: false,
@@ -502,6 +504,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
 
     assert.deepEqual(queryPolicy, {
+      cwd: "/workspace",
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       installPermissionCallback: false,
@@ -521,14 +524,14 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
         bypassDisabled: true,
         autoDisabled: false,
       }),
-      { permissionMode: "auto", installPermissionCallback: true },
+      { cwd: "/workspace", permissionMode: "auto", installPermissionCallback: true },
     );
     assert.deepEqual(
       ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy, {
         bypassDisabled: true,
         autoDisabled: true,
       }),
-      { permissionMode: "default", installPermissionCallback: true },
+      { cwd: "/workspace", permissionMode: "default", installPermissionCallback: true },
     );
   });
 
@@ -545,6 +548,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
 
     assert.deepEqual(queryPolicy, {
+      cwd: "/workspace",
       permissionMode: "default",
       installPermissionCallback: true,
     });
@@ -594,6 +598,32 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     });
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
     assert.isFalse(overrides.allowedTools?.includes("mcp__t3-code__t3_xwing_environment_select"));
+  });
+
+  it("invalidates live-query reuse when only cwd changes", () => {
+    const key = (cwd: string) =>
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+        ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd,
+          }),
+        ),
+        {},
+      );
+    assert.notEqual(key("/home/user/code"), key("/data/scratch/private"));
+  });
+
+  it("pre-approves shared scratch folder reads without granting edits", () => {
+    const policy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy({
+      ...CLAUDE_TEST_RUNTIME_POLICY,
+      runtimeMode: "auto-accept-edits",
+      cwd: "/data/scratch/private",
+      readOnlyRoots: ["/home/user/code"],
+    });
+    assert.deepEqual(policy.allowedTools, ["Read(//home/user/code/**)"]);
+    assert.isUndefined(policy.additionalDirectories);
   });
 
   it("invalidates live-query reuse when MCP credentials rotate", () => {

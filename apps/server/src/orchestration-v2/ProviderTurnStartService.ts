@@ -751,6 +751,7 @@ export const layer: Layer.Layer<
         ...resolvedPolicy.success,
         ...(isScratch && sandboxed && Option.isSome(managedFolders)
           ? {
+              readOnlyRoots: Option.toArray(yield* managedFolders.value.scratchRoot),
               cwd: yield* managedFolders.value.sandboxFolderForThread(
                 input.threadId,
                 resolvedPolicy.success.cwd,

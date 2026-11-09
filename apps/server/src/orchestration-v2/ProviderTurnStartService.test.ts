@@ -950,6 +950,7 @@ function makeLocalCommandHarness(input: {
           ? Layer.empty
           : Layer.mock(ManagedFolders.ManagedProjectFolders)({
               namedProjectsRoot: "/tmp/projects",
+              scratchRoot: Effect.succeed(Option.some("/home/user/code")),
               isScratchProject: () => Effect.succeed(true),
               sandboxFolderForThread: () => Effect.succeed("/tmp/isolated-scratch/thread"),
             }),
@@ -1914,6 +1915,7 @@ effectIt.effect.each(["auto-accept-edits", "approval-required", "full-access"] a
       expect(harness.startRootRun).toHaveBeenCalledTimes(1);
       expect(harness.startRootRun.mock.calls[0]?.[0].runtimePolicy).toMatchObject({
         cwd: runtimeMode === "full-access" ? "/home/user/code" : "/tmp/isolated-scratch/thread",
+        ...(runtimeMode === "full-access" ? {} : { readOnlyRoots: ["/home/user/code"] }),
       });
       expect(roots).toHaveBeenCalledTimes(runtimeMode === "auto-accept-edits" ? 1 : 0);
       if (runtimeMode === "auto-accept-edits")

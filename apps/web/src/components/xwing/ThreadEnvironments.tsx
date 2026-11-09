@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { Boxes, ChevronRightIcon } from "lucide-react";
 
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { randomUUID } from "../../lib/utils";
@@ -247,7 +248,15 @@ function UnlinkEnvironment({
     label: "unlink development environment",
   });
   const allowed = useAtomValue(unlinkThreadEnvironment.permissionAtom(threadRef.environmentId));
-  if (!allowed) return null;
+  const threads = useAtomValue(
+    environmentThreadShells.environmentThreadsAtom(threadRef.environmentId),
+  );
+  const isCurrentFolder = usage.some((row) =>
+    threads.some(
+      (thread) => thread.id === row.threadId && thread.worktreePath === row.checkoutPath,
+    ),
+  );
+  if (!allowed || isCurrentFolder) return null;
   return (
     <Button
       variant="ghost"

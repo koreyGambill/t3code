@@ -51,6 +51,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   cwd: Schema.NullOr(Schema.String),
   /** Server-resolved worktree folders for the current turn. */
   writableRoots: Schema.optional(Schema.Array(Schema.String)),
+  readOnlyRoots: Schema.optional(Schema.Array(Schema.String)),
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   /**

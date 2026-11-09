@@ -131,3 +131,8 @@ down, so new native capability goes in a child with a deadline, not an `import` 
 
 See the [glossary](./glossary.md) for shared terms and the
 [development runbook](../operations/development.md) for setup and checks.
+
+Xwing discovery links an environment only after an `environment.created` or
+`repository.added` event attributed to the provider session. Session environment
+variables are spoofable by unsandboxed local processes, so this attribution is a
+convenience for linking work, not an authentication boundary.

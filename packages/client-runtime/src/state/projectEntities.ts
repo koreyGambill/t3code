@@ -24,7 +24,7 @@ export function createEnvironmentProjectAtoms(input: {
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
   readonly serverConfigValueAtom?: (
     environmentId: EnvironmentId,
-  ) => Atom.Atom<Pick<ServerConfig, "scratchWorkspaceRoot"> | null>;
+  ) => Atom.Atom<Pick<ServerConfig, "scratchWorkspaceRoot" | "legacyScratchWorkspaceRoot"> | null>;
 }) {
   const environmentProjectsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
@@ -65,14 +65,13 @@ export function createEnvironmentProjectAtoms(input: {
     let previousValue: EnvironmentProject | null = null;
     return Atom.make((get) => {
       const source = get(environmentProjectIndexAtom(ref.environmentId)).get(ref.projectId) ?? null;
+      const config = input.serverConfigValueAtom
+        ? get(input.serverConfigValueAtom(ref.environmentId))
+        : null;
       const scratch =
         source !== null &&
-        isScratchProject(
-          source,
-          input.serverConfigValueAtom
-            ? get(input.serverConfigValueAtom(ref.environmentId))?.scratchWorkspaceRoot
-            : null,
-        );
+        (isScratchProject(source, config?.scratchWorkspaceRoot) ||
+          isScratchProject(source, config?.legacyScratchWorkspaceRoot));
       if (source === previousSource && scratch === previousIsScratch) {
         return previousValue;
       }

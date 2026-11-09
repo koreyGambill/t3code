@@ -2884,6 +2884,7 @@ function permissionModeForClaudeRuntimePolicy(
 }
 
 export interface ClaudeRuntimeQueryPolicy {
+  readonly cwd: string | null;
   readonly permissionMode: PermissionMode;
   readonly additionalDirectories?: ReadonlyArray<string>;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2925,10 +2926,22 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy) === "readOnly"
       ? CLAUDE_READ_ONLY_ALLOWED_TOOLS
       : undefined;
+  const scopedReads =
+    runtimePolicy.readOnlyRoots?.map((root) => {
+      const absolute = /^[A-Za-z]:[\\/]/.test(root)
+        ? root
+            .replaceAll("\\", "/")
+            .replace(/^([A-Za-z]):/, (_, drive: string) => `/${drive.toLowerCase()}`)
+        : root;
+      const escaped = absolute.replace(/[\\*?\[\]{}!]/g, "\\$&").replace(/\/$/, "");
+      return `Read(/${escaped}/**)`;
+    }) ?? [];
   const allowedTools =
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
-      : undefined;
+      : scopedReads.length > 0
+        ? scopedReads
+        : undefined;
   // acceptEdits approves edits before the callback; the callback must ask for everything else.
   const installPermissionCallback =
     downgraded ||
@@ -2939,6 +2952,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 
   if (permissionMode === "plan") {
     return {
+      cwd: runtimePolicy.cwd,
       permissionMode,
       ...(additionalDirectories === undefined ? {} : { additionalDirectories }),
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
@@ -2949,6 +2963,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   }
 
   return {
+    cwd: runtimePolicy.cwd,
     permissionMode,
     ...(additionalDirectories === undefined ? {} : { additionalDirectories }),
     ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
@@ -3049,6 +3064,7 @@ function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
 
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
   return JSON.stringify({
+    cwd: policy.cwd,
     permissionMode: policy.permissionMode,
     additionalDirectories: policy.additionalDirectories,
     tools: policy.tools,

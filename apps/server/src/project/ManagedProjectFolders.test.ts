@@ -562,6 +562,38 @@ it.effect("keeps sandbox scratch folders private and preserves legacy dated fold
   ),
 );
 
+it.effect.each([".", ".."])("rejects a sandbox scratch folder escape: %s", (id) =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const failure = yield* Effect.flip(folders.sandboxFolderForThread(ThreadId.make(id), null));
+      assert.equal(failure._tag, "ScratchFolderError");
+    }),
+  ),
+);
+
+it.effect("caches scratch root validation until the configured directory changes", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const fs = yield* FileSystem.FileSystem;
+      const first = `${baseDir}/first`;
+      const second = `${baseDir}/second`;
+      yield* fs.makeDirectory(first);
+      yield* fs.makeDirectory(second);
+      yield* settings.updateSettings({ scratchStartDirectory: first });
+      assert.equal(Option.getOrThrow(yield* folders.scratchRoot), first);
+      yield* git(first, ["init", "--quiet"]);
+      assert.equal(Option.getOrThrow(yield* folders.scratchRoot), first);
+      yield* settings.updateSettings({ scratchStartDirectory: second });
+      assert.equal(Option.getOrThrow(yield* folders.scratchRoot), second);
+      yield* settings.updateSettings({ scratchStartDirectory: first });
+      assert.isTrue(Option.isNone(yield* folders.scratchRoot));
+    }),
+  ),
+);
+
 it.effect.each(["home", "xwing", "data-parent"] as const)(
   "refuses unsafe scratch start folder: %s",
   (kind) =>

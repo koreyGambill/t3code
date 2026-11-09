@@ -2850,6 +2850,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(yield* projections.listDevelopmentEnvironmentUsage({ threadId }), []);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.listDevelopmentEnvironmentUsage({ threadId }), []);
+      yield* orchestrator.dispatch({
+        type: "thread.workspace.select",
+        commandId: CommandId.make("discovered-select-again"),
+        threadId,
+        expected: { worktreePath: "/other/folder", xwingEnvironmentId: null },
+        worktreePath: checkout.checkoutPath,
+        branch: null,
+        developmentEnvironment: checkout,
+      });
+      assert.notInclude(
+        (yield* orchestrator.getThreadProjection(threadId)).thread
+          .unlinkedDevelopmentEnvironmentIds ?? [],
+        checkout.xwingEnvironmentId,
+      );
+      assert.isTrue((yield* projections.listDevelopmentEnvironmentUsage({ threadId }))[0]?.current);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* projections.listDevelopmentEnvironmentUsage({ threadId }))[0]?.current);
     }),
   );
 

@@ -8,6 +8,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { newProjectFolderName } from "@t3tools/shared/path";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -232,40 +233,45 @@ const make = Effect.gen(function* () {
 
   const legacyScratchRoot = path.resolve(config.baseDir, "scratch");
   // A shared start folder must not inherit a parent repository's status or checkpoints.
-  const scratchRoot = Effect.gen(function* () {
-    const configured = path.resolve(
-      expandHomePath((yield* settings.getSettings).scratchStartDirectory, home),
-    );
-    const root = (yield* fileSystem.exists(configured))
-      ? yield* fileSystem.realPath(configured)
-      : legacyScratchRoot;
-    const realHome = yield* fileSystem
-      .realPath(home)
-      .pipe(Effect.orElseSucceed(() => path.resolve(home)));
-    const realXwing = yield* fileSystem
-      .realPath(path.join(realHome, ".xwing"))
-      .pipe(Effect.orElseSucceed(() => path.join(realHome, ".xwing")));
-    const dataDirectory = yield* fileSystem
-      .realPath(config.baseDir)
-      .pipe(Effect.orElseSucceed(() => path.resolve(config.baseDir)));
-    const dataRelative = path.relative(root, dataDirectory);
-    if (
-      root === realHome ||
-      root === realXwing ||
-      dataRelative === "" ||
-      (!dataRelative.startsWith(`..${path.sep}`) &&
-        dataRelative !== ".." &&
-        !path.isAbsolute(dataRelative))
-    )
-      return Option.none<string>();
-    return yield* gitWorkflow.isRepository(root === legacyScratchRoot ? config.baseDir : root).pipe(
-      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-      Effect.map((isRepository) => (isRepository ? Option.none<string>() : Option.some(root))),
-    );
-  }).pipe(
+  const resolveScratchRoot = Effect.fn("ManagedProjectFolders.resolveScratchRoot")(
+    function* (setting: string) {
+      const configured = path.resolve(expandHomePath(setting, home));
+      const root = (yield* fileSystem.exists(configured))
+        ? yield* fileSystem.realPath(configured)
+        : legacyScratchRoot;
+      const realHome = yield* fileSystem
+        .realPath(home)
+        .pipe(Effect.orElseSucceed(() => path.resolve(home)));
+      const realXwing = yield* fileSystem
+        .realPath(path.join(realHome, ".xwing"))
+        .pipe(Effect.orElseSucceed(() => path.join(realHome, ".xwing")));
+      const dataDirectory = yield* fileSystem
+        .realPath(config.baseDir)
+        .pipe(Effect.orElseSucceed(() => path.resolve(config.baseDir)));
+      const dataRelative = path.relative(root, dataDirectory);
+      if (
+        root === realHome ||
+        root === realXwing ||
+        dataRelative === "" ||
+        (!dataRelative.startsWith(`..${path.sep}`) &&
+          dataRelative !== ".." &&
+          !path.isAbsolute(dataRelative))
+      )
+        return Option.none<string>();
+      return yield* gitWorkflow
+        .isRepository(root === legacyScratchRoot ? config.baseDir : root)
+        .pipe(
+          Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
+          Effect.map((isRepository) => (isRepository ? Option.none<string>() : Option.some(root))),
+        );
+    },
     Effect.catchCause((cause) =>
       Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
     ),
+  );
+  const scratchRoots = yield* Cache.make({ capacity: 1, lookup: resolveScratchRoot });
+  const scratchRoot = settings.getSettings.pipe(
+    Effect.flatMap((value) => Cache.get(scratchRoots, value.scratchStartDirectory)),
   );
 
   const makeScratchFolder = (folder: string) =>
@@ -372,6 +378,11 @@ const make = Effect.gen(function* () {
         if (previous !== null && path.dirname(previous) === legacyRoot) return previous;
       }
       const folder = path.join(legacyRoot, encodeURIComponent(threadId));
+      if (path.dirname(folder) !== legacyRoot)
+        return yield* new ScratchFolderError({
+          folder,
+          cause: "Scratch folder must be inside its root.",
+        });
       yield* makeScratchFolder(folder);
       const real = yield* fileSystem
         .realPath(folder)

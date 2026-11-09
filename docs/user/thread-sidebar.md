@@ -59,7 +59,8 @@ folder with the conversation carried over. Finish or stop any work before moving
 The **Environments** tab shows Xwing environments used by the thread and its
 delegated children. Open an environment to see its repositories and apps, open a
 terminal, or review an archive or deletion. The compact list in thread details
-links to the same tab. **Unlink** removes a link. Changing folder keeps earlier
+links to the same tab. **Unlink** removes a link to a folder the thread is not
+using. Select it again with **Change folder** to restore the link. Changing folder keeps earlier
 links as history and releases their cleanup protection.
 
 ### Start in the background

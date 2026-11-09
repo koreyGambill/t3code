@@ -4391,6 +4391,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.workspace.select":
           return {
             ...thread,
+            unlinkedDevelopmentEnvironmentIds: (
+              thread.unlinkedDevelopmentEnvironmentIds ?? []
+            ).filter((id) => id !== command.developmentEnvironment?.xwingEnvironmentId),
             worktreePath: command.worktreePath,
             branch: command.branch,
             ...(command.worktreePath === thread.worktreePath

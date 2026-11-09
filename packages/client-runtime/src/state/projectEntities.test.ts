@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
+import { isScratchProject } from "./projects.ts";
 import { createEnvironmentProjectAtoms } from "./projectEntities.ts";
 import { v2Project, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
@@ -26,7 +27,12 @@ function makeHarness(withConfig = true) {
     }),
   );
   const configAtom = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.make<(Pick<ServerConfig, "scratchWorkspaceRoot"> & { revision?: number }) | null>(null),
+    Atom.make<
+      | (Pick<ServerConfig, "scratchWorkspaceRoot" | "legacyScratchWorkspaceRoot"> & {
+          revision?: number;
+        })
+      | null
+    >(null),
   );
   const catalogValueAtom = Atom.make({
     isReady: true,
@@ -113,6 +119,14 @@ describe("project scratch identity", () => {
       expect(changedRoot[0]).not.toHaveProperty("isScratch");
       expect(changedRoot[1]?.isScratch).toBe(true);
       expect(changedRoot[2]).toBe(initial[2]);
+
+      registry.set(configAtom(environmentId), {
+        scratchWorkspaceRoot: "/new/code",
+        legacyScratchWorkspaceRoot: v2Project.workspaceRoot,
+      });
+      const legacy = registry.get(projects.projectsAtom)[0]!;
+      expect(legacy.isScratch).toBe(true);
+      expect(isScratchProject(legacy, "/new/code")).toBe(true);
 
       registry.set(configAtom(environmentId), null);
       expect(registry.get(projects.projectsAtom).every((project) => !project.isScratch)).toBe(true);
