@@ -50,6 +50,9 @@ async function backupState(source: string, destination: string) {
   if (NodeFS.existsSync(database)) {
     const db = new DatabaseSync(database, { readOnly: true });
     try {
+      // Pin the WAL snapshot so active turns cannot restart each incremental backup step.
+      db.exec("BEGIN");
+      db.prepare("SELECT name FROM sqlite_schema LIMIT 1").get();
       await backup(db, NodePath.join(destination, "statev2.sqlite"));
     } finally {
       db.close();
