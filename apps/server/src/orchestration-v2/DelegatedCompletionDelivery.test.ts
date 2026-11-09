@@ -2158,13 +2158,16 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             },
             dispatchMode: { type: "queue_after_active" },
           });
-          const notice = (yield* orchestrator.getThreadProjection(parentThreadId)).messages.find(
-            (message) => message.id === delivery.messageId,
+          const notices = (yield* orchestrator.getThreadProjection(parentThreadId)).messages.filter(
+            (message) => message.text.includes(`follow-up ${followup.id}`),
           );
+          assert.lengthOf(notices, 1);
+          assert.equal(notices[0]?.id, delivery.messageId);
           assert.include(
-            notice?.text,
+            notices[0]?.text,
             `Delegated task ${child.taskId} (Original brief), follow-up ${followup.id} [completed]`,
           );
+          assert.include(notices[0]?.text, followup.result ?? "");
         }),
     );
 
