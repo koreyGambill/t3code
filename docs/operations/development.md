@@ -381,8 +381,12 @@ containing an existing MCP Authorization header. Without that credential, the av
 path is SQLite's persisted run projection; the receipt labels it `read-only-sqlite`. Read errors keep
 the drain waiting until its deadline. Waiting-for-input turns do not hold the update open.
 
-Activation snapshots WSL and Windows `statev2.sqlite` with SQLite's backup API and copies settings,
-secrets and thread workspaces. It excludes `server-owner.sqlite`, the live ownership lock.
+Activation snapshots WSL and Windows `statev2.sqlite` with `VACUUM INTO` on a read-only connection,
+then copies settings, secrets and thread workspaces. WAL writers can continue during the snapshot.
+Each snapshot helper has a four-minute deadline and removes partial output on failure.
+It excludes `server-owner.sqlite`, the live ownership lock. Check-only snapshots live in command
+scratch and are removed afterwards. Real activation prepares state beside the install, then retains
+it in the rollback directory. Keep logs and receipts separate from private state.
 It carries over the install's launchers, closes the main window gracefully, waits for the WSL server
 to exit, swaps the app and relaunches through `Start Weavewing.cmd`. Health checks require the process
 under the new archive digest to answer the environment endpoint. `--health-seconds` defaults to 240.
@@ -395,7 +399,8 @@ govern other activity. It replaces only its marked sibling `.<install-name>-cand
 and running candidates are refused. Activation keeps one marked `.<install-name>-local-update-rollback`
 directory containing the previous app and state snapshots, replacing only its own older rollback.
 It never force-kills a process. Check `receipt.json` and `activation.log` in the output directory after
-restart. `--notify-thread ID` additionally sends the result with `t3 thread send`.
+restart. The receipt links `helpers/`, which records every helper PID at spawn.
+`--notify-thread ID` additionally sends the result with `t3 thread send`.
 
 The staging helper remains available as `scripts/stage-windows-desktop.ps1`. Run its adjacent fixture
 test and `scripts/activate-local-desktop.test.ps1 -WorkerPath <output-directory>\worker.mjs`

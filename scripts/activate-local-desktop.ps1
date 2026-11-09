@@ -42,13 +42,21 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   $receipt = Join-Path $root 'receipt.json'
   $empty = Join-Path $root 'empty-stdin'
   $log = Join-Path $root 'activation.log'
-  $details = @{ commit = $config.commit; digest = $config.digest; install = $install; rollback = $rollback; checkOnly = $config.checkOnly; drainSource = $(if ($config.authorizationFile) { 'mcp' } else { 'read-only-sqlite' }) }
+  $helperReceipts = Join-Path $root 'helpers'
+  New-Item -ItemType Directory -Path $helperReceipts -Force | Out-Null
+  $details = @{ status = $Mode; helperReceipts = $helperReceipts; commit = $config.commit; digest = $config.digest; install = $install; rollback = $rollback; checkOnly = $config.checkOnly; drainSource = $(if ($config.authorizationFile) { 'mcp' } else { 'read-only-sqlite' }) }
   function Save-UpdateStatus($status) {
     $details.status = $status
     $details.at = [DateTime]::UtcNow.ToString('o')
+    $details.helpers = @(Get-ChildItem -LiteralPath $helperReceipts -Filter '*.json' | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })
     $details | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $receipt
     Add-Content -LiteralPath $log -Value ($details | ConvertTo-Json -Depth 10 -Compress)
   }
+  function Record-UpdateHelper($processId, $role) {
+    @{ pid = $processId; platform = 'win32'; role = $role; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $helperReceipts ("win32-$processId.json"))
+    Save-UpdateStatus $details.status
+  }
+  Record-UpdateHelper $PID "powershell:$Mode"
   function Quote-UpdateArgument([string]$value) {
     if ($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")) { throw 'Arguments must not contain quotes or newlines.' }
     if ($value -notmatch '\s') { return $value }
@@ -60,7 +68,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     # Detached wsl.exe waits forever on inherited stdin after its parent exits.
     $process = Start-Process -FilePath $executable -ArgumentList ($arguments | ForEach-Object { Quote-UpdateArgument $_ }) -RedirectStandardInput $empty -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -PassThru
     $null = $process.Handle
-    @{ pid = $process.Id; label = $label; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root ($label + '.process.json'))
+    Record-UpdateHelper $process.Id $label
     if (-not $process.WaitForExit($seconds * 1000)) { throw "$label exceeded ${seconds}s; no process was force-killed. Inspect $stdout and $stderr." }
     if ($process.ExitCode -ne 0) { throw "$label failed ($($process.ExitCode)). $(Get-Content -LiteralPath $stderr -Raw)" }
     return (Get-Content -LiteralPath $stdout -Raw | ConvertFrom-Json)
@@ -112,6 +120,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     Stage-WindowsDesktop $install $install -CheckOnly
     if (-not (Test-Path -LiteralPath (Join-Path $install 'Start Weavewing.cmd'))) { throw 'Install must have Start Weavewing.cmd.' }
     Assert-UpdateRollback
+    if (-not $config.checkOnly -and (Test-Path -LiteralPath $config.backupRootWindows)) { throw "Interrupted state backup: inspect $($config.backupRootWindows) before updating." }
     $oldDigest = (Get-FileHash -LiteralPath (Join-Path $install 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
     if (-not (Probe-Update 'health' @($oldDigest)).healthy) { throw 'Installed WSL runtime is not healthy; repair it before updating.' }
     Save-UpdateStatus 'preflight-passed'
@@ -144,16 +153,31 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   if ($Mode -eq 'Launch') {
     Assert-UpdatePayload
     $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Quote-UpdateArgument $PSCommandPath), '-ConfigPath', (Quote-UpdateArgument $ConfigPath), '-Mode', 'Activate') -RedirectStandardInput $empty -RedirectStandardOutput (Join-Path $root 'detached.stdout') -RedirectStandardError (Join-Path $root 'detached.stderr') -WindowStyle Hidden -PassThru
+    Record-UpdateHelper $process.Id 'detached-activation'
     @{ pid = $process.Id; receipt = $receipt } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'detached.json')
     return
   }
   $mutex = [Threading.Mutex]::new($false, 'Local\WeavewingLocalDesktopUpdate')
   if (-not $mutex.WaitOne(0)) { $mutex.Dispose(); throw 'Another local update is active.' }
   $closed = $false
+  $stateCreated = $false
+  $windowsScratch = $null
   $oldDigest = ''
   try {
     Assert-UpdatePayload
     Assert-UpdateRollback
+    if ($config.checkOnly) {
+      $windowsScratch = Join-Path ([IO.Path]::GetTempPath()) ('weavewing-backups-' + [guid]::NewGuid().ToString())
+      New-Item -ItemType Directory -Path $windowsScratch | Out-Null
+      $config | Add-Member -NotePropertyName windowsBackupRoot -NotePropertyValue $windowsScratch -Force
+    } else {
+      if (Test-Path -LiteralPath $config.backupRootWindows) { throw "Interrupted state backup: inspect $($config.backupRootWindows) before updating." }
+      New-Item -ItemType Directory -Path $config.backupRootWindows | Out-Null
+      $stateCreated = $true
+      Set-Content -LiteralPath (Join-Path $config.backupRootWindows '.weavewing-update-owner') -Value $install
+      $config | Add-Member -NotePropertyName windowsBackupRoot -NotePropertyValue $config.backupRootWindows -Force
+    }
+    $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConfigPath
     $oldDigest = (Get-FileHash -LiteralPath (Join-Path $install 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
     $old = Probe-Update 'health' @($oldDigest)
     if (-not $old.healthy) { throw 'Installed runtime became unhealthy before drain.' }
@@ -178,7 +202,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     if (Test-Path -LiteralPath $rollback) { Remove-Item -LiteralPath $rollback -Recurse -Force }
     New-Item -ItemType Directory -Path $rollback | Out-Null
     Set-Content -LiteralPath $marker -Value $install
-    foreach ($name in @('backup-wsl', 'backup-windows')) { Move-Item -LiteralPath (Join-Path $root $name) -Destination (Join-Path $rollback $name) }
+    foreach ($name in @('backup-wsl', 'backup-windows')) { Move-Item -LiteralPath (Join-Path $config.backupRootWindows $name) -Destination (Join-Path $rollback $name) }
+    Remove-Item -LiteralPath $config.backupRootWindows -Recurse -Force
     $details.wslBackup.path = Join-Path $rollback 'backup-wsl'
     $details.windowsBackup.path = Join-Path $rollback 'backup-windows'
     Save-UpdateStatus 'activating'
@@ -202,6 +227,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     Save-UpdateStatus 'failed'
     throw
   } finally {
+    if ($windowsScratch) { Remove-Item -LiteralPath $windowsScratch -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($stateCreated -and -not $closed) { Remove-Item -LiteralPath $config.backupRootWindows -Recurse -Force -ErrorAction SilentlyContinue }
     if ($config.notifyThread -and -not $config.checkOnly) {
       try { Probe-Update 'notify' @($(if ($details.status -eq 'verified') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit). Receipt: $($config.output)/receipt.json") | Out-Null } catch { Add-Content -LiteralPath $log -Value "Notification failed: $_" }
     }

@@ -64,7 +64,7 @@ try {
   $userdata = Join-Path $fixtureHome 'userdata'
   New-Item -ItemType Directory -Path $userdata | Out-Null
   $configPath = Join-Path $root 'backup-config.json'
-  @{ wslHome = $fixtureHome; output = $root } | ConvertTo-Json | Set-Content $configPath
+  @{ wslHome = $fixtureHome; output = $root; backupRoot = $root } | ConvertTo-Json | Set-Content $configPath
   $fixtureScript = Join-Path $root 'backup-fixture.mjs'
   @'
 import { DatabaseSync } from 'node:sqlite';
@@ -73,7 +73,14 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, worker, config] = process.argv.slice(2);
 const db = new DatabaseSync(path.join(root, 'statev2.sqlite'));
-db.exec("CREATE TABLE saved(value TEXT); INSERT INTO saved VALUES ('preserved')");
+db.exec("PRAGMA journal_mode=WAL; CREATE TABLE saved(value TEXT); INSERT INTO saved VALUES ('preserved')");
+const reader = new DatabaseSync(path.join(root, 'statev2.sqlite'), {readOnly: true});
+reader.exec('BEGIN');
+reader.prepare('SELECT value FROM saved').get();
+db.exec("UPDATE saved SET value = 'writer committed'");
+if (reader.prepare('SELECT value FROM saved').get().value !== 'preserved') throw new Error('Read snapshot changed');
+db.exec("UPDATE saved SET value = 'preserved'");
+reader.close();
 db.close();
 // A locked ownership database made the manual updater's backup retry forever.
 const lock = new DatabaseSync(path.join(root, 'server-owner.sqlite'));
@@ -97,5 +104,21 @@ lock.close();
   Assert ((Get-Content (Join-Path $backup 'secrets/fixture')) -eq 'secret') 'Secrets missing'
   Assert ((Get-Content (Join-Path $backup 'thread-workspaces/fixture')) -eq 'workspace') 'Workspace missing'
   Assert (-not (Test-Path (Join-Path $backup 'server-owner.sqlite'))) 'Ownership lock entered backup'
-  'PASS: drain deadline, healthy swap, failed promotion, unhealthy rollback, refused close, read-only state backup excluding ownership lock'
+  $failureRoot = Join-Path $root 'failure'
+  New-Item -ItemType Directory -Path $failureRoot | Out-Null
+  @{ wslHome = $fixtureHome; output = $root; backupRoot = $failureRoot; backupTimeoutMs = 0 } | ConvertTo-Json | Set-Content $configPath
+  try {
+    $ErrorActionPreference = 'Continue'
+    & $NodeExecutable $WorkerPath --worker backup $configPath 2> (Join-Path $root 'timeout.stderr')
+    $failureCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = 'Stop' }
+  Assert ($failureCode -ne 0) 'Expired snapshot budget succeeded'
+  Assert (-not (Test-Path (Join-Path $failureRoot 'backup-wsl'))) 'Timeout left a partial snapshot'
+  Assert ((Get-Content (Join-Path $root 'timeout.stderr') -Raw) -match 'timed out') 'Timeout did not explain its failure'
+  foreach ($helper in Get-ChildItem (Join-Path $root 'helpers') -Filter '*.json') {
+    $record = Get-Content $helper.FullName -Raw | ConvertFrom-Json
+    Assert (-not (Get-Process -Id $record.pid -ErrorAction SilentlyContinue)) 'Snapshot helper remained running after completion or timeout'
+  }
+  Assert (Test-Path (Join-Path $userdata 'statev2.sqlite')) 'Timeout removed source state'
+  'PASS: drain deadline, swap and rollback, refused close, read-only snapshot excluding ownership lock, timeout cleanup and captured helper exit'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }

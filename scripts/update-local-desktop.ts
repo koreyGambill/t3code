@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalConsole:off - The detached worker runs under Electron without repository dependencies.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalConsole:off globalDate:off globalTimers:off - The detached worker runs under Electron without repository dependencies.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -25,49 +25,105 @@ const stateFiles = [
   "saved-environments.json",
 ];
 
-function run(
-  command: string,
-  args: string[],
-  options: Parameters<typeof NodeChildProcess.spawnSync>[2] = {},
-) {
-  const result = NodeChildProcess.spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: "inherit",
-    ...options,
-  });
-  if (result.error) throw new Error(`Cannot run ${command}: ${result.error.message}`);
-  if (result.status !== 0)
-    throw new Error(
-      `${command} exited ${result.status}${result.stderr ? `: ${String(result.stderr).trim()}` : ""}`,
+let helperReceiptDirectory: string | undefined;
+const pendingHelpers: Array<{ pid: number; platform: string; role: string; at: string }> = [];
+
+function recordHelper(pid: number, role: string) {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Helper receipts describe the actual standalone host process.
+  pendingHelpers.push({ pid, platform: NodeOS.platform(), role, at: new Date().toISOString() });
+  if (!helperReceiptDirectory) return;
+  NodeFS.mkdirSync(helperReceiptDirectory, { recursive: true, mode: 0o700 });
+  for (const helper of pendingHelpers.splice(0)) {
+    NodeFS.writeFileSync(
+      NodePath.join(helperReceiptDirectory, `${helper.platform}-${helper.pid}.json`),
+      JSON.stringify(helper),
     );
-  return String(result.stdout ?? "").trim();
+  }
 }
 
-async function backupState(source: string, destination: string) {
-  const { DatabaseSync, backup } = await import("node:sqlite");
-  NodeFS.mkdirSync(destination, { mode: 0o700 });
-  const database = NodePath.join(source, "statev2.sqlite");
-  if (NodeFS.existsSync(database)) {
-    const db = new DatabaseSync(database, { readOnly: true });
-    try {
-      // Pin the WAL snapshot so active turns cannot restart each incremental backup step.
-      db.exec("BEGIN");
-      db.prepare("SELECT name FROM sqlite_schema LIMIT 1").get();
-      await backup(db, NodePath.join(destination, "statev2.sqlite"));
-    } finally {
-      db.close();
-    }
-    NodeFS.chmodSync(NodePath.join(destination, "statev2.sqlite"), 0o600);
-  }
-  for (const name of stateFiles) {
-    const file = NodePath.join(source, name);
-    if (NodeFS.existsSync(file))
-      NodeFS.cpSync(file, NodePath.join(destination, name), {
-        recursive: true,
-        dereference: false,
+async function run(command: string, args: string[], options: NodeChildProcess.SpawnOptions = {}) {
+  const { timeout, ...spawnOptions } = options;
+  const child = NodeChildProcess.spawn(command, args, { stdio: "inherit", ...spawnOptions });
+  if (child.pid) recordHelper(child.pid, NodePath.basename(command));
+  child.stdin?.end();
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  let timedOut = false;
+  const expire = () => {
+    timedOut = true;
+    child.kill("SIGTERM");
+  };
+  const timer = timeout !== undefined && timeout > 0 ? setTimeout(expire, timeout) : undefined;
+  if (timeout !== undefined && timeout <= 0) expire();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => {
+        if (timedOut)
+          reject(
+            new Error(
+              `${NodePath.basename(command)} timed out after ${timeout}ms; snapshot helper stopped.`,
+            ),
+          );
+        else if (code !== 0)
+          reject(new Error(`${command} exited ${code ?? signal}: ${stderr.trim()}`));
+        else resolve();
       });
+    });
+    return stdout.trim();
+  } finally {
+    clearTimeout(timer);
   }
-  return { backedUp: true, path: destination };
+}
+
+async function snapshot(database: string, destination: string) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(database, { readOnly: true });
+  try {
+    // VACUUM INTO holds one read transaction while WAL writers continue.
+    db.exec(`VACUUM INTO '${destination.replaceAll("'", "''")}'`);
+  } finally {
+    db.close();
+  }
+}
+
+async function backupState(source: string, destination: string, timeout = 240_000) {
+  NodeFS.mkdirSync(destination, { mode: 0o700 });
+  try {
+    const database = NodePath.join(source, "statev2.sqlite");
+    if (NodeFS.existsSync(database)) {
+      await run(
+        process.execPath,
+        [
+          NodeURL.fileURLToPath(import.meta.url),
+          "--snapshot",
+          database,
+          NodePath.join(destination, "statev2.sqlite"),
+          helperReceiptDirectory!,
+        ],
+        { stdio: "pipe", timeout },
+      );
+      NodeFS.chmodSync(NodePath.join(destination, "statev2.sqlite"), 0o600);
+    }
+    for (const name of stateFiles) {
+      const file = NodePath.join(source, name);
+      if (NodeFS.existsSync(file))
+        NodeFS.cpSync(file, NodePath.join(destination, name), {
+          recursive: true,
+          dereference: true,
+        });
+    }
+    return { backedUp: true, path: destination };
+  } catch (error) {
+    NodeFS.rmSync(destination, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function health(home: string, digest: string) {
@@ -184,15 +240,19 @@ async function idle(home: string, authorizationFile?: string) {
 
 async function worker(mode: string, configFile: string, extra: string[]) {
   const config = JSON.parse(NodeFS.readFileSync(configFile, "utf8"));
+  helperReceiptDirectory = NodePath.join(NodePath.dirname(configFile), "helpers");
+  recordHelper(process.pid, `worker:${mode}`);
   if (mode === "backup")
     return backupState(
       NodePath.join(config.wslHome, "userdata"),
-      NodePath.join(config.output, "backup-wsl"),
+      NodePath.join(config.backupRoot, "backup-wsl"),
+      config.backupTimeoutMs,
     );
   if (mode === "backup-windows")
     return backupState(
-      NodePath.join(NodeOS.homedir(), ".t3/userdata"),
-      NodePath.join(NodePath.dirname(configFile), "backup-windows"),
+      config.windowsUserdata ?? NodePath.join(NodeOS.homedir(), ".t3/userdata"),
+      NodePath.join(config.windowsBackupRoot, "backup-windows"),
+      config.backupTimeoutMs,
     );
   if (mode === "idle") return idle(config.wslHome, config.authorizationFile);
   if (mode === "health") return health(config.wslHome, extra[0]!);
@@ -208,7 +268,7 @@ async function worker(mode: string, configFile: string, extra: string[]) {
     const current = await health(config.wslHome, extra[0]!);
     if (!current.healthy || !current.executable)
       throw new Error("No healthy runtime for notification");
-    run(
+    await run(
       current.executable,
       ["thread", "send", "--base-dir", config.wslHome, "--json", config.notifyThread, extra[1]!],
       { stdio: "pipe", timeout: 30000 },
@@ -279,7 +339,7 @@ async function main() {
     throw new Error("Run this command inside WSL with Windows interop enabled.");
   const repo = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
   const git = (...args: string[]) => run("git", ["-C", repo, ...args], { stdio: "pipe" });
-  if (git("status", "--porcelain"))
+  if (await git("status", "--porcelain"))
     throw new Error(
       "Commit or remove worktree changes before updating; the build requires a clean tree.",
     );
@@ -298,7 +358,7 @@ async function main() {
     throw new Error(
       "--output-dir must be a new absolute directory, outside the installation and candidate.",
     );
-  const outputWindows = run("wslpath", ["-w", output], { stdio: "pipe" }).toLowerCase();
+  const outputWindows = (await run("wslpath", ["-w", output], { stdio: "pipe" })).toLowerCase();
   const install = NodePath.win32.resolve(values["install-dir"]!);
   const parent = NodePath.win32.dirname(install);
   const name = NodePath.win32.basename(install);
@@ -306,6 +366,7 @@ async function main() {
     install,
     NodePath.win32.join(parent, `.${name}-candidate`),
     NodePath.win32.join(parent, `.${name}-local-update-rollback`),
+    NodePath.win32.join(parent, `.${name}-local-update-state`),
   ]) {
     const relative = NodePath.win32.relative(protectedPath.toLowerCase(), outputWindows);
     if (
@@ -347,8 +408,16 @@ async function main() {
   const version = JSON.parse(
     NodeFS.readFileSync(NodePath.join(repo, "apps/server/package.json"), "utf8"),
   ).version;
-  git("diff", "--exit-code", `v${version}`, "--", "native/resource-monitor");
+  await git("diff", "--exit-code", `v${version}`, "--", "native/resource-monitor");
   NodeFS.mkdirSync(output, { mode: 0o700, recursive: true });
+  helperReceiptDirectory = NodePath.join(output, "helpers");
+  recordHelper(process.pid, "driver");
+  const checkOnly = !!(values["check-only"] || values["dry-run"]);
+  const backupRoot = checkOnly
+    ? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "weavewing-backups-"))
+    : await run("wslpath", ["-u", NodePath.win32.join(parent, `.${name}-local-update-state`)], {
+        stdio: "pipe",
+      });
   const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "weavewing-update-bin-"));
   try {
     for (const name of ["vp", "vpr", "vpx", "node", "yarn", "yarnpkg", "bun", "bunx"])
@@ -364,8 +433,8 @@ async function main() {
       T3CODE_DESKTOP_UPDATE_REPOSITORY: "koreyGambill/t3code",
     };
     const build = (command: string, args: string[], cwd = repo) => run(command, args, { cwd, env });
-    build("patchelf", ["--version"]);
-    build("vp", ["--version"]);
+    await build("patchelf", ["--version"]);
+    await build("vp", ["--version"]);
     const powershell = (args: string[]) =>
       run(
         "powershell.exe",
@@ -387,17 +456,19 @@ async function main() {
     );
     const config = {
       output,
-      commit: git("rev-parse", "HEAD"),
+      commit: await git("rev-parse", "HEAD"),
       install: values["install-dir"],
       distro: values["wsl-distro"],
       wslHome: values["wsl-home"],
       node: process.execPath,
       drainMinutes,
       healthSeconds,
-      checkOnly: !!(values["check-only"] || values["dry-run"]),
+      checkOnly,
+      backupRoot,
+      backupRootWindows: await windowsPath(backupRoot),
       notifyThread: values["notify-thread"],
       authorizationFile: values["mcp-authorization-file"],
-      source: windowsPath(NodePath.join(output, "windows/win-unpacked")),
+      source: await windowsPath(NodePath.join(output, "windows/win-unpacked")),
       digest: "",
       exeHash: "",
     };
@@ -405,26 +476,26 @@ async function main() {
     const saveConfig = () =>
       NodeFS.writeFileSync(configFile, JSON.stringify(config, null, 2), { mode: 0o600 });
     saveConfig();
-    powershell([
+    await powershell([
       "-File",
-      windowsPath(activation),
+      await windowsPath(activation),
       "-ConfigPath",
-      windowsPath(configFile),
+      await windowsPath(configFile),
       "-Mode",
       "Preflight",
     ]);
-    if (!NodeFS.existsSync(NodePath.join(repo, "node_modules"))) build("vp", ["i"]);
+    if (!NodeFS.existsSync(NodePath.join(repo, "node_modules"))) await build("vp", ["i"]);
     const windowsMonitor = NodePath.join(
       repo,
       "native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe",
     );
     NodeFS.mkdirSync(NodePath.dirname(windowsMonitor), { recursive: true });
     NodeFS.copyFileSync(values["windows-monitor"]!, windowsMonitor);
-    build("vp", ["run", "--filter", "t3", "build"]);
-    build("node", ["apps/desktop/scripts/build-preview-annotation-css.mjs"]);
-    build("vp", ["pack"], NodePath.join(repo, "apps/desktop"));
-    build("node", ["apps/server/scripts/cli.ts", "build-exe", "--verbose"]);
-    build("node", [
+    await build("vp", ["run", "--filter", "t3", "build"]);
+    await build("node", ["apps/desktop/scripts/build-preview-annotation-css.mjs"]);
+    await build("vp", ["pack"], NodePath.join(repo, "apps/desktop"));
+    await build("node", ["apps/server/scripts/cli.ts", "build-exe", "--verbose"]);
+    await build("node", [
       "scripts/build-cli-archive.ts",
       "--platform",
       "linux",
@@ -438,14 +509,14 @@ async function main() {
       NodePath.join(output, "current"),
     ]);
     const archive = NodePath.join(output, "current", `t3-${version}-linux-x64.tar.gz`);
-    build("node", [
+    await build("node", [
       "scripts/smoke-cli-archive.ts",
       "--archive",
       archive,
       "--expect-version",
       version,
     ]);
-    build("node", [
+    await build("node", [
       "scripts/build-desktop-artifact.ts",
       "--platform",
       "win",
@@ -467,21 +538,21 @@ async function main() {
     config.digest = hash(archive);
     config.exeHash = hash(NodePath.join(output, "windows/win-unpacked/Weavewing.exe"));
     saveConfig();
-    if (git("status", "--porcelain") || config.commit !== git("rev-parse", "HEAD"))
+    if ((await git("status", "--porcelain")) || config.commit !== (await git("rev-parse", "HEAD")))
       throw new Error("Source changed during the build; refusing activation.");
-    powershell([
+    await powershell([
       "-File",
-      windowsPath(activation),
+      await windowsPath(activation),
       "-ConfigPath",
-      windowsPath(configFile),
+      await windowsPath(configFile),
       "-Mode",
       "Prepare",
     ]);
-    powershell([
+    await powershell([
       "-File",
-      windowsPath(activation),
+      await windowsPath(activation),
       "-ConfigPath",
-      windowsPath(configFile),
+      await windowsPath(configFile),
       "-Mode",
       config.checkOnly ? "Activate" : "Launch",
     ]);
@@ -490,11 +561,16 @@ async function main() {
     );
   } finally {
     NodeFS.rmSync(bin, { recursive: true, force: true });
+    if (checkOnly) NodeFS.rmSync(backupRoot, { recursive: true, force: true });
   }
 }
 
 try {
-  if (process.argv[2] === "--worker")
+  if (process.argv[2] === "--snapshot") {
+    helperReceiptDirectory = process.argv[5]!;
+    recordHelper(process.pid, "sqlite-snapshot");
+    await snapshot(process.argv[3]!, process.argv[4]!);
+  } else if (process.argv[2] === "--worker")
     console.log(
       JSON.stringify(await worker(process.argv[3]!, process.argv[4]!, process.argv.slice(5))),
     );
