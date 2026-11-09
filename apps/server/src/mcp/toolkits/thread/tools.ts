@@ -38,7 +38,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ContextReadTool = Tool.make("t3_context_read", {
   description:
-    "Read recent per-turn context records: instruction sizes, injected tools, file and knowledge reads, repeats and reported token usage. Omit threadId for this thread. Results are bounded; page with nextBeforeOrdinal. Inferred shell reads and missing telemetry are uncertainty, not proof of waste. Use records to propose improvements for human review; never edit instructions or notes without authorization.",
+    "Read recent per-turn context records: instruction sizes, injected tool counts, file and knowledge reads, repeats and reported token usage. Defaults to 3 turns and 24 KB; page with nextBeforeOrdinal. Set includeInjectedTools:true for full tool-name lists. Omit threadId for this thread. Inferred shell reads and missing telemetry are uncertainty, not proof of waste. Use records to propose improvements for human review; never edit instructions or notes without authorization.",
   parameters: Schema.Struct({
     ...ThreadContextGetInput.fields,
     threadId: Schema.optional(ThreadId),

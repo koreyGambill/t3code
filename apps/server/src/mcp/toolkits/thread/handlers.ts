@@ -97,7 +97,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, []);
       return yield* (yield* ContextRecords.ContextRecords)
-        .get({ ...input, threadId: projection.thread.id })
+        .get({
+          ...input,
+          threadId: projection.thread.id,
+          limit: input.limit ?? 3,
+          maxBytes: input.maxBytes ?? 24000,
+          includeInjectedTools: input.includeInjectedTools ?? false,
+        })
         .pipe(
           Effect.mapError(
             (cause) =>
