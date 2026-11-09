@@ -190,15 +190,13 @@ const make = Effect.gen(function* () {
         if (profile.kind === "context-review")
           for (const finding of (yield* store.list()).findings)
             if (finding.profileId === id && finding.disposition === "open")
-              yield* delivery
-                .deliver({ profile, finding })
-                .pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Monitoring proposal remains pending", {
-                      operation: cause.operation,
-                    }),
-                  ),
-                );
+              yield* delivery.deliver({ profile, finding }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Monitoring proposal remains pending", {
+                    operation: cause.operation,
+                  }),
+                ),
+              );
         const result = yield* Effect.result(
           review(profile, undefined, (cost) => {
             costUsd = cost;
@@ -222,7 +220,7 @@ const make = Effect.gen(function* () {
             Digest.sha256,
             new TextEncoder().encode(
               [
-                id,
+                ...(profile.kind === "context-review" ? [] : [id]),
                 content.threadId,
                 content.ruleId,
                 ...(profile.kind === "context-review"

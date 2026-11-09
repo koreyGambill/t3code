@@ -394,3 +394,76 @@ it.effect(
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
 );
+
+it.effect(
+  "deduplicates context proposals across profiles reviewing the same thread and run set",
+  () =>
+    Effect.gen(function* () {
+      const first: MonitoringProfile = { ...profile, kind: "context-review" };
+      const second: MonitoringProfile = {
+        ...first,
+        id: MonitoringProfileId.make("other-watcher"),
+        scheduledTaskId: ScheduledTaskId.make("monitoring:other-watcher"),
+      };
+      const findings = yield* Ref.make<ReadonlyArray<MonitoringFinding>>([]);
+      const deliveries = yield* Ref.make(0);
+      const layer = runnerLayer(
+        first,
+        {
+          getProfile: (id) => Effect.succeed(id === first.id ? first : second),
+          list: () =>
+            Ref.get(findings).pipe(
+              Effect.map((findings) => ({ profiles: [first, second], findings, runs: [] })),
+            ),
+          getFinding: (id) =>
+            Ref.get(findings).pipe(Effect.map((all) => all.find((item) => item.id === id) ?? null)),
+          saveFinding: (finding) => Ref.update(findings, (all) => [...all, finding]),
+        },
+        {
+          capture: () =>
+            Effect.succeed({
+              threads: [
+                {
+                  id: ThreadId.make("thread"),
+                  title: "Main",
+                  parentThreadId: null,
+                  messages: [{ id: "context:run", role: "context record", text: "Repeated reads" }],
+                },
+              ],
+              truncated: false,
+              coverage: "Context records",
+            }),
+        },
+        () =>
+          Effect.succeed({
+            findings: [
+              {
+                threadId: ThreadId.make("thread"),
+                ruleId: "verify",
+                summary: "Repeated reads",
+                detail: "Use a summary",
+                confidence: 0.7,
+                evidence: [
+                  {
+                    threadId: ThreadId.make("thread"),
+                    messageId: MessageId.make("context:run"),
+                    excerpt: "Repeated",
+                  },
+                ],
+              },
+            ],
+          }),
+        () =>
+          Ref.update(deliveries, (n) => n + 1).pipe(
+            Effect.as({ delivery: "workspace" as const, messageId: null }),
+          ),
+      );
+      yield* Effect.gen(function* () {
+        const runner = yield* Runner.MonitoringRunner;
+        yield* runner.run(first.id);
+        yield* runner.run(second.id);
+        assert.equal((yield* Ref.get(findings)).length, 1);
+        assert.equal(yield* Ref.get(deliveries), 1);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
+);
