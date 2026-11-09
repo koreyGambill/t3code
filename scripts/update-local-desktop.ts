@@ -147,83 +147,98 @@ async function health(home: string, digest: string) {
   }
 }
 
+async function readThreads(
+  endpoint: string,
+  authorization: string,
+  deadline: number,
+  peer = false,
+) {
+  const requestSignal = () => {
+    if (Date.now() >= deadline) throw new Error("MCP health deadline expired");
+    return AbortSignal.timeout(Math.max(1, Math.min(5000, Math.floor(deadline - Date.now()))));
+  };
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    authorization,
+    ...(peer ? { "T3-Mode-Limit": "approval-required/plan" } : {}),
+  };
+  async function request(message: unknown) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(message),
+      redirect: "error",
+      signal: requestSignal(),
+    });
+    if (!response.ok) throw new Error(`MCP returned HTTP ${response.status}`);
+    const session = response.headers.get("mcp-session-id");
+    if (session) headers["mcp-session-id"] = session;
+    const text = await response.text();
+    const payload = response.headers.get("content-type")?.includes("text/event-stream")
+      ? text
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => JSON.parse(line.slice(5)))
+          .find((value) => value.id !== undefined)
+      : text
+        ? JSON.parse(text)
+        : undefined;
+    if (payload?.error) throw new Error(`MCP failed: ${JSON.stringify(payload.error)}`);
+    return payload?.result;
+  }
+  try {
+    await request({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "weavewing-local-update", version: "1" },
+      },
+    });
+    headers["mcp-protocol-version"] = "2025-06-18";
+    await request({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const result = await request({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "t3_thread_list",
+        arguments: {
+          allProjects: true,
+          includeSubagents: true,
+          statuses: activeStatuses,
+          limit: 1,
+        },
+      },
+    });
+    if (result?.isError || !Number.isInteger(result?.structuredContent?.total))
+      throw new Error("MCP returned no thread count");
+    return {
+      idle: result.structuredContent.total === 0,
+      active: result.structuredContent.total,
+      source: "mcp",
+    };
+  } finally {
+    if (headers["mcp-session-id"] && Date.now() < deadline)
+      await fetch(endpoint, {
+        method: "DELETE",
+        redirect: "error",
+        headers,
+        signal: requestSignal(),
+      }).catch(() => undefined);
+  }
+}
+
 async function idle(home: string, authorizationFile?: string) {
   if (authorizationFile) {
     const runtime = JSON.parse(
       NodeFS.readFileSync(NodePath.join(home, "userdata/server-runtime.json"), "utf8"),
     );
     const authorization = NodeFS.readFileSync(authorizationFile, "utf8").trim();
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      authorization,
-    };
-    const endpoint = `http://127.0.0.1:${runtime.port}/mcp`;
-    async function request(message: unknown) {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(message),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) throw new Error(`Drain MCP returned HTTP ${response.status}`);
-      const session = response.headers.get("mcp-session-id");
-      if (session) headers["mcp-session-id"] = session;
-      const text = await response.text();
-      const payload = response.headers.get("content-type")?.includes("text/event-stream")
-        ? text
-            .split("\n")
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => JSON.parse(line.slice(5)))
-            .find((value) => value.id !== undefined)
-        : text
-          ? JSON.parse(text)
-          : undefined;
-      if (payload?.error) throw new Error(`Drain MCP failed: ${JSON.stringify(payload.error)}`);
-      return payload?.result;
-    }
-    try {
-      await request({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "weavewing-local-update", version: "1" },
-        },
-      });
-      headers["mcp-protocol-version"] = "2025-03-26";
-      await request({ jsonrpc: "2.0", method: "notifications/initialized" });
-      const result = await request({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: {
-          name: "t3_thread_list",
-          arguments: {
-            allProjects: true,
-            includeSubagents: true,
-            statuses: activeStatuses,
-            limit: 1,
-          },
-        },
-      });
-      if (result?.isError || !Number.isInteger(result?.structuredContent?.total))
-        throw new Error("Drain MCP returned no thread count");
-      return {
-        idle: result.structuredContent.total === 0,
-        active: result.structuredContent.total,
-        source: "mcp",
-      };
-    } finally {
-      if (headers["mcp-session-id"])
-        await fetch(endpoint, {
-          method: "DELETE",
-          headers,
-          signal: AbortSignal.timeout(2000),
-        }).catch(() => undefined);
-    }
+    return readThreads(`http://127.0.0.1:${runtime.port}/mcp`, authorization, Date.now() + 20_000);
   }
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(NodePath.join(home, "userdata/statev2.sqlite"), { readOnly: true });
@@ -239,10 +254,150 @@ async function idle(home: string, authorizationFile?: string) {
   }
 }
 
+interface LinkSnapshot {
+  environmentId: string;
+  links: Array<{ environmentId: string; urls: string[]; linkedAt: string }>;
+}
+
+/** Reads the saved identity and peer routes without opening state for writes or exporting credentials. */
+export async function captureLocalLinks(userdata: string): Promise<LinkSnapshot> {
+  const environmentId = NodeFS.readFileSync(
+    NodePath.join(userdata, "environment-id"),
+    "utf8",
+  ).trim();
+  if (!environmentId) throw new Error("Environment identity is empty");
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(NodePath.join(userdata, "statev2.sqlite"), { readOnly: true });
+  try {
+    const links = db
+      .prepare("SELECT environment_id, urls_json, linked_at FROM peer_environment_links")
+      .all()
+      .map((row) => {
+        if (
+          typeof row.environment_id !== "string" ||
+          typeof row.urls_json !== "string" ||
+          typeof row.linked_at !== "string"
+        )
+          throw new Error("Invalid stored peer link");
+        const urls: unknown = JSON.parse(row.urls_json);
+        if (!Array.isArray(urls) || !urls.every((url): url is string => typeof url === "string"))
+          throw new Error("Invalid stored peer URLs");
+        return { environmentId: row.environment_id, urls, linkedAt: row.linked_at };
+      });
+    return { environmentId, links };
+  } finally {
+    db.close();
+  }
+}
+
+/** Probes a saved peer with its existing credential and returns a warning for any failure. */
+export async function checkLocalLink(
+  userdata: string,
+  before: LinkSnapshot,
+  targetId: string,
+  seconds: number,
+) {
+  const result = {
+    sourceEnvironmentId: before.environmentId,
+    targetEnvironmentId: targetId,
+    status: "warning",
+    descriptor: false,
+    mcp: false,
+    url: "",
+    error: "",
+  };
+  const deadline = Date.now() + seconds * 1000;
+  try {
+    const current = await captureLocalLinks(userdata);
+    if (current.environmentId !== before.environmentId)
+      throw new Error("Source environment identity changed");
+    const link = before.links.find((item) => item.environmentId === targetId);
+    const stored = current.links.find((item) => item.environmentId === targetId);
+    if (!link || !stored || link.linkedAt !== stored.linkedAt)
+      throw new Error("Existing peer link is missing or was replaced");
+    for (const url of link.urls) {
+      if (Date.now() >= deadline) break;
+      try {
+        const origin = new URL(url);
+        if (origin.username || origin.password || !["http:", "https:"].includes(origin.protocol))
+          throw new Error("Invalid peer origin");
+        const response = await fetch(new URL("/.well-known/t3/environment", origin), {
+          redirect: "error",
+          signal: AbortSignal.timeout(
+            Math.max(1, Math.min(2000, Math.floor(deadline - Date.now()))),
+          ),
+        });
+        if (!response.ok) continue;
+        const descriptor = await response.json();
+        if (
+          descriptor.environmentId !== targetId ||
+          descriptor.capabilities?.mcpModeLimitHeader !== true ||
+          descriptor.capabilities?.linkFence !== true
+        )
+          continue;
+        result.descriptor = true;
+        result.url = origin.origin;
+        break;
+      } catch {
+        /* Another existing route may answer while a peer starts. */
+      }
+    }
+    if (!result.descriptor)
+      throw new Error(
+        "Existing peer URLs did not answer with the expected identity and link capabilities",
+      );
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(NodePath.join(userdata, "statev2.sqlite"), { readOnly: true });
+    let secretName;
+    try {
+      secretName = db
+        .prepare("SELECT secret_name FROM peer_environment_links WHERE environment_id = ?")
+        .get(targetId)?.secret_name;
+    } finally {
+      db.close();
+    }
+    if (typeof secretName !== "string" || !/^peer-link-[a-z0-9-]+$/i.test(secretName))
+      throw new Error("Existing peer credential is unavailable");
+    const token = NodeFS.readFileSync(
+      NodePath.join(userdata, "secrets", `${secretName}.bin`),
+      "utf8",
+    );
+    await readThreads(`${result.url}/mcp`, `Bearer ${token}`, deadline, true);
+    result.mcp = true;
+    result.status = "passed";
+  } catch (error) {
+    // Peer responses can contain private data; retain only our own failure categories.
+    result.error = result.descriptor
+      ? "Authenticated read-only MCP check failed with the existing peer credential"
+      : error instanceof Error
+        ? error.message
+        : "Peer identity check failed";
+  }
+  return result;
+}
+
 async function worker(mode: string, configFile: string, extra: string[]) {
   const config = JSON.parse(NodeFS.readFileSync(configFile, "utf8"));
   helperReceiptDirectory = NodePath.join(NodePath.dirname(configFile), "helpers");
   recordHelper(process.pid, `worker:${mode}`);
+  if (
+    mode === "capture-links" ||
+    mode === "capture-links-windows" ||
+    mode === "check-links" ||
+    mode === "check-links-windows"
+  ) {
+    const windows = mode.endsWith("-windows");
+    const userdata = windows
+      ? (config.windowsUserdata ?? NodePath.join(NodeOS.homedir(), ".t3/userdata"))
+      : NodePath.join(config.wslHome, "userdata");
+    if (mode.startsWith("capture")) return captureLocalLinks(userdata);
+    return checkLocalLink(
+      userdata,
+      windows ? config.linkBaseline.windows : config.linkBaseline.wsl,
+      windows ? config.linkBaseline.wsl.environmentId : config.linkBaseline.windows.environmentId,
+      Number(extra[0]),
+    );
+  }
   if (mode === "backup") {
     // WSL state stays on the Linux disk: writing it through /mnt/c timed out at 240 s for 3 GB.
     const destination = NodePath.join(config.wslBackupRoot, "backup-wsl");
@@ -341,7 +496,7 @@ async function main() {
   --wsl-distro NAME           WSL distribution (or WSL_DISTRO_NAME)
   --wsl-home PATH             Installed T3 home (default ~/.t3)
   --drain-minutes N           Wait for active turns, then proceed (default 5, 0 skips)
-  --health-seconds N          New/rollback runtime health deadline (default 240)
+  --health-seconds N          Runtime and linked-environment deadlines (default 240)
   --mcp-authorization-file PATH  File containing an MCP Authorization header
   --notify-thread ID          Send the activation result after restart
   --check-only, --dry-run     Build, verify, stage, drain and back up; leave install running`);
@@ -579,23 +734,31 @@ async function main() {
     console.log(
       `${config.checkOnly ? "Check complete" : "Windows activation detached"}. Receipt: ${NodePath.join(output, "receipt.json")}`,
     );
+    if (!config.checkOnly)
+      console.log(
+        `Inspect receipt.json and activation.log in ${output}; detached.stderr captures PowerShell startup errors.`,
+      );
   } finally {
     NodeFS.rmSync(bin, { recursive: true, force: true });
     if (checkOnly) NodeFS.rmSync(backupRoot, { recursive: true, force: true });
   }
 }
 
-try {
-  if (process.argv[2] === "--snapshot") {
-    helperReceiptDirectory = process.argv[5]!;
-    recordHelper(process.pid, "sqlite-snapshot");
-    await snapshot(process.argv[3]!, process.argv[4]!);
-  } else if (process.argv[2] === "--worker")
-    console.log(
-      JSON.stringify(await worker(process.argv[3]!, process.argv[4]!, process.argv.slice(5))),
-    );
-  else await main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-}
+if (
+  process.argv[1] &&
+  NodeURL.pathToFileURL(NodePath.resolve(process.argv[1])).href === import.meta.url
+)
+  try {
+    if (process.argv[2] === "--snapshot") {
+      helperReceiptDirectory = process.argv[5]!;
+      recordHelper(process.pid, "sqlite-snapshot");
+      await snapshot(process.argv[3]!, process.argv[4]!);
+    } else if (process.argv[2] === "--worker")
+      console.log(
+        JSON.stringify(await worker(process.argv[3]!, process.argv[4]!, process.argv.slice(5))),
+      );
+    else await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }

@@ -10,6 +10,18 @@ function Must-Fail($action) {
 $root = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $root | Out-Null
 try {
+  foreach ($mode in @('Preflight', 'Prepare', 'Launch', 'Activate')) {
+    foreach ($failure in @('config', 'startup')) {
+      $fixture = Join-Path $root ("early-$mode-$failure")
+      New-Item -ItemType Directory -Path $fixture | Out-Null
+      $configPath = Join-Path $fixture 'config.json'
+      if ($failure -eq 'config') { Set-Content $configPath '{invalid' }
+      else { @{ install = (Join-Path $fixture 'installed'); checkOnly = $true } | ConvertTo-Json | Set-Content $configPath }
+      Must-Fail { Invoke-LocalDesktopUpdate $configPath $mode }
+      $receipt = Get-Content (Join-Path $fixture 'receipt.json') -Raw | ConvertFrom-Json
+      Assert ($receipt.status -eq 'failed' -and $receipt.error) "$mode early $failure failure lost its terminal receipt"
+    }
+  }
   $clock = @{ now = [DateTime]'2026-01-01T00:00:00Z'; reads = 0; delays = 0 }
   $result = Wait-LocalUpdateDrain 0 { throw 'Zero drain must not read' }
   Assert ($result.reason -eq 'deadline') 'Zero drain did not skip'
@@ -20,6 +32,20 @@ try {
   $clock.now = [DateTime]'2026-01-01T00:00:00Z'
   $result = Wait-LocalUpdateDrain 1 { $clock.now = $clock.now.AddSeconds(65); @{ idle = $false } } { $clock.now } { throw 'Read over deadline must not add a wait' }
   Assert ($result.reason -eq 'deadline') 'Slow drain read ignored deadline'
+
+  $clock.now = [DateTime]'2026-01-01T00:00:00Z'
+  $clock.reads = 0
+  $result = Wait-LocalUpdateLinks 5 {
+    $clock.reads++
+    @{ wslToWindows = @{ status = 'passed' }; windowsToWsl = @{ status = $(if ($clock.reads -eq 1) { 'warning' } else { 'passed' }) } }
+  } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
+  Assert ($result.status -eq 'passed' -and $clock.reads -eq 2) 'Link check did not recover after peer startup'
+  $result = Wait-LocalUpdateLinks 3 {
+    @{ wslToWindows = @{ status = 'passed' }; windowsToWsl = @{ status = 'warning'; error = 'Credential refused' } }
+  } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
+  Assert ($result.status -eq 'warning' -and $result.windowsToWsl.error -eq 'Credential refused') 'Link deadline lost directional warning'
+  $result = Wait-LocalUpdateLinks 1 { throw 'Probe startup failed' } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
+  Assert ($result.status -eq 'warning' -and $result.error -eq 'Probe startup failed') 'Link exception escaped as an activation failure'
 
   foreach ($case in @('healthy', 'unhealthy', 'promotion-failed', 'close-refused')) {
     $fixture = Join-Path $root $case
@@ -64,7 +90,7 @@ try {
   $userdata = Join-Path $fixtureHome 'userdata'
   New-Item -ItemType Directory -Path $userdata | Out-Null
   $configPath = Join-Path $root 'backup-config.json'
-  @{ wslHome = $fixtureHome; output = $root; backupRoot = $root } | ConvertTo-Json | Set-Content $configPath
+  @{ wslHome = $fixtureHome; output = $root; backupRoot = $root; wslBackupRoot = $root; checkOnly = $true } | ConvertTo-Json | Set-Content $configPath
   $fixtureScript = Join-Path $root 'backup-fixture.mjs'
   @'
 import { DatabaseSync } from 'node:sqlite';
@@ -106,7 +132,7 @@ lock.close();
   Assert (-not (Test-Path (Join-Path $backup 'server-owner.sqlite'))) 'Ownership lock entered backup'
   $failureRoot = Join-Path $root 'failure'
   New-Item -ItemType Directory -Path $failureRoot | Out-Null
-  @{ wslHome = $fixtureHome; output = $root; backupRoot = $failureRoot; backupTimeoutMs = 0 } | ConvertTo-Json | Set-Content $configPath
+  @{ wslHome = $fixtureHome; output = $root; backupRoot = $failureRoot; wslBackupRoot = $failureRoot; checkOnly = $true; backupTimeoutMs = 0 } | ConvertTo-Json | Set-Content $configPath
   try {
     $ErrorActionPreference = 'Continue'
     & $NodeExecutable $WorkerPath --worker backup $configPath 2> (Join-Path $root 'timeout.stderr')
@@ -120,5 +146,5 @@ lock.close();
     Assert (-not (Get-Process -Id $record.pid -ErrorAction SilentlyContinue)) 'Snapshot helper remained running after completion or timeout'
   }
   Assert (Test-Path (Join-Path $userdata 'statev2.sqlite')) 'Timeout removed source state'
-  'PASS: drain deadline, swap and rollback, refused close, read-only snapshot excluding ownership lock, timeout cleanup and captured helper exit'
+  'PASS: early failure receipts, bounded link checks, drain deadline, swap and rollback, refused close, read-only snapshot excluding ownership lock, timeout cleanup and captured helper exit'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }

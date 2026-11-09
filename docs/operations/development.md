@@ -394,6 +394,11 @@ to exit, swaps the app and relaunches through `Start Weavewing.cmd`. Health chec
 under the new archive digest to answer the environment endpoint. `--health-seconds` defaults to 240.
 Failure restores and relaunches the previous app when graceful shutdown succeeds. State snapshots
 are retained for manual recovery; rollback does not overwrite live user data or undo database migrations.
+After a healthy swap, a separate `--health-seconds` deadline covers both existing Windows/WSL peer
+identities at their saved URLs and a read-only authenticated MCP call from each side. The probes read
+existing peer credentials locally. They never rotate credentials or re-link environments. A failed
+link check appears as a warning in the receipt and notification, because it can reflect peer startup
+or connectivity while the updated app is healthy. It does not trigger rollback.
 
 Staging requires payload bytes plus 20 GiB free; this local reserve does not guarantee packaging space or
 govern other activity. It replaces only its marked sibling `.<install-name>-candidate` slot and prints its
@@ -401,9 +406,12 @@ govern other activity. It replaces only its marked sibling `.<install-name>-cand
 and running candidates are refused. Activation keeps one marked `.<install-name>-local-update-rollback`
 directory containing the previous app and state snapshots, replacing only its own older rollback.
 It never force-kills a process. Check `receipt.json` and `activation.log` in the output directory after
-restart. The receipt links `helpers/`, which records every helper PID at spawn.
+restart. Every PowerShell mode records exceptions as `failed` with an error message, including setup
+failures. The detached driver's output also points to `detached.stderr` for startup diagnostics.
+The receipt links `helpers/`, which records every helper PID at spawn.
 `--notify-thread ID` additionally sends the result with `t3 thread send`.
 
 The staging helper remains available as `scripts/stage-windows-desktop.ps1`. Run its adjacent fixture
 test and `scripts/activate-local-desktop.test.ps1 -WorkerPath <output-directory>\worker.mjs`
-in Windows PowerShell to check staging, drain, rollback and backup behavior.
+in Windows PowerShell with a Windows `node.exe` to check staging, early failure receipts, bounded
+link results, drain, rollback and backup behavior.
