@@ -1,3 +1,4 @@
+import * as ContextRecords from "../../../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
 import {
   type CommandId,
@@ -92,6 +93,25 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  t3_context_read: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId, []);
+      return yield* (yield* ContextRecords.ContextRecords)
+        .get({
+          ...input,
+          threadId: projection.thread.id,
+          limit: input.limit ?? 3,
+          maxBytes: input.maxBytes ?? 24000,
+          includeInjectedTools: input.includeInjectedTools ?? false,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: cause.message }),
+          ),
+        );
+    }),
+  ),
   respond_monitoring_advisory: McpToolAccess.writesThreads(
     () => [undefined],
     (input) =>

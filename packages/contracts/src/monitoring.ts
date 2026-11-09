@@ -24,6 +24,7 @@ export const MonitoringTargets = Schema.Struct({
 export const MonitoringProfileInput = Schema.Struct({
   id: Schema.optional(MonitoringProfileId),
   title: TrimmedNonEmptyString,
+  kind: Schema.optional(Schema.Literals(["standards", "context-review"])),
   enabled: Schema.Boolean,
   projectId: ProjectId,
   modelSelection: ModelSelection,
@@ -99,6 +100,8 @@ export const MonitoringRun = Schema.Struct({
   status: Schema.Literals(["running", "succeeded", "failed"]),
   error: Schema.NullOr(Schema.String),
   targetThreadIds: Schema.Array(ThreadId),
+  costUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  budgetUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
   profile: MonitoringProfile,
 });
 export type MonitoringRun = typeof MonitoringRun.Type;

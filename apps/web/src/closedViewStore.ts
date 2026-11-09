@@ -96,7 +96,8 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
         (surface.id === "inspect" || surface.id.startsWith("inspect:")) &&
         (surface.inspectSection === undefined ||
           surface.inspectSection === "loads" ||
-          surface.inspectSection === "tokens")
+          surface.inspectSection === "tokens" ||
+          surface.inspectSection === "context")
       );
     case "reviews":
       return (

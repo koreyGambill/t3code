@@ -61,6 +61,7 @@ function ProfileEditor({
   const haiku = entries.find((entry) => entry.driverKind === "claudeAgent" && entry.enabled);
   const [draft, setDraft] = useState(() => ({
     title: profile?.title ?? "Standards watcher",
+    kind: profile?.kind ?? "standards",
     enabled: profile?.enabled ?? false,
     modelSelection:
       profile?.modelSelection ??
@@ -156,6 +157,48 @@ function ProfileEditor({
   return (
     <div className="space-y-4 rounded-lg border border-border p-4">
       <h3 className="text-sm font-medium">{profile ? "Edit watcher" : "New watcher"}</h3>
+      <div className="space-y-1">
+        <Label htmlFor="watcher-kind">Review</Label>
+        <Select
+          value={draft.kind}
+          disabled={busy}
+          onValueChange={(value) => {
+            if (value !== "standards" && value !== "context-review") return;
+            setDraft({
+              ...draft,
+              kind: value,
+              enabled: false,
+              title: value === "context-review" ? "Context review" : "Standards watcher",
+              rules:
+                value === "context-review"
+                  ? [
+                      {
+                        id: "context",
+                        title: "Improve context management",
+                        instructions:
+                          "Suggest concrete improvements to instructions, skills and Overwing knowledge from recent context records. Cite repeats or large loads and explain uncertainty. Never auto-edit anything.",
+                      },
+                    ]
+                  : draft.rules,
+            });
+          }}
+        >
+          <SelectTrigger id="watcher-kind">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            <SelectItem value="standards">Standards</SelectItem>
+            <SelectItem value="context-review">Context management</SelectItem>
+          </SelectPopup>
+        </Select>
+        {draft.kind === "context-review" && (
+          <p className="text-xs text-muted-foreground">
+            Choose Claude Haiku. New schedules start paused. Each run reviews recent records once,
+            with a 3,000 token output cap and $0.05 budget. Suggestions arrive as proposed Workspace
+            decisions for you to accept or reject.
+          </p>
+        )}
+      </div>
       <div className="space-y-1">
         <Label htmlFor="watcher-title">Name</Label>
         <Input
@@ -535,6 +578,12 @@ export function MonitoringSettings({ environmentId }: { environmentId: Environme
                     ? `Last run: ${run.status} · ${formatRelativeTimeLabel(run.startedAt)}`
                     : "Never run"}
                 </p>
+                {run?.costUsd !== undefined && (
+                  <p className="text-xs text-muted-foreground">
+                    Review cost: ${run.costUsd.toFixed(4)}
+                    {run.budgetUsd === undefined ? "" : ` · $${run.budgetUsd.toFixed(2)} budget`}
+                  </p>
+                )}
                 {run?.error && (
                   <p role="status" className="text-xs text-destructive-foreground">
                     {run.error}

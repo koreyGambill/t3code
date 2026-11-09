@@ -54,10 +54,12 @@ const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PER
 
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
+  total_cost_usd: Schema.optional(Schema.Number),
 });
 const ClaudeOutputMessage = Schema.Struct({
   type: Schema.String,
   structured_output: Schema.optionalKey(Schema.Unknown),
+  total_cost_usd: Schema.optional(Schema.Number),
 });
 const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
@@ -130,6 +132,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchema: outputSchemaJson,
     modelSelection,
     investigate,
+    maxOutputTokens,
+    maxBudgetUsd,
+    onCost,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
@@ -174,7 +179,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
       disableAllHooks: true,
-      ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+      ...(maxBudgetUsd !== undefined
+        ? { alwaysThinkingEnabled: false }
+        : typeof thinking === "boolean"
+          ? { alwaysThinkingEnabled: thinking }
+          : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(typeof ultracode === "boolean" ? { ultracode } : {}),
     };
@@ -188,7 +197,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       noSessionPersistence: boolean,
     ) {
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" ||
+        // Context reviews must reflect only the supplied records, without automatic project loads.
+        (operation === "generateMonitoringReview" && maxBudgetUsd !== undefined)
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -220,7 +231,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 "--disallowedTools",
                 CLAUDE_INVESTIGATION_DENIED,
               ]
-            : ["--tools", ""]),
+            : ["--tools", "", "--disallowedTools", "mcp__*"]),
+          ...(maxBudgetUsd === undefined
+            ? []
+            : ["--max-budget-usd", String(maxBudgetUsd), "--max-turns", "2"]),
           "--disable-slash-commands",
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.
@@ -228,10 +242,22 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--permission-mode",
           "dontAsk",
         ],
-        { env: claudeEnvironment },
+        {
+          env: {
+            ...claudeEnvironment,
+            ...(maxOutputTokens === undefined
+              ? {}
+              : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutputTokens) }),
+          },
+        },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: {
+          ...claudeEnvironment,
+          ...(maxOutputTokens === undefined
+            ? {}
+            : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutputTokens) }),
+        },
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
@@ -271,6 +297,21 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         () => runClaudeCommand(false),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
+        const parsed = Option.getOrUndefined(decodeJsonOption(stdout));
+        const messages: ReadonlyArray<unknown> = Array.isArray(parsed) ? parsed : [parsed];
+        const cost = messages
+          .flatMap((message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "total_cost_usd" in message &&
+            typeof message.total_cost_usd === "number" &&
+            Number.isFinite(message.total_cost_usd) &&
+            message.total_cost_usd >= 0
+              ? [message.total_cost_usd]
+              : [],
+          )
+          .at(-1);
+        if (cost !== undefined) onCost?.(cost);
         if (exitCode === 0) return Effect.succeed(stdout);
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();

@@ -8753,6 +8753,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("handles init permissions while capturing the prepared context", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const prepared: Array<
+        Parameters<NonNullable<ProviderAdapter.ProviderAdapterV2TurnInput["onContextPrepared"]>>[0]
+      > = [];
+      const turnInput = {
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attachments: [],
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...CLAUDE_TEST_RUNTIME_POLICY,
+          runtimeMode: "full-access",
+          cwd: harness.attachmentsDir,
+        }),
+      };
+      yield* harness.runtime.startTurn({
+        ...makeClaudeTestTurnInput({
+          ...turnInput,
+          attemptId: RunAttemptId.make("attempt-claude-context-init-1"),
+          text: "Hello.",
+        }),
+        onContextPrepared: (context) =>
+          Effect.sync(() => {
+            prepared.push(context);
+          }),
+      });
+      assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          ...wakeTurnInit,
+          permissionMode: "default",
+          tools: ["Read", "Bash"],
+        }),
+      );
+      assert.deepEqual(prepared.at(-1)?.injectedTools, ["Read", "Bash"]);
+      const decision = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          "Bash",
+          { command: "git status" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "context-init-tool",
+            requestId: "context-init-request",
+            decisionReason: "Dangerous rm operation not ruled out",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const outcome = yield* Effect.raceFirst(
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", request: event.runtimeRequest }) as const),
+        ),
+      );
+      assert.equal(outcome.type, "request");
+      if (outcome.type === "request") {
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: outcome.request.id,
+          decision: "decline",
+        });
+        assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["claude-haiku-4-5-20251001", "claude-sonnet-4-6"])(
     "renegotiates auto only when switching API models after fallback to default: %s",
     (nextModel) =>

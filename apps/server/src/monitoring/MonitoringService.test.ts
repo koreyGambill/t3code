@@ -6,6 +6,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
+  ScheduledTaskId,
+  type ScheduledTask,
   type MonitoringUpsertInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -105,4 +107,64 @@ it.effect(
       }
       assert.deepEqual(yield* (yield* Store.MonitoringStore).status(), { unreadCount: 2 });
     }).pipe(Effect.provide(Store.layer.pipe(Layer.provideMerge(Sqlite.layerMemory)))),
+);
+
+it.effect(
+  "creates context review schedules paused even when creation asks to enable, then permits explicit opt-in",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* Store.MonitoringStore;
+      let scheduleEnabled: boolean | undefined;
+      const task: ScheduledTask = {
+        id: ScheduledTaskId.make("schedule"),
+        title: "Review",
+        prompt: "Review",
+        enabled: false,
+        schedule: input.schedule,
+        projectId: input.projectId,
+        threadId: null,
+        workspaceStrategy: { type: "root" },
+        modelSelection: input.modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdBy: "system",
+        creationSource: "server",
+        createdAt: "2026-11-09T00:00:00Z",
+        updatedAt: "2026-11-09T00:00:00Z",
+        nextRunAt: null,
+        lastRunAt: null,
+        lastRunStatus: "never",
+        lastRunError: null,
+        runCount: 0,
+      };
+      const serviceLayer = Service.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(Store.MonitoringStore, store),
+            Layer.mock(Runner.MonitoringRunner)({ validateModel: () => Effect.void }),
+            Layer.mock(Tasks.ScheduledTaskService)({
+              upsert: (schedule) => {
+                scheduleEnabled = schedule.enabled;
+                return Effect.succeed({ task: { ...task, enabled: schedule.enabled } });
+              },
+              setEnabled: (schedule) => {
+                scheduleEnabled = schedule.enabled;
+                return Effect.succeed({ task: { ...task, enabled: schedule.enabled } });
+              },
+            }),
+          ),
+        ),
+      );
+      const service = yield* Service.MonitoringService.pipe(Effect.provide(serviceLayer));
+      const saved = yield* service.upsert({ ...input, kind: "context-review", enabled: true });
+      assert.equal(saved.profile.enabled, false);
+      assert.equal(scheduleEnabled, false);
+      const optedIn = yield* service.setEnabled({ id: saved.profile.id, enabled: true });
+      assert.equal(optedIn.profile.enabled, true);
+      assert.equal(scheduleEnabled, true);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(NodeCrypto.layer, Store.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+      ),
+    ),
 );

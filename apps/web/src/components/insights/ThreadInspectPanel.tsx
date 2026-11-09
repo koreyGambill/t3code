@@ -1,9 +1,11 @@
+import { ThreadContextPanel } from "./ThreadContextPanel";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useRightPanelStore, type ThreadInspectSection } from "../../rightPanelStore";
 import { ThreadInsightsPanel } from "./ThreadInsightsPanel";
 
 const sections = [
   ["loads", "Loads"],
+  ["context", "Context"],
   ["tokens", "Tokens"],
 ] as const;
 
@@ -39,7 +41,16 @@ export function ThreadInspectPanel({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {startedThread ? (
-        <ThreadInsightsPanel threadRef={threadRef} visible={visible} mode={section} tabs={tabs} />
+        section === "context" ? (
+          <ThreadContextPanel
+            key={`${threadRef.environmentId}:${threadRef.threadId}`}
+            threadRef={threadRef}
+            visible={visible}
+            tabs={tabs}
+          />
+        ) : (
+          <ThreadInsightsPanel threadRef={threadRef} visible={visible} mode={section} tabs={tabs} />
+        )
       ) : (
         <>
           <div className="flex h-7 shrink-0 items-center border-b border-border px-1">{tabs}</div>

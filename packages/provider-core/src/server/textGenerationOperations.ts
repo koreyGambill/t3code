@@ -29,6 +29,9 @@ export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
+  readonly maxOutputTokens?: number | undefined;
+  readonly maxBudgetUsd?: number | undefined;
+  readonly onCost?: (costUsd: number) => void;
   readonly cwd: string;
   readonly prompt: string;
   readonly outputSchema: S;
@@ -185,14 +188,22 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         });
       },
     ),
-    generateMonitoringReview: Effect.fn(`${name}.generateMonitoringReview`)(function (input) {
-      return run({
+    generateMonitoringReview: Effect.fn(`${name}.generateMonitoringReview`)(function* (input) {
+      let costUsd: number | undefined;
+      const output = yield* run({
+        onCost: (cost) => {
+          costUsd = cost;
+          input.onCost?.(cost);
+        },
         operation: "generateMonitoringReview",
+        maxOutputTokens: input.maxOutputTokens,
+        maxBudgetUsd: input.maxBudgetUsd,
         cwd: input.cwd,
         prompt: input.prompt,
         modelSelection: input.modelSelection,
         outputSchema: MonitoringReviewOutput,
       });
+      return { ...output, ...(costUsd === undefined ? {} : { costUsd }) };
     }),
     generateCommitMessage,
     generatePrContent,

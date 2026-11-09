@@ -1,3 +1,4 @@
+import * as ContextRecords from "../../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../../monitoring/MonitoringDialogue.ts";
 import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
@@ -81,6 +82,7 @@ const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
   Layer.provide(Layer.mock(MonitoringDialogue.MonitoringDialogue)({})),
 
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -824,6 +826,7 @@ it.effect.each([
   }).pipe(
     Effect.provide(
       McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),

@@ -1,3 +1,4 @@
+import * as ContextRecords from "./threadInsights/ContextRecords.ts";
 import * as MonitoringService from "./monitoring/MonitoringService.ts";
 import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
@@ -684,6 +685,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ThreadWorkspace.ThreadWorkspace)({}),
   Layer.mock(ThreadMarks.ThreadMarks)({}),
   Layer.mock(ThreadInsights.ThreadInsights)({}),
+  Layer.mock(ContextRecords.ContextRecords)({}),
   Layer.mock(ThreadNotes.ThreadNotes)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),

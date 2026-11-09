@@ -1,3 +1,4 @@
+import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as MonitoringFollowup from "./MonitoringFollowup.ts";
 import * as MonitoringSnapshot from "./MonitoringSnapshot.ts";
@@ -7,6 +8,7 @@ import * as ServerConfig from "../config.ts";
 import { assert, it } from "@effect/vitest";
 import {
   MonitoringError,
+  ThreadWorkspaceError,
   MonitoringFindingId,
   MonitoringProfileId,
   ProjectId,
@@ -166,6 +168,7 @@ it.effect("keeps an alert without waking idle or unsupported agents and steers a
     const status = yield* Ref.make("idle");
     const sends = yield* Ref.make<ThreadManagement.ThreadManagementSendInput[]>([]);
     const layer = MonitoringDelivery.layer.pipe(
+      Layer.provide(ThreadWorkspace.layerTest),
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getProjectThreadRecords: () =>
@@ -444,5 +447,62 @@ it.effect("reassesses from a fresh snapshot and rejects citations outside it", (
       assert.equal(rejected._tag, "Failure");
       assert.equal(yield* Ref.get(captures), 2);
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("retries a context proposal after a concurrent Workspace edit", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const workspaceLayer = ThreadWorkspace.layerTest;
+    const layer = MonitoringDelivery.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            ThreadWorkspace.ThreadWorkspace,
+            Effect.gen(function* () {
+              const workspace = yield* ThreadWorkspace.ThreadWorkspace;
+              return {
+                ...workspace,
+                mutate: (input) =>
+                  Ref.updateAndGet(attempts, (n) => n + 1).pipe(
+                    Effect.flatMap((n) =>
+                      n === 1
+                        ? Effect.fail(
+                            new ThreadWorkspaceError({
+                              code: "conflict",
+                              message: "Concurrent edit",
+                              currentRevision: 1,
+                            }),
+                          )
+                        : workspace.get({ threadId: input.threadId }).pipe(
+                            Effect.map((current) => ({
+                              threadId: input.threadId,
+                              revision: current.revision + 1,
+                              groups: current.groups,
+                              items: [],
+                            })),
+                          ),
+                    ),
+                  ),
+              } satisfies ThreadWorkspace.ThreadWorkspace["Service"];
+            }),
+          ).pipe(Layer.provide(workspaceLayer)),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: { deletedAt: null },
+              } as never),
+          }),
+        ),
+      ),
+    );
+    const result = yield* Effect.flatMap(MonitoringDelivery.MonitoringDelivery, (delivery) =>
+      delivery.deliver({
+        profile: { ...profile, kind: "context-review" },
+        finding,
+      }),
+    ).pipe(Effect.provide(layer));
+    assert.equal(result.delivery, "workspace");
+    assert.equal(yield* Ref.get(attempts), 2);
   }),
 );

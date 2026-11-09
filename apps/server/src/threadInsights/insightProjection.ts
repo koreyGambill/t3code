@@ -1,4 +1,8 @@
-import type { OrchestrationV2TurnItem, ThreadLoadEvent } from "@t3tools/contracts";
+import type {
+  OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
+  ThreadLoadEvent,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 const bytes = (text: string) => new TextEncoder().encode(text).byteLength;
@@ -48,7 +52,67 @@ function shellCommand(input: string): string {
     : script.replace(/\\(["\\$`])/g, "$1");
 }
 
-export function projectLoadEvent(item: OrchestrationV2TurnItem): ThreadLoadEvent | null {
+function shellReads(command: string): { paths: string[]; search: boolean } {
+  // Infer only literal operands of read commands; shell expansion needs provider telemetry.
+  const tokens =
+    command.match(
+      /\d*[<>]+|(?:[^\s'"\\;&|<>]|\\[\s\S]|'[^']*'|"(?:[^"\\]|\\[\s\S])*")+|&&|\|\||[;&|]+|\n/g,
+    ) ?? [];
+  const paths: string[] = [];
+  let search = false;
+  let words: string[] = [];
+  const collect = () => {
+    const executable = words.shift()?.split("/").at(-1);
+    if (!executable || !/^(?:cat|sed|head|tail|rg|grep|less|more)$/.test(executable)) return;
+    if (executable === "sed" && words.some((word) => /^-(?:[^-]*i|-in-place)/.test(word))) return;
+    const searching = executable === "rg" || executable === "grep";
+    search ||= searching;
+    let expression = executable === "sed" || searching;
+    for (let index = 0; index < words.length; index++) {
+      const word = words[index]!;
+      if (
+        /^(?:-[ef]|--(?:regexp|file|expression))$/.test(word) ||
+        (/^(?:head|tail)$/.test(executable) && /^(?:-[nc]|--(?:lines|bytes))$/.test(word)) ||
+        (searching &&
+          /^(?:-[mABCD]|--(?:max-count|after-context|before-context|context))$/.test(word))
+      ) {
+        if (/^(?:-[ef]|--(?:regexp|expression))$/.test(word)) expression = false;
+        index++;
+      } else if (word.startsWith("-")) {
+        if (/^(?:-[ef].+|--(?:regexp|expression)=)/.test(word)) expression = false;
+      } else if (expression) expression = false;
+      else if (!/[\u0000$`*?{}]/.test(word) && word !== "-" && !word.endsWith("/"))
+        paths.push(word);
+    }
+  };
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (/^[;&|\n]+$/.test(token)) {
+      collect();
+      words = [];
+    } else if (/^\d*[<>]+$/.test(token)) {
+      index++;
+    } else {
+      words.push(
+        token.replace(
+          /'([^']*)'|"((?:[^"\\]|\\[\s\S])*)"|\\([\s\S])/g,
+          (
+            _match,
+            single: string | undefined,
+            double: string | undefined,
+            escaped: string | undefined,
+          ) => single ?? double?.replace(/\\(["\\$`])/g, "$1") ?? escaped ?? "",
+        ),
+      );
+    }
+  }
+  collect();
+  return { paths, search };
+}
+
+export function projectLoadEvent(
+  item: OrchestrationV2TurnItem | OrchestrationV2TurnItemJson,
+): ThreadLoadEvent | null {
   let paths: string[] = [];
   let toolName: string;
   let kind: ThreadLoadEvent["kind"] = "file";
@@ -70,8 +134,24 @@ export function projectLoadEvent(item: OrchestrationV2TurnItem): ThreadLoadEvent
         typeof item.input.skill === "string"
       )
         label = item.input.skill;
-    } else if (/read.*resource|resource.*read/i.test(toolName)) kind = "resource";
-    else if (/search|glob|grep/i.test(toolName)) kind = "search";
+    } else if (
+      /read.*resource|resource.*read|t3_(?:thread_read|context_read)|thread_workspace_read|skills[._/].*read/i.test(
+        toolName,
+      )
+    ) {
+      kind = "resource";
+      label = toolName;
+      if (/t3_(?:thread_read|context_read)|thread_workspace_read/.test(toolName)) {
+        const target =
+          typeof item.input === "object" &&
+          item.input !== null &&
+          "threadId" in item.input &&
+          typeof item.input.threadId === "string"
+            ? item.input.threadId
+            : item.threadId;
+        label = `${toolName} ${target}`;
+      }
+    } else if (/search|glob|grep/i.test(toolName)) kind = "search";
     else if (
       !/(?:^|[._/])(?:read|read_file|readfile|read_text_file|open_file|view_image)(?:$|[._/])/i.test(
         toolName,
@@ -82,19 +162,17 @@ export function projectLoadEvent(item: OrchestrationV2TurnItem): ThreadLoadEvent
     output = item.outputOmitted ? null : outputText(item.output);
   } else if (item.type === "command_execution") {
     const command = shellCommand(item.input);
-    if (!/(?:^|[\s;&|])(?:cat|sed|head|tail|rg|grep|less|more)\s/.test(command)) return null;
+    const knowledge = /(?:^|[\s;&|/])overwing\s+(?:search|context|standards)(?:\s|$)/.test(command);
+    const reads = shellReads(command);
+    if (!knowledge && !reads.paths.length) return null;
     evidence = "inferred";
     toolName = "shell";
-    kind = /(?:^|[\s;&|])(?:rg|grep)\s/.test(command) ? "search" : "file";
-    // Shell commands are evidence of intent, not proof that every named path was loaded.
-    paths = [
-      ...command.matchAll(
-        /(?:["']([^"'\n]+(?:\.[\w-]+|\/SKILL\.md))["']|((?:\.{0,2}\/|~\/)[^\s;|&"']+)|(?:^|\s)([^\s;|&"'<>]+\.[\w-]+)(?=\s|$|[;|&<>]))/g,
-      ),
-    ].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+    kind = knowledge ? "knowledge" : reads.search ? "search" : "file";
+    if (knowledge) label = command.slice(0, 512);
+    paths = knowledge ? [] : reads.paths;
     output = item.outputOmitted ? null : (item.output ?? null);
   } else return null;
-  paths = [...new Set(paths)];
+  paths = [...new Set(paths)].slice(0, 64).map((path) => path.slice(0, 512));
   if (kind !== "search") {
     if (paths.some((path) => skillPath.test(path))) kind = "skill";
     else if (paths.some((path) => instructionPath.test(path))) kind = "instructions";
@@ -103,7 +181,10 @@ export function projectLoadEvent(item: OrchestrationV2TurnItem): ThreadLoadEvent
   return {
     itemId: item.id,
     runId: item.runId,
-    at: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+    at:
+      typeof (item.startedAt ?? item.updatedAt) === "string"
+        ? String(item.startedAt ?? item.updatedAt)
+        : DateTime.formatIso(DateTime.makeUnsafe(item.startedAt ?? item.updatedAt)),
     kind,
     label:
       label ??

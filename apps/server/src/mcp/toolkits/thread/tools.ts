@@ -1,3 +1,4 @@
+import * as ContextRecords from "../../../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
 import {
   OrchestratorMcpEnvironmentTarget,
@@ -20,6 +21,8 @@ import {
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
+  ThreadContextGetInput,
+  ThreadContextResult,
   RunId,
   NonNegativeInt,
   ProjectId,
@@ -32,6 +35,27 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+
+const ContextReadTool = Tool.make("t3_context_read", {
+  description:
+    "Read recent per-turn context records: instruction sizes, injected tool counts, file and knowledge reads, repeats and reported token usage. Defaults to 3 turns and 24 KB; page with nextBeforeOrdinal. Set includeInjectedTools:true for full tool-name lists. Omit threadId for this thread. Inferred shell reads and missing telemetry are uncertainty, not proof of waste. Use records to propose improvements for human review; never edit instructions or notes without authorization.",
+  parameters: Schema.Struct({
+    ...ThreadContextGetInput.fields,
+    threadId: Schema.optional(ThreadId),
+    environmentId: OrchestratorMcpEnvironmentTarget,
+  }),
+  success: ThreadContextResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ContextRecords.ContextRecords,
+  ],
+})
+  .annotate(Tool.Title, "Read turn context")
+  .annotate(Tool.Strict, true)
+  .annotate(Tool.Readonly, true);
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
@@ -259,6 +283,7 @@ const MonitoringRespondTool = Tool.make("respond_monitoring_advisory", {
   .annotate(Tool.OpenWorld, false);
 
 export const ThreadToolkit = Toolkit.make(
+  ContextReadTool,
   MonitoringRespondTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,

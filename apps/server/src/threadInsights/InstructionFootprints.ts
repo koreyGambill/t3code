@@ -26,8 +26,32 @@ import * as ServerConfig from "../config.ts";
 
 export interface PreparedContext {
   readonly source: string;
+  readonly injectedTools?: ReadonlyArray<string> | undefined;
+  readonly instructionSources?: ReadonlyArray<string> | undefined;
   readonly entries: ReadonlyArray<{ readonly key: string; readonly text: string }>;
 }
+
+/** Extracts Workspace child preambles for instruction-size accounting. */
+export function childPreambleEntries(text: string): PreparedContext["entries"] {
+  const entries: PreparedContext["entries"][number][] = [];
+  const closingTag = "</child_preamble>";
+  let cursor = 0;
+  while (cursor < text.length) {
+    const opening = text.indexOf("<child_preamble", cursor);
+    if (opening < 0) break;
+    const contentStart = text.indexOf(">", opening + "<child_preamble".length);
+    if (contentStart < 0) break;
+    const closing = text.indexOf(closingTag, contentStart + 1);
+    if (closing < 0) break;
+    entries.push({
+      key: "workspace_child_preamble",
+      text: text.slice(contentStart + 1, closing),
+    });
+    cursor = closing + closingTag.length;
+  }
+  return entries;
+}
+
 interface RecordInput extends PreparedContext {
   readonly threadId: InstructionFootprint["threadId"];
   readonly runId: InstructionFootprint["runId"];
@@ -176,6 +200,29 @@ const make = Effect.gen(function* () {
         attemptId: input.attemptId,
         capturedAt: DateTime.formatIso(yield* DateTime.now),
         parts: measurePreparedContext(input.entries),
+        truncated:
+          (input.injectedTools?.length ?? 0) > 256 || (input.instructionSources?.length ?? 0) > 64,
+        ...(input.injectedTools === undefined
+          ? {}
+          : {
+              injectedTools: input.injectedTools.slice(0, 256).map((name) => name.slice(0, 256)),
+              injectedToolCount: input.injectedTools.length,
+            }),
+        ...(input.instructionSources === undefined
+          ? {}
+          : {
+              instructionSources: yield* Effect.forEach(
+                input.instructionSources.slice(0, 64),
+                (source) =>
+                  fs.stat(source).pipe(
+                    Effect.map((stat) => ({
+                      path: source.slice(0, 512),
+                      bytes: Number(stat.size),
+                    })),
+                    Effect.orElseSucceed(() => ({ path: source.slice(0, 512), bytes: null })),
+                  ),
+              ),
+            }),
       };
       const contents = yield* encode({ formatVersion: 1, footprint }).pipe(
         Effect.mapError(

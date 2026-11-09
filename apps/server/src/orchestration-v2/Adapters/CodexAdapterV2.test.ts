@@ -1275,6 +1275,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
+    afterNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1309,6 +1310,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
+                      handleServerNotification: (method, handler) =>
+                        client.handleServerNotification(method, (payload) =>
+                          handler(payload).pipe(Effect.tap(() => afterNotification(method))),
+                        ),
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
@@ -1409,6 +1414,206 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect("starts turns before tool discovery and reuses the native thread footprint", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "footprint-thread";
+      const first = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "footprint-first",
+        prompt: "work",
+      });
+      const second = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "footprint-second",
+        prompt: "work",
+      });
+      const discoveryStarted = yield* Deferred.make<void>();
+      const releaseDiscovery = yield* Deferred.make<void>();
+      const threadClosed = yield* Deferred.make<void>();
+      const footprints =
+        yield* Queue.unbounded<
+          Parameters<
+            NonNullable<ProviderAdapter.ProviderAdapterV2TurnInput["onContextPrepared"]>
+          >[0]
+        >();
+      const methods: Array<string> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "tool-footprint",
+          entries: [
+            ...first.map((entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label === "thread/start" &&
+              Predicate.isObject(entry.frame) &&
+              Predicate.isObject(entry.frame.result)
+                ? {
+                    ...entry,
+                    frame: {
+                      ...entry.frame,
+                      result: {
+                        ...entry.frame.result,
+                        instructionSources: ["/workspace/AGENTS.md"],
+                      },
+                    },
+                  }
+                : entry,
+            ),
+            {
+              type: "expect_outbound",
+              label: "tool discovery",
+              frame: {
+                id: 4,
+                method: "mcpServerStatus/list",
+                params: { threadId: nativeThreadId, detail: "toolsAndAuthOnly", limit: 100 },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "tool discovery",
+              frame: {
+                id: 4,
+                result: {
+                  data: [
+                    {
+                      name: "t3",
+                      authStatus: "unsupported",
+                      resources: [],
+                      resourceTemplates: [],
+                      tools: { t3_thread_read: { name: "t3_thread_read", inputSchema: {} } },
+                    },
+                  ],
+                  nextCursor: null,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "first done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "footprint-first", status: "completed" }),
+                },
+              },
+            },
+            ...second
+              .slice(5)
+              .map((entry) =>
+                entry.type === "emit_inbound" && entry.label === "turn/started"
+                  ? entry
+                  : withReplayRequestId(entry, 5),
+              ),
+            {
+              type: "emit_inbound",
+              label: "second done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "footprint-second", status: "completed" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread closed",
+              frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
+            },
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "footprint-reopened",
+              prompt: "work",
+            })
+              .slice(5)
+              .map((entry) =>
+                entry.type === "emit_inbound" && entry.label === "turn/started"
+                  ? entry
+                  : withReplayRequestId(entry, 6),
+              ),
+            {
+              type: "expect_outbound",
+              label: "fresh tool discovery",
+              frame: {
+                id: 7,
+                method: "mcpServerStatus/list",
+                params: { threadId: nativeThreadId, detail: "toolsAndAuthOnly", limit: 100 },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "fresh tool discovery",
+              frame: { id: 7, result: { data: [], nextCursor: null } },
+            },
+          ],
+        }),
+        () => Effect.void,
+        (method) =>
+          Effect.gen(function* () {
+            methods.push(method);
+            if (method === "mcpServerStatus/list") {
+              assert.include(methods, "turn/start");
+              yield* Deferred.succeed(discoveryStarted, undefined);
+              yield* Deferred.await(releaseDiscovery);
+            }
+          }),
+        undefined,
+        undefined,
+        undefined,
+        (method) =>
+          method === "thread/closed"
+            ? Deferred.succeed(threadClosed, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      );
+      const input = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("footprint-first"),
+        text: "work",
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        onContextPrepared: (context) => Queue.offer(footprints, context).pipe(Effect.asVoid),
+      });
+      yield* Deferred.await(discoveryStarted);
+      yield* Deferred.succeed(releaseDiscovery, undefined);
+      const footprint = yield* Queue.take(footprints);
+      assert.deepEqual(footprint.injectedTools, ["mcp__t3__t3_thread_read"]);
+      yield* harness.firstTerminal;
+      yield* harness.runtime.startTurn({
+        ...input,
+        attemptId: RunAttemptId.make("footprint-second"),
+        runId: RunId.make("footprint-second"),
+        onContextPrepared: (context) => Queue.offer(footprints, context).pipe(Effect.asVoid),
+      });
+      const secondFootprint = yield* Queue.take(footprints);
+      assert.deepEqual(secondFootprint.injectedTools, ["mcp__t3__t3_thread_read"]);
+      assert.equal(methods.filter((method) => method === "mcpServerStatus/list").length, 1);
+      yield* Deferred.await(threadClosed);
+      yield* harness.runtime.startTurn({
+        ...input,
+        attemptId: RunAttemptId.make("footprint-reopened"),
+        runId: RunId.make("footprint-reopened"),
+        onContextPrepared: (context) => Queue.offer(footprints, context).pipe(Effect.asVoid),
+      });
+      const reopenedFootprint = yield* Queue.take(footprints);
+      assert.isUndefined(reopenedFootprint.instructionSources);
+      assert.deepEqual(reopenedFootprint.injectedTools, []);
+      assert.equal(methods.filter((method) => method === "mcpServerStatus/list").length, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect.each(["before", "after"] as const)(
     "rejects a previous run's native turn when it completes %s the new start response",
@@ -8408,11 +8613,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             { result: codexReplayThreadResult({ nativeThreadId, forkedFromId: null }) },
           ),
           ...exchange(5, "thread/fork", forkParams, {
-            result: codexReplayThreadResult({
-              nativeThreadId: forkThreadId,
-              forkedFromId: nativeThreadId,
-            }),
+            result: {
+              ...codexReplayThreadResult({
+                nativeThreadId: forkThreadId,
+                forkedFromId: nativeThreadId,
+              }),
+              instructionSources: ["/workspace/fork/AGENTS.md"],
+            },
           }),
+          ...codexReplayPreamble({
+            nativeThreadId: forkThreadId,
+            nativeTurnId: "fork-context-turn",
+            prompt: "work",
+          })
+            .slice(5)
+            .map((entry) =>
+              entry.type === "emit_inbound" && entry.label === "turn/started"
+                ? entry
+                : withReplayRequestId(entry, 6),
+            ),
+          ...exchange(
+            7,
+            "mcpServerStatus/list",
+            { threadId: forkThreadId, detail: "toolsAndAuthOnly", limit: 100 },
+            { result: { data: [], nextCursor: null } },
+          ),
         ],
       });
       const harness = yield* makeCodexReplayHarness(transcript);
@@ -8434,6 +8659,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
       assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, forkThreadId);
       assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
+      const footprint =
+        yield* Deferred.make<
+          Parameters<
+            NonNullable<ProviderAdapter.ProviderAdapterV2TurnInput["onContextPrepared"]>
+          >[0]
+        >();
+      yield* harness.runtime.startTurn({
+        ...makeCodexTestTurnInput({
+          threadId: ThreadId.make("thread-archived-fork-target"),
+          providerThread: forkedProviderThread,
+          now,
+          attemptId: RunAttemptId.make("fork-context-turn"),
+          text: "work",
+        }),
+        onContextPrepared: (context) => Deferred.succeed(footprint, context).pipe(Effect.asVoid),
+      });
+      assert.deepEqual((yield* Deferred.await(footprint)).instructionSources, [
+        "/workspace/fork/AGENTS.md",
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

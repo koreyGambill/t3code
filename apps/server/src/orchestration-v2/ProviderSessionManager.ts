@@ -1878,6 +1878,12 @@ export const layerWithOptions = (
                                 yield* instructionFootprints.value
                                   .record({
                                     ...prepared,
+                                    entries: [
+                                      ...prepared.entries,
+                                      ...InstructionFootprints.childPreambleEntries(
+                                        input.message.text,
+                                      ),
+                                    ],
                                     threadId: input.threadId,
                                     runId: input.runId,
                                     providerInstanceId: runtime.instanceId,

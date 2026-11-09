@@ -162,6 +162,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.filesystemGetMetadata]: "workspace",
   [WS_METHODS.threadMarksGet]: "workspace",
   [WS_METHODS.threadInsightsGet]: "workspace",
+  [WS_METHODS.threadContextGet]: "workspace",
   [WS_METHODS.threadNotesGet]: "workspace",
   [WS_METHODS.threadNotesSave]: "workspace",
   [WS_METHODS.threadNotesSettings]: "workspace",
