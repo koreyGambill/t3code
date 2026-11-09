@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  XwingEnvironmentId,
   type ApplicationStoredEvent,
   CheckpointId,
   CheckpointRef,
@@ -2858,6 +2859,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   Effect.succeed(
                     [checkoutA, checkoutB].map((checkout) => ({
                       ...checkout,
+                      xwingEnvironmentId: XwingEnvironmentId.make(checkout.xwingEnvironmentId),
                       repositoryName: "repo",
                       branch: `feature/${checkout.number}`,
                     })),

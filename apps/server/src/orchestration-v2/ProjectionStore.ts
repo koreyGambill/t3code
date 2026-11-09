@@ -5217,7 +5217,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       `.pipe(
         Effect.flatMap((rows) =>
           rows[0] === undefined
-            ? Effect.succeed(undefined)
+            ? Effect.undefined
             : decodeProviderSessionPayload(rows[0].payload_json),
         ),
         Effect.mapError(controlReadError(threadId)),
