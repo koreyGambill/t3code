@@ -14,7 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { formatThreadLink, quoteThreadTitle } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -169,7 +169,7 @@ const make = Effect.gen(function* () {
       commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
       threadId: request.senderThreadId,
       messageId: replyMessageId(request.messageId),
-      text: `Thread ${JSON.stringify(target.thread.title.trim() || "Untitled")} ${link} ${status}.${
+      text: `Thread ${quoteThreadTitle(target.thread.title.trim() || "Untitled")} ${link} ${status}.${
         reply.length === 0 ? "" : `\n\n${reply}`
       }`,
       notification: {
@@ -256,7 +256,7 @@ const make = Effect.gen(function* () {
       commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
       threadId: request.senderThreadId,
       messageId: replyMessageId(request.messageId),
-      text: `Thread ${JSON.stringify(title)} ${link} ${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}.${answer.length === 0 ? "" : `\n\n${answer}`}`,
+      text: `Thread ${quoteThreadTitle(title)} ${link} ${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}.${answer.length === 0 ? "" : `\n\n${answer}`}`,
       notification: {
         source: {
           kind: "thread_reply",

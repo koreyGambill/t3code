@@ -123,6 +123,11 @@ const linkLabel = (label: string | undefined) =>
     .trim();
 
 /** Without a label, an autolink: clients show the thread's current title. */
+/** A thread title as a one-line double-quoted string, for sender headers models read. */
+export function quoteThreadTitle(title: string): string {
+  return `"${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"`;
+}
+
 export function formatThreadLink(ref: ThreadLink, label?: string): string {
   const cleaned = linkLabel(label);
   return cleaned ? `[${cleaned}](${threadLinkHref(ref)})` : `<${threadLinkHref(ref)}>`;

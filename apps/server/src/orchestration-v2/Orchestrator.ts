@@ -82,6 +82,7 @@ import {
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
+import { quoteThreadTitle } from "@t3tools/shared/threadLinks";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -6545,7 +6546,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const senderHeader =
       senderTitles === undefined || command.senderThreadId === undefined
         ? ""
-        : `[Thread: ${JSON.stringify((senderTitles[command.senderThreadId]?.trim() || command.senderThreadId).slice(0, 200))}]\n\n`;
+        : `[Thread: ${quoteThreadTitle((senderTitles[command.senderThreadId]?.trim() || command.senderThreadId).slice(0, 200))}]\n\n`;
     const dispatchText =
       senderHeader +
       (delegatedCompletion === undefined
