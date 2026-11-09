@@ -40,6 +40,7 @@ const state = vi.hoisted(() => ({
   toasts: [] as string[],
   afterRequest: undefined as ((action: string) => void) | undefined,
   sessionLookupFails: false,
+  managedWorktree: true,
 }));
 
 vi.mock("react", () => ({
@@ -70,14 +71,16 @@ vi.mock("../state/use-atom-command", () => ({
     },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async (environmentId: string) =>
-    state.sessionLookupFails
-      ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
-      : AsyncResult.success({
-          authenticated: true,
-          scopes: [...(state.scopes.get(environmentId) ?? [])],
-          auth: { serverUpdateScope: "environment:maintain" },
-        }),
+  useAtomQueryRunner: () => async (environmentId: string | object) =>
+    typeof environmentId !== "string"
+      ? AsyncResult.success({ threadIds: ["thread"], isManagedWorktree: state.managedWorktree })
+      : state.sessionLookupFails
+        ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
+        : AsyncResult.success({
+            authenticated: true,
+            scopes: [...(state.scopes.get(environmentId) ?? [])],
+            auth: { serverUpdateScope: "environment:maintain" },
+          }),
 }));
 vi.mock("../state/threads", () => ({
   threadEnvironment: Object.fromEntries(
@@ -248,6 +251,7 @@ beforeEach(() => {
   state.toasts = [];
   state.afterRequest = undefined;
   state.sessionLookupFails = false;
+  state.managedWorktree = true;
   useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
   useDiffPanelStore.setState(useDiffPanelStore.getInitialState(), true);
   usePreviewMiniPlayerStore.setState(usePreviewMiniPlayerStore.getInitialState(), true);
@@ -346,6 +350,18 @@ describe("thread action permissions", () => {
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
+  });
+
+  it("keeps a hand-made worktree when the server says it is unmanaged", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/hand-made/worktree";
+    state.managedWorktree = false;
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
   });
 
   it("does not request worktree removal after its grant is revoked during delete", async () => {

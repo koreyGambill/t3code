@@ -79,6 +79,7 @@ export class DevelopmentEnvironmentSelectionRejectedError extends Schema.TaggedE
     threadId: ThreadId,
     reason: Schema.Literals([
       "thread-not-found",
+      "provider-native-subagent",
       "deleted",
       "project-missing",
       "workspace-changed",
@@ -88,6 +89,8 @@ export class DevelopmentEnvironmentSelectionRejectedError extends Schema.TaggedE
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "provider-native-subagent":
+        return "A provider-native subagent uses its parent conversation's folder. Change folder on the parent thread instead.";
       case "thread-not-found":
         return "This thread does not exist.";
       case "deleted":

@@ -1075,6 +1075,11 @@ it.effect(
       [];
     const holds: Array<{ readonly id: string; readonly key: string }> = [];
     const layerEnvironments = DevelopmentEnvironments.layer.pipe(
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-xwing-intake-checkouts-" }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(NodeServices.layer),
       Layer.provide(Layer.mock(WorkspacePaths.WorkspacePaths)({})),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provide(DevelopmentEnvironmentHolds.layer),

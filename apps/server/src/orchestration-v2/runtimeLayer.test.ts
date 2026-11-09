@@ -2813,6 +2813,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const holds: Array<{ readonly id: string; readonly owner: string; readonly key: string }> =
           [];
         const layerEnvironments = DevelopmentEnvironments.layer.pipe(
+          Layer.provide(layerServerConfig),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerPlatformTest),
           Layer.provide(
             Layer.mock(WorkspacePaths.WorkspacePaths)({
               normalizeWorkspaceRoot: (folder) => Effect.succeed(folder),
@@ -2851,6 +2854,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 getById: () => Effect.succeedSome({ workspaceRoot: "/workspace/xwing" } as never),
               }),
               Layer.mock(DevelopmentEnvironmentCheckouts.DevelopmentEnvironmentCheckouts)({
+                list: () =>
+                  Effect.succeed(
+                    [checkoutA, checkoutB].map((checkout) => ({
+                      ...checkout,
+                      repositoryName: "repo",
+                      branch: `feature/${checkout.number}`,
+                    })),
+                  ),
                 resolve: ({ xwingEnvironmentId }) => {
                   const target = [checkoutA, checkoutB].find(
                     (candidate) => candidate.xwingEnvironmentId === xwingEnvironmentId,
@@ -2991,7 +3002,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           selectedB.thread.developmentEnvironment,
         );
 
-        yield* select("back-to-a", inB, checkoutA);
+        yield* Effect.flatMap(DevelopmentEnvironments.DevelopmentEnvironments, (environments) =>
+          environments.changeFolder({
+            threadId,
+            commandId: CommandId.make("runtime-layer-xwing-back-to-a"),
+            expected: inB,
+            folder: checkoutA.checkoutPath,
+          }),
+        ).pipe(Effect.provide(layerEnvironments));
         const backAt = yield* DateTime.now;
         const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
           (candidate) => candidate.id === threadId,
@@ -3022,6 +3040,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ).pipe(Effect.provide(layerEnvironments));
         assert.isTrue(movedFolder.changed);
         assert.equal(movedFolder.branch, "feature/native");
+        const cleanup = yield* Effect.flatMap(
+          DevelopmentEnvironments.DevelopmentEnvironments,
+          (environments) => environments.getWorktreeThreadIds({ worktreePath: "/native/worktree" }),
+        ).pipe(Effect.provide(layerEnvironments));
+        assert.isFalse(cleanup.isManagedWorktree);
+        assert.deepEqual(cleanup.threadIds, [threadId]);
         assert.deepEqual(yield* workspace, {
           worktreePath: "/native/worktree",
           xwingEnvironmentId: null,
@@ -3142,6 +3166,41 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           }),
           familyUsage,
         );
+        const child = (yield* orchestrator.getThreadProjection(childId)).thread;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("runtime-layer-xwing-native-child"),
+              type: "thread.metadata-updated",
+              threadId: childId,
+              occurredAt: yield* DateTime.now,
+              payload: {
+                ...child,
+                creationSource: "provider",
+                lineage: {
+                  ...child.lineage,
+                  parentThreadId: threadId,
+                  relationshipToParent: "subagent",
+                },
+              },
+            },
+          ],
+        });
+        const nativeMove = yield* Effect.flatMap(
+          DevelopmentEnvironments.DevelopmentEnvironments,
+          (environments) =>
+            environments.selectCheckout({
+              threadId: childId,
+              commandId: CommandId.make("runtime-layer-xwing-native-move"),
+              expected: inB,
+              target: { type: "native", worktreePath: "/native/worktree", branch: null },
+            }),
+        ).pipe(Effect.provide(layerEnvironments), Effect.flip);
+        assert.instanceOf(
+          nativeMove,
+          DevelopmentEnvironments.DevelopmentEnvironmentSelectionRejectedError,
+        );
+        assert.equal(nativeMove.reason, "provider-native-subagent");
       }),
   );
 

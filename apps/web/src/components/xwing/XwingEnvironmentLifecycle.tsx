@@ -553,7 +553,10 @@ export function CleanupReview({
   const [reviewing, setReviewing] = useState(false);
   const [confirming, setConfirming] = useState<"archive" | "delete" | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const cleanUp = useAtomCommand(cleanUpDevelopmentEnvironment, "Delete Xwing environment");
+  const cleanUp = useAtomCommand(
+    cleanUpDevelopmentEnvironment,
+    confirming === "archive" ? "Archive Xwing environment" : "Delete Xwing environment",
+  );
   const assessment = useEnvironmentQuery(
     reviewing && canRead
       ? developmentEnvironmentCleanupAssessment({

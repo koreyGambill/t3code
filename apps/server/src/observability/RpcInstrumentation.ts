@@ -186,7 +186,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.developmentEnvironmentsSelectCheckout]: "workspace",
   [WS_METHODS.developmentEnvironmentsCreate]: "workspace",
   [WS_METHODS.developmentEnvironmentsAttach]: "workspace",
-  [WS_METHODS.developmentEnvironmentsRestore]: "orchestration",
+  [WS_METHODS.developmentEnvironmentsRestore]: "workspace",
   [WS_METHODS.developmentEnvironmentsRepair]: "workspace",
   [WS_METHODS.developmentEnvironmentsListAppCommands]: "workspace",
   [WS_METHODS.developmentEnvironmentsStartApp]: "workspace",

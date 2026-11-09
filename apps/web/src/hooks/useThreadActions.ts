@@ -462,15 +462,15 @@ export function useThreadActions() {
       survivingThreads,
       threadRef.threadId,
     );
-    // A shell that leaves idle subagent children out cannot prove nobody else uses the worktree,
-    // so the server's list decides. A failed read keeps the worktree.
-    if (orphanedWorktreePath !== null && environmentConfig?.shellThreadFamilies === true) {
+    // Only the server can prove this is a managed worktree and has no other occupants.
+    if (orphanedWorktreePath !== null) {
       const occupants = await loadWorktreeThreadIds({
         environmentId: threadRef.environmentId,
         input: { worktreePath: orphanedWorktreePath },
       });
       if (
         occupants._tag !== "Success" ||
+        !occupants.value.isManagedWorktree ||
         occupants.value.threadIds.some(
           (threadId) => threadId !== threadRef.threadId && deletedIds?.has(threadId) !== true,
         )

@@ -130,7 +130,7 @@ function ChangeThreadFolderDialog({ threadRef }: { readonly threadRef: ScopedThr
           </DialogHeader>
           <DialogPanel>
             <label className="flex flex-col gap-1.5 text-sm">
-              Folder on this machine
+              Folder on the server's machine
               <Input
                 autoFocus
                 value={folder}

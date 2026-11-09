@@ -1,5 +1,6 @@
 import {
   type CommandId,
+  isProviderNativeSubagentThread,
   type ThreadChangeFolderInput,
   type ThreadChangeFolderError,
   ThreadFolderUnavailableError,
@@ -13,13 +14,19 @@ import {
   type OrchestrationV2DevelopmentEnvironmentUsage,
   type OrchestrationV2ThreadDevelopmentEnvironment,
   type XwingListError,
+  type OrchestrationV2WorktreeThreadIds,
 } from "@t3tools/contracts";
 
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { WorktreeRemovalOwnership } from "../vcs/worktreeRemoval.ts";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -87,6 +94,9 @@ export interface DevelopmentEnvironmentLaunchWorkspace {
 export class DevelopmentEnvironments extends Context.Service<
   DevelopmentEnvironments,
   {
+    readonly getWorktreeThreadIds: (input: {
+      readonly worktreePath: string;
+    }) => Effect.Effect<OrchestrationV2WorktreeThreadIds, Orchestrator.OrchestratorV2Error>;
     readonly changeFolder: (
       input: ThreadChangeFolderInput,
     ) => Effect.Effect<DevelopmentEnvironmentSelectionResult, ThreadChangeFolderError>;
@@ -155,6 +165,22 @@ const make = Effect.gen(function* () {
   const holds = yield* DevelopmentEnvironmentHolds.DevelopmentEnvironmentHolds;
   const paths = yield* WorkspacePaths.WorkspacePaths;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const ownership = yield* WorktreeRemovalOwnership;
+
+  const getWorktreeThreadIds: DevelopmentEnvironments["Service"]["getWorktreeThreadIds"] =
+    Effect.fn("DevelopmentEnvironments.getWorktreeThreadIds")(function* ({ worktreePath }) {
+      const snapshot = yield* Effect.flatten(
+        threads.readShellSnapshot({ location: "active", worktreePath }),
+      );
+      return {
+        threadIds: snapshot.threads.map((thread) => thread.id),
+        isManagedWorktree:
+          (yield* isManagedWorktreePath(worktreePath)) &&
+          (yield* ownership.ownerOf(worktreePath)) === null,
+      };
+    });
 
   const bindLaunch: DevelopmentEnvironments["Service"]["bindLaunch"] = (binding, launch) =>
     holds.retain(
@@ -215,6 +241,7 @@ const make = Effect.gen(function* () {
       );
     const { thread } = records;
     if (thread.deletedAt !== null) return yield* reject("deleted");
+    if (isProviderNativeSubagentThread(thread)) return yield* reject("provider-native-subagent");
     // Checked again under the orchestrator's lock; checking first keeps a rejected move from
     // leaving a hold behind.
     if (
@@ -315,6 +342,25 @@ const make = Effect.gen(function* () {
           (cause) => new ThreadFolderUnavailableError({ folder: input.folder, cause }),
         ),
       );
+    const folderKey = (target: string) =>
+      fileSystem.realPath(target).pipe(
+        Effect.orElseSucceed(() => target),
+        Effect.map(normalizeProjectPathForComparison),
+      );
+    let xwingEnvironmentId = input.xwingEnvironmentId;
+    if (xwingEnvironmentId === undefined) {
+      const choices = yield* checkouts.list({ workspaceRoot: folder }).pipe(
+        Effect.catchTags({ XwingUnavailableError: () => Effect.succeed([]) }),
+        Effect.mapError((cause) => new ThreadFolderUnavailableError({ folder, cause })),
+      );
+      const key = yield* folderKey(folder);
+      for (const choice of choices) {
+        if ((yield* folderKey(choice.checkoutPath)) === key) {
+          xwingEnvironmentId = choice.xwingEnvironmentId;
+          break;
+        }
+      }
+    }
     const branch = yield* git
       .execute({
         operation: "change-folder",
@@ -331,9 +377,9 @@ const make = Effect.gen(function* () {
       commandId: input.commandId,
       expected: input.expected,
       target:
-        input.xwingEnvironmentId === undefined
+        xwingEnvironmentId === undefined
           ? { type: "native", worktreePath: folder, branch }
-          : { type: "xwing", xwingEnvironmentId: input.xwingEnvironmentId, workspaceRoot: folder },
+          : { type: "xwing", xwingEnvironmentId, workspaceRoot: folder },
     });
   });
 
@@ -356,6 +402,7 @@ const make = Effect.gen(function* () {
 
   return DevelopmentEnvironments.of({
     bindLaunch,
+    getWorktreeThreadIds,
     changeFolder,
     selectCheckout,
     resolveLaunchWorkspace,
