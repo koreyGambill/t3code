@@ -117,7 +117,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     if ((Get-FileHash -LiteralPath (Join-Path $payload 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.digest) { throw 'Staged runtime digest changed.' }
     if (-not (Test-Path -LiteralPath (Join-Path $payload 'Start Weavewing.cmd'))) { throw 'Staged launcher missing.' }
   }
-  Set-Content -LiteralPath $empty -Value '' -NoNewline
+  # The detached Activate run receives this file as its own stdin, so it cannot be rewritten then.
+  if (-not (Test-Path -LiteralPath $empty)) { Set-Content -LiteralPath $empty -Value '' -NoNewline }
   . (Join-Path $root 'stage-windows-desktop.ps1')
   if ($Mode -eq 'Preflight') {
     Stage-WindowsDesktop $install $install -CheckOnly
