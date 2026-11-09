@@ -193,6 +193,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       const output = yield* run({
         onCost: (cost) => {
           costUsd = cost;
+          input.onCost?.(cost);
         },
         operation: "generateMonitoringReview",
         maxOutputTokens: input.maxOutputTokens,

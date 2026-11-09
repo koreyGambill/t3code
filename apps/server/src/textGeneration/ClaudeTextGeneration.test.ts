@@ -66,6 +66,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
+    cwdMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -87,6 +88,7 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
+      T3_FAKE_CLAUDE_CWD_MUST_BE: input.cwdMustBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
     };
     const environment: NodeJS.ProcessEnv = {
@@ -132,6 +134,56 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             }),
           ).toEqual({ findings: [], costUsd: 0.0042 });
         }),
+    ),
+  );
+
+  it.effect("keeps standards reviews in the project to load CLAUDE.md", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { findings: [] } }),
+        cwdMustBe: process.cwd(),
+      },
+      (textGeneration) =>
+        textGeneration.generateMonitoringReview!({
+          cwd: process.cwd(),
+          prompt: "Review selected standards",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          ),
+        }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      label: "CLI error",
+      output: { is_error: true, result: "Budget exceeded", total_cost_usd: 0.05 },
+      exitCode: 1,
+    },
+    {
+      label: "invalid structured output",
+      output: { structured_output: { invalid: true }, total_cost_usd: 0.0042 },
+      exitCode: 0,
+    },
+  ])("reports model cost after $label", ({ output, exitCode }) =>
+    withFakeClaudeEnv({ output: JSON.stringify(output), exitCode }, (textGeneration) =>
+      Effect.gen(function* () {
+        let cost: number | undefined;
+        const result = yield* textGeneration.generateMonitoringReview!({
+          cwd: process.cwd(),
+          prompt: "Review context",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          ),
+          onCost: (value) => {
+            cost = value;
+          },
+        }).pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        expect(cost).toBe(output.total_cost_usd);
+      }),
     ),
   );
 

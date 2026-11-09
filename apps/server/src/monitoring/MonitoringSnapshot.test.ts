@@ -101,6 +101,14 @@ it.effect(
         kind: "context-review",
       });
       assert.equal(context.threads[0]?.messages[0]?.id, "context:run");
+      assert.equal(context.newestContextAt, at);
+      const completedAt = "1970-01-01T00:00:01.000Z";
+      yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id,thread_id,ordinal,provider,status,requested_at,completed_at,payload_json) VALUES ('run','chosen',1,'claude','completed',${at},${completedAt},'{}')`;
+      const completedContext = yield* (yield* Snapshot.MonitoringSnapshot).capture({
+        ...profile,
+        kind: "context-review",
+      });
+      assert.equal(completedContext.newestContextAt, completedAt);
       assert.include(context.threads[0]?.messages[0]?.text ?? "", '"repeatedReads":5');
       assert.notInclude(context.threads[0]?.messages[0]?.text ?? "", "Tests 3 passed");
       assert.equal(
@@ -186,6 +194,8 @@ it.effect(
                       model: "haiku",
                       providerInstanceId: ProviderInstanceId.make("claude"),
                       startedAt: at,
+                      status: "completed",
+                      cachedInputTokensStatus: "unavailable",
                       instructions: [],
                       reads: [],
                       repeatedReads: 5,

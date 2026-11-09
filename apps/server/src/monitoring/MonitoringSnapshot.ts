@@ -34,6 +34,7 @@ export interface MonitoringSnapshotData {
       readonly text: string;
     }>;
   }>;
+  readonly newestContextAt?: string;
   readonly truncated: boolean;
   readonly coverage: string;
 }
@@ -114,6 +115,7 @@ const make = Effect.gen(function* () {
       if (profile.kind === "context-review") {
         const contextThreads: MonitoringSnapshotData["threads"][number][] = [];
         let remaining = 24000;
+        let newestContextAt: string | undefined;
         let truncated = selected.length > 5;
         const targets: Array<{ id: ThreadId; title: string; parentThreadId: ThreadId | null }> = [];
         for (const root of selected.slice(0, 5)) {
@@ -146,7 +148,37 @@ const make = Effect.gen(function* () {
                 (cause) => new MonitoringError({ operation: "read context records", cause }),
               ),
             );
+          if (result.records.length) {
+            const ids = result.records.map((record) => record.runId);
+            const updates = yield* sql<{ at: string | null }>`
+              SELECT at FROM (
+                SELECT completed_at AS at FROM orchestration_v2_projection_runs
+                  WHERE thread_id=${thread.id} AND run_id IN ${sql.in(ids)}
+                UNION ALL SELECT updated_at AS at FROM orchestration_v2_projection_turn_items
+                  WHERE thread_id=${thread.id} AND run_id IN ${sql.in(ids)} AND type IN ('command_execution','dynamic_tool','file_search')
+                UNION ALL SELECT t.completed_at AS at FROM orchestration_v2_projection_provider_turns t
+                  JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id=t.run_attempt_id
+                  WHERE t.thread_id=${thread.id} AND a.run_id IN ${sql.in(ids)}
+              ) WHERE at IS NOT NULL ORDER BY julianday(at) DESC LIMIT 1`.pipe(
+              NodeSqliteClient.readOnly,
+              Effect.mapError(
+                (cause) => new MonitoringError({ operation: "read context freshness", cause }),
+              ),
+            );
+            const at = updates[0]?.at;
+            if (
+              at &&
+              (newestContextAt === undefined || Date.parse(at) > Date.parse(newestContextAt))
+            )
+              newestContextAt = at;
+          }
           const messages = result.records.flatMap((record) => {
+            for (const at of [
+              record.startedAt,
+              ...record.instructions.map((item) => item.capturedAt),
+            ])
+              if (newestContextAt === undefined || Date.parse(at) > Date.parse(newestContextAt))
+                newestContextAt = at;
             const text = JSON.stringify({
               ...record,
               reads: record.reads.toSorted((a, b) => b.count - a.count).slice(0, 20),
@@ -188,6 +220,7 @@ const make = Effect.gen(function* () {
           });
         }
         return {
+          ...(newestContextAt === undefined ? {} : { newestContextAt }),
           threads: contextThreads.some((thread) => thread.messages.length) ? contextThreads : [],
           truncated,
           coverage:

@@ -56,35 +56,30 @@ export const layer = Layer.effect(
             !profile.targets.threadIds.includes(finding.threadId))
         )
           return { delivery: "alert_only", messageId: null };
-        const current = yield* workspace
-          .get({ threadId: finding.threadId })
-          .pipe(
-            Effect.mapError(
-              (cause) => new MonitoringError({ operation: "read review workspace", cause }),
-            ),
-          );
         const source = `Context review ${finding.id}`;
-        if (!current.decisions.some((decision) => decision.source === source))
-          yield* workspace
-            .mutate({
-              threadId: finding.threadId,
-              expectedRevision: current.revision,
-              changes: [
-                {
-                  kind: "decision",
-                  title: finding.summary,
-                  rationale: `${finding.detail}\n\nEvidence:\n${finding.evidence.map((item) => `${item.messageId}: ${item.excerpt}`).join("\n")}\n\nAdvisory from ${profile.modelSelection.model}. Accept or reject before changing instructions, skills or knowledge.`,
-                  status: "proposed",
-                  decidedBy: "agent",
-                  source,
-                },
-              ],
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) => new MonitoringError({ operation: "propose context improvement", cause }),
-              ),
-            );
+        yield* Effect.gen(function* () {
+          const current = yield* workspace.get({ threadId: finding.threadId });
+          if (current.decisions.some((decision) => decision.source === source)) return;
+          yield* workspace.mutate({
+            threadId: finding.threadId,
+            expectedRevision: current.revision,
+            changes: [
+              {
+                kind: "decision",
+                title: finding.summary,
+                rationale: `${finding.detail}\n\nEvidence:\n${finding.evidence.map((item) => `${item.messageId}: ${item.excerpt}`).join("\n")}\n\nAdvisory from ${profile.modelSelection.model}. Accept or reject before changing instructions, skills or knowledge.`,
+                status: "proposed",
+                decidedBy: "agent",
+                source,
+              },
+            ],
+          });
+        }).pipe(
+          Effect.retry({ times: 1, while: (cause) => cause.code === "conflict" }),
+          Effect.mapError(
+            (cause) => new MonitoringError({ operation: "propose context improvement", cause }),
+          ),
+        );
         return { delivery: "workspace", messageId: null };
       }
       if (

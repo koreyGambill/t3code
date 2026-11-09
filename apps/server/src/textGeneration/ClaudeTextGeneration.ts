@@ -197,7 +197,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       noSessionPersistence: boolean,
     ) {
       const workingDirectory =
-        operation === "generateThreadTitle" || operation === "generateMonitoringReview"
+        operation === "generateThreadTitle" ||
+        // Context reviews must reflect only the supplied records, without automatic project loads.
+        (operation === "generateMonitoringReview" && maxBudgetUsd !== undefined)
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -295,6 +297,21 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         () => runClaudeCommand(false),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
+        const parsed = Option.getOrUndefined(decodeJsonOption(stdout));
+        const messages: ReadonlyArray<unknown> = Array.isArray(parsed) ? parsed : [parsed];
+        const cost = messages
+          .flatMap((message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "total_cost_usd" in message &&
+            typeof message.total_cost_usd === "number" &&
+            Number.isFinite(message.total_cost_usd) &&
+            message.total_cost_usd >= 0
+              ? [message.total_cost_usd]
+              : [],
+          )
+          .at(-1);
+        if (cost !== undefined) onCost?.(cost);
         if (exitCode === 0) return Effect.succeed(stdout);
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
@@ -340,12 +357,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ? output
       : output.findLast((message) => message.type === "result");
 
-    if (
-      envelope?.total_cost_usd !== undefined &&
-      Number.isFinite(envelope.total_cost_usd) &&
-      envelope.total_cost_usd >= 0
-    )
-      onCost?.(envelope.total_cost_usd);
     const decodeOutput = Schema.decodeEffect(outputSchemaJson);
     return yield* decodeOutput(envelope?.structured_output).pipe(
       Effect.catchTags({

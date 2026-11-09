@@ -42,6 +42,10 @@ if (argv.includes("--max-budget-usd")) {
   const denied = argv.indexOf("--disallowedTools");
   if (denied < 0 || argv[denied + 1] !== "mcp__*") fail("review MCP tools must be disabled", 20);
 }
+const cwdMustBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_BE;
+if (cwdMustBe && NodeFS.realpathSync(process.cwd()) !== NodeFS.realpathSync(cwdMustBe)) {
+  fail("standards review must load project instructions", 21);
+}
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {
   fail("text generation ran in the project directory", 11);

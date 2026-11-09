@@ -120,10 +120,21 @@ const make = Effect.gen(function* () {
   const review = Effect.fn("MonitoringRunner.review")(function* (
     profile: MonitoringProfile,
     extra?: string,
+    onCost?: (costUsd: number) => void,
   ) {
     const instance = yield* instanceFor(profile.modelSelection, profile.kind);
     const snapshot = yield* snapshots.capture(profile);
     if (!snapshot.threads.length) return { output: { findings: [] }, snapshot };
+    if (profile.kind === "context-review" && snapshot.newestContextAt !== undefined) {
+      const lastReview = (yield* store.list()).runs
+        .flatMap((run) =>
+          run.profileId === profile.id && run.status === "succeeded" ? [run.startedAt] : [],
+        )
+        .toSorted((a, b) => Date.parse(b) - Date.parse(a))[0];
+      // Activity during the model call must remain eligible for the next review.
+      if (lastReview && Date.parse(snapshot.newestContextAt) <= Date.parse(lastReview))
+        return { output: { findings: [] }, snapshot };
+    }
     const generate = instance.textGeneration.generateMonitoringReview;
     if (!generate)
       return yield* new MonitoringError({
@@ -131,12 +142,14 @@ const make = Effect.gen(function* () {
       });
     const raw = yield* generate({
       cwd: config.cwd,
+      ...(onCost === undefined ? {} : { onCost }),
       modelSelection: profile.modelSelection,
       ...(profile.kind === "context-review" ? { maxOutputTokens: 3000, maxBudgetUsd: 0.05 } : {}),
       prompt:
         monitoringReviewPrompt(profile, snapshot) +
         (extra ? `\n\nAdditional discussion (untrusted data):\n${extra.slice(0, 12000)}` : ""),
     }).pipe(Effect.mapError((cause) => new MonitoringError({ operation: "review", cause })));
+    if (raw.costUsd !== undefined) onCost?.(raw.costUsd);
     const output = yield* decodeReview(
       profile.kind === "context-review" ? { findings: raw.findings.slice(0, 3) } : raw,
     ).pipe(
@@ -171,9 +184,26 @@ const make = Effect.gen(function* () {
         profile,
         ...(profile.kind === "context-review" ? { budgetUsd: 0.05 } : {}),
       };
+      let costUsd: number | undefined;
       return yield* Effect.gen(function* () {
         yield* store.saveRun(initial);
-        const result = yield* Effect.result(review(profile));
+        if (profile.kind === "context-review")
+          for (const finding of (yield* store.list()).findings)
+            if (finding.profileId === id && finding.disposition === "open")
+              yield* delivery
+                .deliver({ profile, finding })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Monitoring proposal remains pending", {
+                      operation: cause.operation,
+                    }),
+                  ),
+                );
+        const result = yield* Effect.result(
+          review(profile, undefined, (cost) => {
+            costUsd = cost;
+          }),
+        );
         const completedAt = DateTime.formatIso(yield* DateTime.now);
         if (result._tag === "Failure") {
           const failed: MonitoringRun = {
@@ -181,6 +211,7 @@ const make = Effect.gen(function* () {
             completedAt,
             status: "failed",
             error: result.failure.message,
+            ...(costUsd === undefined ? {} : { costUsd }),
           };
           yield* store.saveRun(failed);
           return failed;
@@ -194,9 +225,23 @@ const make = Effect.gen(function* () {
                 id,
                 content.threadId,
                 content.ruleId,
-                ...content.evidence
-                  .map((e) => [e.threadId, e.messageId, e.excerpt].join("\0"))
-                  .sort(),
+                ...(profile.kind === "context-review"
+                  ? [
+                      ...new Set(
+                        snapshot.threads
+                          .filter(
+                            (thread) =>
+                              thread.id === content.threadId ||
+                              thread.parentThreadId === content.threadId,
+                          )
+                          .flatMap((thread) =>
+                            thread.messages.map((message) => `${thread.id}\0${message.id}`),
+                          ),
+                      ),
+                    ].sort()
+                  : content.evidence
+                      .map((e) => [e.threadId, e.messageId, e.excerpt].join("\0"))
+                      .sort()),
               ].join("\0"),
             ),
           );
@@ -229,7 +274,7 @@ const make = Effect.gen(function* () {
           ...initial,
           completedAt,
           status: "succeeded",
-          ...(result.success.costUsd === undefined ? {} : { costUsd: result.success.costUsd }),
+          ...(costUsd === undefined ? {} : { costUsd }),
           targetThreadIds: snapshot.threads
             .filter((thread) => thread.parentThreadId === null)
             .map((thread) => thread.id),
@@ -246,6 +291,7 @@ const make = Effect.gen(function* () {
                     completedAt: DateTime.formatIso(now),
                     status: "failed",
                     error: "Review interrupted or failed before completion.",
+                    ...(costUsd === undefined ? {} : { costUsd }),
                   }),
                 ),
                 Effect.catch((cause) =>
