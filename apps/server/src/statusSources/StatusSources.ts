@@ -230,175 +230,193 @@ const make = Effect.gen(function* () {
         yield* Effect.sleep(`${Math.ceil(delay * jitter * 1000)} millis`);
       }).pipe(Effect.forever);
     }).pipe(Effect.ignore);
-    workers.set(config.id, yield* run.pipe(Effect.forkIn(scope)));
+    workers.set(config.id, yield* run.pipe(Effect.interruptible, Effect.forkIn(scope)));
   });
-  const upsert = Effect.fn("StatusSources.upsert")(function* (input: StatusSourceUpsertInput) {
-    const result = yield* mutex.withPermits(1)(
-      Effect.gen(function* () {
-        const old = input.id ? yield* requireSource(input.id) : undefined;
-        if (!old && entries.size >= 64)
-          return yield* new StatusSourcesError({ operation: "source-limit" });
-        const id =
-          old?.config.id ??
-          (yield* random
-            .uuidV4()
+  const upsert = Effect.fn("StatusSources.upsert")(
+    function* (input: StatusSourceUpsertInput) {
+      const result = yield* mutex.withPermits(1)(
+        Effect.gen(function* () {
+          const old = input.id ? yield* requireSource(input.id) : undefined;
+          if (!old && entries.size >= 64)
+            return yield* new StatusSourcesError({ operation: "source-limit" });
+          const id =
+            old?.config.id ??
+            (yield* random
+              .uuidV4()
+              .pipe(
+                Effect.mapError(
+                  (cause) => new StatusSourcesError({ operation: "generate-id", cause }),
+                ),
+              ));
+          const previous = old ? yield* credentials(id) : { target: "", headers: {} };
+          const target = input.target ?? previous.target;
+          const headers = input.headers ?? previous.headers;
+          if (
+            input.kind !== "webhook" &&
+            (!target.trim() || (input.kind !== "command" && !Probe.statusTargetOrigin(target)))
+          )
+            return yield* new StatusSourcesError({ operation: "invalid-target" });
+          if (
+            Object.keys(headers).length > 32 ||
+            Object.entries(headers).some(
+              ([key, value]) =>
+                key.length > 200 || value.length > 8192 || /[\r\n]/.test(key + value),
+            )
+          )
+            return yield* new StatusSourcesError({ operation: "invalid-headers" });
+          const cleanTarget =
+            input.kind === "command" || input.kind === "webhook"
+              ? ""
+              : Probe.statusTargetOrigin(target)!;
+          const config = yield* decodeConfig({
+            id,
+            name: input.name,
+            kind: input.kind,
+            icon: input.icon,
+            intervalSeconds: Math.min(
+              86400,
+              Math.max(30, input.intervalSeconds ?? old?.config.intervalSeconds ?? 60),
+            ),
+            timeoutSeconds: Math.min(
+              60,
+              Math.max(1, input.timeoutSeconds ?? old?.config.timeoutSeconds ?? 10),
+            ),
+            snoozedUntil: old?.config.snoozedUntil ?? null,
+            target: cleanTarget,
+            hasCredentials:
+              input.kind === "command" || target !== cleanTarget || Object.keys(headers).length > 0,
+          }).pipe(
+            Effect.mapError(
+              (cause) => new StatusSourcesError({ operation: "validate-config", cause }),
+            ),
+          );
+          const source: StatusSource = {
+            config,
+            latest: unknown(config.name),
+            lastTransition: null,
+          };
+          const oldSecret = yield* secrets
+            .get(secretName(id))
             .pipe(
               Effect.mapError(
-                (cause) => new StatusSourcesError({ operation: "generate-id", cause }),
+                (cause) => new StatusSourcesError({ operation: "read-secret", cause }),
               ),
-            ));
-        const previous = old ? yield* credentials(id) : { target: "", headers: {} };
-        const target = input.target ?? previous.target;
-        const headers = input.headers ?? previous.headers;
-        if (
-          input.kind !== "webhook" &&
-          (!target.trim() || (input.kind !== "command" && !Probe.statusTargetOrigin(target)))
-        )
-          return yield* new StatusSourcesError({ operation: "invalid-target" });
-        if (
-          Object.keys(headers).length > 32 ||
-          Object.entries(headers).some(
-            ([key, value]) => key.length > 200 || value.length > 8192 || /[\r\n]/.test(key + value),
-          )
-        )
-          return yield* new StatusSourcesError({ operation: "invalid-headers" });
-        const cleanTarget =
-          input.kind === "command" || input.kind === "webhook"
-            ? ""
-            : Probe.statusTargetOrigin(target)!;
-        const config = yield* decodeConfig({
-          id,
-          name: input.name,
-          kind: input.kind,
-          icon: input.icon,
-          intervalSeconds: Math.min(
-            86400,
-            Math.max(30, input.intervalSeconds ?? old?.config.intervalSeconds ?? 60),
-          ),
-          timeoutSeconds: Math.min(
-            60,
-            Math.max(1, input.timeoutSeconds ?? old?.config.timeoutSeconds ?? 10),
-          ),
-          snoozedUntil: old?.config.snoozedUntil ?? null,
-          target: cleanTarget,
-          hasCredentials:
-            input.kind === "command" || target !== cleanTarget || Object.keys(headers).length > 0,
-        }).pipe(
-          Effect.mapError(
-            (cause) => new StatusSourcesError({ operation: "validate-config", cause }),
-          ),
-        );
-        const source: StatusSource = { config, latest: unknown(config.name), lastTransition: null };
-        const oldSecret = yield* secrets
-          .get(secretName(id))
-          .pipe(
-            Effect.mapError((cause) => new StatusSourcesError({ operation: "read-secret", cause })),
-          );
-        yield* secrets
-          .set(
-            secretName(id),
-            utf8.encode(
-              yield* encodeCredentials({ target, headers }).pipe(
-                Effect.mapError(
-                  (cause) => new StatusSourcesError({ operation: "encode-secret", cause }),
+            );
+          yield* Effect.gen(function* () {
+            yield* secrets
+              .set(
+                secretName(id),
+                utf8.encode(
+                  yield* encodeCredentials({ target, headers }).pipe(
+                    Effect.mapError(
+                      (cause) => new StatusSourcesError({ operation: "encode-secret", cause }),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) => new StatusSourcesError({ operation: "write-secret", cause }),
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) => new StatusSourcesError({ operation: "write-secret", cause }),
+                ),
+              );
+            yield* persist([
+              ...Array.from(entries.values())
+                .filter((entry) => entry.config.id !== id)
+                .map((entry) => entry.config),
+              config,
+            ]);
+          }).pipe(
+            Effect.tapError(() =>
+              (Option.isSome(oldSecret)
+                ? secrets.set(secretName(id), oldSecret.value)
+                : secrets.remove(secretName(id))
+              ).pipe(Effect.ignore),
             ),
           );
-        yield* persist([
-          ...Array.from(entries.values())
-            .filter((entry) => entry.config.id !== id)
-            .map((entry) => entry.config),
-          config,
-        ]).pipe(
-          Effect.tapError(() =>
-            (Option.isSome(oldSecret)
-              ? secrets.set(secretName(id), oldSecret.value)
-              : secrets.remove(secretName(id))
-            ).pipe(Effect.ignore),
+          pollConfigs.delete(id);
+          entries.set(id, source);
+          initialized.delete(id);
+          yield* emit;
+          return source;
+        }),
+      );
+      yield* stop(result.config.id);
+      yield* launch(result.config);
+      return result;
+    },
+    Effect.uninterruptible,
+    mutations.withPermits(1),
+  );
+  const remove = Effect.fn("StatusSources.remove")(
+    function* ({ id }: { readonly id: string }) {
+      yield* mutex.withPermits(1)(
+        Effect.gen(function* () {
+          yield* requireSource(id);
+          yield* persist(
+            Array.from(entries.values())
+              .filter((entry) => entry.config.id !== id)
+              .map((entry) => entry.config),
+          );
+          entries.delete(id);
+          initialized.delete(id);
+          yield* emit;
+        }),
+      );
+      yield* stop(id);
+      yield* Effect.all([secrets.remove(secretName(id)), secrets.remove(signingName(id))]).pipe(
+        Effect.mapError((cause) => new StatusSourcesError({ operation: "remove-secret", cause })),
+      );
+    },
+    Effect.uninterruptible,
+    mutations.withPermits(1),
+  );
+  const snooze = Effect.fn("StatusSources.snooze")(
+    function* ({ id, until }: StatusSourceSnoozeInput) {
+      if (until !== null && !Number.isFinite(Date.parse(until)))
+        return yield* new StatusSourcesError({ operation: "invalid-snooze" });
+      const source = yield* mutex.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* requireSource(id);
+          const next = { ...current, config: { ...current.config, snoozedUntil: until } };
+          yield* persist(
+            Array.from(entries.values()).map((entry) =>
+              entry.config.id === id ? next.config : entry.config,
+            ),
+          );
+          entries.set(id, next);
+          yield* emit;
+          return next;
+        }),
+      );
+      return source;
+    },
+    Effect.uninterruptible,
+    mutations.withPermits(1),
+  );
+  const rotateWebhookSecret = Effect.fn("StatusSources.rotateWebhookSecret")(
+    function* ({ id }: { readonly id: string }) {
+      const source = yield* requireSource(id);
+      if (source.config.kind !== "webhook")
+        return yield* new StatusSourcesError({ operation: "not-webhook" });
+      const secret = yield* random
+        .uuidV4()
+        .pipe(
+          Effect.mapError(
+            (cause) => new StatusSourcesError({ operation: "generate-signing-secret", cause }),
           ),
         );
-        pollConfigs.delete(id);
-        entries.set(id, source);
-        initialized.delete(id);
-        yield* emit;
-        return source;
-      }),
-    );
-    yield* stop(result.config.id);
-    yield* launch(result.config);
-    return result;
-  }, mutations.withPermits(1));
-  const remove = Effect.fn("StatusSources.remove")(function* ({ id }: { readonly id: string }) {
-    yield* mutex.withPermits(1)(
-      Effect.gen(function* () {
-        yield* requireSource(id);
-        yield* persist(
-          Array.from(entries.values())
-            .filter((entry) => entry.config.id !== id)
-            .map((entry) => entry.config),
-        );
-        entries.delete(id);
-        initialized.delete(id);
-        yield* emit;
-      }),
-    );
-    yield* stop(id);
-    yield* Effect.all([secrets.remove(secretName(id)), secrets.remove(signingName(id))]).pipe(
-      Effect.mapError((cause) => new StatusSourcesError({ operation: "remove-secret", cause })),
-    );
-  }, mutations.withPermits(1));
-  const snooze = Effect.fn("StatusSources.snooze")(function* ({
-    id,
-    until,
-  }: StatusSourceSnoozeInput) {
-    if (until !== null && !Number.isFinite(Date.parse(until)))
-      return yield* new StatusSourcesError({ operation: "invalid-snooze" });
-    const source = yield* mutex.withPermits(1)(
-      Effect.gen(function* () {
-        const current = yield* requireSource(id);
-        const next = { ...current, config: { ...current.config, snoozedUntil: until } };
-        yield* persist(
-          Array.from(entries.values()).map((entry) =>
-            entry.config.id === id ? next.config : entry.config,
+      yield* secrets
+        .set(signingName(id), utf8.encode(secret))
+        .pipe(
+          Effect.mapError(
+            (cause) => new StatusSourcesError({ operation: "write-signing-secret", cause }),
           ),
         );
-        entries.set(id, next);
-        yield* emit;
-        return next;
-      }),
-    );
-    return source;
-  }, mutations.withPermits(1));
-  const rotateWebhookSecret = Effect.fn("StatusSources.rotateWebhookSecret")(function* ({
-    id,
-  }: {
-    readonly id: string;
-  }) {
-    const source = yield* requireSource(id);
-    if (source.config.kind !== "webhook")
-      return yield* new StatusSourcesError({ operation: "not-webhook" });
-    const secret = yield* random
-      .uuidV4()
-      .pipe(
-        Effect.mapError(
-          (cause) => new StatusSourcesError({ operation: "generate-signing-secret", cause }),
-        ),
-      );
-    yield* secrets
-      .set(signingName(id), utf8.encode(secret))
-      .pipe(
-        Effect.mapError(
-          (cause) => new StatusSourcesError({ operation: "write-signing-secret", cause }),
-        ),
-      );
-    return { secret };
-  }, mutations.withPermits(1));
+      return { secret };
+    },
+    Effect.uninterruptible,
+    mutations.withPermits(1),
+  );
   const webhook = Effect.fn("StatusSources.webhook")(function* (input: {
     readonly id: string;
     readonly headers: Readonly<Record<string, string>>;

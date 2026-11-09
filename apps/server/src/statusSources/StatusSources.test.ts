@@ -9,6 +9,7 @@ import * as Context from "effect/Context";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
@@ -182,5 +183,49 @@ it.effect(
       expect((yield* service.list())[0]?.lastTransition).toMatchObject({ from: "fail", to: "ok" });
       yield* TestClock.adjust("6 minutes");
       expect(yield* push("fail", "1970-01-01T00:00:03.000Z")).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect(
+  "rolls back credentials when a secret write reports failure after changing the file",
+  () =>
+    Effect.gen(function* () {
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const { service } = yield* setup.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, {
+          ...secrets,
+          set: (name, bytes) =>
+            secrets.set(name, bytes).pipe(
+              Effect.andThen(() =>
+                new TextDecoder().decode(bytes).includes("new.test")
+                  ? Effect.fail(
+                      new ServerSecretStore.SecretStorePersistError({
+                        resource: "fixture",
+                        cause: new Error("write failed"),
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
+        }),
+      );
+      const source = yield* service.upsert({
+        name: "Original",
+        kind: "http-health",
+        icon: "activity",
+        target: "https://old.test/health",
+      });
+      yield* service
+        .upsert({
+          id: source.config.id,
+          name: "Changed",
+          kind: "http-health",
+          icon: "activity",
+          target: "https://new.test/health",
+        })
+        .pipe(Effect.flip);
+      const stored = yield* secrets.get(`status-source-${source.config.id}`);
+      expect(new TextDecoder().decode(Option.getOrThrow(stored))).toContain("old.test");
+      expect((yield* service.list())[0]?.config.name).toBe("Original");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
