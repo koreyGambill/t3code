@@ -184,7 +184,7 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       });
       // B lists the link under A's name, where it can be revoked.
       expect((yield* linkedSessions(b)).map((session) => session.client.label)).toEqual([
-        "T3 Code · Laptop",
+        "Linked environment · Laptop",
       ]);
       expect(
         (yield* a.links.list).map(({ environmentId, status }) => [environmentId, status]),
@@ -193,8 +193,11 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       // The caller's limits narrow the link's access; they never widen it.
       expect(
         yield* probe(a, { runtimeMode: "approval-required", interactionMode: "plan" }),
-      ).toEqual({ caller: "T3 Code · Laptop", modes: "approval-required/plan" });
-      expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+      ).toEqual({ caller: "Linked environment · Laptop", modes: "approval-required/plan" });
+      expect(yield* probe(a)).toEqual({
+        caller: "Linked environment · Laptop",
+        modes: "auto/default",
+      });
 
       // A refusal keeps the peer's reason.
       const notFound = yield* probe(a, undefined, "refuse").pipe(Effect.flip);
@@ -235,7 +238,10 @@ it.effect(
         expect(waiting.code).toBe("orchestration_error");
         expect(waiting.message).toContain("has Linked environments turned off");
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+        expect(yield* probe(a)).toEqual({
+          caller: "Linked environment · Laptop",
+          modes: "auto/default",
+        });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -488,12 +494,15 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
       const revoked = yield* probe(a).pipe(Effect.flip);
       expect(revoked.code).toBe("capability_denied");
       expect(revoked.message).toContain("revoked there");
+      // B still answers, but it refuses the link's credential.
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["unauthorized"]);
 
       yield* a.links.link({
         url: b.url,
         pairingCode: (yield* b.auth.issuePairingCredential()).credential,
         access: "auto",
       });
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
       // A link made with a peer that later answers without the fence, as
       // one made before the fence or a peer moved back to such a version.
       yield* Ref.set(b.descriptor, descriptorOf("environment-box", "Box", { linkFence: false }));

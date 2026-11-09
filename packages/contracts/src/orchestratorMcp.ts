@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
+import { PeerLinkStatus } from "./peerLink.ts";
 import {
   CheckpointId,
   ContextTransferId,
@@ -696,8 +697,8 @@ export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCa
 export const OrchestratorMcpEnvironmentLink = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
-  /** Whether it answered just now. An expired link must be linked again there. */
-  status: Schema.Literals(["reachable", "unreachable", "expired"]),
+  /** Whether it answered just now. An expired or unauthorized link must be linked again. */
+  status: PeerLinkStatus,
   /** The most the linked environment lets this one's agents do there. */
   access: AuthMcpClientAccess,
   expiresAt: IsoDateTime,

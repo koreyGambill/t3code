@@ -58,6 +58,10 @@ export interface ResolvedPeerLink {
   readonly token: string;
 }
 
+/** What a call records when the peer refuses the link's token; listing reads it back as `unauthorized`. */
+export const LINK_CREDENTIAL_REFUSED =
+  "The linked environment no longer accepts this link. It may have been revoked there; link it again.";
+
 export const LINKED_ENVIRONMENTS_OFF =
   "Linked environments is off on this machine. Turn it on in Settings → Labs.";
 
@@ -436,7 +440,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
+    const issued = yield* signIn(primary, input, `Linked environment · ${self.label}`);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
@@ -509,6 +513,7 @@ const make = Effect.gen(function* () {
     now: DateTime.Utc,
   ): Effect.fn.Return<PeerLinkSummary> {
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
+    if (link.lastError === LINK_CREDENTIAL_REFUSED) return { ...link, status: "unauthorized" };
     let label = link.label;
     const answered = yield* Effect.findFirst(link.urls, (url) =>
       describe(url).pipe(

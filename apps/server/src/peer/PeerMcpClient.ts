@@ -140,7 +140,7 @@ const make = Effect.gen(function* () {
         code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
         message:
           initialized.status === 401
-            ? "The linked environment no longer accepts this link. It may have been revoked there; link it again."
+            ? PeerLinks.LINK_CREDENTIAL_REFUSED
             : `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
       });
     }
@@ -189,8 +189,7 @@ const make = Effect.gen(function* () {
       if (response.status === 401) {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
-          message:
-            "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
+          message: PeerLinks.LINK_CREDENTIAL_REFUSED,
         });
       }
       if (response.status === 403) return yield* linkedEnvironmentsOffThere;

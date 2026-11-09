@@ -22,8 +22,17 @@ export const PeerLink = Schema.Struct({
 });
 export type PeerLink = typeof PeerLink.Type;
 
-/** Whether a link can be used now, as worked out when it is listed. */
-export const PeerLinkStatus = Schema.Literals(["reachable", "unreachable", "expired"]);
+/**
+ * Whether a link can be used now, as worked out when it is listed. `unauthorized`
+ * means the peer refused the link's credential on its last call, so it answers
+ * but needs linking again; the next successful call clears it.
+ */
+export const PeerLinkStatus = Schema.Literals([
+  "reachable",
+  "unreachable",
+  "expired",
+  "unauthorized",
+]);
 export type PeerLinkStatus = typeof PeerLinkStatus.Type;
 
 export const PeerLinkSummary = Schema.Struct({

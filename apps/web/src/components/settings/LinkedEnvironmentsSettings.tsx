@@ -100,10 +100,11 @@ function LinkedEnvironmentRow({
   const health = peerLinkHealth(link, DateTime.makeUnsafe(nowMinute));
   const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
+  const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const [busy, setBusy] = useState(false);
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
-      `Forget ${link.label}? Agents here stop working there. Revoke "T3 Code · …" in ${link.label}'s Connections to end the session there too.`,
+      `Forget ${link.label}? Agents here stop working there. Revoke "Linked environment · …" in ${link.label}'s Sharing & access to end the session there too.`,
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
@@ -114,16 +115,21 @@ function LinkedEnvironmentRow({
       failureToast("Could not forget the link", String(squashAtomCommandFailure(result)));
     }
   };
+  // Its access no longer holds, so the row shows only why and how to renew it.
+  const unusable = health.kind === "expired" || link.status === "unauthorized";
+  const renewable = unusable || (health.kind === "reachable" && health.expiresInDays !== null);
   const status =
     health.kind === "expired"
       ? "Expired. Link it again with a new pairing code."
-      : health.kind === "unreachable"
-        ? (health.detail ?? "Not answering right now.")
-        : health.kind === "failing"
-          ? health.detail
-          : health.expiresInDays !== null
-            ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. Link it again to renew.`
-            : "Reachable";
+      : link.status === "unauthorized"
+        ? `${link.label} no longer accepts this link. It may have been revoked there; link it again.`
+        : health.kind === "unreachable"
+          ? (health.detail ?? "Not answering right now.")
+          : health.kind === "failing"
+            ? health.detail
+            : health.expiresInDays !== null
+              ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. Link it again to renew.`
+              : "Reachable";
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
@@ -145,20 +151,25 @@ function LinkedEnvironmentRow({
             <h3 className="text-sm font-medium text-foreground">{link.label}</h3>
           </div>
           <p className="text-xs text-muted-foreground">
-            {accessConfig[link.access].label} · {status}
+            {unusable ? status : `${accessConfig[link.access].label} · ${status}`}
           </p>
           <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
         </div>
-        {canUnlink ? (
+        {canUnlink || (canLink && renewable) ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            <Button
-              size="xs"
-              variant="destructive-outline"
-              disabled={busy}
-              onClick={() => void forget()}
-            >
-              {busy ? "Forgetting…" : "Forget"}
-            </Button>
+            {canLink && renewable ? (
+              <LinkEnvironmentAction environmentId={environmentId} relink={link} />
+            ) : null}
+            {canUnlink ? (
+              <Button
+                size="xs"
+                variant="destructive-outline"
+                disabled={busy}
+                onClick={() => void forget()}
+              >
+                {busy ? "Forgetting…" : "Forget"}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -166,14 +177,22 @@ function LinkedEnvironmentRow({
   );
 }
 
-function LinkEnvironmentAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function LinkEnvironmentAction({
+  environmentId,
+  relink,
+}: {
+  readonly environmentId: EnvironmentId;
+  /** A link to renew at the addresses it already answers at. */
+  readonly relink?: PeerLinkSummary;
+}) {
   const [open, setOpen] = useState(false);
-  const machines = useLinkableMachines(environmentId, open);
+  const machines = useLinkableMachines(environmentId, open && relink === undefined);
   // Null until the user picks; with no other machines known, only an address is left.
   const [choice, setChoice] = useState<string | null>(null);
   const [address, setAddress] = useState("");
   const [pairingCode, setPairingCode] = useState("");
-  const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
+  const initialAccess = relink?.access ?? "approval-required";
+  const [access, setAccess] = useState<AuthMcpClientAccess>(initialAccess);
   const [busy, setBusy] = useState(false);
   // Machines whose minting already failed, so the dialog asks for a code instead.
   const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
@@ -181,16 +200,18 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
   const inFlight = useRef(false);
   const formId = useId();
   const link = useAtomCommand(peerLinkEnvironment.link, { label: "link environment" });
-  const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
+  const selected =
+    relink?.environmentId ?? choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
   const machine = machines.find((candidate) => candidate.environmentId === selected) ?? null;
+  const target = relink ?? machine;
   // This client can mint a code there when it is connected to that
   // environment with a session that may create pairing links.
-  const targetId = machine?.environmentId ?? null;
+  const targetId = target?.environmentId ?? null;
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
   const canMint =
     targetId !== null && Option.isSome(connected) && mayMint && !mintFailed.has(targetId);
-  const needsAddress = selected === ANOTHER_ADDRESS || machine?.urls.length === 0;
+  const needsAddress = selected === ANOTHER_ADDRESS || target?.urls.length === 0;
   const ready =
     selected !== null &&
     (!needsAddress || address.trim().length > 0) &&
@@ -201,7 +222,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
       setChoice(null);
       setAddress("");
       setPairingCode("");
-      setAccess("approval-required");
+      setAccess(initialAccess);
       setMintFailed(new Set());
     }
   };
@@ -216,7 +237,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
   };
   const submit = async () => {
     const [url, ...alternateUrls] =
-      machine === null || needsAddress ? [address.trim()] : machine.urls;
+      target === null || needsAddress ? [address.trim()] : target.urls;
     if (inFlight.current || !ready || url === undefined) return;
     inFlight.current = true;
     setBusy(true);
@@ -229,9 +250,9 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
             input: {
               url,
               ...(alternateUrls.length > 0 ? { alternateUrls } : {}),
-              ...(machine === null
+              ...(target === null
                 ? {}
-                : { expectedEnvironmentId: machine.environmentId, expectedLabel: machine.label }),
+                : { expectedEnvironmentId: target.environmentId, expectedLabel: target.label }),
               pairingCode: code,
               access,
             },
@@ -256,18 +277,27 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
     >
       <DialogTrigger
         render={
-          <Button size="xs" variant="default">
-            <PlusIcon className="size-3" />
-            Link
-          </Button>
+          relink === undefined ? (
+            <Button size="xs" variant="default">
+              <PlusIcon className="size-3" />
+              Link
+            </Button>
+          ) : (
+            <Button size="xs" variant="outline">
+              Link again
+            </Button>
+          )
         }
       />
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Link an environment</DialogTitle>
+          <DialogTitle>
+            {relink === undefined ? "Link an environment" : `Link ${relink.label} again`}
+          </DialogTitle>
           <DialogDescription>
             Agents here can then launch, message and wait on threads there. It appears in that
-            environment's Connections, where it can be revoked.
+            environment's Sharing & access as "Linked environment", where revoking it ends this
+            link.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -280,7 +310,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
               void submit();
             }}
           >
-            {machines.length > 0 ? (
+            {relink === undefined && machines.length > 0 ? (
               <LinkMachineSelect
                 machines={machines}
                 value={selected}
@@ -309,10 +339,10 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   nativeInput
                   spellCheck={false}
                 />
-                {machine !== null ? (
+                {target !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    This app has no address for {machine.label} that another machine can reach.
-                    Enter its https or Tailscale address.
+                    This app has no address for {target.label} that another machine can reach. Enter
+                    its https or Tailscale address.
                   </span>
                 ) : null}
               </label>
@@ -324,8 +354,8 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   value={pairingCode}
                   onChange={(event) => setPairingCode(event.target.value)}
                   placeholder={
-                    machine === null
-                      ? "From that environment's Connections, or t3 pair there"
+                    target === null
+                      ? "From that environment's Sharing & access, or t3 pair there"
                       : "Paste the code"
                   }
                   disabled={busy}
@@ -333,9 +363,9 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   nativeInput
                   spellCheck={false}
                 />
-                {machine !== null ? (
+                {target !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    Create a link on {machine.label}: Settings → Connections → Create link, then
+                    Create a link on {target.label}: Settings → Sharing & access → Create link, then
                     paste its code here.
                   </span>
                 ) : null}

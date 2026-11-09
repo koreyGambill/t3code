@@ -361,10 +361,13 @@ and the access, then approve.
   access, the link's agents can change only threads it started, not that
   machine's own threads, projects or settings, and they skip its project setup
   scripts.
-- The link shows up in that machine's **Settings → Sharing & access** like any
-  outside agent. Revoke it there to end it. **Forget** on this machine only
-  removes it here.
-- Links last 30 days. Link again with a new pairing code to renew one.
+- The link shows up in that machine's **Settings → Sharing & access** as
+  **Linked environment ·** this machine's name. Revoke it there to end it.
+  **Forget** on this machine only removes it here.
+- Once the other machine refuses the link, after a revoke, it shows here as no
+  longer accepted, even though that machine still answers.
+- Links last 30 days. Choose **Link again** on an expired or refused link to
+  renew it with a new pairing code.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
