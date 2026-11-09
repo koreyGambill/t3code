@@ -13,8 +13,10 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
   const list = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:peer-links:list",
     tag: WS_METHODS.peerLinksList,
-    // Listing probes every linked environment, so a list stays fresh briefly.
+    // A desktop can answer before its WSL peer finishes starting.
     staleTimeMs: 10_000,
+    refreshIntervalMs: 10_000,
+    isFinal: ({ links }) => links.every((link) => link.status !== "unreachable"),
   });
   return {
     list,
