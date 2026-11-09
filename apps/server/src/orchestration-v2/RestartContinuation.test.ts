@@ -945,6 +945,35 @@ const cutMidTurn = (extra: Record<string, unknown> = {}) => {
   } as unknown as OrchestrationV2ThreadProjection;
 };
 
+it.effect.each([
+  { continuations: 2, expired: false, expected: 1 },
+  { continuations: 3, expired: false, expected: 0 },
+  { continuations: 3, expired: true, expected: 1 },
+])(
+  "bounds restart continuations at $continuations with expired history $expired",
+  ({ continuations, expired, expected }) =>
+    Effect.gen(function* () {
+      const cut = cutMidTurn();
+      const runs = [...cut.runs];
+      for (let ordinal = 2; ordinal <= continuations + 1; ordinal += 1) {
+        const previous = runs.at(-1)!;
+        runs.push({
+          ...cut.runs[0]!,
+          id: RunId.make(`run:continuation-${ordinal}`),
+          ordinal,
+          restartContinuationOfRunId: previous.id,
+          requestedAt:
+            expired && ordinal <= continuations ? DateTime.subtract(now, { minutes: 6 }) : now,
+        });
+      }
+      const dispatches = yield* continuationDispatches({ ...cut, runs }, runs.at(-1)!.id);
+      assert.lengthOf(dispatches, expected);
+      if (expected > 0) {
+        assert.equal(dispatches[0]!.restartContinuationOfRunId, runs.at(-1)!.id);
+      }
+    }),
+);
+
 const queuedFollowUp = {
   id: RunId.make("run:queued"),
   ordinal: 2,
