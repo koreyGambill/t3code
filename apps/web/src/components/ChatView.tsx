@@ -1850,7 +1850,13 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       input: {
         threadId: activeThreadId,
-        message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+        message: {
+          messageId: newMessageId(),
+          origin: { kind: "system" as const, event: "app message" },
+          role: "user",
+          text,
+          attachments: [],
+        },
         runtimeMode,
         interactionMode,
         dispatchMode: "queue",

@@ -183,6 +183,7 @@ const stopEarlierBackgroundWork = ({
         );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("start-dev-server"),
           threadId,
           messageId: MessageId.make("message:start-dev-server"),
@@ -198,6 +199,7 @@ const stopEarlierBackgroundWork = ({
           const send = (id: string, provider = false) =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make(id),
               threadId,
               messageId: MessageId.make(`message:${id}`),
@@ -884,6 +886,7 @@ const stopEarlierBackgroundWork = ({
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("queue-follow-up"),
             threadId,
             messageId: MessageId.make("message:queue-follow-up"),

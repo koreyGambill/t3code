@@ -1379,17 +1379,16 @@ function useMarkdownStyles(): MarkdownStyleSets {
 
 /** Messages from other agents fold to one line so the user's own messages stay easy to find. */
 function AgentMessageFoldHeader(props: {
-  readonly environmentId: EnvironmentId;
-  readonly senderThreadId?: ThreadId;
+  readonly sender?:
+    | Extract<import("@t3tools/contracts").TurnOrigin, { readonly threadId: unknown }>
+    | undefined;
   readonly summary: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly iconSubtleColor: ColorValue;
 }) {
-  const senderShell = useQuietThreadShell(
-    props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
-  );
-  const label = senderShell?.title.trim() || "Agent";
+  const senderShell = useQuietThreadShell(props.sender ?? null);
+  const label = props.sender?.title.trim() || senderShell?.title.trim() || "Agent";
   return (
     <Pressable
       accessibilityRole="button"
@@ -1430,26 +1429,23 @@ function AgentMessageFoldHeader(props: {
 }
 
 function OpenSenderThreadButton(props: {
-  readonly environmentId: EnvironmentId;
-  readonly senderThreadId: ThreadId;
+  readonly sender: Extract<import("@t3tools/contracts").TurnOrigin, { readonly threadId: unknown }>;
 }) {
   const openLinkedThread = useOpenLinkedThread();
-  const senderShell = useQuietThreadShell(
-    scopeThreadRef(props.environmentId, props.senderThreadId),
-  );
+  const senderShell = useQuietThreadShell(props.sender);
   return (
     <Pressable
       accessibilityRole="link"
       hitSlop={6}
       onPress={() =>
         openLinkedThread({
-          environmentId: String(props.environmentId),
-          threadId: String(props.senderThreadId),
+          environmentId: String(props.sender.environmentId),
+          threadId: String(props.sender.threadId),
         })
       }
     >
       <Text className="font-t3-medium text-xs text-foreground-secondary">
-        {senderShell?.title.trim() || "Open thread"}
+        {props.sender.title.trim() || senderShell?.title.trim() || "Open thread"}
       </Text>
     </Pressable>
   );
@@ -2067,8 +2063,7 @@ function renderFeedEntry(
               {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
               {foldRowId !== null ? (
                 <AgentMessageFoldHeader
-                  environmentId={props.environmentId}
-                  senderThreadId={message.senderThreadId}
+                  sender={presentation.sender}
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                       .split(/\r?\n/)
@@ -2173,23 +2168,15 @@ function renderFeedEntry(
               ) : null}
             </View>
           ) : null}
-          {!bubbleBodyVisible && message.senderThreadId ? (
+          {!bubbleBodyVisible && presentation.sender ? (
             <View className="mt-1 flex-row justify-end pr-0.5">
-              <OpenSenderThreadButton
-                environmentId={props.environmentId}
-                senderThreadId={message.senderThreadId}
-              />
+              <OpenSenderThreadButton sender={presentation.sender} />
             </View>
           ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
               {/* The user's own messages carry a sender when they bring back a fork. */}
-              {message.senderThreadId ? (
-                <OpenSenderThreadButton
-                  environmentId={props.environmentId}
-                  senderThreadId={message.senderThreadId}
-                />
-              ) : null}
+              {presentation.sender ? <OpenSenderThreadButton sender={presentation.sender} /> : null}
               {intentBadge ? (
                 <View
                   accessible

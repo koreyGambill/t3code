@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
@@ -299,7 +301,15 @@ it.effect(
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(
-        Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
+        Layer.provide(
+          Layer.mergeAll(
+            layerProjection,
+            layerSessionManager,
+            Layer.succeed(ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:test")),
+            }),
+          ),
+        ),
       );
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {

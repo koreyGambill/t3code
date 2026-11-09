@@ -1,3 +1,4 @@
+import { escapeXmlAttribute } from "./xml.ts";
 import {
   COMPOSER_CONTEXT_LABEL_MAX_CHARS,
   type ComposerContextId,
@@ -250,14 +251,6 @@ function escapeComposerContextPayloadText(text: string): string {
   );
 }
 
-function escapeAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 function indent(text: string): string {
   return text
     .split("\n")
@@ -363,7 +356,7 @@ function formatEnvelopeEntry(
   contextId: ComposerContextId,
   record: ComposerContextRecord | undefined,
 ): string {
-  const open = `<${CONTEXT_ENTRY_TAG} kind="${escapeAttribute(kind)}" id="${escapeAttribute(contextId)}"`;
+  const open = `<${CONTEXT_ENTRY_TAG} kind="${escapeXmlAttribute(kind)}" id="${escapeXmlAttribute(contextId)}"`;
   if (!record) return `${open} unavailable="true"/>`;
   const body =
     "payload" in record

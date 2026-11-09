@@ -37,6 +37,7 @@ import {
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
+  ThreadTurnOrigin,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2IdleCompaction,
@@ -572,6 +573,7 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
+  origin: Schema.optional(ThreadTurnOrigin),
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,

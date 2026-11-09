@@ -5,6 +5,7 @@ import * as Ref from "effect/Ref";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
@@ -13,8 +14,8 @@ const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
   return taskIds.length === 1
-    ? `Delegated task ${taskList} reached a terminal state. Use task_status with taskId ${taskList} to read the result.`
-    : `Delegated tasks ${taskList} reached terminal states. Use task_status with each taskId to read the results.`;
+    ? `Use task_status with taskId ${taskList} to read the result.`
+    : `Use task_status with each taskId (${taskList}) to read the results.`;
 }
 
 function currentDelegatedCompletionDelivery(
@@ -53,6 +54,8 @@ function delegatedCompletionRetryKey(
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
+    const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const environmentId = yield* environment.getEnvironmentId;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
@@ -77,7 +80,7 @@ export const layer = Layer.effectDiscard(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
-          ["messages", "runs", "providerTurns"],
+          ["messages", "runs", "providerTurns", "subagents"],
           {
             messageIds:
               request.delegatedCompletion === undefined
@@ -112,6 +115,17 @@ export const layer = Layer.effectDiscard(
             yield* clearRetryAttempt(retryKey);
             return;
           }
+          const tasks = projection.subagents.filter((task) => delivery.taskIds.includes(task.id));
+          const first = tasks[0];
+          const origin = {
+            kind: "subagent" as const,
+            event: tasks.some((task) => task.status === "failed")
+              ? ("failed" as const)
+              : ("completed" as const),
+            title: tasks.map((task) => task.title?.trim() || task.id).join(", "),
+            threadId: first?.remoteChild?.threadId ?? first?.childThreadId ?? request.threadId,
+            environmentId: first?.remoteChild?.environmentId ?? environmentId,
+          };
           const commandId = yield* ids.allocate.command({
             fixtureName: "delegated-completion",
             commandName: "dispatch",
@@ -119,6 +133,7 @@ export const layer = Layer.effectDiscard(
           yield* threads
             .dispatch({
               type: "message.dispatch",
+              origin,
               commandId,
               threadId: request.threadId,
               messageId: delivery.messageId,
@@ -189,6 +204,7 @@ export const layer = Layer.effectDiscard(
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
         const dispatch = threads.dispatch({
           type: "message.dispatch",
+          origin: { kind: "system", event: "background task continuation" },
           commandId,
           threadId: request.threadId,
           messageId,
@@ -252,7 +268,7 @@ export const layer = Layer.effectDiscard(
                   yield* Effect.sleep(`${retryDelay} millis`);
                   const projection = yield* threads.getThreadRecords(
                     request.threadId,
-                    ["messages", "runs", "providerTurns"],
+                    ["messages", "runs", "providerTurns", "subagents"],
                     {
                       messageIds:
                         request.delegatedCompletion === undefined

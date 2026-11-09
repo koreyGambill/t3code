@@ -1,6 +1,7 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
+  type TurnOrigin,
   type XwingEnvironmentId,
   CommandId,
   CheckpointId,
@@ -177,6 +178,7 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly expectedEnvironmentId?: EnvironmentId;
   readonly manualContinuationOfRunId?: RunId;
   readonly message: {
+    readonly origin: TurnOrigin;
     readonly messageId: MessageId;
     readonly role: "user";
     readonly text: string;
@@ -477,6 +479,7 @@ export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMe
   }
   return yield* dispatch({
     type: "message.dispatch",
+    origin: { kind: "user" },
     commandId,
     threadId: input.threadId,
     messageId: MessageId.make(commandId),
@@ -704,6 +707,13 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     input.message.attachments,
     attachments,
   );
+  const origin = (
+    input.manualContinuationOfRunId !== undefined
+      ? { kind: "system", event: "manual continuation" }
+      : input.message.idleCompaction !== undefined
+        ? { kind: "system", event: "idle compaction" }
+        : input.message.origin
+  ) satisfies TurnOrigin;
   const bootstrap = input.bootstrap?.createThread;
   const prepareWorktree = input.bootstrap?.prepareWorktree;
   if (bootstrap !== undefined || prepareWorktree !== undefined) {
@@ -750,6 +760,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       interactionMode: input.interactionMode,
       workspaceStrategy,
       initialMessage: {
+        origin,
         messageId: input.message.messageId,
         text: input.message.text,
         ...(context ? { context } : {}),
@@ -762,6 +773,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   if (requestedMode === "start") {
     return yield* dispatch({
       type: "message.dispatch",
+      origin,
       commandId,
       createdBy: "user",
       creationSource: input.creationSource ?? "web",
@@ -791,6 +803,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       : ({ type: "start_immediately" } as const);
   return yield* dispatch({
     type: "message.dispatch",
+    origin,
     commandId,
     createdBy: "user",
     creationSource: input.creationSource ?? "web",

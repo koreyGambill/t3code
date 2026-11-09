@@ -7900,6 +7900,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
           const text = t3AcpPromptWithInstructions({
+            origin: turnInput.message.origin,
             prompt: messageText,
             state: instructionState,
             ...(previousInstructionState === undefined || compactionMarker !== undefined

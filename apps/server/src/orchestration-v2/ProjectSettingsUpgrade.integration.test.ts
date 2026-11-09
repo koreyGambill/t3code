@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -131,6 +133,11 @@ const layerRuntime = (dbPath: string) => {
         Layer.provide(VcsProcess.layer),
         Layer.provide(layerServerConfig),
         Layer.provide(layerPlatform),
+        Layer.provide(
+          Layer.succeed(ServerEnvironmentIdentity, {
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:upgrade")),
+          }),
+        ),
       ),
     ),
   );
@@ -171,6 +178,11 @@ const layerRuntime = (dbPath: string) => {
       }),
     ),
     Layer.provide(layerPlatform),
+    Layer.provide(
+      Layer.succeed(ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:upgrade")),
+      }),
+    ),
   );
 };
 

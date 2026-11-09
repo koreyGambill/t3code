@@ -701,7 +701,7 @@ export const make = Effect.gen(function* () {
       const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
       const selected = selectHistory({
         messages: visibleTurnItems.flatMap(
-          ({ item }) => historicalMessage(limitCommandOutput(item)) ?? [],
+          ({ item }) => historicalMessage(limitCommandOutput(item), null) ?? [],
         ),
         coverage: "Digest of the thread that made this change, oldest first.",
         budget: PR_THREAD_CONTEXT_BYTES,

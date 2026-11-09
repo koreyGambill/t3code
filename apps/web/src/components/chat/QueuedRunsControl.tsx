@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   ArrowUpIcon,
   CalendarClockIcon,
@@ -423,12 +424,10 @@ function QueuedMessage(props: {
   const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
   const attribution = presentation?.attribution ?? null;
   const scheduledTaskId = presentation?.scheduledTaskId;
-  const senderThreadId = props.message?.senderThreadId;
+  const sender = presentation?.sender;
   const [expanded, setExpanded] = useState(false);
   const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
-  const senderShell = useQuietThreadShell(
-    senderThreadId ? { environmentId: props.environmentId, threadId: senderThreadId } : null,
-  );
+  const senderShell = useQuietThreadShell(sender ?? null);
   const fold =
     attribution === "automation"
       ? {
@@ -439,7 +438,7 @@ function QueuedMessage(props: {
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
-            label: senderShell?.title.trim() || "Agent",
+            label: sender?.title.trim() || senderShell?.title.trim() || "Agent",
             summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
           }
         : null;
@@ -512,8 +511,20 @@ function QueuedMessage(props: {
       <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
         {props.message ? (
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
-            {senderThreadId ? (
-              <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
+            {sender ? (
+              <InlineButton
+                tone="muted"
+                render={
+                  sender.environmentId === props.environmentId ? undefined : (
+                    <Link to="/$environmentId/$threadId" params={buildThreadRouteParams(sender)} />
+                  )
+                }
+                onClick={
+                  sender.environmentId === props.environmentId
+                    ? () => props.onOpenThread(sender.threadId)
+                    : undefined
+                }
+              >
                 {attribution !== "agent" && senderShell?.lineage.sideChat
                   ? "Open side chat"
                   : "Open thread"}

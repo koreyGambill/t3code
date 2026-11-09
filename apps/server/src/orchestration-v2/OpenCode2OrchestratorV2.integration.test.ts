@@ -243,6 +243,7 @@ const threadCommands = (input: {
     message: (key: string, modelSelection: ModelSelection = bigPickle, text?: string) =>
       ({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         createdBy: "user",
         creationSource: "web",
         commandId: command(key),

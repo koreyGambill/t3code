@@ -181,6 +181,7 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: yield* ids.allocate.command({
@@ -206,6 +207,7 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: yield* ids.allocate.command({
@@ -325,6 +327,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -340,6 +343,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -365,6 +369,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -519,6 +524,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -536,6 +542,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -561,6 +568,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -725,6 +733,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -750,6 +759,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -765,6 +775,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({
@@ -791,6 +802,7 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: yield* ids.allocate.command({

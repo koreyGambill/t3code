@@ -329,6 +329,7 @@ const make = Effect.gen(function* () {
               ? Effect.succeed<WorktreeMcpContinuationStatus>({ status: "skipped" })
               : threadManagement
                   .sendToThread({
+                    origin: { kind: "system", event: "workspace continuation" },
                     projectId: projection.thread.projectId,
                     commandId: ids.continuationCommandId,
                     threadId: scope.thread.threadId,

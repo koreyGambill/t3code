@@ -312,6 +312,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     yield* threads
       .dispatch({
         type: "message.dispatch",
+        origin: { kind: "system", event: "restart continuation" },
         commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
         threadId: input.threadId,
         messageId,

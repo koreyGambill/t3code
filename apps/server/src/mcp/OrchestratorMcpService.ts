@@ -3324,6 +3324,14 @@ const make = Effect.gen(function* () {
                 yield* threadManagement
                   .dispatch({
                     type: "message.dispatch",
+                    origin: {
+                      kind: "thread",
+                      event: "message",
+                      reply: "not expected",
+                      title: parent.thread.title,
+                      threadId: parent.thread.id,
+                      environmentId: scope.environmentId,
+                    },
                     createdBy: "agent",
                     creationSource: "mcp",
                     commandId: stableCommandId({
@@ -3653,6 +3661,17 @@ const make = Effect.gen(function* () {
         }));
       const result = yield* threadManagement
         .sendToThread({
+          origin:
+            parent === undefined
+              ? (input.origin ?? { kind: "system", event: "agent API" })
+              : {
+                  kind: "thread",
+                  event: "message",
+                  reply: input.reply === false ? "not expected" : "expected",
+                  title: parent.thread.title,
+                  threadId: parent.thread.id,
+                  environmentId: scope.environmentId,
+                },
           projectId: target.thread.projectId,
           commandId: stableCommandId({
             scope,

@@ -542,7 +542,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
             environmentId,
             input: {
               threadId,
-              message: { messageId, role: "user", text, attachments: [] },
+              message: {
+                messageId,
+                origin: { kind: "system" as const, event: "command" },
+                role: "user",
+                text,
+                attachments: [],
+              },
               modelSelection: context.selectedModelSelection,
               runtimeMode,
               interactionMode: context.interactionMode,

@@ -116,6 +116,7 @@ const send = (threadId: ThreadId, text: string, type: "start_immediately" | "que
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make(`send:${threadId}:${text}`),
       threadId,
       messageId: MessageId.make(`message:${threadId}:${text}`),
@@ -663,6 +664,7 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
       for (const creationSource of ["provider", "server"] as const) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make(`notification:${type}:${creationSource}`),
           threadId,
           messageId: MessageId.make(`notification:${type}:${creationSource}`),
@@ -715,6 +717,7 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
     const agentSend = (text: string) =>
       orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`agent-send:${text}`),
         threadId,
         messageId: MessageId.make(`message:${threadId}:${text}`),
@@ -755,6 +758,7 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
     // A scheduled task the user created is not the user coming back.
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("scheduled-send"),
       threadId,
       messageId: MessageId.make(`message:${threadId}:scheduled`),
@@ -995,6 +999,7 @@ it.effect("thread.stop keeps a restart continuation of the stopped run from star
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("restart-continuation"),
       threadId,
       messageId: MessageId.make("message:restart-continuation"),
@@ -1087,6 +1092,7 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
       assert.equal(DateTime.toEpochMillis(interrupted.completedAt!), DateTime.toEpochMillis(now));
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("restart-after-stop"),
         threadId,
         messageId: MessageId.make("message:restart-after-stop"),

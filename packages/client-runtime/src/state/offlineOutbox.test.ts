@@ -10,7 +10,13 @@ const submission = (): OfflineSubmission => ({
   input: {
     commandId: CommandId.make("command"),
     threadId: ThreadId.make("thread"),
-    message: { messageId: MessageId.make("message"), role: "user", text: "hello", attachments: [] },
+    message: {
+      messageId: MessageId.make("message"),
+      origin: { kind: "user" },
+      role: "user",
+      text: "hello",
+      attachments: [],
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     dispatchMode: "queue",

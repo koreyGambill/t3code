@@ -620,6 +620,7 @@ const dispatchMessageAwaitingRun = Effect.fn("LegacyV1Cutover.dispatchMessageAwa
     );
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       createdBy: "user",
       creationSource: "web",
       commandId: CommandId.make(input.commandId),

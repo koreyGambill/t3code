@@ -148,7 +148,8 @@ function stableStringify(value: unknown): string {
 }
 
 function normalizeContextHandoffText(value: string): string {
-  if (!value.startsWith("Context handoff (")) {
+  const origin = /^<t3_origin [^\n]*<\/t3_origin>\n\n/.exec(value)?.[0] ?? "";
+  if (!value.slice(origin.length).startsWith("Context handoff (")) {
     return value;
   }
   const marker = "\n\nUser message:\n";

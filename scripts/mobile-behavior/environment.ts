@@ -251,7 +251,9 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },
-      ...(prompt === undefined ? {} : { initialMessage: { text: prompt, attachments: [] } }),
+      ...(prompt === undefined
+        ? {}
+        : { initialMessage: { origin: { kind: "user" }, text: prompt, attachments: [] } }),
     });
     return threadId;
   });
@@ -275,6 +277,7 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
   const send = Effect.fn("environment.send")(function* (threadId: ThreadId, text: string) {
     yield* client["orchestration.dispatchCommand"]({
       type: "message.dispatch",
+      origin: { kind: "user" },
       commandId: yield* command,
       threadId,
       messageId: MessageId.make(yield* uuid),

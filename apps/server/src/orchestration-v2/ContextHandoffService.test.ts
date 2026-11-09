@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
@@ -19,7 +21,16 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
-const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const layerTest = ContextHandoffService.layer.pipe(
+  Layer.provide(
+    Layer.merge(
+      IdAllocator.layer,
+      Layer.succeed(ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:test")),
+      }),
+    ),
+  ),
+);
 
 function importedItem(
   input:

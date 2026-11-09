@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -75,6 +77,11 @@ const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(layerServerConfig),
   Layer.provide(layerPlatformTest),
+  Layer.provide(
+    Layer.succeed(ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:delegated")),
+    }),
+  ),
 );
 
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
@@ -155,10 +162,20 @@ const layerTest = Layer.mergeAll(
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerPlatformTest),
+  Layer.provide(
+    Layer.succeed(ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:delegated")),
+    }),
+  ),
 );
 
 // ProviderContinuationService consumes the orchestrator's continuation queue, as in production.
 const layerContinuationWorkerTest = ProviderContinuationService.layer.pipe(
+  Layer.provide(
+    Layer.succeed(ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:delegated")),
+    }),
+  ),
   Layer.provide(Layer.merge(ProviderContinuationRequests.layer, IdAllocator.layer)),
   Layer.provideMerge(layerTest),
 );
@@ -356,6 +373,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const delivery = origin.delegatedCompletion!.delivery!;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "agent",
           creationSource: "server",
           commandId: CommandId.make("stop-wake-start"),
@@ -418,6 +436,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
 
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make("stop-wake-newer-work"),
@@ -679,6 +698,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
 
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("command:delegated-delivery-live-cohort"),
         threadId,
         messageId,
@@ -735,6 +755,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
 
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("command:delegated-delivery-notice-count"),
         threadId,
         messageId: MessageId.make(`message:delegated-delivery:${threadId}`),
@@ -809,6 +830,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`command:inline-budget:${testCase.name}`),
         threadId,
         messageId,
@@ -830,7 +852,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
       assert.include(
         message.text,
-        `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
+        `Inspect regression (${deferredTaskId}) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
       );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
@@ -1469,6 +1491,7 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
       const delivery = origin.delegatedCompletion!.delivery!;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         createdBy: "agent",
         creationSource: "server",
         commandId: CommandId.make(`${key}-wake`),
@@ -1820,6 +1843,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const delivery = completed.delegatedCompletion!.delivery!;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "agent",
           creationSource: "server",
           commandId: CommandId.make("command:completion-capture-delivery"),
@@ -1873,6 +1897,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const send = (name: string) =>
           orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "agent",
             creationSource: "mcp",
             commandId: CommandId.make(`command:held-followup:${name}`),
@@ -2030,6 +2055,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             // reports a background command (wire kind `background_command`) ended.
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "agent",
               creationSource: "provider",
               commandId: CommandId.make(`command:${source}-wake`),
@@ -2065,6 +2091,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             wakeMessageId = delivery!.messageId;
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "agent",
               creationSource: "server",
               commandId: CommandId.make(`command:${source}-wake`),
@@ -2144,6 +2171,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           const delivery = wake.delegatedCompletion!;
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "agent",
             creationSource: "server",
             commandId: CommandId.make(`command:${source}-wake-delivery`),
@@ -2159,13 +2187,17 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             dispatchMode: { type: "queue_after_active" },
           });
           const notices = (yield* orchestrator.getThreadProjection(parentThreadId)).messages.filter(
-            (message) => message.text.includes(`follow-up ${followup.id}`),
+            (message) => message.delegatedCompletion?.taskIds.includes(followup.id),
           );
           assert.lengthOf(notices, 1);
           assert.equal(notices[0]?.id, delivery.messageId);
-          assert.include(notices[0]?.text, `follow-up ${followup.id} [completed]`);
+          assert.deepInclude(notices[0]?.origin, {
+            kind: "subagent",
+            event: "completed",
+            title: followup.title || "Untitled",
+            threadId: child.childThreadId,
+          });
           assert.equal(notices[0]?.senderThreadId, child.childThreadId);
-          assert.include(notices[0]?.text, `t3-thread://v1/${child.childThreadId}`);
           assert.include(notices[0]?.text, followup.result ?? "");
         }),
     );
@@ -2244,6 +2276,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           const messageId = MessageId.make(`message:followup-${outcome}`);
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: outcome === "failed" ? "user" : "agent",
             creationSource: outcome === "failed" ? "web" : "mcp",
             commandId: CommandId.make(`command:followup-send-${outcome}`),
@@ -2265,6 +2298,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           if (outcome === "overlapping") {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "agent",
               creationSource: "mcp",
               commandId: CommandId.make("command:overlapping-followup"),
@@ -2308,6 +2342,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const continuationMessageId = MessageId.make("message:followup-restart-continuation");
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "agent",
               creationSource: "server",
               commandId: CommandId.make("command:followup-restart-continuation"),
@@ -2404,6 +2439,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const wakeMessageId = MessageId.make("message:followup-background-wake");
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make("command:followup-background-wake"),
               threadId: child.childThreadId,
               createdBy: "agent",
@@ -2529,6 +2565,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const automaticMessageId = MessageId.make("message:followup-automatic-wake");
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "agent",
               creationSource: "server",
               commandId: CommandId.make("command:followup-automatic-wake"),
@@ -2935,6 +2972,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const messageId = delivery.messageId;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("command:result-message-delivery"),
         threadId,
         messageId,

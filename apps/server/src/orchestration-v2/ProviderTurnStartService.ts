@@ -1,9 +1,12 @@
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import { renderTurnOriginText } from "@t3tools/provider-core/server/turnOriginText";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
+  type TurnOrigin,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -133,6 +136,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | ServerEnvironmentIdentity
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -150,6 +154,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const receivingEnvironmentId = yield* (yield* ServerEnvironmentIdentity).getEnvironmentId;
     const scope = yield* Effect.scope;
     const eventSink = yield* EventSink.EventSinkV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
@@ -309,6 +314,7 @@ export const layer: Layer.Layer<
 
     const makeDeliverySession = (
       session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      origin: TurnOrigin,
       startWithHandoffs: (
         input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0],
         compact?: boolean,
@@ -321,9 +327,16 @@ export const layer: Layer.Layer<
       ) =>
         Effect.suspend(() => {
           if (deliver !== undefined) return deliver(input, compact);
+          const turnInput = {
+            ...input,
+            message: {
+              ...input.message,
+              text: renderTurnOriginText(origin, input.message.text, receivingEnvironmentId),
+            },
+          };
           return compact && session.compactThread !== undefined
-            ? session.compactThread(input)
-            : session.startTurn(input);
+            ? session.compactThread(turnInput)
+            : session.startTurn(turnInput);
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
@@ -1020,7 +1033,7 @@ export const layer: Layer.Layer<
                       !legacyRecoveredRunIds.has(item.runId)));
                 if (item.runId === run.id || (!acceptedNatively && !deliveredItemIds.has(item.id)))
                   return sum;
-                const historical = historicalMessage(item);
+                const historical = historicalMessage(item, receivingEnvironmentId);
                 const nativeAttachments =
                   item.type === "user_message" && acceptedNatively
                     ? attachmentTokenAllowance(item.attachments)
@@ -1089,7 +1102,7 @@ export const layer: Layer.Layer<
                     item.runId !== null &&
                     missedRunIds.has(item.runId) &&
                     !coveredItemIds.has(item.id) &&
-                    historicalMessage(item) !== null,
+                    historicalMessage(item, receivingEnvironmentId) !== null,
                 );
           const retryHandoff =
             missedItems.length === 0
@@ -1658,7 +1671,11 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
+              text: renderTurnOriginText(
+                message.origin ?? { kind: "user" },
+                goalCommand ? userText : withInlineContext(context, userText),
+                receivingEnvironmentId,
+              ),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
@@ -1713,14 +1730,11 @@ export const layer: Layer.Layer<
               }),
         ),
       );
-      const deliverySession =
-        effectiveHandoffs.length === 0 &&
-        retryHandoff.length === 0 &&
-        sideChatHandoff === undefined &&
-        restartNote === "" &&
-        !noteContinuation
-          ? session
-          : makeDeliverySession(session, startWithHandoffs);
+      const deliverySession = makeDeliverySession(
+        session,
+        message.origin ?? { kind: "user" },
+        startWithHandoffs,
+      );
       const scratchSession = isScratch
         ? {
             ...deliverySession,
@@ -1774,6 +1788,7 @@ export const layer: Layer.Layer<
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         message: {
           messageId: message.id,
+          ...(message.origin === undefined ? {} : { origin: message.origin }),
           text: userText,
           attachments: message.attachments,
           createdBy: message.createdBy,

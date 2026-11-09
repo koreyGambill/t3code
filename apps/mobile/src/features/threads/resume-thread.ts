@@ -68,6 +68,7 @@ export async function resumeThread<E>(input: {
         ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
         message: {
           messageId: input.messageId,
+          origin: { kind: "system" as const, event: "manual continuation" },
           role: "user",
           text: "Continue where you left off.",
           attachments: [],

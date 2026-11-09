@@ -3504,6 +3504,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             );
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make("start-capacity-retry"),
               threadId,
               messageId: MessageId.make("message:capacity-retry"),
@@ -4858,6 +4859,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("start-background-stop"),
             threadId,
             messageId: MessageId.make("message:background-stop"),
@@ -4983,6 +4985,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("start-background-stop-untracked"),
             threadId,
             messageId: MessageId.make("message:background-stop-untracked"),

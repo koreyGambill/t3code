@@ -239,7 +239,12 @@ describe("ThreadReplies", () => {
         environmentId: remoteEnvironment,
         threadId: target,
       });
-      expect(reply.text).toContain(`t3-thread://v2/${remoteEnvironment}/${target}`);
+      expect(reply.origin).toMatchObject({
+        kind: "thread",
+        event: "reply",
+        environmentId: remoteEnvironment,
+        threadId: target,
+      });
       world.crashAfterReplyCommit = false;
       yield* serve(world, (replies, delivered) =>
         replies.start().pipe(Effect.andThen(Deferred.await(delivered))),
@@ -330,7 +335,12 @@ describe("ThreadReplies", () => {
             dispatchMode: { type: "queue_after_active" },
           });
           expect(reply.text).toContain("Done: shipped it.");
-          expect(reply.text).toContain(`t3-thread://v2/environment:replies/${target}`);
+          expect(reply.origin).toMatchObject({
+            kind: "thread",
+            event: "reply",
+            environmentId: "environment:replies",
+            threadId: target,
+          });
           expect(reply).not.toHaveProperty("senderThreadId");
         }),
       );
@@ -353,7 +363,7 @@ describe("ThreadReplies", () => {
       );
       expect(reply.messageId).toBe(ThreadReplies.replyMessageId(request.messageId));
       expect(reply.notification?.outcome).toBe("failed");
-      expect(reply.text).toContain("failed");
+      expect(reply.text).toBe("Done: shipped it.");
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 

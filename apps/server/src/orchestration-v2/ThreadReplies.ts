@@ -14,7 +14,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
-import { formatThreadLink, quoteThreadTitle } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -101,8 +100,6 @@ const make = Effect.gen(function* () {
   const followers = yield* Scope.Scope;
   const following = new Set<MessageId>();
 
-  const linkTo = (threadId: ThreadId) => formatThreadLink({ environmentId, threadId });
-
   /** The run that took the request, or why there is none to wait for. */
   const locate = Effect.fn("ThreadReplies.locate")(function* (request: ThreadReplyRequest) {
     const target = yield* threads.getThreadRecords(request.targetThreadId, ["messages"], {
@@ -153,7 +150,6 @@ const make = Effect.gen(function* () {
       return yield* markDelivered(request);
     }
     const target = yield* threads.getThreadRecords(request.targetThreadId, []);
-    const link = linkTo(request.targetThreadId);
     const outcome = "run" in ended ? outcomeOf(ended.run) : "failed";
     const reply = "run" in ended ? yield* replyText(request.targetThreadId, ended.run) : "";
     const status =
@@ -169,9 +165,14 @@ const make = Effect.gen(function* () {
       commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
       threadId: request.senderThreadId,
       messageId: replyMessageId(request.messageId),
-      text: `Thread ${quoteThreadTitle(target.thread.title.trim() || "Untitled")} ${link} ${status}.${
-        reply.length === 0 ? "" : `\n\n${reply}`
-      }`,
+      origin: {
+        kind: "thread",
+        event: "reply",
+        title: target.thread.title.trim() || "Untitled",
+        threadId: request.targetThreadId,
+        environmentId,
+      },
+      text: reply.length === 0 ? `${status}.` : reply,
       notification: {
         source: { kind: "thread_reply", threadId: request.targetThreadId },
         outcome,
@@ -247,16 +248,22 @@ const make = Effect.gen(function* () {
     const sender = yield* threads.getThreadRecords(request.senderThreadId, []);
     if (sender.thread.deletedAt !== null || sender.thread.archivedAt !== null)
       return yield* markDelivered(request);
-    const link = formatThreadLink({
-      environmentId: remote.environmentId,
-      threadId: request.targetThreadId,
-    });
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`server:thread-reply:${request.messageId}`),
       threadId: request.senderThreadId,
       messageId: replyMessageId(request.messageId),
-      text: `Thread ${quoteThreadTitle(title)} ${link} ${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}.${answer.length === 0 ? "" : `\n\n${answer}`}`,
+      origin: {
+        kind: "thread",
+        event: "reply",
+        title,
+        threadId: request.targetThreadId,
+        environmentId: remote.environmentId,
+      },
+      text:
+        answer.length === 0
+          ? `${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}.`
+          : answer,
       notification: {
         source: {
           kind: "thread_reply",

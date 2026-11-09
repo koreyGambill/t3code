@@ -74,7 +74,13 @@ export function useSideChat(input: {
         environmentId: threadRef.environmentId,
         input: {
           threadId: targetThreadId,
-          message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+          message: {
+            messageId: newMessageId(),
+            origin: { kind: "user" as const },
+            role: "user",
+            text,
+            attachments: [],
+          },
           titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
           runtimeMode: sideChat.runtimeMode,
           interactionMode: "default",

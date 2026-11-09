@@ -152,6 +152,24 @@ const make = Effect.gen(function* () {
     if (typeof args.clientRequestId === "string") {
       args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
     }
+    if (toolName === "t3_thread_send" && scope.thread !== undefined) {
+      const sender = yield* threads
+        .getThreadShell(scope.thread.threadId)
+        .pipe(Effect.mapError(unavailable));
+      if (sender === null)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The sending thread no longer exists.",
+        });
+      args.origin = {
+        kind: "thread",
+        event: "message",
+        title: sender.title,
+        threadId: scope.thread.threadId,
+        environmentId: scope.environmentId,
+        reply: args.reply === false ? "not expected" : "expected",
+      };
+    }
     if (toolName === "t3_thread_send" && scope.thread !== undefined && args.reply !== false) {
       if (typeof args.clientRequestId !== "string") {
         args.clientRequestId = yield* scopedRequestId(

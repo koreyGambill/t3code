@@ -4,7 +4,6 @@ import {
   makeQueuedRunsAtom,
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -72,11 +71,12 @@ function QueuedRunSender(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage;
 }) {
-  const { attribution, scheduledTaskId } = resolveUserMessagePresentation(props.message);
-  const senderThreadId = attribution === "agent" ? props.message.senderThreadId : undefined;
-  const senderShell = useQuietThreadShell(
-    senderThreadId ? scopeThreadRef(props.environmentId, senderThreadId) : null,
-  );
+  const {
+    attribution,
+    scheduledTaskId,
+    sender: originSender,
+  } = resolveUserMessagePresentation(props.message);
+  const senderShell = useQuietThreadShell(originSender ?? null);
   const tasks = useEnvironmentQuery(
     scheduledTaskId
       ? serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} })
@@ -92,7 +92,7 @@ function QueuedRunSender(props: {
       : attribution === "agent"
         ? {
             icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || "Agent",
+            label: originSender?.title.trim() || senderShell?.title.trim() || "Agent",
           }
         : attribution === "t3code"
           ? { icon: null, label: "Sent by T3 Code" }

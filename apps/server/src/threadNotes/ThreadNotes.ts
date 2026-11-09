@@ -238,6 +238,7 @@ const make = Effect.gen(function* () {
     const info = yield* owner(input.threadId);
     yield* threads
       .sendToThread({
+        origin: { kind: "user" },
         projectId: info.thread.projectId,
         threadId: input.threadId,
         commandId: CommandId.make(`note:${id}`),

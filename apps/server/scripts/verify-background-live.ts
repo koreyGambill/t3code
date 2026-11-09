@@ -317,7 +317,7 @@ try {
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },
-      initialMessage: { text: prompt, attachments: [] },
+      initialMessage: { origin: { kind: "user" }, text: prompt, attachments: [] },
     });
     const check = (projection: OrchestrationV2ThreadProjection) => {
       NodeFS.writeFileSync(

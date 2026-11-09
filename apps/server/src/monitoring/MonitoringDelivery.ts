@@ -131,6 +131,7 @@ export const layer = Layer.effect(
       const messageId = MessageId.make(deliveryId);
       const sent = yield* threads
         .sendToThread({
+          origin: { kind: "system", event: "monitoring advisory" },
           commandId: CommandId.make(deliveryId),
           messageId,
           projectId: profile.projectId,

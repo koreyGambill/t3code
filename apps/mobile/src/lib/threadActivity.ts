@@ -132,6 +132,7 @@ export interface ThreadFeedMessage {
   readonly runId: RunId | null;
   readonly streaming: boolean;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
+  readonly origin?: import("@t3tools/contracts").TurnOrigin;
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
@@ -2137,6 +2138,7 @@ export function buildThreadFeed(
           ...(item.type === "user_message"
             ? {
                 inputIntent: item.inputIntent,
+                ...(item.origin ? { origin: item.origin } : {}),
                 createdBy: item.createdBy,
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),

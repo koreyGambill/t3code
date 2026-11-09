@@ -1016,12 +1016,13 @@ export const layer = Layer.effect(
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         const idleCheckin =
           active.schedule.type === "interval" && active.schedule.idleCheckin === true;
-        const prompt =
+        const turnOrigin =
           reason !== null
-            ? `[Wake condition fired: ${reason}]\n${active.prompt}`
-            : idleCheckin
-              ? idleCheckinPrompt(active.id)
-              : (webhook?.prompt ?? active.prompt);
+            ? { kind: "wake" as const, detail: reason }
+            : { kind: "scheduled-task" as const, title: active.title };
+        const prompt = idleCheckin
+          ? idleCheckinPrompt(active.id)
+          : (webhook?.prompt ?? active.prompt);
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
@@ -1038,6 +1039,7 @@ export const layer = Layer.effect(
               threadId,
               messageId,
               scheduledTaskId: active.id,
+              origin: turnOrigin,
               ...(idleCheckin ? { idleCheckin: true } : {}),
               text: prompt,
               attachments: [],
@@ -1094,6 +1096,7 @@ export const layer = Layer.effect(
                     initialMessage: {
                       messageId,
                       scheduledTaskId: active.id,
+                      origin: turnOrigin,
                       text: prompt,
                       attachments: [],
                     },

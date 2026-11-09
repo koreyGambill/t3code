@@ -155,6 +155,7 @@ export type ThreadManagementTerminalRunStatus = Extract<
 >;
 
 export interface ThreadManagementSendInput {
+  readonly origin: import("@t3tools/contracts").TurnOrigin;
   readonly projectId: ProjectId;
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
@@ -910,6 +911,7 @@ const make = Effect.gen(function* () {
 
     const dispatched = yield* dispatch({
       type: "message.dispatch",
+      origin: input.origin,
       commandId: input.commandId,
       threadId: input.threadId,
       messageId: input.messageId,

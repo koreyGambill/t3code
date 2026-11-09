@@ -1262,6 +1262,7 @@ const make = Effect.gen(function* () {
     const messageId = MessageId.make(`workspace:${input.threadId}:${key}`);
     yield* threads
       .sendToThread({
+        origin: { kind: "user" },
         projectId: owner.projectId,
         commandId: CommandId.make(`workspace-submit:${input.threadId}:${key}`),
         threadId: input.threadId,

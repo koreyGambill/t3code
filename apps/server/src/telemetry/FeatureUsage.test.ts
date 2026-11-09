@@ -17,6 +17,7 @@ it("ignores messages, housekeeping commands, and untracked RPCs", () => {
       command({
         ...ids,
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         messageId: "message-private",
         text: "secret prompt",
         attachments: [],
@@ -74,6 +75,7 @@ it("counts the owner's guest share actions, and only guest message sends", () =>
       command({
         ...ids,
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         messageId: "message-private",
         text: "secret prompt",
         attachments: [],

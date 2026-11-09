@@ -416,7 +416,11 @@ function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
   const transfers = projection?.contextTransfers ?? [];
   const replyTargets = new Set(
     projection?.messages.flatMap((message) => [
-      ...(message.senderThreadId ? [message.senderThreadId] : []),
+      ...(message.origin &&
+      "threadId" in message.origin &&
+      message.origin.environmentId === threadRef.environmentId
+        ? [message.origin.threadId]
+        : []),
       ...(message.notification?.source.kind === "thread_reply" &&
       (message.notification.source.environmentId === undefined ||
         message.notification.source.environmentId === threadRef.environmentId)

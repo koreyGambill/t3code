@@ -42,6 +42,7 @@ const make = Effect.gen(function* () {
         : `Delegated task ${task.id} is blocked on a question and cannot continue until it is answered.`;
     yield* engine.dispatch({
       type: "message.dispatch",
+      origin: { kind: "system", event: "subagent question" },
       commandId: CommandId.make(`server:delegated-task-question:${key}`),
       threadId: task.threadId,
       messageId: MessageId.make(`message:delegated-task-question:${key}`),

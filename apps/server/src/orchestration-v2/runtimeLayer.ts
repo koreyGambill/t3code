@@ -1,3 +1,4 @@
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import * as MonitoringStore from "../monitoring/MonitoringStore.ts";
 import * as MonitoringSnapshot from "../monitoring/MonitoringSnapshot.ts";
@@ -137,7 +138,7 @@ const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
   Layer.provide(Layer.merge(IdAllocator.layer, ProjectionStore.layer)),
 );
 const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-  Layer.provide(IdAllocator.layer),
+  Layer.provide(Layer.merge(IdAllocator.layer, ServerEnvironment.layerIdentity)),
 );
 
 const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
@@ -183,6 +184,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ServerEnvironment.layerIdentity,
       layerContextHandoffServiceProvided,
       layerEventSink,
       IdAllocator.layer,
@@ -196,7 +198,13 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
 );
 
 const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-  Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      layerProviderSessionManagerProvided,
+      ServerEnvironment.layerIdentity,
+    ),
+  ),
 );
 const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
@@ -232,6 +240,7 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ServerEnvironment.layerIdentity,
       layerCheckpointServiceProvided,
       CommandPolicy.layer,
       layerStores,

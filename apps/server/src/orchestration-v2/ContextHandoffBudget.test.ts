@@ -1,7 +1,9 @@
+import { renderTurnOriginText } from "@t3tools/provider-core/server/turnOriginText";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  EnvironmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -126,37 +128,46 @@ describe("handoff budget", () => {
       completedAt: now,
       updatedAt: now,
     };
-    const command = historicalMessage({
-      ...base,
-      type: "command_execution",
-      input: "vp test",
-      output: "Failure near the end: " + "界".repeat(300),
-      exitCode: 1,
-    });
+    const command = historicalMessage(
+      {
+        ...base,
+        type: "command_execution",
+        input: "vp test",
+        output: "Failure near the end: " + "界".repeat(300),
+        exitCode: 1,
+      },
+      null,
+    );
     assert.equal(command?.role, "assistant");
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
     assert.equal(
-      historicalMessage({
-        ...base,
-        type: "file_change",
-        fileName: "src/a.ts",
-        changes: [
-          { operation: "update", path: "src/a.ts" },
-          { operation: "add", path: "src/b.ts" },
-          { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
-        ],
-      })?.text,
+      historicalMessage(
+        {
+          ...base,
+          type: "file_change",
+          fileName: "src/a.ts",
+          changes: [
+            { operation: "update", path: "src/a.ts" },
+            { operation: "add", path: "src/b.ts" },
+            { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+          ],
+        },
+        null,
+      )?.text,
       "File change: src/a.ts, src/b.ts, src/new.ts",
     );
     assert.isNull(
-      historicalMessage({
-        ...base,
-        type: "reasoning",
-        text: "private reasoning",
-        streaming: false,
-      }),
+      historicalMessage(
+        {
+          ...base,
+          type: "reasoning",
+          text: "private reasoning",
+          streaming: false,
+        },
+        null,
+      ),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
   });
@@ -653,4 +664,25 @@ describe("handoff delivery", () => {
       assert.equal(calls, 0);
     }),
   );
+});
+
+it("keeps historical agent provenance first and labels synthetic handoff context", () => {
+  const origin = {
+    kind: "thread" as const,
+    event: "message" as const,
+    title: "Peer",
+    threadId: ThreadId.make("thread:peer"),
+    environmentId: EnvironmentId.make("environment:local"),
+  };
+  const text = renderTurnOriginText(origin, "Report", origin.environmentId);
+  const items = historyResponseItems([{ ...messages[0]!, role: "user", origin, text }], "Coverage");
+  assert.isTrue(
+    items[0]!.content[0]!.text.startsWith('<t3_origin from="system" title="context handoff">'),
+  );
+  assert.isTrue(
+    items[1]!.content[0]!.text.startsWith(
+      text.slice(0, text.indexOf("\n\n")) + "\n\n[Historical user;",
+    ),
+  );
+  assert.include(items[1]!.content[0]!.text, "\nReport");
 });

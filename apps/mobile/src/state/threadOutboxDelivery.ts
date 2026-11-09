@@ -883,6 +883,7 @@ export function createThreadOutboxDelivery(): {
         threadId: queuedMessage.threadId,
         message: {
           messageId: queuedMessage.messageId,
+          origin: { kind: "user" as const },
           role: "user",
           ...serializeComposerMessageForServer(
             queuedMessage.text,

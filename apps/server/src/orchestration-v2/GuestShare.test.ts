@@ -77,6 +77,7 @@ const setup = Effect.gen(function* () {
 const sendGuestMessage = (orchestrator: Orchestrator.OrchestratorV2["Service"], id: string) =>
   orchestrator.dispatch({
     type: "message.dispatch",
+    origin: { kind: "user" as const },
     commandId: CommandId.make(id),
     threadId,
     messageId: MessageId.make(id),
@@ -168,6 +169,7 @@ it.effect("drops guest attribution that a client sends on its own message", () =
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("owner-message"),
       threadId,
       messageId: MessageId.make("owner-message"),
@@ -192,6 +194,7 @@ it.effect("keeps a queued guest message unchanged when the owner tries to edit i
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("owner-first"),
       threadId,
       messageId: MessageId.make("owner-first"),
@@ -218,6 +221,7 @@ it.effect("keeps a queued guest message unchanged when the owner tries to edit i
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("send-queued"),
       threadId,
       messageId: MessageId.make("send-queued"),
@@ -254,6 +258,7 @@ it.effect("shows a guest message as dismissed when the owner cancels its queued 
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("owner-first"),
       threadId,
       messageId: MessageId.make("owner-first"),
@@ -280,6 +285,7 @@ it.effect("shows a guest message as dismissed when the owner cancels its queued 
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("send-queued"),
       threadId,
       messageId: MessageId.make("send-queued"),

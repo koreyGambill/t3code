@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
@@ -20,6 +21,7 @@ import { mergeBackMessageText } from "../Orchestrator.ts";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
+import { renderTurnOriginText } from "@t3tools/provider-core/server/turnOriginText";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -283,6 +285,7 @@ describe("orchestration V2 merge-back provider replay", () => {
             }),
             {
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: yield* commandId("source"),
@@ -305,6 +308,7 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: yield* commandId("first-fork-delta"),
@@ -327,6 +331,7 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: yield* commandId("second-fork-delta"),
@@ -357,6 +362,7 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: yield* commandId("recall"),
@@ -392,15 +398,37 @@ describe("orchestration V2 merge-back provider replay", () => {
         const transcript = parameterizeHandoffs(rawTranscript, [
           [
             THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
-            variant.driver === "codex"
-              ? FIRST_SIBLING_MERGE_USER_TEXT
-              : providerMessage(firstSummary, FIRST_SIBLING_MERGE_USER_TEXT),
+            renderTurnOriginText(
+              {
+                kind: "thread",
+                event: "message",
+                title: "First merge-back sibling",
+                threadId: materialized.firstForkThreadId,
+                environmentId: EnvironmentId.make("environment:replay"),
+                reply: "not expected",
+              },
+              variant.driver === "codex"
+                ? FIRST_SIBLING_MERGE_USER_TEXT
+                : providerMessage(firstSummary, FIRST_SIBLING_MERGE_USER_TEXT),
+              EnvironmentId.make("environment:replay"),
+            ),
           ],
           [
             THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
-            variant.driver === "codex"
-              ? SECOND_SIBLING_MERGE_USER_TEXT
-              : providerMessage(secondSummary, SECOND_SIBLING_MERGE_USER_TEXT),
+            renderTurnOriginText(
+              {
+                kind: "thread",
+                event: "message",
+                title: "Second merge-back sibling",
+                threadId: materialized.secondForkThreadId,
+                environmentId: EnvironmentId.make("environment:replay"),
+                reply: "not expected",
+              },
+              variant.driver === "codex"
+                ? SECOND_SIBLING_MERGE_USER_TEXT
+                : providerMessage(secondSummary, SECOND_SIBLING_MERGE_USER_TEXT),
+              EnvironmentId.make("environment:replay"),
+            ),
           ],
         ]);
         const cwd = yield* Effect.acquireRelease(

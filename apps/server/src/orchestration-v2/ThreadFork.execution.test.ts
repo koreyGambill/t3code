@@ -411,6 +411,7 @@ it.effect.each(forkCases)(
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("continue-fork"),
         threadId: targetThreadId,
         messageId: MessageId.make("continue-fork"),
@@ -610,6 +611,7 @@ it.effect.each([
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("fork-compact-compact"),
         threadId: targetThreadId,
         messageId: MessageId.make("fork-compact-compact"),
@@ -863,6 +865,7 @@ const askSideChat = (
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make(commandId),
       threadId,
       messageId: MessageId.make(commandId),
@@ -1171,6 +1174,7 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
 
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("side-chat-busy-first-message"),
       threadId: sideChatId,
       messageId: MessageId.make("side-chat-busy-first-message"),

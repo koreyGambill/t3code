@@ -213,6 +213,7 @@ it.effect.each(deliveries)(
           );
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("first"),
             threadId,
             messageId: MessageId.make("first"),
@@ -292,6 +293,7 @@ it.effect.each(deliveries)(
             });
             const command = {
               type: "message.dispatch" as const,
+              origin: { kind: "user" as const },
               commandId: CommandId.make("completion"),
               threadId,
               messageId,
@@ -360,6 +362,7 @@ it.effect.each(deliveries)(
           } else if (delivery === "user steering") {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make("steer"),
               threadId,
               messageId,
@@ -372,6 +375,7 @@ it.effect.each(deliveries)(
           } else {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make("queue"),
               threadId,
               messageId,

@@ -152,6 +152,7 @@ function dispatchUserMessage(input: {
     const threads = yield* ThreadManagement.ThreadManagementService;
     yield* threads.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make(input.command),
       threadId: input.threadId,
       messageId: MessageId.make(`${input.command}:message`),
@@ -484,6 +485,7 @@ describe("ThreadTitleRegenerationService", () => {
         const messageId = MessageId.make("command:title:fork:message:message");
         yield* threads.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: requestId,
           threadId: forkThreadId,
           messageId,

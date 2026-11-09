@@ -34,8 +34,8 @@ const ROW_COUNT = 600;
 const OUTPUT_BYTES_PER_ROW = 8_192;
 
 const HISTORICAL_FULL_PROJECTION_APPLICATION_BYTES = 10_371_419;
-const HISTORICAL_FORMER_SEND_APPLICATION_BYTES = 10_371_678;
-const FORMER_SEND_RPC_JSON_BYTES = 10_372_184;
+const HISTORICAL_FORMER_SEND_APPLICATION_BYTES = 10_371_703;
+const FORMER_SEND_RPC_JSON_BYTES = 10_372_209;
 const MAX_CURRENT_SEND_RPC_JSON_BYTES = 1_024;
 
 const RPC_TRACE_CONTEXT = {
@@ -207,6 +207,7 @@ describe("routine command transport budget", () => {
         threadId: v2ThreadId,
         message: {
           messageId: MessageId.make("message-perf"),
+          origin: { kind: "user" as const },
           role: "user",
           text: "continue",
           attachments: [],

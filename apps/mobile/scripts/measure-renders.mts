@@ -202,7 +202,7 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
     runtimeMode: "approval-required",
     interactionMode: "default",
     workspaceStrategy: { type: "root" },
-    initialMessage: { text: STREAM_PROMPT, attachments: [] },
+    initialMessage: { origin: { kind: "user" }, text: STREAM_PROMPT, attachments: [] },
   });
   // A failed or interrupted window must not leave a provider turn running.
   yield* Effect.addFinalizer(() =>

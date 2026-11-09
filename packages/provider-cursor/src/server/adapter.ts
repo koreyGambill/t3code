@@ -2304,6 +2304,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             );
           }
           const userText = t3OrchestrationPrompt({
+            origin: turnInput.message.origin,
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text:
                 cursorSkillNames === undefined

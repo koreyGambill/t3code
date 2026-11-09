@@ -1,3 +1,4 @@
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
@@ -359,6 +360,7 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
 
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
   function* () {
+    const receivingEnvironmentId = yield* (yield* ServerEnvironmentIdentity).getEnvironmentId;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const tokenCap = yield* handoffTokenCapConfig.pipe(
       Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
@@ -394,7 +396,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         const coverage = handoffCoverage({ ...input, coveredRunOrdinals: { from: 1, to: 1 } });
         const selected = selectHistory({
           messages: input.items.flatMap((item) => {
-            const message = historicalMessage(item);
+            const message = historicalMessage(item, receivingEnvironmentId);
             return message === null ? [] : [message];
           }),
           coverage,
@@ -464,7 +466,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         });
         const selected = selectHistory({
           messages: input.deltaItems.flatMap((item) => {
-            const message = historicalMessage(item);
+            const message = historicalMessage(item, receivingEnvironmentId);
             return message === null ? [] : [message];
           }),
           coverage,
@@ -536,7 +538,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       const coverage = handoffCoverage(input);
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
+          const message = historicalMessage(item, receivingEnvironmentId);
           return message === null
             ? []
             : [
@@ -624,5 +626,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
   },
 );
 
-export const layer: Layer.Layer<ContextHandoffServiceV2, never, IdAllocator.IdAllocatorV2> =
-  Layer.effect(ContextHandoffServiceV2, makeContextHandoffService());
+export const layer: Layer.Layer<
+  ContextHandoffServiceV2,
+  never,
+  IdAllocator.IdAllocatorV2 | ServerEnvironmentIdentity
+> = Layer.effect(ContextHandoffServiceV2, makeContextHandoffService());

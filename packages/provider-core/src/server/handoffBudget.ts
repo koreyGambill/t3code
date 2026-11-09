@@ -1,3 +1,5 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { renderTurnOriginText, withTurnOriginPrefix } from "./turnOriginText.ts";
 import type {
   ChatAttachment,
   ModelSelection,
@@ -126,10 +128,17 @@ export function handoffBudget(input: {
 
 export function historicalMessage(
   item: OrchestrationV2TurnItem,
+  receivingEnvironmentId: EnvironmentId | null,
 ): OrchestrationV2HistoricalMessage | null {
   let text: string;
   switch (item.type) {
     case "user_message":
+      text = renderTurnOriginText(
+        item.origin ?? { kind: "user" },
+        item.text,
+        receivingEnvironmentId,
+      );
+      break;
     case "assistant_message":
       text = item.text;
       break;
@@ -156,6 +165,7 @@ export function historicalMessage(
       return null;
   }
   return {
+    ...(item.type === "user_message" && item.origin !== undefined ? { origin: item.origin } : {}),
     role: item.type === "user_message" ? "user" : "assistant",
     text,
     threadId: item.threadId,
@@ -168,7 +178,12 @@ export function historicalMessage(
 }
 
 function renderHistoricalMessage(message: OrchestrationV2HistoricalMessage): string {
-  return `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]\n${message.text}`;
+  return withTurnOriginPrefix(
+    message.text,
+    message.origin,
+    (body) =>
+      `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]\n${body}`,
+  );
 }
 
 export function historyResponseItems(
@@ -176,7 +191,16 @@ export function historyResponseItems(
   context: string,
 ) {
   return [
-    { type: "message", role: "user", content: [{ type: "input_text", text: context }] },
+    {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: renderTurnOriginText({ kind: "system", event: "context handoff" }, context, null),
+        },
+      ],
+    },
     ...messages.map((message) => ({
       type: "message",
       role: message.role,

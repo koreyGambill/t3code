@@ -82,7 +82,7 @@ import {
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
-import { quoteThreadTitle } from "@t3tools/shared/threadLinks";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -861,17 +861,8 @@ function delegatedCompletionWakeDetail(
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
       const threadLabel = task?.title?.trim() || "Untitled";
-      const title =
-        task?.childThreadId == null
-          ? task?.title == null
-            ? ""
-            : ` (${task.title})`
-          : ` ([${threadLabel.replace(/[[\]\\]/g, "\\$&")}](t3-thread://v1/${task.childThreadId}))`;
       const status = task === undefined ? " reached a terminal state" : ` [${task.status}]`;
-      const label =
-        task?.originalTaskId === undefined
-          ? `Delegated task ${taskId}${title}${status}`
-          : `Delegated task ${task.originalTaskId}${title}, follow-up ${taskId}${status}`;
+      const label = `${threadLabel} (${taskId})${status}`;
       if (task?.result != null) {
         const detail = `${label}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);
@@ -1260,6 +1251,7 @@ function lastDeliveredRunForProviderThread(
 }
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const environmentIdentity = yield* ServerEnvironmentIdentity;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -2519,6 +2511,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
           createdBy: queuedMessage.createdBy,
           creationSource: queuedMessage.creationSource,
+          origin: queuedMessage.origin,
           ...(queuedMessage.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: queuedMessage.scheduledTaskId }),
@@ -3497,6 +3490,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* dispatchMessage(
         {
           type: "message.dispatch",
+          origin: { kind: "system", event: "pull request update" },
           commandId: command.commandId,
           threadId: command.threadId,
           messageId: command.wake.messageId,
@@ -5330,6 +5324,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* dispatchMessage(
       {
         type: "message.dispatch",
+        origin: {
+          kind: "thread",
+          event: "message",
+          reply: "not expected",
+          title: sourceProjection.thread.title,
+          threadId: command.sourceThreadId,
+          environmentId: yield* environmentIdentity.getEnvironmentId,
+        },
         commandId: command.commandId,
         threadId: command.targetThreadId,
         messageId: MessageId.make(`${command.commandId}:merge-back`),
@@ -5384,6 +5386,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
     readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
+    readonly origin: import("@t3tools/contracts").TurnOrigin | undefined;
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
@@ -5539,6 +5542,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const message: OrchestrationV2ConversationMessage = {
           createdBy: input.createdBy,
           creationSource: input.creationSource,
+          origin: input.origin,
           ...(input.delegatedCompletion === undefined
             ? {}
             : { delegatedCompletion: input.delegatedCompletion }),
@@ -5563,6 +5567,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const turnItem: OrchestrationV2TurnItem = {
           createdBy: input.createdBy,
           creationSource: input.creationSource,
+          origin: input.origin,
           ...(input.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: input.scheduledTaskId }),
@@ -6537,21 +6542,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (command.senderThreadId === undefined && completionSenders?.length === 1) {
       command = { ...command, senderThreadId: completionSenders[0]! };
     }
-    const senderTitles =
-      command.createdBy === "agent" && command.senderThreadId !== undefined
-        ? yield* projectionStore
-            .getThreadTitles([command.senderThreadId])
-            .pipe(mapDispatchError(command))
-        : undefined;
-    const senderHeader =
-      senderTitles === undefined || command.senderThreadId === undefined
-        ? ""
-        : `[Thread: ${quoteThreadTitle((senderTitles[command.senderThreadId]?.trim() || command.senderThreadId).slice(0, 200))}]\n\n`;
     const dispatchText =
-      senderHeader +
-      (delegatedCompletion === undefined
+      delegatedCompletion === undefined
         ? command.text
-        : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents));
+        : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
+    if (delegatedCompletion !== undefined) {
+      const tasks = delegatedCompletion.taskIds.flatMap((id) => {
+        const task = projection.subagents.find((candidate) => candidate.id === id);
+        return task === undefined ? [] : [task];
+      });
+      command = {
+        ...command,
+        origin: {
+          kind: "subagent",
+          event: tasks.some((task) => task.status === "failed") ? "failed" : "completed",
+          title: tasks.map((task) => task.title || "Untitled").join(", "),
+          threadId: tasks[0]?.remoteChild?.threadId ?? tasks[0]?.childThreadId ?? command.threadId,
+          environmentId:
+            tasks[0]?.remoteChild?.environmentId ?? (yield* environmentIdentity.getEnvironmentId),
+        },
+      };
+    }
     const sourcePlanProjection =
       command.sourcePlanRef === undefined
         ? null
@@ -6622,6 +6633,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         attachments: command.attachments,
         createdBy: command.createdBy,
         creationSource: command.creationSource,
+        origin: command.origin,
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
@@ -6860,6 +6872,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const message: OrchestrationV2ConversationMessage = {
         createdBy: command.createdBy,
         creationSource: command.creationSource,
+        origin: command.origin,
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
@@ -7268,6 +7281,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const message: OrchestrationV2ConversationMessage = {
         createdBy: command.createdBy,
         creationSource: command.creationSource,
+        origin: command.origin,
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
@@ -7290,6 +7304,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
         creationSource: command.creationSource,
+        origin: command.origin,
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
@@ -7983,6 +7998,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const message: OrchestrationV2ConversationMessage = {
       createdBy: command.createdBy,
       creationSource: command.creationSource,
+      origin: command.origin,
       ...(command.scheduledTaskId === undefined
         ? {}
         : { scheduledTaskId: command.scheduledTaskId }),
@@ -8005,6 +8021,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const turnItem: OrchestrationV2TurnItem = {
       createdBy: command.createdBy,
       creationSource: command.creationSource,
+      origin: command.origin,
       ...(command.scheduledTaskId === undefined
         ? {}
         : { scheduledTaskId: command.scheduledTaskId }),
@@ -8764,6 +8781,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const childMessageCommand = {
         type: "message.dispatch",
+        origin: {
+          kind: "thread",
+          event: "message",
+          reply: "not expected",
+          title: parentProjection.thread.title,
+          threadId: command.parentThreadId,
+          environmentId: yield* environmentIdentity.getEnvironmentId,
+        },
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         commandId: command.commandId,
@@ -9847,6 +9872,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* dispatchMessage(
         {
           type: "message.dispatch",
+          origin: { kind: "system", event: "connection update" },
           commandId: command.commandId,
           threadId: command.threadId,
           messageId: wake.messageId,
@@ -10229,6 +10255,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         const answer = {
           type: "message.dispatch" as const,
+          origin: { kind: "user" as const },
           commandId: command.commandId,
           threadId: command.threadId,
           messageId: MessageId.make(`async-answer:${command.requestId}`),
@@ -10592,6 +10619,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
       createdBy: queuedMessage.createdBy,
       creationSource: queuedMessage.creationSource,
+      origin: queuedMessage.origin,
       ...(queuedMessage.scheduledTaskId === undefined
         ? {}
         : { scheduledTaskId: queuedMessage.scheduledTaskId }),
@@ -13508,7 +13536,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : parentProjection.runs.find((candidate) => candidate.id === task.runId);
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
-        (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
+        (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "subagent" }> =>
+          candidate.type === "subagent" && candidate.subagentId === task.id,
       );
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
@@ -15410,6 +15439,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 export const layer: Layer.Layer<
   OrchestratorV2,
   never,
+  | ServerEnvironmentIdentity
   | CheckpointServiceV2
   | FileSystem.FileSystem
   | Path.Path

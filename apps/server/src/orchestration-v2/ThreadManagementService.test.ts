@@ -85,6 +85,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
     ThreadManagementService.withCreationProvenance(
       {
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("command:forged-reply"),
         threadId: command.threadId,
         messageId: MessageId.make("message:forged-reply"),
@@ -169,6 +170,7 @@ it.effect(
       const error = yield* Effect.flip(
         threads.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId,
           threadId,
           messageId: MessageId.make("message:thread-management:chokepoint-disabled"),
@@ -221,6 +223,7 @@ it.effect(
       const threads = yield* ThreadManagementService.ThreadManagementService;
       yield* threads.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId,
         threadId,
         messageId: MessageId.make("message:thread-management:chokepoint-replay"),
@@ -857,6 +860,7 @@ it.effect("a steer between turns queues while delegated work will wake the threa
         const threads = yield* ThreadManagementService.ThreadManagementService;
         return yield* threads
           .sendToThread({
+            origin: { kind: "user" as const },
             projectId,
             commandId: CommandId.make(`command:idle-steer:${pendingTask}`),
             threadId,

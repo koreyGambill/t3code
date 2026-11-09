@@ -1,5 +1,6 @@
 import {
   type ChatAttachment,
+  type TurnOrigin,
   type ChatFileAttachment,
   type GuestMessageAttribution,
   type OrchestrationMessageContext,
@@ -7,7 +8,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2UserMessageInputIntent,
-  ScheduledTaskId,
+  type ScheduledTaskId,
 } from "@t3tools/contracts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -28,9 +29,6 @@ export const IDLE_COMPACTION_TITLES = {
   beforeCacheExpires: "Context automatically compacted before cache expiry",
   onReturn: "Context compacted before sending",
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
-
-const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
-const LEGACY_AUTOMATION_MESSAGE_ID = /^scheduled-task-message:(.+):\d+:(?:scheduled|manual)$/;
 
 export function resolveUserMessageFileCards(message: {
   readonly text: string;
@@ -62,6 +60,7 @@ export function resolveUserMessagePresentation(message: {
   readonly id?: string;
   readonly role: string;
   readonly text: string;
+  readonly origin?: TurnOrigin | undefined;
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly senderThreadId?: string | undefined;
@@ -70,6 +69,7 @@ export function resolveUserMessagePresentation(message: {
   readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
 }): {
   readonly text: string;
+  readonly sender?: Extract<TurnOrigin, { readonly threadId: unknown }>;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
   /** Set when `attribution` is "guest". */
@@ -88,6 +88,23 @@ export function resolveUserMessagePresentation(message: {
       guestName: guest.name,
     };
   }
+  const origin = message.origin;
+  if (origin !== undefined) {
+    const sender = "threadId" in origin ? origin : undefined;
+    return {
+      text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+      attribution:
+        origin.kind === "user"
+          ? null
+          : origin.kind === "scheduled-task"
+            ? "automation"
+            : sender
+              ? "agent"
+              : "t3code",
+      scheduledTaskId: message.scheduledTaskId,
+      ...(sender ? { sender } : {}),
+    };
+  }
   if (message.scheduledTaskId !== undefined) {
     return {
       text: message.text,
@@ -95,24 +112,9 @@ export function resolveUserMessagePresentation(message: {
       scheduledTaskId: message.scheduledTaskId,
     };
   }
-  const legacyPrefix = LEGACY_AUTOMATION_PREFIX.exec(message.text);
-  const legacyTaskId = legacyPrefix
-    ? LEGACY_AUTOMATION_MESSAGE_ID.exec(message.id ?? "")?.[1]
-    : undefined;
-  if (legacyPrefix !== null && (legacyTaskId !== undefined || message.createdBy === "agent")) {
-    return {
-      text: message.text.slice(legacyPrefix[0].length),
-      attribution: "automation",
-      scheduledTaskId: legacyTaskId === undefined ? undefined : ScheduledTaskId.make(legacyTaskId),
-    };
-  }
   return {
     // The agent needs words to start a turn; people sent only the attachments.
-    text: isAttachmentOnlyBootstrapPrompt(message.text)
-      ? ""
-      : message.createdBy === "agent" && message.senderThreadId !== undefined
-        ? message.text.replace(/^\[Thread: "(?:[^"\\]|\\.)*"\]\n\n/, "")
-        : message.text,
+    text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
     attribution:
       message.createdBy !== "agent"
         ? null

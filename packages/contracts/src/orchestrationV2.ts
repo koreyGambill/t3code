@@ -102,6 +102,31 @@ export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource
 export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
 
+export const ThreadTurnOrigin = Schema.Struct({
+  kind: Schema.Literal("thread"),
+  event: Schema.Literals(["message", "reply"]),
+  reply: Schema.optional(Schema.Literals(["expected", "not expected"])),
+  title: Schema.String,
+  threadId: ThreadId,
+  environmentId: EnvironmentId,
+});
+
+export const TurnOrigin = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("user") }),
+  ThreadTurnOrigin,
+  Schema.Struct({
+    kind: Schema.Literal("subagent"),
+    event: Schema.Literals(["completed", "failed"]),
+    title: Schema.String,
+    threadId: ThreadId,
+    environmentId: EnvironmentId,
+  }),
+  Schema.Struct({ kind: Schema.Literal("scheduled-task"), title: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("wake"), detail: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("system"), event: Schema.String }),
+]);
+export type TurnOrigin = typeof TurnOrigin.Type;
+
 const OrchestrationV2CreationFields = {
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
@@ -1203,6 +1228,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
 export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread.Type;
 
 export const OrchestrationV2HistoricalMessage = Schema.Struct({
+  origin: Schema.optional(TurnOrigin),
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   runStatus: Schema.optional(Schema.String),
@@ -1393,6 +1419,7 @@ export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpire
 export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  origin: Schema.optional(TurnOrigin),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -1709,6 +1736,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
+    origin: Schema.optional(TurnOrigin),
     messageId: MessageId,
     delegatedCompletion: OrchestrationV2ConversationMessage.fields.delegatedCompletion,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -2574,6 +2602,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
+    origin: Schema.optional(TurnOrigin),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -3311,6 +3340,7 @@ export const OrchestrationV2Command = Schema.Union([
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
+    origin: TurnOrigin,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     /** Atomically records the sender's request for this message's terminal reply. */
@@ -3837,6 +3867,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   workspaceStrategy: OrchestrationV2ThreadLaunchRequestWorkspaceStrategy,
   initialMessage: Schema.optional(
     Schema.Struct({
+      origin: TurnOrigin,
       messageId: Schema.optional(MessageId),
       text: Schema.String,
       context: Schema.optional(OrchestrationMessageContext),

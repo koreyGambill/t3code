@@ -49,6 +49,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     threadId: ThreadId.make(spec.threadId),
     message: {
       messageId: MessageId.make(spec.messageId),
+      origin: { kind: "user" as const },
       role: "user" as const,
       text: spec.text,
       ...(spec.context ? { context: spec.context } : {}),

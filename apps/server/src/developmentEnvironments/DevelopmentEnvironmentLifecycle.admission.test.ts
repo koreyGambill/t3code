@@ -240,6 +240,7 @@ it.effect.each([
       if (actor === "queued rollback") {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("rollback-seed-run"),
           threadId,
           messageId: MessageId.make("rollback-seed-run"),
@@ -358,6 +359,7 @@ it.effect.each([
       }
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("cleanup-admission-message"),
         threadId,
         messageId: MessageId.make("cleanup-admission-message"),

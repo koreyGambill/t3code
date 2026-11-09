@@ -409,6 +409,7 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     });
     yield* dispatchCommand({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("send-guest-message"),
       threadId: ThreadId.make("thread-guest"),
       messageId: MessageId.make("message-guest"),

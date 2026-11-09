@@ -184,7 +184,9 @@ async function renderElement(element: ReactElement, options: { router?: false } 
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
   const screen = await render(element, { container, ...options });
   const buttons = (name: string | RegExp) =>
-    [...container.querySelectorAll<HTMLElement>("button, [role=button]")].filter((button) => {
+    [
+      ...container.querySelectorAll<HTMLElement>('button:not([role="link"]), [role="button"]'),
+    ].filter((button) => {
       const label = button.getAttribute("aria-label") ?? button.textContent ?? "";
       return typeof name === "string" ? label === name : name.test(label);
     });
@@ -395,7 +397,16 @@ describe("MessagesTimeline messages", () => {
         : index === 119
           ? message(
               "Last turn",
-              { createdBy: "agent", senderThreadId: ThreadId.make("thread-sender") },
+              {
+                createdBy: "agent",
+                origin: {
+                  kind: "thread",
+                  event: "message",
+                  title: "Agent",
+                  threadId: ThreadId.make("thread-sender"),
+                  environmentId: ENVIRONMENT_ID,
+                },
+              },
               "turn-119",
             )
           : message(
@@ -841,7 +852,18 @@ describe("MessagesTimeline agent messages", () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
-      [message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
+      [
+        message(AGENT_MESSAGE, {
+          createdBy: "agent",
+          origin: {
+            kind: "thread",
+            event: "message",
+            title: "Agent",
+            threadId: SENDER_THREAD_ID,
+            environmentId: ENVIRONMENT_ID,
+          },
+        }),
+      ],
       { onOpenThread },
     );
     const row = screen.button(/^Agent/);
@@ -852,7 +874,7 @@ describe("MessagesTimeline agent messages", () => {
 
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
-    await click(screen.button("Open thread"));
+    await screen.getByRole("link", { name: "Agent", exact: true }).click();
     expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
 
     await click(screen.button(/^Agent/));
@@ -872,7 +894,18 @@ describe("MessagesTimeline agent messages", () => {
     setup();
     const text = `${"Checked the next file.\n\n".repeat(16)}The migration drops the index.`;
     await using screen = await renderTimeline(
-      [message(text, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
+      [
+        message(text, {
+          createdBy: "agent",
+          origin: {
+            kind: "thread",
+            event: "message",
+            title: "Agent",
+            threadId: SENDER_THREAD_ID,
+            environmentId: ENVIRONMENT_ID,
+          },
+        }),
+      ],
       {
         findExpanded: true,
         findQuery: "drops the index",

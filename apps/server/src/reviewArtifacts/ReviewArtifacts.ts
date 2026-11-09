@@ -382,6 +382,7 @@ const make = Effect.gen(function* () {
       const messageId = MessageId.make(`review:${review.id}:${review.revision}`);
       yield* threads
         .sendToThread({
+          origin: { kind: "user" },
           projectId: owner.projectId,
           commandId: CommandId.make(`review-submit:${review.id}:${review.revision}`),
           threadId: review.threadId,

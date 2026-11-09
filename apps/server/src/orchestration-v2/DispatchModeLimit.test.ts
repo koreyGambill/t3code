@@ -162,6 +162,7 @@ const layerWithCeiling = Layer.mergeAll(
 
 const sendMessage = (threadId: ThreadId, id: string) => ({
   type: "message.dispatch" as const,
+  origin: { kind: "user" as const },
   commandId: CommandId.make(`send:${id}`),
   threadId,
   messageId: MessageId.make(`message:${id}`),

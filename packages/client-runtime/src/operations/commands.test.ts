@@ -224,6 +224,7 @@ describe("V2 environment commands", () => {
         threadId: v2ThreadId,
         message: {
           messageId: MessageId.make("offline-message"),
+          origin: { kind: "user" as const },
           role: "user" as const,
           text: "Queued while offline",
           attachments: [],
@@ -259,6 +260,7 @@ describe("V2 environment commands", () => {
         threadId: v2ThreadId,
         message: {
           messageId: MessageId.make("message-existing-worktree"),
+          origin: { kind: "user" as const },
           role: "user",
           text: "Continue here",
           attachments: [],
@@ -296,6 +298,7 @@ describe("V2 environment commands", () => {
         threadId: v2ThreadId,
         message: {
           messageId: MessageId.make("message-xwing-environment"),
+          origin: { kind: "user" as const },
           role: "user",
           text: "Work in my environment",
           attachments: [],
@@ -341,6 +344,7 @@ describe("V2 environment commands", () => {
           threadId: v2ThreadId,
           message: {
             messageId: MessageId.make(`message-${mode}`),
+            origin: { kind: "user" },
             role: "user",
             text: mode,
             attachments: [],
@@ -355,6 +359,28 @@ describe("V2 environment commands", () => {
           dispatchMode: { type: expectedType },
           ...(mode === "queue" ? {} : { deliveryIntent: mode }),
         });
+      }
+      for (const dispatchMode of ["start", "queue"] as const) {
+        for (const event of ["manual continuation", "idle compaction"] as const) {
+          yield* startThreadTurn({
+            threadId: v2ThreadId,
+            message: {
+              messageId: MessageId.make(`message-${dispatchMode}-${event}`),
+              origin: { kind: "user" },
+              role: "user",
+              text: "Continue",
+              attachments: [],
+              ...(event === "idle compaction" ? { idleCompaction: "onReturn" as const } : {}),
+            },
+            ...(event === "manual continuation"
+              ? { manualContinuationOfRunId: RunId.make("run:interrupted") }
+              : {}),
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            dispatchMode,
+          }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+          expect(commands.at(-1)).toMatchObject({ origin: { kind: "system", event } });
+        }
       }
       expect(projectionRequests).toEqual([]);
     }).pipe(Effect.provide(layerTestRandom)),

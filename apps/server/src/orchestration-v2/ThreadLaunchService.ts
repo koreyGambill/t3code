@@ -70,6 +70,7 @@ export type ThreadLaunchWorkspaceStrategy =
     };
 
 export interface ThreadLaunchInitialMessage {
+  readonly origin: import("@t3tools/contracts").TurnOrigin;
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
@@ -113,8 +114,9 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "developmentEnvironment"
+  "commandId" | "projectId" | "workspaceStrategy" | "developmentEnvironment"
 > & {
+  readonly initialMessage?: Omit<ThreadLaunchInitialMessage, "origin">;
   readonly reusedWorktree?: { readonly baseRef: string };
 };
 
@@ -342,7 +344,7 @@ const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const initialMessage = input.initialMessage;
       const generateBranchNameFor = Effect.fn("ThreadLaunchService.generateBranchNameFor")(
-        function* (cwd: string, message: ThreadLaunchInitialMessage) {
+        function* (cwd: string, message: Omit<ThreadLaunchInitialMessage, "origin">) {
           const settings = resolveProjectSettings(
             yield* serverSettings.getSettings,
             input.projectId,
@@ -1022,6 +1024,7 @@ const make = Effect.gen(function* () {
           const dispatched = yield* threads
             .dispatch({
               type: "message.dispatch",
+              origin: input.initialMessage.origin,
               commandId: messageCommandId,
               threadId,
               messageId,

@@ -164,6 +164,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   threadId: targetThreadId,
                   message: {
                     messageId: newMessageId(),
+                    origin: { kind: "user" as const },
                     role: "user",
                     attachments,
                     ...withMessageContext({

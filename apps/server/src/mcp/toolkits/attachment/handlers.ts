@@ -85,6 +85,7 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
+            const scope = yield* McpInvocationContext.McpInvocationContext;
             const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
@@ -98,6 +99,17 @@ export const layer = McpToolAccess.toLayer(
             const commandId = yield* newCommandId();
             const messageId = MessageId.make(commandId);
             const result = yield* ThreadMessageIntake.sendToThread({
+              origin:
+                caller === undefined
+                  ? { kind: "system", event: "agent API" }
+                  : {
+                      kind: "thread",
+                      event: "message",
+                      reply: "not expected",
+                      title: caller.title,
+                      threadId: caller.id,
+                      environmentId: scope.environmentId,
+                    },
               projectId: projection.thread.projectId,
               threadId: projection.thread.id,
               commandId,

@@ -334,6 +334,7 @@ it.live("retries a failed selection restart session open before completing", () 
           );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make("command:selection-restart:first"),
@@ -369,6 +370,7 @@ it.live("retries a failed selection restart session open before completing", () 
           );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make("command:selection-restart:second"),
@@ -501,6 +503,7 @@ it.live("Stop during a restart interrupts the turn the restart could not stop", 
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make("command:selection-restart-stop:first"),
@@ -517,6 +520,7 @@ it.live("Stop during a restart interrupts the turn the restart could not stop", 
 
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make("command:selection-restart-stop:steer"),
@@ -593,6 +597,7 @@ it.live(
               );
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 createdBy: "user",
                 creationSource: "web",
                 commandId: CommandId.make(`${name}:${step}`),
@@ -818,6 +823,7 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
               );
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 commandId: CommandId.make(`${name}:${step}`),
                 threadId,
                 messageId: MessageId.make(`${name}:${step}`),

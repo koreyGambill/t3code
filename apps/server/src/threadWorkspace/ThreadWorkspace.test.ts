@@ -192,6 +192,7 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
       context: ThreadManagement.ThreadManagementSendInput["context"],
     ) =>
       send({
+        origin: { kind: "user" as const },
         projectId: projection.thread.projectId,
         commandId: CommandId.make(`composer-${messages.length}`),
         threadId,

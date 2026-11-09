@@ -224,6 +224,7 @@ it.effect("streams the owner's thread events after the share and a snapshot", ()
     const events = yield* guestShares.stream(session);
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("owner-message"),
       threadId,
       messageId: MessageId.make("message:owner"),
@@ -260,6 +261,7 @@ it.effect("starts a stream with the runs and items already in the thread", () =>
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("owner-message-before"),
       threadId,
       messageId: MessageId.make("message:before"),
@@ -422,6 +424,7 @@ const ownerRun = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
     type: "message.dispatch",
+    origin: { kind: "user" as const },
     commandId: CommandId.make("owner-message-for-command"),
     threadId,
     messageId: MessageId.make("message:command"),
@@ -857,6 +860,7 @@ it.effect("sends a guest's files as the guest's message and keeps them the guest
     const copied = pending[0]!;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("send-guest-files"),
       threadId,
       messageId: MessageId.make("message:guest-files"),
@@ -937,6 +941,7 @@ it.effect("serves the shared thread's files to its guest, never another thread's
     );
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("owner-image"),
       threadId,
       messageId: MessageId.make("message:owner-image"),
@@ -987,6 +992,7 @@ it.effect("gives a fork's guest the files on messages the fork shows from its so
       );
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`owner:${name}`),
         threadId,
         messageId: MessageId.make(`message:${name}`),
@@ -1162,6 +1168,7 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
     // the window, before the page asks for any image.
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("fork-message"),
       threadId: forkId,
       messageId: MessageId.make("message:fork"),
@@ -1231,6 +1238,7 @@ it.effect("keeps a connected guest's images while other shares come and go", () 
       const { orchestrator, guestShares, credential } = yield* shareThreadFor(id);
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`message:${id}`),
         threadId: id,
         messageId: MessageId.make(`message:${id}`),

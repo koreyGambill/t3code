@@ -650,6 +650,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         streaming: item.type === "assistant_message" && item.streaming,
         ...(item.type === "user_message"
           ? {
+              ...(item.origin ? { origin: item.origin } : {}),
               createdBy: item.createdBy,
               creationSource: item.creationSource,
               ...(item.delegatedCompletion

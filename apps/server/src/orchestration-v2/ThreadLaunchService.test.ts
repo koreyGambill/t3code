@@ -322,6 +322,7 @@ function launchInput(input: {
       ? {}
       : {
           initialMessage: {
+            origin: { kind: "user" as const },
             messageId: MessageId.make(`${input.message}:id`),
             text: input.message,
             attachments: [],
@@ -511,6 +512,7 @@ it.effect("retains automation and sender attribution while a message waits in th
     const scheduledTaskId = ScheduledTaskId.make("scheduled-task:queued");
     const senderThreadId = ThreadId.make("thread:agent-sender");
     const queued = yield* threads.sendToThread({
+      origin: { kind: "user" as const },
       projectId,
       commandId: CommandId.make("command:automation:queued"),
       threadId: launched.threadId,
@@ -531,6 +533,7 @@ it.effect("retains automation and sender attribution while a message waits in th
     assert.equal(message?.text, "Run the audit");
     // A fresh send queues instead of steering, so it needs no steerable run.
     const fresh = yield* threads.sendToThread({
+      origin: { kind: "user" as const },
       projectId,
       commandId: CommandId.make("command:automation:queued-fresh"),
       threadId: launched.threadId,
@@ -626,6 +629,7 @@ it.effect.each([" /COMPACT "])(
         const messageId = MessageId.make("compact-title-conversation-message");
         yield* threads.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId,
           threadId: launched.threadId,
           messageId,
@@ -708,6 +712,7 @@ it.effect("keeps native maintenance commands out of steering and restart message
         const commandId = CommandId.make(`${scenario.name}:message`);
         const dispatch = threads.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId,
           threadId: launched.threadId,
           messageId: MessageId.make(`${scenario.name}:message`),
@@ -1500,6 +1505,7 @@ it.effect.each(["fails", "is interrupted"] as const)(
         );
         yield* Deferred.await(fetchEntered);
         const queued = yield* threads.sendToThread({
+          origin: { kind: "user" as const },
           projectId,
           commandId: CommandId.make(`command:launch:queued-setup-${ending}:follow-up`),
           threadId: launched.threadId,
@@ -1593,6 +1599,7 @@ it.effect.each(["failed", "interrupted"] as const)(
       );
 
       const queued = yield* threads.sendToThread({
+        origin: { kind: "user" as const },
         projectId,
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:send`),
         threadId: launched.threadId,
@@ -1612,6 +1619,7 @@ it.effect.each(["failed", "interrupted"] as const)(
       // A message the user starts does not release it: the held message would
       // run after it in the project checkout.
       yield* threads.sendToThread({
+        origin: { kind: "user" as const },
         projectId,
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:start`),
         threadId: launched.threadId,
@@ -1624,6 +1632,7 @@ it.effect.each(["failed", "interrupted"] as const)(
       });
       yield* threads.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:wake`),
         threadId: launched.threadId,
         messageId: MessageId.make(`message:launch:late-queued-follow-up-${ending}:wake`),
@@ -1640,6 +1649,7 @@ it.effect.each(["failed", "interrupted"] as const)(
       // Nor does the next one, though the run that message started is now the
       // latest and carries no workspace preparation.
       yield* threads.sendToThread({
+        origin: { kind: "user" as const },
         projectId,
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:again`),
         threadId: launched.threadId,
@@ -2059,6 +2069,7 @@ it.effect("schedules an accepted preparing message exactly once across concurren
       });
       yield* threads.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`${input.commandId}:initial-message`),
         threadId: input.threadId,
         messageId,
@@ -2157,6 +2168,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     const input = {
       ...launchInput({ command: "intake-launch", thread: "intake-thread" }),
       initialMessage: {
+        origin: { kind: "user" as const },
         messageId: MessageId.make("intake-first"),
         text: "First [file](t3-context://v1/file/intake-file)",
         context: {
@@ -2249,6 +2261,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.equal((yield* claimedFiles).length, 1);
     const missingThread = yield* ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("intake-no-thread"),
       threadId: ThreadId.make("missing-thread"),
       messageId: MessageId.make("intake-missing"),
@@ -2263,6 +2276,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
 
     const dispatch = ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("intake-dispatch"),
       threadId: input.threadId,
       messageId: MessageId.make("intake-second"),
@@ -2335,6 +2349,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.equal((yield* claimedFiles).length, beforeRejectedEdit);
     assert.deepEqual(yield* fs.readFile(filePath), new Uint8Array([5, 6, 7, 8]));
     const send = ThreadMessageIntake.sendToThread({
+      origin: { kind: "user" as const },
       commandId: CommandId.make("intake-send"),
       projectId,
       threadId: input.threadId,
@@ -2619,6 +2634,7 @@ it.effect("replays an accepted send after the project disables the instance", ()
     );
 
     const sendInput = {
+      origin: { kind: "user" as const },
       commandId: CommandId.make("command:send:retry-after-disable"),
       projectId,
       threadId: created.threadId,

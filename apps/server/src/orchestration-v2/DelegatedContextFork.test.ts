@@ -127,6 +127,7 @@ const startTurn = (threadId: ThreadId, text: string) =>
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make(`${threadId}:${text}`),
       threadId,
       messageId: MessageId.make(`${threadId}:${text}`),

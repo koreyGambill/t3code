@@ -188,6 +188,10 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
           threadId: threadIdForSend,
           message: {
             messageId: messageIdForSend,
+            origin:
+              nextInteractionMode === "default"
+                ? { kind: "system", event: "plan implementation" }
+                : { kind: "user" },
             role: "user",
             text: outgoingMessageText,
             ...(context ? { context } : {}),
@@ -326,6 +330,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
           threadId: nextThreadId,
           message: {
             messageId: newMessageId(),
+            origin: { kind: "system" as const, event: "plan implementation" },
             role: "user",
             text: outgoingImplementationPrompt,
             attachments: [],

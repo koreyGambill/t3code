@@ -222,6 +222,7 @@ it.effect("marks a never-visited thread's first completion unread", () =>
     const dispatch = (id: string) =>
       orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(id),
         threadId,
         messageId: MessageId.make(id),
@@ -284,6 +285,7 @@ const completeAndSnoozeThread = Effect.fn("test.completeAndSnoozeThread")(functi
   });
   yield* orchestrator.dispatch({
     type: "message.dispatch",
+    origin: { kind: "user" as const },
     commandId: CommandId.make(`dispatch-${name}`),
     threadId,
     messageId: MessageId.make(`dispatch-${name}`),
@@ -640,6 +642,7 @@ it.effect(
         VALUES ('obsolete-handoff', ${threadId}, 'old-run', 'old-provider-thread', 'full_thread_summary', 'ready', ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make("dispatch-with-old-history"),
         threadId,
         messageId: MessageId.make("fresh-input"),
@@ -755,6 +758,7 @@ it.effect("implements a proposed plan that the command projection leaves out", (
 
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("implement-plan"),
       threadId,
       messageId: MessageId.make("implement-plan-input"),
@@ -998,6 +1002,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("start-parent-pr"),
       threadId: parentThreadId,
       messageId: MessageId.make("message:parent-pr"),
@@ -1076,6 +1081,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("start-question-parent"),
       threadId: parentThreadId,
       messageId: MessageId.make("message:question-parent"),
@@ -1351,6 +1357,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("question-followup"),
       threadId: task.childThreadId!,
       messageId: MessageId.make("message:question-followup"),
@@ -1690,6 +1697,14 @@ it.effect("commits a reply request with its accepted send and deduplicates retri
     });
     const command = {
       type: "message.dispatch" as const,
+      origin: {
+        kind: "thread" as const,
+        event: "message" as const,
+        title: "Reply sender",
+        threadId: ThreadId.make("thread:reply-sender"),
+        environmentId: EnvironmentId.make("environment:test"),
+        reply: "expected" as const,
+      },
       commandId: CommandId.make("send-reply-admission"),
       threadId,
       senderThreadId: ThreadId.make("thread:reply-sender"),
@@ -1716,7 +1731,7 @@ it.effect("commits a reply request with its accepted send and deduplicates retri
     const accepted = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
       threadId,
     );
-    assert.include(accepted.messages[0]!.text, '[Thread: "thread:reply-sender"]');
+    assert.deepEqual(accepted.messages[0]!.origin, command.origin);
     assert.include(accepted.messages[0]!.text, "Please reply");
     // No caller-side follower registration runs before the server goes away.
     assert.deepEqual(
@@ -1855,6 +1870,7 @@ it.effect("admits idle check-ins only for an idle main with at most one working 
       if ("runStatus" in scenario) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make(`seed:${threadId}`),
           threadId,
           messageId: MessageId.make(`seed:${threadId}`),
@@ -1912,6 +1928,7 @@ it.effect("admits idle check-ins only for an idle main with at most one working 
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(`seed:${childThreadId}`),
             threadId: childThreadId,
             messageId: MessageId.make(`seed:${childThreadId}`),
@@ -2079,6 +2096,7 @@ it.effect("admits idle check-ins only for an idle main with at most one working 
       const beforeSequence = yield* orchestrator.getThreadEventSequence(threadId);
       const command = {
         type: "message.dispatch" as const,
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`checkin:${threadId}`),
         threadId,
         idleCheckin: true,
@@ -2150,6 +2168,7 @@ it.effect("refuses advisory steering when a turn became idle or requires interru
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`seed:${threadId}`),
         threadId,
         messageId: MessageId.make(`seed:${threadId}`),
@@ -2242,6 +2261,7 @@ it.effect("refuses advisory steering when a turn became idle or requires interru
       });
       const command = {
         type: "message.dispatch" as const,
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`advisory:${threadId}`),
         threadId,
         messageId: MessageId.make(`advisory:${threadId}`),

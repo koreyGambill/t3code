@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -425,7 +426,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const coarsePointer = useMediaQuery({ pointer: "coarse" });
-  const senderThreadId = row.message.senderThreadId;
+  const userMessage = resolveUserMessagePresentation(row.message);
+  const sender = userMessage.sender;
   const resources = selectMessageImageResources(row.message.attachments);
   const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
   const [projectPreviews] = useState(createMessageAttachmentPreviewProjector);
@@ -450,18 +452,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const userMessage = resolveUserMessagePresentation(row.message);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   // The user's own messages carry a sender when they bring back a side chat or fork.
-  const senderShell = useQuietThreadShell(
-    senderThreadId
-      ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
-      : null,
-  );
-  const senderLabel = senderShell?.title.trim() || "Agent";
+  const senderShell = useQuietThreadShell(sender ?? null);
+  const senderLabel = sender?.title.trim() || senderShell?.title.trim() || "Agent";
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
@@ -783,8 +780,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         floatActions ? "flex-wrap" : "shrink-0",
       )}
     >
-      {senderThreadId && !folded ? (
-        <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+      {sender && !folded ? (
+        <InlineButton
+          render={
+            sender.environmentId === ctx.activeThreadEnvironmentId ? undefined : (
+              <Link to="/$environmentId/$threadId" params={buildThreadRouteParams(sender)} />
+            )
+          }
+          onClick={
+            sender.environmentId === ctx.activeThreadEnvironmentId
+              ? () => ctx.onOpenThread(sender.threadId)
+              : undefined
+          }
+          tone="muted"
+        >
           {senderShell?.lineage.sideChat ? "Open side chat" : "Open thread"}
         </InlineButton>
       ) : null}
@@ -829,8 +838,21 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
-      {folded && senderThreadId ? (
-        <InlineButton role="link" onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+      {folded && sender ? (
+        <InlineButton
+          role="link"
+          render={
+            sender.environmentId === ctx.activeThreadEnvironmentId ? undefined : (
+              <Link to="/$environmentId/$threadId" params={buildThreadRouteParams(sender)} />
+            )
+          }
+          onClick={
+            sender.environmentId === ctx.activeThreadEnvironmentId
+              ? () => ctx.onOpenThread(sender.threadId)
+              : undefined
+          }
+          tone="muted"
+        >
           {senderLabel}
         </InlineButton>
       ) : null}

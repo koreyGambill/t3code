@@ -235,6 +235,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? {}
             : {
                 initialMessage: {
+                  origin:
+                    caller === undefined
+                      ? { kind: "system", event: "agent API" }
+                      : {
+                          kind: "thread",
+                          event: "message",
+                          reply: "not expected",
+                          title: caller.title,
+                          threadId: caller.id,
+                          environmentId: scope.environmentId,
+                        },
                   messageId,
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                   text: input.message ?? "",

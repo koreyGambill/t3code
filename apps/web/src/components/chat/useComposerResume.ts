@@ -128,6 +128,7 @@ export function useComposerResume(input: ComposerResumeInput) {
           ...(modelSelection ? { modelSelection } : {}),
           message: {
             messageId: newMessageId(),
+            origin: { kind: "system" as const, event: "manual continuation" },
             role: "user",
             text: "Continue where you left off.",
             attachments: [],

@@ -587,6 +587,7 @@ describe("orchestration v2 provider switching", () => {
           const dispatch = (ordinal: number, text: string, selection: ModelSelection) =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make(`regression:${ordinal}`),
               threadId,
               messageId: MessageId.make(`regression:${ordinal}`),
@@ -1092,6 +1093,7 @@ describe("orchestration v2 provider switching", () => {
             const dispatch = (ordinal: number, text: string, selection: ModelSelection) =>
               orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 commandId: CommandId.make(`retry:${ordinal}`),
                 threadId,
                 messageId: MessageId.make(`retry:${ordinal}`),
@@ -1258,6 +1260,7 @@ describe("orchestration v2 provider switching", () => {
             const runToCompletion = Effect.fn("runToCompletion")(function* (ordinal: number) {
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 commandId: CommandId.make(`resume-fallback:${ordinal}`),
                 threadId,
                 messageId: MessageId.make(`resume-fallback:${ordinal}`),
@@ -1404,6 +1407,7 @@ describe("orchestration v2 provider switching", () => {
               }
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 commandId: CommandId.make(`handoff-order:${ordinal}`),
                 threadId,
                 messageId: MessageId.make(`handoff-order:${ordinal}`),
@@ -1518,6 +1522,7 @@ describe("orchestration v2 provider switching", () => {
           const run = Effect.fn("run")(function* (ordinal: number) {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make(`refused-start:${ordinal}`),
               threadId,
               messageId: MessageId.make(`refused-start:${ordinal}`),
@@ -1670,6 +1675,7 @@ describe("orchestration v2 provider switching", () => {
           ) =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make(`command:handoff:${key}`),
               threadId,
               messageId: MessageId.make(`message:handoff:${key}`),
@@ -1834,6 +1840,7 @@ describe("orchestration v2 provider switching", () => {
             });
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make(`command:queued-capability:first:${key}`),
@@ -1848,6 +1855,7 @@ describe("orchestration v2 provider switching", () => {
             yield* worker.drain();
             const queue = orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make(`command:queued-capability:claude:${key}`),
@@ -1944,6 +1952,7 @@ describe("orchestration v2 provider switching", () => {
           ) =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make(`command:queued-steer-provider-switch:${key}`),
@@ -2192,6 +2201,7 @@ describe("orchestration v2 provider switching", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:queued-account-switch:first"),
@@ -2205,6 +2215,7 @@ describe("orchestration v2 provider switching", () => {
           yield* Deferred.await(started);
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:queued-account-switch:second"),
@@ -2331,6 +2342,7 @@ describe("orchestration v2 provider switching", () => {
           const dispatch = (ordinal: number, modelSelection: ModelSelection) =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make(`command:queued-provider-switch:${ordinal}`),
@@ -2617,6 +2629,7 @@ describe("orchestration v2 provider switching", () => {
           const send = (ordinal: number, modelSelection: ModelSelection, attempt = "") =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make(`command:handoff-releases-session:${ordinal}${attempt}`),
@@ -2802,6 +2815,7 @@ describe("orchestration v2 provider switching", () => {
             });
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make("command:checkout-change-background-work:send"),
@@ -2856,6 +2870,7 @@ describe("orchestration v2 provider switching", () => {
             if (variant === "rewind") {
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 createdBy: "user",
                 creationSource: "web",
                 commandId: CommandId.make("command:checkout-change-background-work:before-move"),
@@ -2898,6 +2913,7 @@ describe("orchestration v2 provider switching", () => {
             }
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make("command:checkout-change-background-work:next"),
@@ -3008,6 +3024,7 @@ describe("orchestration v2 provider switching", () => {
             ) =>
               orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 createdBy: "user",
                 creationSource: "web",
                 commandId: CommandId.make(`command:fresh-context:${key}:${name}`),
@@ -3178,6 +3195,7 @@ describe("orchestration v2 provider switching", () => {
           ) =>
             orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               createdBy: "user",
               creationSource: "web",
               commandId: CommandId.make(`command:fresh-context-reserved:${name}`),
@@ -3340,6 +3358,7 @@ describe("orchestration v2 provider switching", () => {
             const dispatch = (text: string, modelSelection: ModelSelection) =>
               orchestrator.dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 commandId: CommandId.make(text),
                 messageId: MessageId.make(text),
                 threadId,
@@ -3368,6 +3387,7 @@ describe("orchestration v2 provider switching", () => {
             yield* Deferred.await(started);
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              origin: { kind: "user" as const },
               commandId: CommandId.make("wake"),
               messageId: MessageId.make("wake"),
               threadId,
@@ -3532,6 +3552,7 @@ describe("orchestration v2 provider switching", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:queued-handoff-rejection:first"),
@@ -3583,6 +3604,7 @@ describe("orchestration v2 provider switching", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:queued-handoff-rejection:claude"),
@@ -3595,6 +3617,7 @@ describe("orchestration v2 provider switching", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:queued-handoff-rejection:later"),
@@ -3866,6 +3889,7 @@ describe("orchestration v2 provider switching", () => {
 
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:provider-switch:legacy-import:failed"),
@@ -3883,6 +3907,7 @@ describe("orchestration v2 provider switching", () => {
           }
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:provider-switch:legacy-import:recovery"),

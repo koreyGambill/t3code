@@ -842,6 +842,13 @@ it.live("persists one origin notification for a remote completion across reply r
       const sends = (yield* Ref.get(seen)).sends;
       expect(sends).toHaveLength(1);
       expect(sends[0]?.replyRequested).toBeUndefined();
+      expect(sends[0]?.origin).toMatchObject({
+        kind: "thread",
+        event: "message",
+        threadId: sender,
+        environmentId: laptop.environmentId,
+        reply: "expected",
+      });
       const rows = yield* a.sql<{
         message_id: string;
         delivered_at: string | null;
@@ -853,9 +860,12 @@ it.live("persists one origin notification for a remote completion across reply r
         environmentId: box.environmentId,
         limits: { runtimeMode: "full-access", interactionMode: "default" },
       });
-      expect(projection.messages[0]?.text).toContain(
-        "t3-thread://v2/environment-box/thread:box-auto",
-      );
+      expect(projection.messages[0]?.origin).toMatchObject({
+        kind: "thread",
+        event: "reply",
+        environmentId: "environment-box",
+        threadId: "thread:box-auto",
+      });
       expect(rows[0]?.message_id).toContain("message:remote-thread-reply:fwd:");
       yield* a.stop;
       const recoveredCommit = yield* Deferred.make<void>();

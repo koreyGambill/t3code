@@ -1,6 +1,8 @@
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -345,7 +347,14 @@ it.effect.each(storageCases)(
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(layerSessions),
+            Layer.provide(
+              Layer.merge(
+                layerSessions,
+                Layer.succeed(ServerEnvironmentIdentity, {
+                  getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:test")),
+                }),
+              ),
+            ),
           ),
         ),
       );

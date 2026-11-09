@@ -1,3 +1,4 @@
+import { renderTurnOriginText } from "@t3tools/provider-core/server/turnOriginText";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -102,9 +103,31 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
   function* (followupResult: string) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
-    const transcript = yield* decodeProviderReplayNdjson(
-      text.replaceAll(queuedFollowupResult, followupResult),
-    );
+    let updatedText = text.replaceAll(queuedFollowupResult, followupResult);
+    const environmentId = EnvironmentId.make("environment:replay");
+    for (const prompt of [delegatedPrompt, cancellationPrompt, queuedFollowupPrompt]) {
+      updatedText = updatedText.replaceAll(
+        JSON.stringify(prompt),
+        JSON.stringify(
+          renderTurnOriginText(
+            {
+              kind: "thread",
+              event: "message",
+              title: "MCP replay parent",
+              threadId: parentThreadId,
+              environmentId:
+                prompt === delegatedPrompt
+                  ? environmentId
+                  : EnvironmentId.make("environment:mcp-replay"),
+              reply: prompt === delegatedPrompt ? "not expected" : "expected",
+            },
+            prompt,
+            environmentId,
+          ),
+        ),
+      );
+    }
+    const transcript = yield* decodeProviderReplayNdjson(updatedText);
     // The recording ends when the recorder closes the app-server while the parent
     // turn is still open. This test keeps acting as that parent afterwards, and
     // replaying the exit would kill the shared process and fail the parent run.
@@ -278,6 +301,7 @@ describe("orchestrator MCP toolkit", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:mcp-replay-parent:start"),

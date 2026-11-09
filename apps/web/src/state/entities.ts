@@ -406,7 +406,7 @@ export function selectThreadRelationshipShells(
       named.add(transfer.targetThreadId);
     }
     for (const message of projection.messages ?? []) {
-      if (message.senderThreadId !== undefined) named.add(message.senderThreadId);
+      if (message.origin && "threadId" in message.origin) named.add(message.origin.threadId);
       if (message.notification?.source.kind === "thread_reply")
         named.add(message.notification.source.threadId);
     }

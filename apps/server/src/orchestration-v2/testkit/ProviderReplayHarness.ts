@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -367,8 +369,11 @@ export function layerWithRegistry<Error>(
   const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
     Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer, layerStores)),
   );
+  const layerEnvironmentIdentity = Layer.succeed(ServerEnvironmentIdentity, {
+    getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:replay")),
+  });
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-    Layer.provide(IdAllocator.layer),
+    Layer.provide(Layer.merge(IdAllocator.layer, layerEnvironmentIdentity)),
   );
   const layerPersistence = Layer.mergeAll(
     layerStores,
@@ -416,6 +421,7 @@ export function layerWithRegistry<Error>(
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerEnvironmentIdentity,
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -432,7 +438,9 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
+    Layer.provide(
+      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerEnvironmentIdentity),
+    ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
@@ -488,6 +496,9 @@ export function layerWithRegistry<Error>(
         layerRunExecutionServiceProvided,
         layerServerSettings,
         ThreadForkService.layer,
+        Layer.succeed(ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:replay")),
+        }),
       ),
     ),
   );
@@ -506,6 +517,11 @@ export function layerWithRegistry<Error>(
   const layerContinuationWorkerProvided =
     options.runContinuationWorker === true
       ? ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.succeed(ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:replay")),
+            }),
+          ),
           Layer.provide(
             Layer.mergeAll(
               layerContinuationRequests,

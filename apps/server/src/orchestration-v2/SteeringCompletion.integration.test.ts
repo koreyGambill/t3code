@@ -185,6 +185,7 @@ it.effect.each(
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("first"),
           threadId,
           messageId: MessageId.make("message:first"),
@@ -275,6 +276,7 @@ it.effect.each(
         }
         const dispatchSteer = orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("steer"),
           threadId,
           messageId,
@@ -634,6 +636,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     );
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("first"),
       threadId,
       messageId: MessageId.make("message:first"),
@@ -686,6 +689,7 @@ it.effect("steers a delegated task question notice into the running parent turn"
         };
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("question-wake"),
           threadId,
           messageId,
@@ -722,6 +726,7 @@ it.effect("sends a selected held message once and preserves the remaining queue 
         yield* Effect.forEach(["queued-first", "selected", "queued-last"], (text) =>
           orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(text),
             threadId,
             messageId: MessageId.make(`message:${text}`),
@@ -816,6 +821,7 @@ it.effect("force sends multiple queued messages and can force send a requeued me
         const queue = (text: string, commandId: string) =>
           orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(commandId),
             threadId,
             messageId: MessageId.make(`message:${text}`),
@@ -886,6 +892,7 @@ it.effect("keeps a message queued when send now races with a running turn", () =
         const threadId = yield* startFirstTurn;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("queue"),
           threadId,
           messageId: MessageId.make("message:queued"),
@@ -933,6 +940,7 @@ it.effect(
             orchestrator
               .dispatch({
                 type: "message.dispatch",
+                origin: { kind: "user" as const },
                 commandId: CommandId.make(id),
                 threadId,
                 messageId: MessageId.make(`message:${id}`),
@@ -1007,6 +1015,7 @@ it.effect("restarts the turn for an image when native steering takes text only",
         const threadId = yield* startFirstTurn;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("steer-image"),
           threadId,
           messageId: MessageId.make("message:steer-image"),
@@ -1052,6 +1061,7 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
         const first = started[0]!;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("steer"),
           threadId,
           messageId: MessageId.make("message:steer"),
@@ -1119,6 +1129,7 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
         const messageId = MessageId.make("message:steer");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("steer"),
           threadId,
           messageId,
@@ -1236,6 +1247,7 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
 
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("steer"),
           threadId,
           messageId: MessageId.make("message:steer"),
@@ -1306,6 +1318,7 @@ it.effect("steers a promoted queued message with the selection it was queued wit
         const threadId = yield* startFirstTurn;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("queued"),
           threadId,
           messageId: MessageId.make("message:queued"),
@@ -1351,6 +1364,7 @@ it.effect("marks the model switch on a promoted message that restarts the turn",
         const threadId = yield* startFirstTurn;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("queued"),
           threadId,
           messageId: MessageId.make("message:queued"),
@@ -1397,6 +1411,7 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
         const first = started[0]!;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("queued"),
           threadId,
           messageId: MessageId.make("message:queued"),
@@ -1461,6 +1476,7 @@ it.effect("queues a plain send behind the stopped queue and releases its hold", 
         const send = (id: string, delivery: "queue" | "auto") =>
           orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(id),
             threadId,
             messageId: MessageId.make(`message:${id}`),
@@ -1516,6 +1532,7 @@ const goalHarness = Effect.fn("goalHarness")(function* (name: string) {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(id),
         threadId: ThreadId.make(`thread:${name}`),
         messageId: MessageId.make(`message:${id}`),
@@ -1838,6 +1855,7 @@ it.effect("a side chat that opens with /goal gets its context on the next questi
         const ask = (id: string, text: string) =>
           orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(id),
             threadId: sideChatId,
             messageId: MessageId.make(`message:${id}`),

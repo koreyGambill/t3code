@@ -235,6 +235,7 @@ it.effect.each([
           const parentRunning = yield* turnRunning();
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("start-parent"),
             threadId: parentThreadId,
             messageId: MessageId.make("message:start-parent"),

@@ -170,6 +170,7 @@ describe("history loading", () => {
           threadId: THREAD_ID,
           message: {
             messageId: MessageId.make("message"),
+            origin: { kind: "user" },
             role: "user",
             text: "Send while history loads",
             attachments: [],

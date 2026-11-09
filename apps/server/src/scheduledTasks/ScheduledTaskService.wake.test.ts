@@ -117,7 +117,7 @@ it.effect.each([
       yield* f.tick;
       const sent = yield* Ref.get(f.sends);
       expect(sent).toHaveLength(1);
-      expect(sent[0]?.text).toContain("Wake condition fired:");
+      expect(sent[0]?.origin).toMatchObject({ kind: "wake" });
       expect((yield* service.list()).tasks[0]?.enabled).toBe(false);
       yield* TestClock.adjust("2 minutes");
       yield* f.tick;

@@ -516,6 +516,7 @@ export function useComposerSend(input: ComposerSendInput) {
             threadId: activeThread.id,
             message: {
               messageId: newMessageId(),
+              origin: { kind: "user" as const },
               role: "user",
               attachments: [],
               ...withMessageContext({
@@ -1412,6 +1413,7 @@ export function useComposerSend(input: ComposerSendInput) {
           threadId: threadIdForSend,
           message: {
             messageId: messageIdForSend,
+            origin: { kind: "user" as const },
             role: "user",
             attachments: turnAttachmentsResult.value,
             ...withMessageContext({

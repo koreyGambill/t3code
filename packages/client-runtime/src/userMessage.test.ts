@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  EnvironmentId,
+  GuestMessageId,
+  ScheduledTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -223,10 +229,20 @@ describe("resolveUserMessagePresentation", () => {
         role: "user",
         createdBy: "agent",
         creationSource: "server",
-        senderThreadId: "thread:helper",
-        text: '[Thread: "Helper"]\n\nDone.',
+        origin: {
+          kind: "thread",
+          event: "message",
+          title: "Helper",
+          threadId: ThreadId.make("thread:helper"),
+          environmentId: EnvironmentId.make("local"),
+        },
+        text: "from: user\nDone.",
       }),
-    ).toMatchObject({ attribution: "agent", text: "Done." });
+    ).toMatchObject({
+      attribution: "agent",
+      text: "from: user\nDone.",
+      sender: { title: "Helper", threadId: "thread:helper" },
+    });
     expect(
       resolveUserMessagePresentation({
         role: "user",
@@ -238,7 +254,7 @@ describe("resolveUserMessagePresentation", () => {
     ).toMatchObject({ attribution: "agent" });
   });
 
-  it("recovers the triggering automation from older scheduler message ids", () => {
+  it("preserves raw historical schedule messages without inferring an origin", () => {
     for (const trigger of ["scheduled", "manual"]) {
       expect(
         resolveUserMessagePresentation({
@@ -248,9 +264,9 @@ describe("resolveUserMessagePresentation", () => {
           text: legacyText,
         }),
       ).toEqual({
-        text: "Check for crashes.\n",
-        attribution: "automation",
-        scheduledTaskId: "task:daily-audit",
+        text: legacyText,
+        attribution: null,
+        scheduledTaskId: undefined,
       });
     }
   });

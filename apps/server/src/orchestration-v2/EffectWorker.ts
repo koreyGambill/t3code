@@ -277,7 +277,8 @@ export const layerExecutor: Layer.Layer<
                     const messageId = effect.request.messageId;
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
-                    if (message === undefined || run === undefined) return yield* error;
+                    if (message === undefined || run === undefined || message.origin === undefined)
+                      return yield* error;
                     // Notifications must be queued messages.
                     const queued =
                       message.delegatedCompletion !== undefined ||
@@ -286,6 +287,7 @@ export const layerExecutor: Layer.Layer<
                     yield* threads
                       .dispatch({
                         type: "message.dispatch",
+                        origin: message.origin,
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                         threadId: effect.threadId,
                         messageId: message.id,

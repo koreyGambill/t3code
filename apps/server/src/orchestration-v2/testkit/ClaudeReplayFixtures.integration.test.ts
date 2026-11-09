@@ -80,6 +80,7 @@ describe("Claude Agent SDK replay fixtures", () => {
         const refused = yield* orchestrator
           .dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:subagent:message-native-child"),

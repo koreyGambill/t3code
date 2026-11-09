@@ -2243,6 +2243,7 @@ export const layerWsRpc = (
                       ? {}
                       : {
                           initialMessage: {
+                            origin: input.initialMessage.origin,
                             ...(input.initialMessage.messageId === undefined
                               ? {}
                               : { messageId: input.initialMessage.messageId }),

@@ -469,6 +469,7 @@ function dispatchMessageCommand(input: {
 }): OrchestrationV2Command {
   return {
     type: "message.dispatch",
+    origin: { kind: "user" },
     createdBy: input.createdBy ?? "user",
     creationSource: input.creationSource ?? "web",
     commandId: input.commandId,

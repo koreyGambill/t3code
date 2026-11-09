@@ -63,6 +63,7 @@ export function limitRecoveryCommand(
   const deliveryIdentity = `${identity}:${recovery.requestId ?? "legacy"}`;
   return {
     type: "message.dispatch",
+    origin: { kind: "system", event: "usage-limit recovery" },
     commandId: CommandId.make(`limit-resume:${deliveryIdentity}`),
     messageId: MessageId.make(`limit-resume:${deliveryIdentity}`),
     threadId: thread.id,

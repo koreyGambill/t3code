@@ -138,7 +138,13 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
         {
           createdBy: "agent",
           creationSource: "provider",
-          senderThreadId: "thread:lead",
+          origin: {
+            kind: "thread",
+            event: "message",
+            title: "Release lead",
+            threadId: "thread:lead",
+            environmentId: "environment:test",
+          },
         },
       ],
       [
