@@ -195,3 +195,9 @@ keyboard repeat; if repeat is disabled, use two presses or the application menu.
 Change **Settings → General → Confirmations → Quit shortcut** to **Direct** for a
 single press or **Double press** for two presses only. Choosing **Quit** from the
 application menu always quits immediately.
+
+Toggle the thread sidebar with `mod+alt+i` (`threadContext.toggle`). It follows the
+focused tile. Pin it to keep one thread while you switch tiles or conversations.
+The sidebar remembers its open state and width on this device. Its collapsible
+sections contain Marks, Related threads, Details, Environments, Context and Ticket.
+The full Workspace remains available from the tile menu.

@@ -1,4 +1,4 @@
-import { ThreadEnvironmentsDetails } from "../xwing/ThreadEnvironments";
+import { ThreadDetailsLocation } from "./ThreadDetailsDestination";
 import { openChangeThreadFolder } from "./changeThreadFolderDialogState";
 import { useAtomValue } from "@effect/atom-react";
 import { changeThreadFolder } from "../../state/xwingEnvironments";
@@ -127,7 +127,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   };
 
   return (
-    <ThreadDetailsCard
+    <ThreadDetailsLocation
       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor}
       handle={props.handle}
@@ -259,9 +259,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   </ThreadDetailsControl>
                 </ThreadDetailsSection>
               ) : null}
-              {density === "full" && !props.draftId && visible.environments ? (
-                <ThreadEnvironmentsDetails threadRef={activeThreadRef} />
-              ) : null}
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
               ) : null}
@@ -330,6 +327,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           </>
         );
       }}
-    </ThreadDetailsCard>
+    </ThreadDetailsLocation>
   );
 }

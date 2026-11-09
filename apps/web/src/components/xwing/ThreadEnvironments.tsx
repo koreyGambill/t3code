@@ -15,7 +15,6 @@ import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { randomUUID } from "../../lib/utils";
-import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import {
@@ -26,7 +25,6 @@ import {
   xwingEnvironmentsList,
 } from "../../state/xwingEnvironments";
 import { ThreadDetailsControl } from "../chat/ThreadDetailsControl";
-import { ThreadDetailsSection } from "../chat/ThreadDetailsSection";
 import { Badge } from "../ui/badge";
 import { xwingEnvironmentLabel } from "./xwingEnvironments.logic";
 
@@ -294,31 +292,5 @@ function MissingEnvironmentRow({
       available
       <span className="block break-all font-mono">{row.checkoutPath}</span>
     </div>
-  );
-}
-
-export function ThreadEnvironmentsDetails({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
-  const linked = useThreadEnvironmentUsage(threadRef, true);
-  if (!linked.supported || !linked.canRead || linked.usage.data?.length === 0) return null;
-  return (
-    <ThreadDetailsSection
-      headingId="thread-details-environments-heading"
-      title="Environments"
-      showHeading={false}
-    >
-      <ThreadDetailsControl
-        onClick={() => useRightPanelStore.getState().open(threadRef, "environments")}
-      >
-        <Boxes className="size-4 text-muted-foreground" />
-        Environments
-      </ThreadDetailsControl>
-      <div data-thread-details-environments className="max-h-40 overflow-y-auto">
-        <ThreadEnvironmentRows
-          threadRef={threadRef}
-          compact
-          onSelect={(id) => useRightPanelStore.getState().openXwingEnvironment(threadRef, id)}
-        />
-      </div>
-    </ThreadDetailsSection>
   );
 }

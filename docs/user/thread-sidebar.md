@@ -56,12 +56,17 @@ Pick a recent folder, a project, or a linked Xwing environment, or enter a path.
 The thread keeps its history. Its next turn starts a new agent session in that
 folder with the conversation carried over. Finish or stop any work before moving.
 
-The **Environments** tab shows Xwing environments used by the thread and its
-delegated children. Open an environment to see its repositories and apps, open a
-terminal, or review an archive or deletion. The compact list in thread details
-links to the same tab. **Unlink** removes a link to a folder the thread is not
-using. Select it again with **Change folder** to restore the link. Changing folder keeps earlier
-links as history and releases their cleanup protection.
+Open the right thread sidebar with `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows
+and Linux. It follows the focused tile. Pin it to keep one thread while you move
+between tiles or conversations. The open state and width stay on this device.
+The full Workspace remains available for questions, work records and design notes.
+
+The sidebar's **Environments** section shows Xwing environments used by the thread
+and its delegated children. Open an environment to see its repositories and apps,
+open a terminal, or review an archive or deletion. **Unlink** removes a link to a
+folder the thread is not using. Select it again with **Change folder** to restore
+the link. Changing folder keeps earlier links as history and releases their
+cleanup protection.
 
 ### Start in the background
 

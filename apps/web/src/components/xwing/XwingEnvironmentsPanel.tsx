@@ -49,12 +49,12 @@ const isXwingEnvironmentId = Schema.is(XwingEnvironmentId);
 
 export function XwingEnvironmentsPanel({
   threadRef,
-  surfaceId,
+  onSelect,
   selectedId,
   visible,
 }: {
   readonly threadRef: ScopedThreadRef;
-  readonly surfaceId: string;
+  readonly onSelect: (id: string | null) => void;
   readonly selectedId: string | undefined;
   readonly visible: boolean;
 }) {
@@ -93,7 +93,7 @@ export function XwingEnvironmentsPanel({
   );
   const select = (id: string | null) => {
     setCreating(false);
-    useRightPanelStore.getState().selectXwingEnvironment(threadRef, surfaceId, id);
+    onSelect(id);
   };
   const active = inspecting ? detail : list;
   const refresh = () => {

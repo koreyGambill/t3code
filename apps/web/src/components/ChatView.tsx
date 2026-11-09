@@ -278,7 +278,6 @@ import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ImportedSessionProgress } from "./chat/ImportedSessionProgress";
 import { useReviewSupport } from "./reviews/useReviewSupport";
-import { useXwingEnvironmentsSupport } from "../state/xwingEnvironments";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
@@ -295,6 +294,7 @@ import {
   WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { ThreadDetailsDestination } from "./chat/ThreadDetailsDestination";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
@@ -981,9 +981,10 @@ export default function ChatView(props: ChatViewProps) {
   })();
   const activeThreadRef = useActiveThreadRef(activeThread);
   const reviewsSupported = useReviewSupport(activeThreadRef?.environmentId ?? null);
-  const xwingEnvironmentsSupported = useXwingEnvironmentsSupport(
-    activeThreadRef?.environmentId ?? null,
-  );
+  const detailsDestination = use(ThreadDetailsDestination);
+  const detailsInSidebar =
+    detailsDestination?.threadRef.environmentId === activeThreadRef?.environmentId &&
+    detailsDestination?.threadRef.threadId === activeThreadRef?.threadId;
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
@@ -3841,7 +3842,7 @@ export default function ChatView(props: ChatViewProps) {
             />
           ) : null}
 
-          {embedded ? null : (
+          {embedded && !detailsInSidebar ? null : (
             <>
               <BranchRestoreConfirmHost
                 threadKey={activeThreadKey}
@@ -3979,10 +3980,6 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread && activeThreadRef
         ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
         : undefined,
-    onAddEnvironments:
-      activeThreadRef && xwingEnvironmentsSupported
-        ? () => useRightPanelStore.getState().add(activeThreadRef, "environments")
-        : undefined,
     onAddReviews:
       isServerThread && activeThreadRef && reviewsSupported
         ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
@@ -4084,11 +4081,6 @@ export default function ChatView(props: ChatViewProps) {
           onAddInspect={
             isServerThread && activeThreadRef
               ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
-              : undefined
-          }
-          onAddEnvironments={
-            activeThreadRef && xwingEnvironmentsSupported
-              ? () => useRightPanelStore.getState().add(activeThreadRef, "environments")
               : undefined
           }
           onAddReviews={

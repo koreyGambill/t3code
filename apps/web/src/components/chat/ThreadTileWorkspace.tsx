@@ -436,11 +436,6 @@ export function ThreadTileWorkspace(props: {
       run: props.panels.onAddInspect,
     },
     { label: "Notes", enabled: Boolean(props.panels.onAddNotes), run: props.panels.onAddNotes },
-    {
-      label: "Environments",
-      enabled: Boolean(props.panels.onAddEnvironments),
-      run: props.panels.onAddEnvironments,
-    },
     { label: "Diff", enabled: props.panels.diffAvailable, run: props.panels.onAddDiff },
     {
       label: "Pull request",

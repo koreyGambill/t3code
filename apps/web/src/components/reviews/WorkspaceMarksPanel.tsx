@@ -7,7 +7,7 @@ import { persist } from "zustand/middleware";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadMarksGet } from "../../state/threadMarks";
-import { useRightPanelStore } from "../../rightPanelStore";
+import { useThreadContextSidebarStore } from "../../threadContextSidebarStore";
 import type { WorkspaceMark } from "@t3tools/shared/workspaceMarks";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -95,7 +95,7 @@ export function WorkspaceMarksPanel({
   });
   const openEnvironment = (xwingEnvironmentId: string | undefined) => {
     if (xwingEnvironmentId !== undefined)
-      useRightPanelStore.getState().openXwingEnvironment(threadRef, xwingEnvironmentId);
+      useThreadContextSidebarStore.getState().openEnvironments(threadRef, xwingEnvironmentId);
   };
   const sortBy = (field: keyof WorkspaceMark) => {
     setAscending(field === sort ? !ascending : true);

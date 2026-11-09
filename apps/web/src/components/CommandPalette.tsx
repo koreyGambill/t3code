@@ -1,3 +1,4 @@
+import { useThreadContextSidebarStore } from "../threadContextSidebarStore";
 import { openChangeThreadFolder } from "./chat/changeThreadFolderDialogState";
 import { changeThreadFolder } from "../state/xwingEnvironments";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
@@ -1735,6 +1736,19 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (activeThread !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:thread-context",
+      title: "Toggle thread sidebar",
+      searchTerms: ["marks", "related threads", "details", "context", "pin"],
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useThreadContextSidebarStore.getState().toggle();
+      },
+    });
+  }
+
   if (
     activeThread !== null &&
     activeThreadServerConfig?.environment.capabilities.xwingEnvironments === true
@@ -1746,9 +1760,7 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["xwing", "environments", "development environments", "checkouts", "apps"],
       icon: <BoxesIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useRightPanelStore
-          .getState()
-          .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "environments");
+        useThreadContextSidebarStore.getState().openEnvironments();
       },
     });
   }

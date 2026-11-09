@@ -385,10 +385,10 @@ function shellParentThreadId(
 /** Retains unchanged reachable shells so unrelated streams do not re-render the panel. */
 export function selectThreadRelationshipShells(
   threadId: ThreadId,
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "subagents" | "contextTransfers"
-  > | null,
+  projection:
+    | (Pick<OrchestrationV2ThreadProjection, "thread" | "subagents" | "contextTransfers"> &
+        Partial<Pick<OrchestrationV2ThreadProjection, "messages">>)
+    | null,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const named = new Set<string>([threadId]);
@@ -405,12 +405,20 @@ export function selectThreadRelationshipShells(
       named.add(transfer.sourceThreadId);
       named.add(transfer.targetThreadId);
     }
+    for (const message of projection.messages ?? []) {
+      if (message.senderThreadId !== undefined) named.add(message.senderThreadId);
+      if (message.notification?.source.kind === "thread_reply")
+        named.add(message.notification.source.threadId);
+    }
   }
   const current = threads.find((thread) => thread.id === threadId);
   const currentParentId = current === undefined ? null : shellParentThreadId(current);
   if (currentParentId !== null) named.add(currentParentId);
   return threads.filter(
-    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
+    (thread) =>
+      named.has(thread.id) ||
+      shellParentThreadId(thread) === threadId ||
+      (currentParentId !== null && shellParentThreadId(thread) === currentParentId),
   );
 }
 

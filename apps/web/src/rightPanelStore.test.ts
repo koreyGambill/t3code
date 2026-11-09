@@ -80,27 +80,6 @@ describe("rightPanelStore", () => {
       refA,
     ).activeSurfaceId!;
     store.setInspectSection(refA, "tokens", inspectA);
-    store.add(refA, "environments");
-    const environmentsA = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      refA,
-    ).activeSurfaceId!;
-    store.add(refA, "environments");
-    const environmentsB = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      refA,
-    ).activeSurfaceId!;
-    store.selectXwingEnvironment(refA, environmentsA, "a9372dfe2f232044");
-    store.openXwingEnvironment(refA, "a9372dfe2f232044");
-    expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).activeSurfaceId,
-    ).toBe(environmentsA);
-    store.openXwingEnvironment(refA, "56460e7eab92c116");
-    expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.filter(
-        (surface) => surface.kind === "environments",
-      ),
-    ).toHaveLength(3);
     store.add(refA, "reviews");
     const workspaceA = selectThreadRightPanelState(
       useRightPanelStore.getState().byThreadKey,
@@ -156,12 +135,6 @@ describe("rightPanelStore", () => {
     expect(surfaces.find((surface) => surface.id === inspectB)).toMatchObject({
       inspectSection: "loads",
     });
-    expect(surfaces.find((surface) => surface.id === environmentsA)).toMatchObject({
-      xwingEnvironmentId: "a9372dfe2f232044",
-    });
-    expect(surfaces.find((surface) => surface.id === environmentsB)).not.toHaveProperty(
-      "xwingEnvironmentId",
-    );
     expect(surfaces.find((surface) => surface.id === workspaceA)).toMatchObject({
       workspaceSection: "action-items",
     });

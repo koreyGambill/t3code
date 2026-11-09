@@ -106,6 +106,7 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
   { shortcut: modShortcut("b", { altKey: true }), command: "rightPanel.toggle" },
+  { shortcut: modShortcut("i", { altKey: true }), command: "threadContext.toggle" },
   {
     shortcut: modShortcut("d"),
     command: "terminal.split",
