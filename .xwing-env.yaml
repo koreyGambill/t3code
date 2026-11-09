@@ -2,6 +2,9 @@
 # docs/operations/development.md.
 project: t3code
 profiles: [local]
+generated:
+  - apps/mobile/.generated
+  - apps/desktop/dist-electron
 variables:
   T3CODE_PORT: { secret: false }
   T3CODE_WEB_PORT: { secret: false }
