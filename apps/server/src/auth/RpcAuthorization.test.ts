@@ -15,6 +15,7 @@ import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   WS_METHODS,
+  clientRpcRequiredScopes,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -79,16 +80,23 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("allows status observation with read scope and requires operate for source changes", () => {
+  it("treats status source configuration as settings and command sources as terminals", () => {
     expect(requiredScopeForRpcMethod("statusSources.subscribe")).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod("statusSources.snooze")).toBe(AuthOrchestrationOperateScope);
     for (const method of [
       "statusSources.upsert",
       "statusSources.delete",
-      "statusSources.snooze",
       "statusSources.rotateWebhookSecret",
     ]) {
-      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
     }
+    expect(clientRpcRequiredScopes("statusSources.upsert", { kind: "command" })).toEqual([
+      AuthSettingsWriteScope,
+      AuthTerminalOperateScope,
+    ]);
+    expect(clientRpcRequiredScopes("statusSources.upsert", { kind: "http-health" })).toEqual([
+      AuthSettingsWriteScope,
+    ]);
   });
 
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
@@ -227,7 +235,7 @@ it.effect(
       });
       const denied = {
         _tag: "EnvironmentAuthorizationError",
-        requiredPermission: AuthOrchestrationOperateScope,
+        requiredPermission: AuthSettingsWriteScope,
       };
       expect(
         yield* client[WS_METHODS.statusSourcesUpsert]({
@@ -244,7 +252,7 @@ it.effect(
         yield* client[WS_METHODS.statusSourcesSnooze]({ id: "checks", until: null }).pipe(
           Effect.flip,
         ),
-      ).toMatchObject(denied);
+      ).toMatchObject({ ...denied, requiredPermission: AuthOrchestrationOperateScope });
       expect(
         yield* client[WS_METHODS.statusSourcesRotateWebhookSecret]({ id: "checks" }).pipe(
           Effect.flip,

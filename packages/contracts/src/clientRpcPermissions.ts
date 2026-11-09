@@ -83,10 +83,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.monitoringSetDisposition]: AuthOrchestrationOperateScope,
   [WS_METHODS.monitoringRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
-  [WS_METHODS.statusSourcesUpsert]: AuthOrchestrationOperateScope,
-  [WS_METHODS.statusSourcesDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.statusSourcesUpsert]: AuthSettingsWriteScope,
+  [WS_METHODS.statusSourcesDelete]: AuthSettingsWriteScope,
   [WS_METHODS.statusSourcesSnooze]: AuthOrchestrationOperateScope,
-  [WS_METHODS.statusSourcesRotateWebhookSecret]: AuthOrchestrationOperateScope,
+  [WS_METHODS.statusSourcesRotateWebhookSecret]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
@@ -123,6 +123,12 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // A command source runs a shell command on the server, like a terminal.
+  if (
+    method === WS_METHODS.statusSourcesUpsert &&
+    (input as { kind?: unknown } | undefined)?.kind === "command"
+  )
+    return [AuthSettingsWriteScope, AuthTerminalOperateScope];
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];
