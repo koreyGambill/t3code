@@ -11017,7 +11017,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
-                Effect.suspend(() => {
+                Effect.gen(function* () {
                   if (
                     message.type === "system" &&
                     message.subtype === "init" &&
@@ -11035,7 +11035,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                           : typeof prompt === "string"
                             ? prompt
                             : "";
-                      return turnInput.onContextPrepared({
+                      yield* turnInput.onContextPrepared({
                         source:
                           "Claude SDK systemPrompt.append and init.tools; preset harness text unavailable",
                         entries: claudePreparedContextEntries(append),
@@ -11067,7 +11067,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  return yield* handleSdkMessage({ query: querySession, message });
                 }),
               ),
             ),
