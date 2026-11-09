@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import {
   OrchestrationV2TurnItemJson,
   TurnTokenUsage,
@@ -8,6 +10,7 @@ import {
   ThreadContextGetInput,
   type ThreadContextResult,
   type ThreadContextRead,
+  type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -55,14 +58,25 @@ const make = Effect.gen(function* () {
           requested_at: string;
           model: string;
           provider: string;
+          status: OrchestrationV2RunStatus;
+          cwd: string | null;
         }>`
-        SELECT run_id, ordinal, requested_at, provider,
-          COALESCE(json_extract(payload_json, '$.modelSelection.model'), '') AS model
-        FROM orchestration_v2_projection_runs WHERE thread_id=${input.threadId}
+        SELECT r.run_id, r.ordinal, r.requested_at, r.provider, r.status,
+          COALESCE(json_extract(r.payload_json, '$.modelSelection.model'), '') AS model,
+          COALESCE(
+            (SELECT json_extract(s.payload_json, '$.cwd') FROM orchestration_v2_projection_checkpoint_scopes s
+              WHERE s.thread_id=r.thread_id AND s.run_id=r.run_id AND s.kind='root_run' ORDER BY s.created_at DESC LIMIT 1),
+            (SELECT json_extract(s.payload_json, '$.cwd') FROM orchestration_v2_projection_provider_sessions s
+              JOIN orchestration_v2_projection_provider_threads p ON p.provider_session_id=s.provider_session_id
+              WHERE p.provider_thread_id=r.provider_thread_id LIMIT 1)
+          ) AS cwd
+        FROM orchestration_v2_projection_runs r WHERE r.thread_id=${input.threadId}
+          AND status != 'queued'
           AND ${input.beforeOrdinal === undefined ? sql`1` : sql`ordinal < ${input.beforeOrdinal}`}
         ORDER BY ordinal DESC LIMIT ${limit + 1}`;
         const records: ThreadContextResult["records"][number][] = [];
-        let remaining = 160_000;
+        const recordBudget = (input.maxBytes ?? 160_000) - 2048;
+        let remaining = recordBudget;
         let payloadLimited = false;
         for (const row of rows.slice(0, limit)) {
           const runId = RunId.make(row.run_id);
@@ -88,9 +102,17 @@ const make = Effect.gen(function* () {
             const labels =
               event.kind === "search" || event.kind === "knowledge" || !event.paths.length
                 ? [event.label]
-                : event.paths;
+                : event.paths.map((path) => {
+                    const paths = /^[A-Za-z]:[\\/]/.test(row.cwd ?? path)
+                      ? NodePath.win32
+                      : NodePath.posix;
+                    return row.cwd === null ? paths.normalize(path) : paths.resolve(row.cwd, path);
+                  });
             for (const label of labels) {
-              const key = `${event.kind}:${label.slice(0, 512)}`;
+              const repeatable =
+                (event.paths.length > 0 && event.kind !== "search" && event.kind !== "knowledge") ||
+                (event.kind === "resource" && label !== event.toolName);
+              const key = `${repeatable ? event.kind : event.itemId}:${label}`;
               const previous = reads.get(key);
               if (!previous && reads.size >= 64) {
                 truncated = true;
@@ -121,19 +143,26 @@ const make = Effect.gen(function* () {
             return known.length ? known.reduce((sum, value) => sum + value, 0) : null;
           };
           const instructions = yield* footprints.list(input.threadId, runId);
-          const boundedInstructions = instructions.slice(-8).map((footprint) => ({
-            ...footprint,
-            parts: footprint.parts.slice(0, 64).map((part) => ({
-              ...part,
-              key: part.key.slice(0, 512),
-              label: part.label.slice(0, 512),
-            })),
-            injectedTools: footprint.injectedTools?.slice(0, 256),
-            instructionSources: footprint.instructionSources?.slice(0, 64),
-          }));
+          const boundedInstructions = instructions
+            .slice(-8)
+            .map(({ injectedTools, ...footprint }) => ({
+              ...footprint,
+              source: footprint.source.slice(0, 512),
+              parts: footprint.parts.slice(0, 64).map((part) => ({
+                ...part,
+                key: part.key.slice(0, 512),
+                label: part.label.slice(0, 512),
+              })),
+              ...(input.includeInjectedTools === false
+                ? {}
+                : { injectedTools: injectedTools?.slice(0, 256) }),
+              injectedToolCount: footprint.injectedToolCount ?? injectedTools?.length,
+              instructionSources: footprint.instructionSources?.slice(0, 64),
+            }));
           const grouped = [...reads.values()];
           let record: ThreadContextResult["records"][number] = {
             runId,
+            status: row.status,
             ordinal: row.ordinal,
             model: row.model.slice(0, 256),
             providerInstanceId: ProviderInstanceId.make(row.provider),
@@ -143,6 +172,15 @@ const make = Effect.gen(function* () {
             repeatedReads: grouped.reduce((sum, read) => sum + Math.max(0, read.count - 1), 0),
             inputTokens: total("inputTokens"),
             cachedInputTokens: total("cachedInputTokens"),
+            cachedInputTokensStatus:
+              total("cachedInputTokens") === null
+                ? "unavailable"
+                : usage.every(
+                      (value) =>
+                        value?.cachedInputTokens != null && value.usageStatus === "complete",
+                    ) && turns.length <= 100
+                  ? "complete"
+                  : "partial",
             outputTokens: total("outputTokens"),
             usageStatus:
               !usage.length ||
@@ -158,17 +196,27 @@ const make = Effect.gen(function* () {
               instructions.some((item) => item.truncated),
           };
           let size = new TextEncoder().encode(yield* encodeRecord(record)).byteLength;
-          if (size > 160_000) {
+          while (size > recordBudget) {
             record = {
               ...record,
               truncated: true,
-              reads: record.reads.slice(0, 16),
+              reads: record.reads.slice(0, Math.floor(record.reads.length / 2)),
               instructions: record.instructions.slice(-1).map((item) => ({
                 ...item,
                 source: item.source.slice(0, 512),
-                parts: item.parts.slice(0, 16),
-                injectedTools: item.injectedTools?.slice(0, 32),
-                instructionSources: item.instructionSources?.slice(0, 16),
+                parts: item.parts.slice(0, Math.floor(item.parts.length / 2)),
+                ...(item.injectedTools === undefined
+                  ? {}
+                  : {
+                      injectedTools: item.injectedTools.slice(
+                        0,
+                        Math.floor(item.injectedTools.length / 2),
+                      ),
+                    }),
+                instructionSources: item.instructionSources?.slice(
+                  0,
+                  Math.floor(item.instructionSources.length / 2),
+                ),
               })),
             };
             size = new TextEncoder().encode(yield* encodeRecord(record)).byteLength;
@@ -186,7 +234,7 @@ const make = Effect.gen(function* () {
           nextBeforeOrdinal:
             rows.length > limit || payloadLimited ? (records.at(-1)?.ordinal ?? null) : null,
           coverage:
-            "Successful reported tools and inferred shell reads only. Shell paths and sizes do not prove every file was loaded. Combined command output is attributed to each named path. Instruction estimates are UTF-8 bytes / 4; source sizes are filesystem sizes at capture, not tokenizer counts. Hidden harness context and automatic skills may be unavailable. Usage is provider-reported, including cache, and unknown stays unknown. At most 20 runs, 500 items, 64 grouped reads and 8 instruction snapshots per run.",
+            "Successful reported tools and inferred shell reads only. Shell paths and sizes do not prove every file was loaded. Combined command output is attributed to each named path. Instruction estimates are UTF-8 bytes / 4; source sizes are filesystem sizes at capture, not tokenizer counts. Hidden harness context and automatic skills may be unavailable. Input is billed input across model calls, not context size. Cached totals are partial when any provider turn omits cache usage; unknown stays unknown. At most 20 runs, 500 items, 64 grouped reads and 8 instruction snapshots per run.",
         };
       },
       Effect.mapError((cause) =>

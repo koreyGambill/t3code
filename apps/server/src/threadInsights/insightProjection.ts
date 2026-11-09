@@ -52,6 +52,64 @@ function shellCommand(input: string): string {
     : script.replace(/\\(["\\$`])/g, "$1");
 }
 
+function shellReads(command: string): { paths: string[]; search: boolean } {
+  // Infer only literal operands of read commands; shell expansion needs provider telemetry.
+  const tokens =
+    command.match(
+      /\d*[<>]+|(?:[^\s'"\\;&|<>]|\\[\s\S]|'[^']*'|"(?:[^"\\]|\\[\s\S])*")+|&&|\|\||[;&|]+|\n/g,
+    ) ?? [];
+  const paths: string[] = [];
+  let search = false;
+  let words: string[] = [];
+  const collect = () => {
+    const executable = words.shift()?.split("/").at(-1);
+    if (!executable || !/^(?:cat|sed|head|tail|rg|grep|less|more)$/.test(executable)) return;
+    if (executable === "sed" && words.some((word) => /^-(?:[^-]*i|\-in-place)/.test(word))) return;
+    const searching = executable === "rg" || executable === "grep";
+    search ||= searching;
+    let expression = executable === "sed" || searching;
+    for (let index = 0; index < words.length; index++) {
+      const word = words[index]!;
+      if (
+        /^(?:-[ef]|--(?:regexp|file|expression))$/.test(word) ||
+        (/^(?:head|tail)$/.test(executable) && /^(?:-[nc]|--(?:lines|bytes))$/.test(word)) ||
+        (searching &&
+          /^(?:-[mABCD]|--(?:max-count|after-context|before-context|context))$/.test(word))
+      ) {
+        if (/^(?:-[ef]|--(?:regexp|expression))$/.test(word)) expression = false;
+        index++;
+      } else if (word.startsWith("-")) {
+        if (/^(?:-[ef].+|--(?:regexp|expression)=)/.test(word)) expression = false;
+      } else if (expression) expression = false;
+      else if (!/[\u0000$`*?{}]/.test(word) && word !== "-" && !word.endsWith("/"))
+        paths.push(word);
+    }
+  };
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (/^[;&|\n]+$/.test(token)) {
+      collect();
+      words = [];
+    } else if (/^\d*[<>]+$/.test(token)) {
+      index++;
+    } else {
+      words.push(
+        token.replace(
+          /'([^']*)'|"((?:[^"\\]|\\[\s\S])*)"|\\([\s\S])/g,
+          (
+            _match,
+            single: string | undefined,
+            double: string | undefined,
+            escaped: string | undefined,
+          ) => single ?? double?.replace(/\\(["\\$`])/g, "$1") ?? escaped ?? "",
+        ),
+      );
+    }
+  }
+  collect();
+  return { paths, search };
+}
+
 export function projectLoadEvent(
   item: OrchestrationV2TurnItem | OrchestrationV2TurnItemJson,
 ): ThreadLoadEvent | null {
@@ -83,6 +141,16 @@ export function projectLoadEvent(
     ) {
       kind = "resource";
       label = toolName;
+      if (/t3_(?:thread_read|context_read)|thread_workspace_read/.test(toolName)) {
+        const target =
+          typeof item.input === "object" &&
+          item.input !== null &&
+          "threadId" in item.input &&
+          typeof item.input.threadId === "string"
+            ? item.input.threadId
+            : item.threadId;
+        label = `${toolName} ${target}`;
+      }
     } else if (/search|glob|grep/i.test(toolName)) kind = "search";
     else if (
       !/(?:^|[._/])(?:read|read_file|readfile|read_text_file|open_file|view_image)(?:$|[._/])/i.test(
@@ -95,18 +163,13 @@ export function projectLoadEvent(
   } else if (item.type === "command_execution") {
     const command = shellCommand(item.input);
     const knowledge = /(?:^|[\s;&|/])overwing\s+(?:search|context|standards)(?:\s|$)/.test(command);
-    if (!knowledge && !/(?:^|[\s;&|])(?:cat|sed|head|tail|rg|grep|less|more)\s/.test(command))
-      return null;
+    const reads = shellReads(command);
+    if (!knowledge && !reads.paths.length && !reads.search) return null;
     evidence = "inferred";
     toolName = "shell";
-    kind = knowledge ? "knowledge" : /(?:^|[\s;&|])(?:rg|grep)\s/.test(command) ? "search" : "file";
+    kind = knowledge ? "knowledge" : reads.search ? "search" : "file";
     if (knowledge) label = command.slice(0, 512);
-    // Shell commands are evidence of intent, not proof that every named path was loaded.
-    paths = [
-      ...command.matchAll(
-        /(?:["']([^"'\n]+(?:\.[\w-]+|\/SKILL\.md))["']|((?:\.{0,2}\/|~\/)[^\s;|&"']+)|(?:^|\s)([^\s;|&"'<>]+\.[\w-]+)(?=\s|$|[;|&<>]))/g,
-      ),
-    ].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+    paths = knowledge ? [] : reads.paths;
     output = item.outputOmitted ? null : (item.output ?? null);
   } else return null;
   paths = [...new Set(paths)].slice(0, 64).map((path) => path.slice(0, 512));

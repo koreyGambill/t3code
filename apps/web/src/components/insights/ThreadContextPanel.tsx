@@ -41,8 +41,8 @@ export function ThreadContextPanel({
       </header>
       <div className="space-y-3 p-2 text-xs">
         <p className="text-muted-foreground">
-          Context loaded per turn. Highlighted reads repeat or load at least 32 KB. Token counts
-          come from the provider. ? means unavailable.
+          Context records by turn. Highlighted reads repeat or load at least 32 KB. Input tokens are
+          billed input across model calls. ? means unavailable.
         </p>
         {!canRead ? (
           <p>Context access is unavailable.</p>
@@ -56,13 +56,14 @@ export function ThreadContextPanel({
           <details key={record.runId} className="rounded border p-2">
             <summary className="cursor-pointer">
               Turn {record.ordinal} · {record.model} · {record.repeatedReads} repeats
+              {record.status === "rolled_back" ? " · rolled back" : ""}
               {record.truncated ? " · partial record" : ""}
             </summary>
             <table className="mt-2 w-full text-left tabular-nums">
               <caption className="sr-only">Turn {record.ordinal} token usage</caption>
               <thead>
                 <tr>
-                  <th>Input</th>
+                  <th>Billed input across model calls</th>
                   <th>Cached</th>
                   <th>Output</th>
                   <th>Coverage</th>
@@ -71,7 +72,10 @@ export function ThreadContextPanel({
               <tbody>
                 <tr>
                   <td>{number(record.inputTokens)}</td>
-                  <td>{number(record.cachedInputTokens)}</td>
+                  <td>
+                    {number(record.cachedInputTokens)}
+                    {record.cachedInputTokensStatus === "partial" ? " (partial)" : ""}
+                  </td>
                   <td>{number(record.outputTokens)}</td>
                   <td>{record.usageStatus}</td>
                 </tr>
@@ -124,9 +128,9 @@ export function ThreadContextPanel({
                 </tr>
               </thead>
               <tbody>
-                {record.reads.map((read) => (
+                {record.reads.map((read, index) => (
                   <tr
-                    key={`${read.kind}:${read.label}`}
+                    key={`${read.kind}:${read.label}:${index}`}
                     className={
                       read.count > 1 || (read.outputBytes ?? 0) >= 32000
                         ? "text-warning-foreground"

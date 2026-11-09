@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { IsoDateTime, NonNegativeInt, RunId, ThreadId, TurnItemId } from "./baseSchemas.ts";
+import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
 
 export const InstructionFootprintPart = Schema.Struct({
   key: Schema.String,
@@ -103,6 +104,7 @@ export const ThreadContextRead = Schema.Struct({
 export type ThreadContextRead = typeof ThreadContextRead.Type;
 export const TurnContextRecord = Schema.Struct({
   runId: RunId,
+  status: OrchestrationV2RunStatus,
   ordinal: NonNegativeInt,
   model: Schema.String,
   providerInstanceId: ProviderInstanceId,
@@ -112,6 +114,7 @@ export const TurnContextRecord = Schema.Struct({
   repeatedReads: NonNegativeInt,
   inputTokens: Schema.NullOr(NonNegativeInt),
   cachedInputTokens: Schema.NullOr(NonNegativeInt),
+  cachedInputTokensStatus: Schema.Literals(["complete", "partial", "unavailable"]),
   outputTokens: Schema.NullOr(NonNegativeInt),
   usageStatus: Schema.Literals(["complete", "partial", "unavailable"]),
   truncated: Schema.Boolean,
@@ -121,6 +124,10 @@ export const ThreadContextGetInput = Schema.Struct({
   threadId: ThreadId,
   beforeOrdinal: Schema.optional(NonNegativeInt),
   limit: Schema.optional(NonNegativeInt.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
+  maxBytes: Schema.optional(
+    NonNegativeInt.check(Schema.isBetween({ minimum: 4000, maximum: 160000 })),
+  ),
+  includeInjectedTools: Schema.optional(Schema.Boolean),
 });
 export type ThreadContextGetInput = typeof ThreadContextGetInput.Type;
 export const ThreadContextResult = Schema.Struct({

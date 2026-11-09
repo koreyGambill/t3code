@@ -68,7 +68,7 @@ describe("load event projection", () => {
         toolName: "mcp__t3_code__thread_workspace_read",
         input: { threadId: "other" },
       }),
-    ).toMatchObject({ kind: "resource", label: "mcp__t3_code__thread_workspace_read" });
+    ).toMatchObject({ kind: "resource", label: "mcp__t3_code__thread_workspace_read other" });
     expect(projectLoadEvent({ ...read, toolName: "write_file" })).toBeNull();
     for (const [input, path] of [
       ["/usr/bin/zsh -lc 'cat /repo/AGENTS.md'", "/repo/AGENTS.md"],
@@ -84,6 +84,28 @@ describe("load event projection", () => {
         evidence: "inferred",
         paths: [path],
       });
+    }
+    for (const [input, paths] of [
+      ["git log | head -5", []],
+      ["git log | tail -20", []],
+      ["git log | grep release.md", []],
+      ["cd /other/repo && cat README.md", ["README.md"]],
+      ["cat README.md > /tmp/output.md", ["README.md"]],
+      ["cat README.md >> /tmp/output.md", ["README.md"]],
+      ["cat README.md 2> /tmp/errors.log", ["README.md"]],
+      ["cat README.md\ncat AGENTS.md", ["README.md", "AGENTS.md"]],
+      ["sed -i 's/a/b/' /repo/README.md", []],
+      ["sed --in-place=.bak 's/a/b/' /repo/README.md", []],
+      ["/usr/bin/cat README.md", ["README.md"]],
+      ["head -5 README.md", ["README.md"]],
+      ["rg 'release.md' README.md", ["README.md"]],
+      ["cat README.md | head -5", ["README.md"]],
+    ] as const) {
+      expect(
+        projectLoadEvent({ ...base, type: "command_execution", input, output: "text" })?.paths ??
+          [],
+        input,
+      ).toEqual(paths);
     }
     expect(
       projectLoadEvent({
