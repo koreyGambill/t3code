@@ -128,9 +128,9 @@ export function ThreadContextPanel({
                 </tr>
               </thead>
               <tbody>
-                {record.reads.map((read, index) => (
+                {record.reads.map((read) => (
                   <tr
-                    key={`${read.kind}:${read.label}:${index}`}
+                    key={read.key}
                     className={
                       read.count > 1 || (read.outputBytes ?? 0) >= 32000
                         ? "text-warning-foreground"

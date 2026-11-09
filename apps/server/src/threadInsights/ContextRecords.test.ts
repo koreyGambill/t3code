@@ -102,6 +102,9 @@ it.effect(
         usageStatus: "unavailable",
         truncated: false,
       });
+      expect(new Set(result.records[0]?.reads.map((read) => read.key)).size).toBe(
+        result.records[0]?.reads.length,
+      );
       expect(result.records[0]?.reads).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

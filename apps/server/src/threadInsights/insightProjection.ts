@@ -64,7 +64,7 @@ function shellReads(command: string): { paths: string[]; search: boolean } {
   const collect = () => {
     const executable = words.shift()?.split("/").at(-1);
     if (!executable || !/^(?:cat|sed|head|tail|rg|grep|less|more)$/.test(executable)) return;
-    if (executable === "sed" && words.some((word) => /^-(?:[^-]*i|\-in-place)/.test(word))) return;
+    if (executable === "sed" && words.some((word) => /^-(?:[^-]*i|-in-place)/.test(word))) return;
     const searching = executable === "rg" || executable === "grep";
     search ||= searching;
     let expression = executable === "sed" || searching;

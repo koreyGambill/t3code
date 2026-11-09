@@ -474,16 +474,14 @@ it.effect("retries a context proposal after a concurrent Workspace edit", () =>
                               currentRevision: 1,
                             }),
                           )
-                        : workspace
-                            .get({ threadId: input.threadId })
-                            .pipe(
-                              Effect.map((current) => ({
-                                threadId: input.threadId,
-                                revision: current.revision + 1,
-                                groups: current.groups,
-                                items: [],
-                              })),
-                            ),
+                        : workspace.get({ threadId: input.threadId }).pipe(
+                            Effect.map((current) => ({
+                              threadId: input.threadId,
+                              revision: current.revision + 1,
+                              groups: current.groups,
+                              items: [],
+                            })),
+                          ),
                     ),
                   ),
               } satisfies ThreadWorkspace.ThreadWorkspace["Service"];

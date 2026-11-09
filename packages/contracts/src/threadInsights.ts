@@ -95,6 +95,7 @@ export class ThreadInsightsError extends Schema.TaggedError<ThreadInsightsError>
 ) {}
 
 export const ThreadContextRead = Schema.Struct({
+  key: Schema.String,
   kind: ThreadLoadEvent.fields.kind,
   label: Schema.String,
   count: NonNegativeInt,

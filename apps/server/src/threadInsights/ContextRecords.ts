@@ -119,6 +119,7 @@ const make = Effect.gen(function* () {
                 continue;
               }
               reads.set(key, {
+                key,
                 kind: event.kind,
                 label: label.slice(0, 512),
                 count: (previous?.count ?? 0) + 1,
@@ -160,7 +161,7 @@ const make = Effect.gen(function* () {
               instructionSources: footprint.instructionSources?.slice(0, 64),
             }));
           const grouped = [...reads.values()];
-          let record: ThreadContextResult["records"][number] = {
+          const record: ThreadContextResult["records"][number] = {
             runId,
             status: row.status,
             ordinal: row.ordinal,
@@ -197,8 +198,7 @@ const make = Effect.gen(function* () {
           };
           let size = new TextEncoder().encode(yield* encodeRecord(record)).byteLength;
           while (size > recordBudget) {
-            record = {
-              ...record,
+            Object.assign(record, {
               truncated: true,
               reads: record.reads.slice(0, Math.floor(record.reads.length / 2)),
               instructions: record.instructions.slice(-1).map((item) => ({
@@ -218,7 +218,7 @@ const make = Effect.gen(function* () {
                   Math.floor(item.instructionSources.length / 2),
                 ),
               })),
-            };
+            });
             size = new TextEncoder().encode(yield* encodeRecord(record)).byteLength;
           }
           if (records.length && size > remaining) {
