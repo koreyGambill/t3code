@@ -6,7 +6,7 @@ Follow its tool link for history.
 
 Open **Settings > Status sources**, select an environment, and choose **Add source**. Checks run
 from that environment's server, so `127.0.0.1` refers to the server's machine. Configuration
-requires the **operate** permission. Agents can read status but cannot change sources or run
+requires the **settings** permission; snoozing needs **operate**. Agents can read status but cannot change sources or run
 commands through them.
 
 ## Add Stormwing
@@ -30,8 +30,7 @@ command and headers intact when those fields are blank. Enter `{}` to clear save
 
 A **Local command** source runs a command on the server with a timeout. It can print the same
 JSON status format as a Wing status endpoint. Otherwise, exit code 0 means OK and any other exit
-code means failed. Command sources can only be managed from Settings by a connection with the
-operate permission.
+code means failed. Adding or editing a command source also needs the **terminal** permission.
 
 A **Signed webhook** source accepts pushed status. Save it, generate a signing secret, and copy
 the endpoint and secret before closing. Replacing the secret invalidates the previous one.
