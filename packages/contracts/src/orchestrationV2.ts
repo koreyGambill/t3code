@@ -4405,7 +4405,14 @@ export const OrchestrationV2RpcSchemas = {
     output: OrchestrationV2SearchThreadResult,
   },
   dispatchCommand: {
-    input: OrchestrationV2Command,
+    input: OrchestrationV2Command.check(
+      Schema.makeFilter(
+        (command) =>
+          command.type !== "thread.metadata.update" ||
+          command.linkDevelopmentEnvironments === undefined ||
+          "Environment discovery links are set by the server.",
+      ),
+    ),
     output: OrchestrationV2DispatchCommandResult,
   },
   getTurnDiff: {

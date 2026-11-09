@@ -26,6 +26,24 @@ describe("WebSocket RPC contracts", () => {
       ),
     ).toBe(true);
     expect(
+      Exit.isFailure(
+        decode({
+          type: "thread.metadata.update",
+          commandId: "forged-environment-link",
+          threadId: "thread-1",
+          linkDevelopmentEnvironments: [
+            {
+              xwingEnvironmentId: "0123abcd",
+              repositorySource: "/repo",
+              checkoutPath: "/etc",
+              number: 1,
+              name: "forged",
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
       Exit.isSuccess(
         decode({
           type: "checkpoint.rollback",

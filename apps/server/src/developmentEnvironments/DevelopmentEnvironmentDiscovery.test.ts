@@ -231,7 +231,11 @@ it.effect(
           [id, [checkout]],
         ],
       );
-      assert.deepEqual(yield* service.writableRoots(id, null), [checkout, `${source}/.git`]);
+      assert.deepEqual(yield* service.writableRoots(id, null), [
+        checkout,
+        `${source}/.git`,
+        `${source}/.git/worktrees/repo`,
+      ]);
       yield* service.refresh(id);
       assert.equal(commands.length, 2);
       threads.set(id, thread());
@@ -310,9 +314,21 @@ it.effect(
       assert.deepEqual(yield* service.writableRoots(id, t3Checkout), [
         checkout,
         `${source}/.git`,
+        `${source}/.git/worktrees/repo`,
         t3Checkout,
+        `${source}/.git/worktrees/t3-worktree`,
       ]);
-      assert.deepEqual(yield* service.writableRoots(id, other), [checkout, `${source}/.git`]);
+      assert.deepEqual(yield* service.writableRoots(id, other), [
+        checkout,
+        `${source}/.git`,
+        `${source}/.git/worktrees/repo`,
+      ]);
+      const metadata = `${source}/.git/worktrees/repo`;
+      const outsideMetadata = `${root}/outside-metadata`;
+      yield* fs.rename(metadata, outsideMetadata);
+      yield* fs.writeFileString(`${outsideMetadata}/commondir`, `${source}/.git\n`);
+      yield* fs.symlink(outsideMetadata, metadata);
+      assert.deepEqual(yield* service.writableRoots(id, null), []);
       yield* fs.remove(checkout, { recursive: true });
       assert.deepEqual(yield* service.writableRoots(id, null), []);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),

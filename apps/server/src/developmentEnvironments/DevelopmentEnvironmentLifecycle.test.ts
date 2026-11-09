@@ -51,6 +51,7 @@ interface ThreadFixture {
   readonly runStatus?: string;
   readonly background?: boolean;
   readonly terminal?: boolean;
+  readonly linked?: boolean;
 }
 
 /** Xwing's side as the CLI behaves: holds block deletion, dirty work blocks without discard. */
@@ -227,6 +228,18 @@ const records = (fixture: ThreadFixture) =>
       projectId: PROJECT,
       title: `Thread ${fixture.id}`,
       worktreePath: fixture.worktreePath,
+      linkedDevelopmentEnvironments: fixture.linked
+        ? [
+            {
+              xwingEnvironmentId: ID,
+              repositorySource: "/home/dev/src/app",
+              checkoutPath: `${ROOT}/app`,
+              number: 7,
+              name: "space name",
+              selectedAt: NOW,
+            },
+          ]
+        : [],
       deletedAt: null,
       archivedAt: fixture.archived ? NOW : null,
       settledAt: fixture.settled || fixture.archived ? NOW : null,
@@ -437,6 +450,13 @@ describe("DevelopmentEnvironmentLifecycle", () => {
       { id: "idle", worktreePath: `${ROOT}/app`, settled: true },
       { id: "archived", worktreePath: `${ROOT}/app`, archived: true },
       { id: "moved", worktreePath: "/elsewhere", runStatus: "running" },
+      {
+        id: "scratch",
+        worktreePath: "/home/user/code",
+        settled: true,
+        runStatus: "running",
+        linked: true,
+      },
     ];
     return Effect.gen(function* () {
       const assessment = yield* (yield* lifecycle).assessCleanup({
@@ -448,6 +468,7 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         assessment.threads.map((thread) => [thread.threadId, thread.current, thread.block]),
         [
           ["moved", false, null],
+          ["scratch", true, "working"],
           ["unsettled", true, "unsettled"],
           ["turn", true, "working"],
           ["queued", true, "working"],
@@ -477,7 +498,7 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         makeLayer({
           xwing,
           threads,
-          usage: [usage("moved", false)],
+          usage: [usage("moved", false), usage("scratch", true)],
           schedules: [
             schedule("on-idle-thread", "idle", true),
             schedule("in-checkout", null, true),

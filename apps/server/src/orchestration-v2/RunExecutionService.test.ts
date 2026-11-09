@@ -2643,23 +2643,36 @@ it.effect("records a finished run as failed when its ownership check cannot be r
 
 it.effect("does not refresh pull requests for auxiliary or stale provider terminals", () =>
   Effect.gen(function* () {
+    const providerFinished = yield* Deferred.make<void>();
+    const turnFollowUps = yield* Ref.make(0);
     const { observed } = yield* captureRootRunTermination({
       key: "pull-request-refresh:auxiliary",
       shouldFinalizeRun: () => Effect.succeed(true),
+      afterTurn: Ref.update(turnFollowUps, (count) => count + 1),
+      afterStart: () =>
+        Effect.gen(function* () {
+          assert.equal(yield* Ref.get(turnFollowUps), 0);
+          yield* Deferred.succeed(providerFinished, undefined);
+        }),
       events: (ids) =>
-        Stream.fromIterable([
-          rootTerminalEvent(
-            { ...ids, rootProviderTurnId: ProviderTurnId.make("turn:child") },
-            "completed",
+        Stream.fromEffect(Deferred.await(providerFinished)).pipe(
+          Stream.flatMap(() =>
+            Stream.fromIterable([
+              rootTerminalEvent(
+                { ...ids, rootProviderTurnId: ProviderTurnId.make("turn:child") },
+                "completed",
+              ),
+              rootTerminalEvent(
+                { ...ids, rootProviderTurnId: ProviderTurnId.make("turn:previous") },
+                "interrupted",
+              ),
+              rootTerminalEvent(ids, "cancelled"),
+            ]),
           ),
-          rootTerminalEvent(
-            { ...ids, rootProviderTurnId: ProviderTurnId.make("turn:previous") },
-            "interrupted",
-          ),
-          rootTerminalEvent(ids, "cancelled"),
-        ]),
+        ),
     });
     assert.deepEqual(observed, ["run:cancelled", "pull-requests-refreshed"]);
+    assert.equal(yield* Ref.get(turnFollowUps), 1);
   }),
 );
 
@@ -3144,6 +3157,7 @@ function captureRootRunTermination(input: {
     error: RunExecutionService.RunExecutionServiceV2Error,
   ) => Effect.Effect<void>;
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly afterTurn?: Effect.Effect<void>;
   readonly onSubscriptionClose?: Effect.Effect<void>;
   readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
   readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
@@ -3313,6 +3327,7 @@ function captureRootRunTermination(input: {
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
         shouldFinalizeRun: input.shouldFinalizeRun,
+        ...(input.afterTurn === undefined ? {} : { afterTurn: input.afterTurn }),
         ...(input.loadRunInterruptReason === undefined
           ? {}
           : { loadRunInterruptReason: input.loadRunInterruptReason }),

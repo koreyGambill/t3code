@@ -574,6 +574,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly afterTurn?: Effect.Effect<void>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
@@ -893,9 +894,10 @@ export const layer: Layer.Layer<
         };
         // Startup failure and stream shutdown can report the same attempt.
         const refreshAfterTurn = yield* Effect.cached(
-          finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
+          (input.afterTurn ?? Effect.void).pipe(
+            Effect.andThen(finalizationObserver.refreshAfterTurn(input.appThread.projectId)),
             Effect.catchCause((cause) =>
-              Effect.logWarning("failed to refresh pull requests after run termination", {
+              Effect.logWarning("failed to refresh after run termination", {
                 threadId: input.run.threadId,
                 runId: input.run.id,
                 cause,

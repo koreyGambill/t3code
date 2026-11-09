@@ -124,6 +124,8 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
               target === null ||
               source.commonDir !== target.commonDir ||
               target.topLevel !== checkout ||
+              (target.gitDir !== target.commonDir &&
+                !contained(path.join(target.commonDir, "worktrees"), target.gitDir)) ||
               !(yield* registered(target))
             )
               return null;
@@ -136,6 +138,7 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
                 name: environment.name,
               } satisfies OrchestrationV2DevelopmentEnvironmentCheckout,
               commonDir: target.commonDir,
+              gitDir: target.gitDir,
             };
           }).pipe(Effect.orElseSucceed(() => null)),
         { concurrency: 2 },
@@ -290,6 +293,8 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
           for (const checkout of yield* checkouts(environment)) {
             roots.add(checkout.link.checkoutPath);
             roots.add(checkout.commonDir);
+            // Codex protects a worktree's Git metadata unless its exact directory is granted.
+            roots.add(checkout.gitDir);
           }
       }
       if (cwd !== null && thread.worktreePath !== null) {
@@ -306,6 +311,7 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
           ) {
             roots.add(realCwd);
             roots.add(repository.commonDir);
+            roots.add(repository.gitDir);
           }
         }
       }

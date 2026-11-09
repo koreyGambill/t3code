@@ -1,6 +1,19 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  codexAppServerEnvironment,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+it.each([undefined, { CLAUDE_CODE_SESSION_ID: "outer-claude", PATH: "/bin" }])(
+  "clears inherited Claude identity before Codex supplies its tool session: %s",
+  (environment) => {
+    const resolved = codexAppServerEnvironment(environment);
+    assert.equal(resolved.CLAUDE_CODE_SESSION_ID, "");
+    assert.equal(resolved.PATH, environment?.PATH);
+  },
+);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({

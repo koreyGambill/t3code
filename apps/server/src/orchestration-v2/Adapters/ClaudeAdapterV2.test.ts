@@ -264,6 +264,23 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it.each([false, true])("pins the native Claude session identity with resume=%s", (resume) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "current-claude-session",
+      resume,
+      cwd: "/workspace",
+      environment: {
+        CLAUDE_CODE_SESSION_ID: "outer-claude-session",
+        CODEX_THREAD_ID: "outer-codex-session",
+        PATH: "/bin",
+      },
+    });
+    assert.equal(options.env?.CLAUDE_CODE_SESSION_ID, "current-claude-session");
+    assert.equal(options.env?.PATH, "/bin");
+    assert.equal(resume ? options.resume : options.sessionId, "current-claude-session");
+  });
+
   it.each([
     "-- --thinking-display omitted",
     "--thinking-display summarized -- --thinking-display omitted",

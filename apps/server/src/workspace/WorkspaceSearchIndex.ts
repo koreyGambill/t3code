@@ -363,7 +363,7 @@ const isSharedScratchDirectory = Effect.fn("WorkspaceSearchIndex.isSharedScratch
         NodePath.resolve(cwd) === NodePath.resolve(config.value.baseDir, "scratch"))
     );
   },
-  Effect.catch(() => Effect.succeed(false)),
+  Effect.orElseSucceed(() => false),
 );
 
 // Shared scratch roots can contain many repositories; never scan or watch their descendants.
@@ -414,7 +414,7 @@ const makeSharedScratchIndex = (cwd: string) => {
         };
       },
     ),
-    searchContents: (input) =>
+    searchContents: Effect.fn("WorkspaceSearchIndex.searchSharedScratchContents")((input) =>
       Effect.fail(
         new WorkspaceSearchIndexSearchFailed({
           cwd,
@@ -423,7 +423,8 @@ const makeSharedScratchIndex = (cwd: string) => {
           reason: "Choose a repository folder to search file contents.",
         }),
       ),
-    refresh: () => Effect.void,
+    ),
+    refresh: Effect.fn("WorkspaceSearchIndex.refreshSharedScratch")(() => Effect.void),
   });
 };
 

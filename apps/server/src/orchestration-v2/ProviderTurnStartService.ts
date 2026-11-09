@@ -1744,6 +1744,7 @@ export const layer: Layer.Layer<
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
+        ...(Option.isSome(discovery) ? { afterTurn: discovery.value.refresh(input.threadId) } : {}),
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         message: {
@@ -1778,12 +1779,7 @@ export const layer: Layer.Layer<
           const providerTurn = yield* cwd === undefined
             ? start(input)
             : withWorkspaceLease(path.resolve(cwd), start(input));
-          if (providerTurn !== undefined)
-            yield* providerTurn.pipe(
-              Effect.ensuring(
-                Option.isSome(discovery) ? discovery.value.refresh(input.threadId) : Effect.void,
-              ),
-            );
+          if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>
           effect.pipe(

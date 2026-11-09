@@ -379,7 +379,10 @@ const make = Effect.gen(function* () {
           const cwd = working.find((entry) => entry.threadId === threadId)?.worktreePath;
           const current =
             within(preview.rootPath, cwd ?? thread.worktreePath) ||
-            thread.developmentEnvironment?.xwingEnvironmentId === id;
+            thread.developmentEnvironment?.xwingEnvironmentId === id ||
+            (thread.linkedDevelopmentEnvironments ?? []).some(
+              (environment) => environment.xwingEnvironmentId === id,
+            );
           const block: DevelopmentEnvironmentThreadBlock | null = current
             ? yield* threadBlock(records, operation, id)
             : null;
