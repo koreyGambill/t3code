@@ -101,11 +101,9 @@ describe("load event projection", () => {
       ["rg 'release.md' README.md", ["README.md"]],
       ["cat README.md | head -5", ["README.md"]],
     ] as const) {
-      expect(
-        projectLoadEvent({ ...base, type: "command_execution", input, output: "text" })?.paths ??
-          [],
-        input,
-      ).toEqual(paths);
+      const event = projectLoadEvent({ ...base, type: "command_execution", input, output: "text" });
+      if (paths.length) expect(event?.paths, input).toEqual(paths);
+      else expect(event, input).toBeNull();
     }
     expect(
       projectLoadEvent({

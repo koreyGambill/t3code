@@ -64,6 +64,8 @@ it.effect(
         ["mcp-b", "mcp__t3_code__t3_thread_read", { threadId: "b" }],
         ["mcp-a-again", "mcp__t3_code__t3_thread_read", { threadId: "a" }],
         ["ws-a", "mcp__t3_code__thread_workspace_read", { threadId: "a" }],
+        ["uri-a", "mcp__resources__read_resource", { uri: "notes://latest" }],
+        ["uri-b", "mcp__resources__read_resource", { uri: "notes://latest" }],
       ] as const) {
         const payload = JSON.stringify({
           id,

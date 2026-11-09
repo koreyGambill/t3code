@@ -99,10 +99,14 @@ const make = Effect.gen(function* () {
             if (item.payload_json === null) continue;
             const event = projectLoadEvent(yield* decodeItem(item.payload_json));
             if (!event || event.status !== "completed") continue;
+            const filePaths =
+              event.kind === "file" || event.kind === "skill" || event.kind === "instructions"
+                ? event.paths.filter((path) => path.length > 0 && !/^[\w+.-]+:\/\//.test(path))
+                : [];
             const labels =
-              event.kind === "search" || event.kind === "knowledge" || !event.paths.length
+              filePaths.length === 0
                 ? [event.label]
-                : event.paths.map((path) => {
+                : filePaths.map((path) => {
                     const paths = /^[A-Za-z]:[\\/]/.test(row.cwd ?? path)
                       ? NodePath.win32
                       : NodePath.posix;
@@ -110,8 +114,7 @@ const make = Effect.gen(function* () {
                   });
             for (const label of labels) {
               const repeatable =
-                (event.paths.length > 0 && event.kind !== "search" && event.kind !== "knowledge") ||
-                (event.kind === "resource" && label !== event.toolName);
+                filePaths.length > 0 || (event.kind === "resource" && label !== event.toolName);
               const key = `${repeatable ? event.kind : event.itemId}:${label}`;
               const previous = reads.get(key);
               if (!previous && reads.size >= 64) {

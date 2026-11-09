@@ -164,7 +164,7 @@ export function projectLoadEvent(
     const command = shellCommand(item.input);
     const knowledge = /(?:^|[\s;&|/])overwing\s+(?:search|context|standards)(?:\s|$)/.test(command);
     const reads = shellReads(command);
-    if (!knowledge && !reads.paths.length && !reads.search) return null;
+    if (!knowledge && !reads.paths.length) return null;
     evidence = "inferred";
     toolName = "shell";
     kind = knowledge ? "knowledge" : reads.search ? "search" : "file";
