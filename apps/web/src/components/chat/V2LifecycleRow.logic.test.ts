@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { subagentResumedSince } from "./V2LifecycleRow.logic";
+import { subagentResumedSince, subagentStatusVisual } from "./V2LifecycleRow.logic";
 
 const failedAt = "2026-10-09T12:21:00.000Z";
 const beforeFailure = DateTime.makeUnsafe("2026-10-09T12:05:00.000Z");
@@ -28,5 +28,31 @@ describe("subagentResumedSince", () => {
     expect(subagentResumedSince({ status: "failed", startedAt: beforeFailure }, failedAt)).toBe(
       false,
     );
+  });
+});
+
+describe("subagentStatusVisual", () => {
+  it.each(["running", "waiting", "pending"] as const)(
+    "shows pending input over the %s lifecycle",
+    (status) => {
+      expect(
+        subagentStatusVisual(status, { hasPendingUserInput: true, hasPendingApprovals: false })
+          .label,
+      ).toBe("Input requested");
+      expect(
+        subagentStatusVisual(status, { hasPendingUserInput: false, hasPendingApprovals: true })
+          .label,
+      ).toBe("Approval requested");
+    },
+  );
+  it("preserves settled outcomes and clears the question once answered", () => {
+    expect(
+      subagentStatusVisual("completed", { hasPendingUserInput: true, hasPendingApprovals: false })
+        .label,
+    ).toBe("Completed");
+    expect(
+      subagentStatusVisual("running", { hasPendingUserInput: false, hasPendingApprovals: false })
+        .label,
+    ).toBe("Running");
   });
 });

@@ -2,7 +2,7 @@ import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ReactNode } from "react";
-import { useThreadShell, useProject } from "../../state/entities";
+import { useThreadShell, useQuietThreadShell, useProject } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useNavigate } from "@tanstack/react-router";
@@ -61,7 +61,7 @@ import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
-import { subagentResumedSince } from "./V2LifecycleRow.logic";
+import { subagentResumedSince, subagentStatusVisual } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { WeavewingMark } from "../WeavewingMark";
 
@@ -166,24 +166,6 @@ export function V2LifecycleRow(props: {
     );
   }
   return null;
-}
-
-const STATUS_VISUALS: Record<
-  OrchestrationV2TurnItem["status"],
-  { dotClass: string; label: string }
-> = {
-  pending: { dotClass: "bg-info", label: "Queued" },
-  running: { dotClass: "bg-info", label: "Running" },
-  waiting: { dotClass: "bg-info", label: "Waiting" },
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
-  completed: { dotClass: "bg-success", label: "Completed" },
-  failed: { dotClass: "bg-destructive", label: "Failed" },
-  cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-  interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-};
-
-function subagentStatusVisual(status: OrchestrationV2TurnItem["status"]) {
-  return STATUS_VISUALS[status];
 }
 
 const SETTLED_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
@@ -424,6 +406,13 @@ function SubagentTimelineLink(props: {
   const remoteEnvironment = useEnvironment(remote?.environmentId ?? null);
   const navigate = useNavigate();
   const threadId = props.threadId;
+  const child = useQuietThreadShell(
+    threadId !== null
+      ? scopeThreadRef(props.parentRef.environmentId, threadId)
+      : remote !== undefined
+        ? scopeThreadRef(remote.environmentId, remote.threadId)
+        : null,
+  );
   // A task in a linked environment opens there, if this client is connected to it.
   const open =
     threadId !== null
@@ -437,7 +426,8 @@ function SubagentTimelineLink(props: {
         : null;
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
-  const statusLabel = props.event?.label ?? subagentStatusVisual(liveStatus).label;
+  const statusLabel = props.event?.label ?? subagentStatusVisual(liveStatus, child).label;
+  const inputRequested = props.event === undefined && statusLabel === "Input requested";
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
@@ -493,6 +483,9 @@ function SubagentTimelineLink(props: {
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
+      {open !== null && inputRequested ? (
+        <span className="shrink-0 text-xs text-info">Open to answer</span>
+      ) : null}
       {open !== null ? (
         <ChevronRightIcon
           aria-hidden
@@ -516,7 +509,7 @@ function SubagentTimelineLink(props: {
             <button
               type="button"
               data-v2-item-type="subagent"
-              aria-label={`Open ${props.title}`}
+              aria-label={`Open ${props.title}${inputRequested ? " to answer" : ""}`}
               aria-description={statusLabel}
               onClick={open}
               className={cn(
