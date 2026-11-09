@@ -35,15 +35,27 @@ try {
 
   $clock.now = [DateTime]'2026-01-01T00:00:00Z'
   $clock.reads = 0
+  $clock.authentications = 0
   $result = Wait-LocalUpdateLinks 5 {
-    $clock.reads++
+    param($remaining, $authenticate)
+    if ($authenticate) { $clock.authentications++; Assert ($clock.reads -eq 2) 'Authenticated before both identities answered' }
+    else { $clock.reads++ }
     @{ wslToWindows = @{ status = 'passed' }; windowsToWsl = @{ status = $(if ($clock.reads -eq 1) { 'warning' } else { 'passed' }) } }
   } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
-  Assert ($result.status -eq 'passed' -and $clock.reads -eq 2) 'Link check did not recover after peer startup'
+  Assert ($result.status -eq 'passed' -and $clock.reads -eq 2 -and $clock.authentications -eq 1) 'Link check did not wait for both identities before authenticating once'
+  $clock.authentications = 0
   $result = Wait-LocalUpdateLinks 3 {
-    @{ wslToWindows = @{ status = 'passed' }; windowsToWsl = @{ status = 'warning'; error = 'Credential refused' } }
+    param($remaining, $authenticate)
+    if ($authenticate) { $clock.authentications++ }
+    @{ wslToWindows = @{ status = 'passed' }; windowsToWsl = @{ status = $(if ($authenticate) { 'warning' } else { 'passed' }); error = 'Credential refused' } }
   } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
-  Assert ($result.status -eq 'warning' -and $result.windowsToWsl.error -eq 'Credential refused') 'Link deadline lost directional warning'
+  Assert ($result.status -eq 'warning' -and $result.windowsToWsl.error -eq 'Credential refused' -and $clock.authentications -eq 1) 'Authentication failure lost its directional warning or retried'
+  $result = Wait-LocalUpdateLinks 3 {
+    param($remaining, $authenticate)
+    Assert (-not $authenticate) 'Authenticated before unreachable peer answered'
+    @{ wslToWindows = @{ status = 'passed' }; windowsToWsl = @{ status = 'warning'; error = 'Starting' } }
+  } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
+  Assert ($result.status -eq 'warning' -and $result.windowsToWsl.error -eq 'Starting') 'Link deadline lost its directional warning'
   $result = Wait-LocalUpdateLinks 1 { throw 'Probe startup failed' } { $clock.now } { param($seconds) $clock.now = $clock.now.AddSeconds($seconds) }
   Assert ($result.status -eq 'warning' -and $result.error -eq 'Probe startup failed') 'Link exception escaped as an activation failure'
 

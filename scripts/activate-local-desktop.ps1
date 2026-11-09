@@ -18,9 +18,17 @@ function Wait-LocalUpdateLinks([double]$Seconds, [scriptblock]$Read, [scriptbloc
   $last = @{ status = 'warning'; error = 'Link deadline expired before probing' }
   while ((& $Now) -lt $deadline) {
     try {
-      $last = & $Read ($deadline - (& $Now)).TotalSeconds
+      $last = & $Read ($deadline - (& $Now)).TotalSeconds $false
       $last.status = $(if ($last.wslToWindows.status -eq 'passed' -and $last.windowsToWsl.status -eq 'passed') { 'passed' } else { 'warning' })
-      if ($last.status -eq 'passed') { return $last }
+      if ($last.status -eq 'passed') {
+        $remaining = ($deadline - (& $Now)).TotalSeconds
+        if ($remaining -le 0) { return @{ status = 'warning'; error = 'Link deadline expired before authenticated checks'; descriptors = $last } }
+        try {
+          $last = & $Read $remaining $true
+          $last.status = $(if ($last.wslToWindows.status -eq 'passed' -and $last.windowsToWsl.status -eq 'passed') { 'passed' } else { 'warning' })
+        } catch { $last = @{ status = 'warning'; error = $_.Exception.Message } }
+        return $last
+      }
     } catch { $last = @{ status = 'warning'; error = $_.Exception.Message } }
     $remaining = ($deadline - (& $Now)).TotalSeconds
     if ($remaining -gt 0) { & $Delay ([Math]::Min(2, $remaining)) }
@@ -251,10 +259,11 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       # Link availability can lag app startup; it must not roll back a healthy app.
       if ($config.linkBaseline) {
         $details.links = Wait-LocalUpdateLinks $config.healthSeconds {
-          param($remaining)
-          $budget = [Math]::Min(10, $remaining / 2)
-          $wsl = try { Probe-Update 'check-links' @($budget.ToString([Globalization.CultureInfo]::InvariantCulture)) $budget } catch { @{ status = 'warning'; error = $_.Exception.Message } }
-          $windows = try { Windows-UpdateWorker 'check-links-windows' @($budget.ToString([Globalization.CultureInfo]::InvariantCulture)) $budget } catch { @{ status = 'warning'; error = $_.Exception.Message } }
+          param($remaining, $authenticate)
+          $budget = $(if ($authenticate) { $remaining / 2 } else { [Math]::Min(10, $remaining / 2) })
+          $arguments = @($budget.ToString([Globalization.CultureInfo]::InvariantCulture), $(if ($authenticate) { 'authenticate' } else { 'descriptor-only' }))
+          $wsl = try { Probe-Update 'check-links' $arguments $budget } catch { @{ status = 'warning'; error = $_.Exception.Message } }
+          $windows = try { Windows-UpdateWorker 'check-links-windows' $arguments $budget } catch { @{ status = 'warning'; error = $_.Exception.Message } }
           @{ wslToWindows = $wsl; windowsToWsl = $windows }
         }
       }

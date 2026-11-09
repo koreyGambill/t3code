@@ -296,6 +296,7 @@ export async function checkLocalLink(
   before: LinkSnapshot,
   targetId: string,
   seconds: number,
+  descriptorOnly = false,
 ) {
   const result = {
     sourceEnvironmentId: before.environmentId,
@@ -354,6 +355,10 @@ export async function checkLocalLink(
       throw new Error(
         "Existing peer URLs did not answer with the expected identity and link capabilities",
       );
+    if (descriptorOnly) {
+      result.status = "passed";
+      return result;
+    }
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(NodePath.join(userdata, "statev2.sqlite"), { readOnly: true });
     let secretName;
@@ -404,6 +409,7 @@ async function worker(mode: string, configFile: string, extra: string[]) {
       windows ? config.linkBaseline.windows : config.linkBaseline.wsl,
       windows ? config.linkBaseline.wsl.environmentId : config.linkBaseline.windows.environmentId,
       Number(extra[0]),
+      extra[1] === "descriptor-only",
     );
   }
   if (mode === "backup") {

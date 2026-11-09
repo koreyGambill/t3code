@@ -103,6 +103,23 @@ it.each(["starting", "wrong-identity", "missing-capability", "deadline"])(
   },
 );
 
+it("waits for peer identity before reading its credential or making an MCP call", async () => {
+  using fixture = linkFixture();
+  const before = await captureLocalLinks(fixture.userdata);
+  NodeFS.rmSync(fixture.credential);
+  using fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input, init) => peerResponse(input, init));
+  expect(await checkLocalLink(fixture.userdata, before, "windows", 10, true)).toMatchObject({
+    status: "passed",
+    descriptor: true,
+    mcp: false,
+  });
+  expect(
+    fetch.mock.calls.every(([input]) => String(input).endsWith("/.well-known/t3/environment")),
+  ).toBe(true);
+});
+
 it.each(["refused", "tool-error", "malformed"])(
   "records a safe warning when authenticated MCP is %s",
   async (failure) => {
