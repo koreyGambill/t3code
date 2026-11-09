@@ -4663,32 +4663,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
-    if (
-      command.type === "thread.workspace.select" &&
-      command.worktreePath !== thread.worktreePath
-    ) {
-      // Native conversations belong to a working folder; keep their rows for history and restore.
-      const previousThreads = (yield* projectionStore
-        .getThreadRecords(command.threadId, ["providerThreads"])
-        .pipe(mapDispatchError(command))).providerThreads.filter((row) => row.ownerNodeId === null);
-      for (const previous of previousThreads.toSorted(
-        (a, b) =>
-          Number(a.id === thread.activeProviderThreadId) -
-          Number(b.id === thread.activeProviderThreadId),
-      )) {
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "provider-thread.updated",
-          threadId: command.threadId,
-          providerInstanceId: previous.providerInstanceId,
-          occurredAt: now,
-          payload: { ...previous, status: "closed", updatedAt: now },
-        });
-      }
-    }
-
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -6962,7 +6936,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.historyOrigin === "v1_import" && contextBoundary === 0
         ? yield* readHandoffItems(command.threadId, [null])
         : [];
-    const workspaceChanged = activeProviderThread?.status === "closed";
+    const activeProviderSession =
+      projection.providerSessions.find(
+        (session) => session.id === activeProviderThread?.providerSessionId,
+      ) ??
+      (activeProviderThread === undefined
+        ? undefined
+        : yield* projectionStore
+            .getProviderThreadSession(command.threadId, activeProviderThread.id)
+            .pipe(mapDispatchError(command)));
+    const workspaceChanged =
+      activeProviderSession !== undefined &&
+      activeProviderSession.cwd !==
+        (projection.thread.worktreePath ??
+          (yield* runtimePolicy
+            .resolve({ thread: projection.thread, modelSelection })
+            .pipe(mapDispatchError(command))).cwd ??
+          process.cwd());
     const isProviderSwitch =
       activeProviderThread !== undefined &&
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;

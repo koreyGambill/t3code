@@ -262,7 +262,10 @@ export const layer: Layer.Layer<
         threadId: input.threadId,
         providerSessionId: providerThread.providerSessionId,
         modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
+        runtimePolicy: {
+          ...resolvedRuntimePolicy,
+          cwd: existingSession?.cwd ?? resolvedRuntimePolicy.cwd,
+        },
         ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
         ...(providerThread.nativeThreadRef?.nativeId == null
           ? {}

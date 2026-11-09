@@ -664,6 +664,14 @@ export interface ProjectionStoreV2Shape {
     Pick<ProjectionProviderControlContext, "run" | "providerThread" | "providerTurn">,
     ProjectionStoreV2Error
   >;
+  /** Native conversations retain their session folder after the app thread detaches. */
+  readonly getProviderThreadSession: (
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+  ) => Effect.Effect<
+    OrchestrationV2ThreadProjection["providerSessions"][number] | undefined,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadProviderContext: (
     threadId: ThreadId,
     targetInstanceId?: ProviderInstanceId,
@@ -5197,6 +5205,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getProviderThreadSession: ProjectionStoreV2Shape["getProviderThreadSession"] = (
+      threadId,
+      providerThreadId,
+    ) =>
+      sql<PayloadRow>`
+        SELECT session.payload_json FROM orchestration_v2_projection_provider_sessions AS session
+        JOIN orchestration_v2_projection_provider_threads AS thread
+          ON thread.provider_session_id = session.provider_session_id
+        WHERE thread.thread_id = ${threadId} AND thread.provider_thread_id = ${providerThreadId}
+      `.pipe(
+        Effect.flatMap((rows) =>
+          rows[0] === undefined
+            ? Effect.succeed(undefined)
+            : decodeProviderSessionPayload(rows[0].payload_json),
+        ),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     const getThreadProviderContext: ProjectionStoreV2Shape["getThreadProviderContext"] = (
       threadId,
       targetInstanceId,
@@ -5543,10 +5569,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY ordinal ASC`,
                 sql<PayloadRow>`SELECT session.payload_json
             FROM orchestration_v2_projection_provider_sessions AS session
-            JOIN orchestration_v2_projection_provider_session_bindings AS binding
-              ON binding.provider_session_id = session.provider_session_id
-            WHERE binding.thread_id = ${threadId}
-              AND session.provider_session_id = ${providerThread.providerSessionId}`,
+            WHERE session.provider_session_id = ${providerThread.providerSessionId}`,
                 sql<{ readonly id: RunAttemptId }>`SELECT attempt.attempt_id AS id
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run ON run.run_id = attempt.run_id
@@ -7611,6 +7634,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getTurnStartHistory: readOnReader(getTurnStartHistory),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),
+      getProviderThreadSession: readOnReader(getProviderThreadSession),
       getThreadProviderContext: readOnReader(getThreadProviderContext),
       getRuntimeResponseContext: readOnReader(getRuntimeResponseContext),
       getCheckpointContext: readOnReader(getCheckpointContext),

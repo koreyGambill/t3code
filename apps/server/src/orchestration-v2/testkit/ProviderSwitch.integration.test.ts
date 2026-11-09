@@ -392,8 +392,13 @@ function makeTestAdapter(input: {
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
-          rollbackThread: () =>
-            unimplemented(input.driver, "rollbackThread unused in provider switch test"),
+          rollbackThread: ({ providerThread }) =>
+            Effect.succeed({
+              providerThread: { ...providerThread, status: "idle" as const },
+              providerTurns: [],
+              messages: [],
+              runtimeRequests: [],
+            }),
           forkThread: () =>
             unimplemented(input.driver, "forkThread unused in provider switch test"),
         };
@@ -2767,128 +2772,191 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live("refuses a checkout change while the session still runs native background agents", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("checkout-change-background-work");
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const backgroundWork = yield* Ref.make(true);
-        const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
-        const threadId = ThreadId.make("thread:checkout-change-background-work");
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:checkout-change-background-work:create"),
-            threadId,
-            projectId: ProjectId.make("project:checkout-change-background-work"),
-            title: "Checkout change with background work",
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:checkout-change-background-work:send"),
-            threadId,
-            messageId: MessageId.make("message:checkout-change-background-work"),
-            text: "Start background agents",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-          });
-          yield* worker.drain();
-          const idle = yield* waitForIdle(threadId);
-          const session = idle.providerSessions[0]!;
-          const select = (attempt: string) =>
-            orchestrator.dispatch({
-              type: "thread.workspace.select",
-              commandId: CommandId.make(`command:checkout-change-background-work:${attempt}`),
+  it.live.each(["change-folder", "rewind", "handoff"] as const)(
+    "starts a fresh conversation after %s and refuses moves during native background work",
+    (variant) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("checkout-change-background-work");
+          const nextCwd = yield* checkpointWorkspace("checkout-change-target");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const backgroundWork = yield* Ref.make(true);
+          const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+          const threadId = ThreadId.make("thread:checkout-change-background-work");
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:checkout-change-background-work:create"),
               threadId,
-              expected: { worktreePath: cwd, xwingEnvironmentId: null },
-              worktreePath: `${cwd}-other-checkout`,
+              projectId: ProjectId.make("project:checkout-change-background-work"),
+              title: "Checkout change with background work",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
               branch: null,
-              developmentEnvironment: null,
+              worktreePath: cwd,
             });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:checkout-change-background-work:send"),
+              threadId,
+              messageId: MessageId.make("message:checkout-change-background-work"),
+              text: "Start background agents",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            const idle = yield* waitForIdle(threadId);
+            const session = idle.providerSessions[0]!;
+            const select = (attempt: string) =>
+              orchestrator.dispatch(
+                variant === "handoff" && attempt === "accepted"
+                  ? {
+                      type: "thread.metadata.update",
+                      commandId: CommandId.make(
+                        `command:checkout-change-background-work:${attempt}`,
+                      ),
+                      threadId,
+                      worktreePath: nextCwd,
+                      branch: null,
+                      workspaceChange: "agent-handoff",
+                    }
+                  : {
+                      type: "thread.workspace.select",
+                      commandId: CommandId.make(
+                        `command:checkout-change-background-work:${attempt}`,
+                      ),
+                      threadId,
+                      expected: { worktreePath: cwd, xwingEnvironmentId: null },
+                      worktreePath: nextCwd,
+                      branch: null,
+                      developmentEnvironment: null,
+                    },
+              );
 
-          const refused = yield* select("refused").pipe(Effect.flip);
-          assert.instanceOf(refused, Orchestrator.OrchestratorWorkspaceSelectionRejectedError);
-          assert.equal(refused.reason, "work-in-progress");
-          yield* worker.drain();
-          const unchanged = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(unchanged.thread.worktreePath, cwd);
-          assert.deepEqual(
-            unchanged.providerSessions.map((candidate) => [candidate.id, candidate.status]),
-            [[session.id, "ready"]],
-          );
-          assert.deepEqual(yield* Ref.get(closedSessions), []);
+            const refused = yield* select("refused").pipe(Effect.flip);
+            assert.instanceOf(refused, Orchestrator.OrchestratorWorkspaceSelectionRejectedError);
+            assert.equal(refused.reason, "work-in-progress");
+            yield* worker.drain();
+            const unchanged = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(unchanged.thread.worktreePath, cwd);
+            assert.deepEqual(
+              unchanged.providerSessions.map((candidate) => [candidate.id, candidate.status]),
+              [[session.id, "ready"]],
+            );
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
 
-          yield* Ref.set(backgroundWork, false);
-          yield* select("accepted");
-          yield* worker.drain();
-          const moved = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(moved.thread.worktreePath, `${cwd}-other-checkout`);
-          assert.deepEqual(yield* Ref.get(closedSessions), [session.id]);
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:checkout-change-background-work:next"),
-            threadId,
-            messageId: MessageId.make("message:checkout-change-background-work:next"),
-            text: "What did we do before changing folder?",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-          });
-          yield* worker.drain();
-          const continued = yield* waitForIdle(threadId);
-          assert.notEqual(continued.runs[1]?.providerThreadId, idle.runs[0]?.providerThreadId);
-          assert.lengthOf(continued.messages, 2);
-          assert.equal(continued.contextHandoffs[0]?.strategy, "full_thread_summary");
-          assert.include(continued.contextHandoffs[0]?.summaryText, "Start background agents");
-          assert.include(continued.contextHandoffs[0]?.summaryText, "Background agents started");
-        }).pipe(
-          Effect.provide(
-            ProviderReplayHarness.layerWithRegistry(
-              {
-                name: "checkout-change-background-work",
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: {
-                    type: "readOnly",
-                    access: { type: "fullAccess" },
-                    networkAccess: false,
+            yield* Ref.set(backgroundWork, false);
+            if (variant === "rewind") {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make("command:checkout-change-background-work:before-move"),
+                threadId,
+                messageId: MessageId.make("message:checkout-change-background-work:before-move"),
+                text: "A later turn to rewind",
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+            }
+            const beforeMove = yield* waitForIdle(threadId);
+            assert.equal(beforeMove.runs.at(-1)?.status, "completed");
+            yield* worker.drain();
+            assert.deepEqual(
+              beforeMove.providerSessions.map((entry) => [entry.id, entry.status]),
+              [[session.id, "ready"]],
+            );
+            yield* select("accepted");
+            yield* worker.drain();
+            const moved = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(moved.thread.worktreePath, nextCwd);
+            if (variant !== "rewind")
+              assert.deepEqual(yield* Ref.get(closedSessions), [session.id]);
+            if (variant === "rewind") {
+              const checkpoint = idle.checkpoints.find((entry) => entry.appRunOrdinal === 1)!;
+              assert.isDefined(checkpoint);
+              yield* orchestrator.dispatch({
+                type: "checkpoint.rollback",
+                commandId: CommandId.make("command:checkout-change-background-work:rewind"),
+                threadId,
+                checkpointId: checkpoint.id,
+                scopeId: checkpoint.scopeId,
+                restoreFiles: false,
+              });
+              yield* worker.drain();
+              assert.isNull(
+                (yield* orchestrator.getThreadProjection(threadId)).thread.rollbackFailure ?? null,
+              );
+            }
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:checkout-change-background-work:next"),
+              threadId,
+              messageId: MessageId.make("message:checkout-change-background-work:next"),
+              text: "What did we do before changing folder?",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            const continued = yield* waitForIdle(threadId);
+            const turns = yield* Ref.get(capturedTurns);
+            assert.notEqual(turns.at(-1)?.providerThreadId, turns[0]?.providerThreadId);
+            assert.notEqual(turns.at(-1)?.nativeThreadId, turns[0]?.nativeThreadId);
+            assert.equal(continued.providerSessions.at(-1)?.cwd, nextCwd);
+            if (variant !== "rewind") {
+              assert.lengthOf(continued.messages, 2);
+              assert.equal(continued.contextHandoffs[0]?.strategy, "full_thread_summary");
+              assert.include(continued.contextHandoffs[0]?.summaryText, "Start background agents");
+              assert.include(
+                continued.contextHandoffs[0]?.summaryText,
+                "Background agents started",
+              );
+            }
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "checkout-change-background-work",
+                  runtimePolicyOverride: {
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
                   },
                 },
-              },
-              ProviderAdapterRegistry.layerFromAdapters([
-                makeTestAdapter({
-                  instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-                  driver: CLAUDE_DRIVER,
-                  capabilities: ClaudeProviderCapabilitiesV2,
-                  modelSelection: CLAUDE_MODEL_SELECTION,
-                  responseByRunOrdinal: {
-                    1: "Background agents started",
-                    2: "Earlier context retained",
-                  },
-                  nativeThreadGeneration: yield* Ref.make(0),
-                  capturedTurns,
-                  backgroundWork,
-                  closedSessions,
-                }),
-              ]),
+                ProviderAdapterRegistry.layerFromAdapters([
+                  makeTestAdapter({
+                    instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                    driver: CLAUDE_DRIVER,
+                    capabilities: ClaudeProviderCapabilitiesV2,
+                    modelSelection: CLAUDE_MODEL_SELECTION,
+                    responseByRunOrdinal: {
+                      1: "Background agents started",
+                      2: "Earlier context retained",
+                    },
+                    nativeThreadGeneration: yield* Ref.make(0),
+                    capturedTurns,
+                    backgroundWork,
+                    closedSessions,
+                  }),
+                ]),
+              ),
             ),
-          ),
-        );
-      }),
-    ),
+          );
+        }),
+      ),
   );
 
   it.live.each(["immediately", "behind a running turn"] as const)(
