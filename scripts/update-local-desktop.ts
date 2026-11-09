@@ -330,9 +330,17 @@ export async function checkLocalLink(
         if (!response.ok) continue;
         const descriptor = await response.json();
         if (
+          descriptor === null ||
+          typeof descriptor !== "object" ||
+          !("environmentId" in descriptor) ||
           descriptor.environmentId !== targetId ||
-          descriptor.capabilities?.mcpModeLimitHeader !== true ||
-          descriptor.capabilities?.linkFence !== true
+          !("capabilities" in descriptor) ||
+          descriptor.capabilities === null ||
+          typeof descriptor.capabilities !== "object" ||
+          !("mcpModeLimitHeader" in descriptor.capabilities) ||
+          descriptor.capabilities.mcpModeLimitHeader !== true ||
+          !("linkFence" in descriptor.capabilities) ||
+          descriptor.capabilities.linkFence !== true
         )
           continue;
         result.descriptor = true;

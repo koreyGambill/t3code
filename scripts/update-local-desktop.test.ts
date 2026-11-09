@@ -1,8 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - Fixtures exercise the standalone worker without Effect dependencies.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { expect, it, vi } from "vitest";
+import * as NodeSqlite from "node:sqlite";
+import { expect, it, vi } from "vite-plus/test";
 
 import { captureLocalLinks, checkLocalLink } from "./update-local-desktop.ts";
 
@@ -12,7 +13,7 @@ function linkFixture(source = "wsl", target = "windows") {
   NodeFS.mkdirSync(NodePath.join(userdata, "secrets"));
   const credential = NodePath.join(userdata, "secrets/peer-link-fixture.bin");
   NodeFS.writeFileSync(credential, "existing-peer-token");
-  const db = new DatabaseSync(NodePath.join(userdata, "statev2.sqlite"));
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(userdata, "statev2.sqlite"));
   db.exec(
     "CREATE TABLE peer_environment_links(environment_id TEXT, urls_json TEXT, linked_at TEXT, secret_name TEXT)",
   );
@@ -137,7 +138,7 @@ it.each(["identity", "link"])("warns when the original %s was replaced", async (
   if (failure === "identity")
     NodeFS.writeFileSync(NodePath.join(fixture.userdata, "environment-id"), "replacement");
   else {
-    const db = new DatabaseSync(NodePath.join(fixture.userdata, "statev2.sqlite"));
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(fixture.userdata, "statev2.sqlite"));
     db.exec("UPDATE peer_environment_links SET linked_at = 'replacement'");
     db.close();
   }
