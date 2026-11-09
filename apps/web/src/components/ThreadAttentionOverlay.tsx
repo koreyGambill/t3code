@@ -1,5 +1,6 @@
 import { type CSSProperties, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { useViewportSize } from "../hooks/useViewportSize";
 import {
@@ -7,12 +8,13 @@ import {
   subscribeThreadAttention,
   THREAD_ATTENTION_DURATION_MS,
 } from "../threadAttention";
+import { resolveThreadGlyph } from "../threadGlyphs";
 import { ThreadGlyph } from "./ThreadGlyph";
 
 export function ThreadAttentionOverlay() {
   const alert = useSyncExternalStore(subscribeThreadAttention, readThreadAttention);
   const { width, height } = useViewportSize();
-  if (!alert) return null;
+  if (!alert || alert.presentation === "pane") return null;
   const size = Math.min(Math.sqrt(width * height * 0.5), width * 0.95, height * 0.95);
   const style: CSSProperties & { "--thread-attention-duration": string } = {
     width: size,
@@ -27,5 +29,25 @@ export function ThreadAttentionOverlay() {
       </div>
     </div>,
     document.body,
+  );
+}
+
+export function ThreadPaneAttention({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const alert = useSyncExternalStore(subscribeThreadAttention, readThreadAttention);
+  if (
+    alert?.presentation !== "pane" ||
+    alert.environmentId !== threadRef.environmentId ||
+    alert.threadId !== threadRef.threadId
+  )
+    return null;
+  const glyph = resolveThreadGlyph(alert.threadId, alert.seed);
+  return (
+    <div
+      key={alert.sequence}
+      data-thread-pane-attention={alert.threadId}
+      aria-hidden="true"
+      className="thread-pane-attention pointer-events-none absolute inset-0 z-50 rounded-sm ring-2 ring-inset ring-current inset-shadow-sm inset-shadow-current"
+      style={{ color: `light-dark(${glyph.lightColor}, ${glyph.color})` }}
+    />
   );
 }

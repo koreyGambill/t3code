@@ -1,12 +1,35 @@
-import type { ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+
+import { displayTileRoot } from "./threadTileGeometry";
+import { CONVERSATION_TAB_ID, getTileGroups, type ThreadTileLayout } from "./threadTileLayout";
 
 export const THREAD_ATTENTION_DURATION_MS = 1000;
+export const THREAD_PANE_ATTENTION_DURATION_MS = 750;
+
+export function isThreadVisible(
+  thread: ScopedThreadRef,
+  route: ScopedThreadRef | null,
+  layout: ThreadTileLayout,
+  documentVisible: boolean,
+) {
+  if (!documentVisible || route === null || route.environmentId !== thread.environmentId)
+    return false;
+  const tabId =
+    thread.threadId === route.threadId ? CONVERSATION_TAB_ID : `side-chat:${thread.threadId}`;
+  return getTileGroups(displayTileRoot(layout)).some(
+    (group) =>
+      (!layout.maximizedGroupId || group.id === layout.maximizedGroupId) &&
+      group.activeTabId === tabId,
+  );
+}
 
 type ThreadAttention = {
   readonly threadId: ThreadId;
   readonly seed: number | undefined;
   readonly title: string;
   readonly sequence: number;
+  readonly environmentId?: EnvironmentId;
+  readonly presentation?: "pane" | "overlay";
 };
 
 let current: ThreadAttention | null = null;
@@ -22,10 +45,15 @@ export function showThreadAttention(alert: Omit<ThreadAttention, "sequence">) {
   clearTimeout(timer);
   current = { ...alert, sequence: ++sequence };
   emit();
-  timer = setTimeout(() => {
-    current = null;
-    emit();
-  }, THREAD_ATTENTION_DURATION_MS);
+  timer = setTimeout(
+    () => {
+      current = null;
+      emit();
+    },
+    alert.presentation === "pane"
+      ? THREAD_PANE_ATTENTION_DURATION_MS
+      : THREAD_ATTENTION_DURATION_MS,
+  );
 }
 
 export const readThreadAttention = () => current;

@@ -803,7 +803,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("thread-glyph-alerts")}
-          description="Flash a thread's glyph across the whole application for one second when it replies or needs attention, including the thread you're viewing."
+          description="Highlight a visible thread's pane when it replies or needs attention. Background threads flash their glyph across the application."
           control={
             <Switch
               checked={settings.threadGlyphAlertsEnabled}

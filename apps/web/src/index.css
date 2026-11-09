@@ -2755,3 +2755,21 @@ code {
     opacity: 0.7;
   }
 }
+
+.thread-pane-attention {
+  animation: thread-pane-attention 750ms ease-out both;
+}
+@keyframes thread-pane-attention {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-pane-attention {
+    animation: none;
+    opacity: 0.45;
+  }
+}

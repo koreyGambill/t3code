@@ -78,7 +78,10 @@ vi.mock(import("../threadNotifications"), async (original) => ({
   setNotificationBadge: state.badge,
 }));
 
-vi.mock(import("../threadAttention"), () => ({ showThreadAttention: state.glyph }));
+vi.mock(import("../threadAttention"), async (importOriginal) => ({
+  isThreadVisible: (await importOriginal()).isThreadVisible,
+  showThreadAttention: state.glyph,
+}));
 
 import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
@@ -325,7 +328,7 @@ it.each([false, true])(
 );
 
 it.each([false, true])(
-  "flashes the thread glyph across the app, including the viewed thread: %s",
+  "uses a pane cue for the viewed thread and an overlay for a background thread: %s",
   async (viewing) => {
     await using app = setup();
     state.mode = "off";
@@ -339,9 +342,11 @@ it.each([false, true])(
     });
     state.shells.set("one", done);
     expect(state.glyph).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "one",
       threadId: "thread",
       seed: undefined,
       title: "Test thread",
+      presentation: viewing ? "pane" : "overlay",
     });
     state.shells.set("one", done);
     expect(state.glyph).toHaveBeenCalledTimes(1);

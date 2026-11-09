@@ -56,6 +56,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PanelTabCloseButton } from "../ui/panel-tab-close-button";
 import { cn, randomUUID } from "../../lib/utils";
+import { ThreadPaneAttention } from "../ThreadAttentionOverlay";
 
 const TAB_DRAG_TYPE = "application/x-weavewing-tab";
 const GROUP_DRAG_TYPE = "application/x-weavewing-group";
@@ -1206,6 +1207,15 @@ export function ThreadTileWorkspace(props: {
                   activate(group, tabId);
               }}
             >
+              {visible && (tabId === CONVERSATION_TAB_ID || surface?.kind === "side-chat") && (
+                <ThreadPaneAttention
+                  threadRef={
+                    surface?.kind === "side-chat"
+                      ? { ...props.threadRef, threadId: surface.threadId }
+                      : props.threadRef
+                  }
+                />
+              )}
               <div className="contents" inert={Boolean(group && isFocusOverviewGroup(group.id))}>
                 {tabId === CONVERSATION_TAB_ID
                   ? props.conversation

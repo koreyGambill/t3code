@@ -22,7 +22,8 @@ import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
-import { showThreadAttention } from "../threadAttention";
+import { isThreadVisible, showThreadAttention } from "../threadAttention";
+import { selectThreadTileLayout, useRightPanelStore } from "../rightPanelStore";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -129,13 +130,29 @@ export function startThreadNotifications(
       inAppNotificationsEnabled,
       threadGlyphAlertsEnabled,
     } = getClientSettings();
-    if (threadGlyphAlertsEnabled && document.visibilityState === "visible") {
-      showThreadAttention({ threadId: thread.id, seed: thread.glyphSeed, title: thread.title });
-    }
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
-      environmentId?: string;
-      threadId?: string;
+      environmentId?: EnvironmentId;
+      threadId?: ThreadId;
     };
+    if (threadGlyphAlertsEnabled && document.visibilityState === "visible") {
+      const route =
+        active.environmentId && active.threadId
+          ? { environmentId: active.environmentId, threadId: active.threadId }
+          : null;
+      const visible = isThreadVisible(
+        { environmentId, threadId: thread.id },
+        route,
+        selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, route),
+        document.visibilityState === "visible",
+      );
+      showThreadAttention({
+        environmentId,
+        threadId: thread.id,
+        seed: thread.glyphSeed,
+        title: thread.title,
+        presentation: visible ? "pane" : "overlay",
+      });
+    }
     const title =
       kind === "completion"
         ? "Thread completed"
