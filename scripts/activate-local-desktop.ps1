@@ -91,7 +91,10 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       Start-Sleep -Seconds 1
     }
   }
-  function Start-UpdateDesktop { Start-Process -FilePath (Join-Path $install 'Start Weavewing.cmd') -WorkingDirectory $install -WindowStyle Hidden | Out-Null }
+  function Start-UpdateDesktop {
+    $launcher = Start-Process -FilePath (Join-Path $install 'Start Weavewing.cmd') -WorkingDirectory $install -WindowStyle Hidden -PassThru
+    Record-UpdateHelper $launcher.Id 'desktop-launcher'
+  }
   function Wait-UpdateHealthy($digest) {
     $deadline = [DateTime]::UtcNow.AddSeconds($config.healthSeconds)
     do {
