@@ -8,6 +8,7 @@ variables:
 commands:
   install:
     argv: [node, scripts/setup-worktree.ts]
+    outputs: [.t3/setup-done]
     description: Install dependencies and link the main checkout's env files
   build:
     argv: [vp, run, build]
