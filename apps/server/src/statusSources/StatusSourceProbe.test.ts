@@ -116,10 +116,15 @@ describe("StatusSourceProbe", () => {
     (status) =>
       Effect.gen(function* () {
         const probe = yield* StatusSourceProbe.StatusSourceProbe;
-        const result = yield* probe.check({ ...input, kind: "http-health" });
+        const result = yield* probe.check({
+          ...input,
+          kind: "http-health",
+          target: "http://127.0.0.1:4791/private-token/health?token=secret",
+        });
         expect(result.state).toBe(status >= 200 && status < 300 ? "ok" : "fail");
         expect(result.summary).toBe(`HTTP ${status}`);
-        expect(result.url).toBe("http://127.0.0.1:4791/api/status");
+        expect(result.url).toBe("http://127.0.0.1:4791/");
+        expect(JSON.stringify(result)).not.toContain("private-token");
       }).pipe(
         Effect.provide(
           fixture({

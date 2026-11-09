@@ -252,7 +252,7 @@ const make = Effect.gen(function* () {
         const headers = input.headers ?? previous.headers;
         if (
           input.kind !== "webhook" &&
-          (!target.trim() || (input.kind !== "command" && !Probe.sanitizeStatusUrl(target)))
+          (!target.trim() || (input.kind !== "command" && !Probe.statusTargetOrigin(target)))
         )
           return yield* new StatusSourcesError({ operation: "invalid-target" });
         if (
@@ -265,7 +265,7 @@ const make = Effect.gen(function* () {
         const cleanTarget =
           input.kind === "command" || input.kind === "webhook"
             ? ""
-            : Probe.sanitizeStatusUrl(target)!;
+            : Probe.statusTargetOrigin(target)!;
         const config = yield* decodeConfig({
           id,
           name: input.name,

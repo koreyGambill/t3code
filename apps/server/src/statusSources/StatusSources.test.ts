@@ -24,12 +24,13 @@ const payload = (state: StatusPayload["state"]): StatusPayload => ({
 });
 
 const setup = Effect.gen(function* () {
-  const calls = yield* Queue.unbounded<void>();
+  const calls =
+    yield* Queue.unbounded<Parameters<Probe.StatusSourceProbe["Service"]["check"]>[0]>();
   const results = yield* Queue.unbounded<StatusPayload>();
   const probe = Layer.succeed(
     Probe.StatusSourceProbe,
     Probe.StatusSourceProbe.of({
-      check: () => Queue.offer(calls, undefined).pipe(Effect.andThen(Queue.take(results))),
+      check: (input) => Queue.offer(calls, input).pipe(Effect.andThen(Queue.take(results))),
       favicon: () => Effect.undefined,
     }),
   );
@@ -52,20 +53,25 @@ it.effect(
   "keeps credentials out of config and subscriptions, retains them on edit, and removes config",
   () =>
     Effect.gen(function* () {
-      const { service } = yield* setup;
+      const { service, calls } = yield* setup;
       const source = yield* service.upsert({
         name: "Health",
         kind: "http-health",
         icon: "globe",
-        target: "https://user:password@example.com/health?token=secret",
+        target: "https://user:password@example.com/private-token/health?token=secret",
         headers: { Authorization: "Bearer hidden" },
       });
-      expect(source.config.target).toBe("https://example.com/health");
+      expect(source.config.target).toBe("https://example.com/");
+      expect((yield* Queue.take(calls)).target).toBe(
+        "https://user:password@example.com/private-token/health?token=secret",
+      );
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const persisted = yield* fs.readFileString(`${config.stateDir}/status-sources.json`);
-      expect(persisted).not.toMatch(/password|secret|hidden/);
-      expect(JSON.stringify(yield* service.list())).not.toMatch(/password|secret|hidden/);
+      expect(persisted).not.toMatch(/password|secret|hidden|private-token/);
+      expect(JSON.stringify(yield* service.list())).not.toMatch(
+        /password|secret|hidden|private-token/,
+      );
       yield* service.upsert({
         id: source.config.id,
         name: "Renamed",
@@ -73,6 +79,9 @@ it.effect(
         icon: "globe",
       });
       expect((yield* service.list())[0]?.config.hasCredentials).toBe(true);
+      expect((yield* Queue.take(calls)).target).toBe(
+        "https://user:password@example.com/private-token/health?token=secret",
+      );
       yield* service.remove({ id: source.config.id });
       expect(yield* service.list()).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),

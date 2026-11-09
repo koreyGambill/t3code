@@ -28,7 +28,7 @@ export class StatusSourceProbe extends Context.Service<
   }
 >()("t3/statusSources/StatusSourceProbe") {}
 
-export function sanitizeStatusUrl(value: string): string | undefined {
+function sanitizeStatusUrl(value: string): string | undefined {
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
@@ -40,6 +40,11 @@ export function sanitizeStatusUrl(value: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function statusTargetOrigin(value: string): string | undefined {
+  const url = sanitizeStatusUrl(value);
+  return url === undefined ? undefined : `${new URL(url).origin}/`;
 }
 
 export function normalizeStatusPayload(payload: StatusPayload): StatusPayload {
@@ -104,7 +109,7 @@ const make = Effect.gen(function* () {
   const check = Effect.fn("StatusSourceProbe.check")(function* (
     input: Parameters<StatusSourceProbe["Service"]["check"]>[0],
   ) {
-    const url = sanitizeStatusUrl(input.target);
+    const url = statusTargetOrigin(input.target);
     const state = (state: StatusPayload["state"], summary: string): StatusPayload => ({
       source: input.name,
       state,
