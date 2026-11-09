@@ -8668,7 +8668,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           requestId: outcome.request.id,
           decision: "decline",
         });
-        assert.equal((yield* Fiber.join(decision)).behavior, "deny");
+        assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
       }
     }).pipe(
       Effect.scoped,

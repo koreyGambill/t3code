@@ -1464,7 +1464,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...second
               .slice(5)
               .map((entry) =>
-                entry.label === "turn/started" ? entry : withReplayRequestId(entry, 5),
+                entry.type === "emit_inbound" && entry.label === "turn/started"
+                  ? entry
+                  : withReplayRequestId(entry, 5),
               ),
             {
               type: "emit_inbound",
@@ -1489,7 +1491,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             })
               .slice(5)
               .map((entry) =>
-                entry.label === "turn/started" ? entry : withReplayRequestId(entry, 6),
+                entry.type === "emit_inbound" && entry.label === "turn/started"
+                  ? entry
+                  : withReplayRequestId(entry, 6),
               ),
             {
               type: "expect_outbound",
@@ -8587,7 +8591,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           })
             .slice(5)
             .map((entry) =>
-              entry.label === "turn/started" ? entry : withReplayRequestId(entry, 6),
+              entry.type === "emit_inbound" && entry.label === "turn/started"
+                ? entry
+                : withReplayRequestId(entry, 6),
             ),
           ...exchange(
             7,
