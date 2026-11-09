@@ -1021,27 +1021,36 @@ it.live("a retry naming a machine linked meanwhile closes the card it left as li
   ),
 );
 
-it.live("a link that expired goes through the card, so the user can link it again", () =>
-  withBoth((a, b) =>
-    Effect.gen(function* () {
-      yield* seedThread(a);
-      yield* linkTo(a.links, b, "read-only");
-      const asked = yield* a.call({ environmentId: box.environmentId }).pipe(afterLinksExpire);
-      expect(asked.structuredContent).toMatchObject({ status: "pending" });
-      const card = yield* pendingCard(a);
+it.live.each(["expired", "unauthorized"] as const)(
+  "a link that is %s goes through the card, so the user can link it again",
+  (status) =>
+    withBoth((a, b) =>
+      Effect.gen(function* () {
+        yield* seedThread(a);
+        yield* linkTo(a.links, b, "read-only");
+        if (status === "unauthorized") {
+          yield* a.links.recordOutcome(yield* a.links.resolve(box.environmentId), {
+            error: PeerLinks.LINK_CREDENTIAL_REFUSED,
+          });
+        }
+        const atStatus = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          status === "expired" ? effect.pipe(afterLinksExpire) : effect;
+        const asked = yield* a.call({ environmentId: box.environmentId }).pipe(atStatus);
+        expect(asked.structuredContent).toMatchObject({ status: "pending" });
+        const card = yield* pendingCard(a);
 
-      // Keeping the expired link is no answer: the card fails and says why.
-      yield* a.requests
-        .answer({
-          threadId,
-          turnItemId: card.id,
-          answer: { type: "use-existing", environmentId: box.environmentId },
-        })
-        .pipe(afterLinksExpire);
-      expect(yield* cardOf(a)).toMatchObject({ linkStatus: "failed" });
-      expect((yield* outcomeMessages(a)).messages[0]!.text).toContain("expired");
-    }),
-  ),
+        // A new credential must come from the user.
+        yield* a.requests
+          .answer({
+            threadId,
+            turnItemId: card.id,
+            answer: { type: "use-existing", environmentId: box.environmentId },
+          })
+          .pipe(atStatus);
+        expect(yield* cardOf(a)).toMatchObject({ linkStatus: "failed" });
+        expect((yield* outcomeMessages(a)).messages[0]!.text).toContain("Link it again");
+      }),
+    ),
 );
 
 it.live("a link made before links were fenced goes through the card, as an expired one", () =>

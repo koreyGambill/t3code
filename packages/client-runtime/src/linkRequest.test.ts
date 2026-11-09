@@ -261,26 +261,29 @@ describe("linkableMachines", () => {
     ]);
   });
 
-  it("no longer counts a machine as linked once its link expired", () => {
-    const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
-    const vps = presentation("environment-vps", "VPS", { saved: ["https://vps.ts.net"] });
-    const mini = presentation("environment-mini", "Mini", { saved: ["http://mini.local:3773"] });
-    const listed = linkableMachines({
-      environments: [here, vps, mini],
-      threadEnvironmentId: here.environmentId,
-      links: [
-        { environmentId: vps.environmentId, status: "expired" },
-        { environmentId: mini.environmentId, status: "unreachable" },
-        { environmentId: EnvironmentId.make("environment-old"), status: "expired" },
-      ],
-      connect: new Map([["environment-old", discovered("environment-old", "Old box")]]),
-    });
-    expect(listed.map((machine) => [machine.label, machine.linked])).toEqual([
-      ["VPS", false],
-      ["Mini", true],
-      ["Old box", false],
-    ]);
-  });
+  it.each(["expired", "unauthorized"] as const)(
+    "no longer counts a machine as linked when %s",
+    (status) => {
+      const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
+      const vps = presentation("environment-vps", "VPS", { saved: ["https://vps.ts.net"] });
+      const mini = presentation("environment-mini", "Mini", { saved: ["http://mini.local:3773"] });
+      const listed = linkableMachines({
+        environments: [here, vps, mini],
+        threadEnvironmentId: here.environmentId,
+        links: [
+          { environmentId: vps.environmentId, status },
+          { environmentId: mini.environmentId, status: "unreachable" },
+          { environmentId: EnvironmentId.make("environment-old"), status },
+        ],
+        connect: new Map([["environment-old", discovered("environment-old", "Old box")]]),
+      });
+      expect(listed.map((machine) => [machine.label, machine.linked])).toEqual([
+        ["VPS", false],
+        ["Mini", true],
+        ["Old box", false],
+      ]);
+    },
+  );
 
   it("offers machines only on T3 Connect after the saved ones, at their Connect address", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
@@ -316,29 +319,32 @@ describe("linkableMachines", () => {
 });
 
 describe("linkedEnvironmentNames", () => {
-  it("names the unexpired links as this client does, else as the link does", () => {
-    const vps = EnvironmentId.make("environment-vps");
-    const mini = EnvironmentId.make("environment-mini");
-    const unsaved = EnvironmentId.make("environment-unsaved");
-    expect(
-      linkedEnvironmentNames({
-        links: [
-          { environmentId: vps, label: "vps-01", status: "unreachable" },
-          { environmentId: mini, label: "mini", status: "expired" },
-          { environmentId: unsaved, label: "Office box", status: "reachable" },
-        ],
-        environments: [
-          { environmentId: vps, label: "Hetzner VPS" },
-          { environmentId: mini, label: "Mac mini" },
-        ],
-      }),
-    ).toEqual(
-      new Map([
-        [vps, "Hetzner VPS"],
-        [unsaved, "Office box"],
-      ]),
-    );
-  });
+  it.each(["expired", "unauthorized"] as const)(
+    "excludes %s links and names the rest as this client does, else as the link does",
+    (status) => {
+      const vps = EnvironmentId.make("environment-vps");
+      const mini = EnvironmentId.make("environment-mini");
+      const unsaved = EnvironmentId.make("environment-unsaved");
+      expect(
+        linkedEnvironmentNames({
+          links: [
+            { environmentId: vps, label: "vps-01", status: "unreachable" },
+            { environmentId: mini, label: "mini", status },
+            { environmentId: unsaved, label: "Office box", status: "reachable" },
+          ],
+          environments: [
+            { environmentId: vps, label: "Hetzner VPS" },
+            { environmentId: mini, label: "Mac mini" },
+          ],
+        }),
+      ).toEqual(
+        new Map([
+          [vps, "Hetzner VPS"],
+          [unsaved, "Office box"],
+        ]),
+      );
+    },
+  );
 });
 
 describe("rankMachinesByHint", () => {

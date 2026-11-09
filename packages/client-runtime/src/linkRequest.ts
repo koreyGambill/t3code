@@ -23,8 +23,8 @@ export const offersLinkedEnvironments = (
   config?.environment.capabilities.peerLinks === true && config.settings.linkedEnvironmentsEnabled;
 
 /**
- * The machines an environment's agents can work on, by name: its links that have not
- * expired, named as this client names them, else as the link does.
+ * The machines an environment's agents can work on, by name: links that are neither
+ * expired nor unauthorized, named as this client names them, else as the link does.
  */
 export function linkedEnvironmentNames(input: {
   readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "label" | "status">>;
@@ -38,7 +38,7 @@ export function linkedEnvironmentNames(input: {
   );
   return new Map(
     input.links.flatMap((link) =>
-      link.status === "expired"
+      link.status === "expired" || link.status === "unauthorized"
         ? []
         : [[link.environmentId, names.get(link.environmentId) ?? link.label] as const],
     ),
@@ -75,9 +75,9 @@ export interface LinkableMachine {
 
 /**
  * The catalog's machines other than the thread's own, in catalog order, then those only T3
- * Connect knows. `links` are the thread environment's; an expired one no longer counts as
- * linked. `connect` is what relay discovery found, and a server reaches a machine there as a
- * browser does, so its Connect address is usable.
+ * Connect knows. `links` are the thread environment's; expired or unauthorized links do not
+ * count as linked. `connect` is what relay discovery found. A server reaches a machine there
+ * as a browser does, so its Connect address is usable.
  */
 export function linkableMachines(input: {
   readonly environments: ReadonlyArray<
@@ -88,7 +88,9 @@ export function linkableMachines(input: {
   readonly connect: ReadonlyMap<string, RelayDiscoveredEnvironment>;
 }): ReadonlyArray<LinkableMachine> {
   const linkedIds = new Set(
-    input.links.flatMap((link) => (link.status === "expired" ? [] : [link.environmentId])),
+    input.links.flatMap((link) =>
+      link.status === "expired" || link.status === "unauthorized" ? [] : [link.environmentId],
+    ),
   );
   const saved = input.environments
     .filter((environment) => environment.environmentId !== input.threadEnvironmentId)

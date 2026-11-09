@@ -102,14 +102,16 @@ const make = Effect.gen(function* () {
         }),
       );
 
-  /**
-   * The stored link to `environmentId`, or nothing once it has expired: an
-   * expired link needs a new pairing code, which only the card asks for.
-   */
+  // A link needing a new credential must go through the card to ask for one.
   const usableLink = (environmentId: EnvironmentId) =>
     Effect.all([peerLinks.get(environmentId), DateTime.now]).pipe(
       Effect.map(([linked, now]) =>
-        Option.filter(linked, (link) => DateTime.isGreaterThan(link.expiresAt, now)),
+        Option.filter(
+          linked,
+          (link) =>
+            DateTime.isGreaterThan(link.expiresAt, now) &&
+            link.lastError !== PeerLinks.LINK_CREDENTIAL_REFUSED,
+        ),
       ),
     );
 
@@ -307,7 +309,7 @@ const make = Effect.gen(function* () {
                   new PeerLinkError({
                     reason: "unknown_link",
                     message:
-                      "That environment is no longer linked here, or its link expired. Link it again.",
+                      "That environment is no longer linked here, or its link expired or was refused. Link it again.",
                   }),
                 ),
               onSome: (linked) => Effect.succeed(linkedOutcome(linked)),
