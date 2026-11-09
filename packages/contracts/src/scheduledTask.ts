@@ -26,10 +26,35 @@ export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
 const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0));
 
+const CheckinFields = {
+  checkin: Schema.optional(Schema.Boolean).annotate({
+    description: "Recurring thread check-in: skip unchanged state by default.",
+  }),
+  alwaysRun: Schema.optional(Schema.Boolean).annotate({
+    description: "Run even when the check-in state is unchanged.",
+  }),
+  wakeWhen: Schema.optional(
+    Schema.Union([
+      Schema.Struct({ type: Schema.Literal("thread_finished"), threadId: ThreadId }),
+      Schema.Struct({ type: Schema.Literal("task_finished"), task: TrimmedNonEmptyString }),
+      Schema.Struct({
+        type: Schema.Literal("git_landed"),
+        repoPath: TrimmedNonEmptyString,
+        ref: TrimmedNonEmptyString,
+        main: Schema.optional(TrimmedNonEmptyString.check(Schema.isPattern(/^[^-]/))),
+      }),
+    ]),
+  ).annotate({
+    description:
+      "One-shot wake on thread completion, own delegated task id/title completion, or ref merged into local main (default main). Checked server-side at everyMs. Git refs are pinned at registration.",
+  }),
+};
+
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval"),
   everyMs: ScheduledTaskIntervalMs,
   idleCheckin: Schema.optional(Schema.Literal(true)),
+  ...CheckinFields,
 });
 
 const ScheduledTaskFixedTimeSchedule = Schema.Struct({
@@ -204,6 +229,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval"),
     idleCheckin: Schema.optional(Schema.Literal(true)),
+    ...CheckinFields,
     everyMs: ScheduledTaskIntervalMs.check(
       Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS),
     ).annotate({
@@ -216,7 +242,13 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
-export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
+export const ScheduledTaskRunStatus = Schema.Literals([
+  "never",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+]);
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
 
 export const ScheduledTaskWebhookEndpoint = Schema.Struct({
@@ -418,3 +450,12 @@ export class ScheduledTaskError extends Schema.TaggedError<ScheduledTaskError>()
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/** Describe the condition attached to a one-shot scheduled wake. */
+export function scheduledWakeLabel(schedule: ScheduledTaskSchedule): string | null {
+  const wake = schedule.type === "interval" ? schedule.wakeWhen : undefined;
+  if (wake === undefined) return null;
+  if (wake.type === "thread_finished") return `When thread ${wake.threadId} finishes`;
+  if (wake.type === "task_finished") return `When task ${wake.task} finishes`;
+  return `When ${wake.ref} lands on ${wake.main ?? "main"} in ${wake.repoPath}`;
+}

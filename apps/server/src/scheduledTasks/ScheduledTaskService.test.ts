@@ -869,7 +869,7 @@ it.effect("idle check-ins persist their cadence, skip busy ticks, and pause with
         title: "Idle work check-in",
         prompt: "Check ready work",
         enabled: true,
-        schedule: { type: "interval", everyMs: 1_800_000, idleCheckin: true },
+        schedule: { type: "interval", everyMs: 1_800_000, idleCheckin: true, alwaysRun: true },
         projectId: ProjectId.make("project:test"),
         threadId: ThreadId.make("thread:main"),
         threadMode: "continue",

@@ -35,6 +35,7 @@ import {
 } from "./threadDetailsPanelStyles";
 
 const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
+  skipped: "bg-muted-foreground",
   never: "bg-muted-foreground/40",
   running: "bg-sky-500",
   succeeded: "bg-emerald-500",
@@ -44,6 +45,7 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
 function taskScheduleLine(task: ScheduledTask) {
   return (
     <>
+      {task.lastRunStatus === "skipped" ? "skipped: no change · " : ""}
       {scheduleLabel(task.schedule)}
       {task.blockedByPolicy !== undefined ? (
         ` · ${task.blockedByPolicy}`

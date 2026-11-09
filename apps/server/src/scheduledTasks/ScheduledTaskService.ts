@@ -1,3 +1,5 @@
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { checkinFingerprint, pinGitWake, wakeReason } from "./WakeState.ts";
 import * as MonitoringRunner from "../monitoring/MonitoringRunner.ts";
 import { idleCheckinPrompt } from "./IdleCheckin.ts";
 import {
@@ -451,6 +453,10 @@ export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const git = yield* Effect.serviceOption(GitVcsDriver.GitVcsDriver);
+    const gitContext = Option.isSome(git)
+      ? Context.make(GitVcsDriver.GitVcsDriver, git.value)
+      : Context.empty();
     const random = yield* SecureRandom.SecureRandom;
     const digest = yield* Digest.Digest;
     const mac = yield* Mac.Mac;
@@ -905,6 +911,83 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
+        const wake = active.schedule.type === "interval" ? active.schedule.wakeWhen : undefined;
+        const reason =
+          wake === undefined
+            ? null
+            : yield* wakeReason(active).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+                Effect.provideContext(gitContext),
+                Effect.mapError((cause) =>
+                  taskError("Could not check wake condition.", { taskId: active.id, cause }),
+                ),
+              );
+        if (wake !== undefined && reason === null) {
+          yield* sql`UPDATE scheduled_tasks SET next_run_at = ${nextRunAt(active, startedAt)} WHERE task_id = ${active.id} AND enabled = 1 AND next_run_at = ${active.nextRunAt}`.pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not reschedule wake condition.", { taskId: active.id, cause }),
+            ),
+          );
+          yield* notifyChanged;
+          return { task: active, threadId: null, dispatchFailed: false };
+        }
+        if (wake !== undefined && trigger === "scheduled") {
+          const current = yield* findTask(active.id);
+          if (
+            current === null ||
+            !current.enabled ||
+            current.createdAt !== active.createdAt ||
+            !isSameSchedule(current.schedule, active.schedule)
+          ) {
+            return { task: current ?? active, threadId: null, dispatchFailed: false };
+          }
+        }
+        const skipUnchanged =
+          trigger === "scheduled" &&
+          active.threadId !== null &&
+          active.schedule.type === "interval" &&
+          active.schedule.alwaysRun !== true &&
+          (active.schedule.checkin === true || active.schedule.idleCheckin === true);
+        const fingerprint = skipUnchanged
+          ? yield* checkinFingerprint(active).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError((cause) =>
+                taskError("Could not fingerprint check-in.", { taskId: active.id, cause }),
+              ),
+            )
+          : null;
+        if (fingerprint !== null) {
+          const [previous] = yield* sql<{
+            last_fingerprint: string | null;
+          }>`SELECT last_fingerprint FROM scheduled_tasks WHERE task_id = ${active.id}`.pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not read check-in baseline.", { taskId: active.id, cause }),
+            ),
+          );
+          if (previous?.last_fingerprint === fingerprint) {
+            const next = nextRunAt(active, startedAt);
+            yield* sql`UPDATE scheduled_tasks SET next_run_at = ${next}, last_run_at = ${startedAtIso},
+              last_run_status = 'skipped', last_run_error = NULL, updated_at = ${startedAtIso}
+              WHERE task_id = ${active.id}`.pipe(
+              Effect.mapError((cause) =>
+                taskError("Could not record skipped check-in.", { taskId: active.id, cause }),
+              ),
+            );
+            yield* notifyChanged;
+            return {
+              task: {
+                ...active,
+                nextRunAt: next,
+                lastRunAt: startedAtIso,
+                lastRunStatus: "skipped" as const,
+                lastRunError: null,
+              },
+              threadId: null,
+              dispatchFailed: false,
+            };
+          }
+        }
+
         if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
         else
           yield* sql
@@ -925,15 +1008,20 @@ export const layer = Layer.effect(
 
         const fireKey =
           webhook === undefined
-            ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
+            ? wake !== undefined
+              ? `${active.id}:wake:${active.createdAt}:${wake.type === "git_landed" ? wake.ref : wake.type === "thread_finished" ? wake.threadId : wake.task}`
+              : `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         const idleCheckin =
           active.schedule.type === "interval" && active.schedule.idleCheckin === true;
-        const prompt = idleCheckin
-          ? idleCheckinPrompt(active.id)
-          : (webhook?.prompt ?? active.prompt);
+        const prompt =
+          reason !== null
+            ? `[Wake condition fired: ${reason}]\n${active.prompt}`
+            : idleCheckin
+              ? idleCheckinPrompt(active.id)
+              : (webhook?.prompt ?? active.prompt);
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
@@ -1084,15 +1172,23 @@ export const layer = Layer.effect(
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
+          const consumeWake =
+            wake !== undefined &&
+            runSucceeded &&
+            current?.createdAt === active.createdAt &&
+            isSameSchedule(active.schedule, scheduleSource.schedule);
           const completed: ScheduledTask = {
             ...scheduleSource,
+            ...(consumeWake ? { enabled: false } : {}),
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
-            nextRunAt: nextRunAt(
-              scheduleSource,
-              scheduleSource.schedule.type === "once" ? startedAt : completedAt,
-            ),
+            nextRunAt: consumeWake
+              ? null
+              : nextRunAt(
+                  scheduleSource,
+                  scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+                ),
             lastRunStatus,
             lastRunError,
             runCount: scheduleSource.runCount + 1,
@@ -1110,8 +1206,12 @@ export const layer = Layer.effect(
             startedAtIso,
           });
           let written = false;
-          if (webhook === undefined) written = yield* completion;
-          else {
+          if (webhook === undefined) {
+            written = yield* completion;
+            if (written && runSucceeded) {
+              yield* sql`UPDATE scheduled_tasks SET last_fingerprint = ${fingerprint}, enabled = ${completed.enabled ? 1 : 0} WHERE task_id = ${task.id}`;
+            }
+          } else {
             const pending =
               yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId}`;
             if (pending.length === 0) written = yield* completion;
@@ -1377,7 +1477,7 @@ export const layer = Layer.effect(
       // Keep the existing next_run_at when the schedule itself is untouched:
       // editing a title or prompt must not postpone (or resurrect) a due
       // run — only schedule/enabled changes restart the clock.
-      const schedule: ScheduledTask["schedule"] =
+      let schedule: ScheduledTask["schedule"] =
         input.schedule.type === "webhook"
           ? {
               type: "webhook",
@@ -1408,6 +1508,26 @@ export const layer = Layer.effect(
           : input.schedule.type === "once"
             ? { type: "once", runAt: iso(DateTime.makeUnsafe(input.schedule.runAt)) }
             : input.schedule;
+      if (schedule.type === "interval" && schedule.wakeWhen !== undefined) {
+        if (
+          threadId === null ||
+          threadMode !== "continue" ||
+          schedule.idleCheckin ||
+          schedule.checkin
+        ) {
+          return yield* taskError(
+            "Wake conditions require a bound thread in continue mode and cannot be check-ins.",
+            { taskId: id },
+          );
+        }
+        const pinned = yield* pinGitWake(schedule.wakeWhen).pipe(
+          Effect.provideContext(gitContext),
+          Effect.mapError((cause) =>
+            taskError("Could not resolve wake condition.", { taskId: id, cause }),
+          ),
+        );
+        schedule = { ...schedule, wakeWhen: pinned };
+      }
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {

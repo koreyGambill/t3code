@@ -353,6 +353,7 @@ const layerMonitoringDialogueProvided = MonitoringDialogue.layer.pipe(
   ),
 );
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
+  Layer.provide(GitVcsDriver.layer),
   Layer.provide(layerMonitoringRunnerProvided),
   Layer.provide(
     Layer.mergeAll(

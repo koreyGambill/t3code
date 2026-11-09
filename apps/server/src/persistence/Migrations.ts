@@ -88,6 +88,8 @@ import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 import Migration0081 from "./Migrations/081_DevelopmentEnvironmentUsage.ts";
 import Migration0082 from "./Migrations/082_ThreadReplyRequests.ts";
 
+import Migration0085 from "./Migrations/085_ScheduledTaskFingerprint.ts";
+
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -174,6 +176,7 @@ const migrationEntries = [
   [82, "ThreadReplyRequests", Migration0082],
   [83, "Monitoring", Migration0083],
   [84, "RemoteThreadReplies", Migration0084],
+  [85, "ScheduledTaskFingerprint", Migration0085],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

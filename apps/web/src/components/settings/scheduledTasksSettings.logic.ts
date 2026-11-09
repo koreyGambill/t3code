@@ -64,6 +64,10 @@ export interface DraftState {
   readonly enabled: boolean;
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
+  readonly intervalOptions?: Pick<
+    Extract<ScheduledTaskUpsertSchedule, { type: "interval" }>,
+    "wakeWhen" | "checkin" | "alwaysRun"
+  >;
   readonly timeOfDay: string;
   /** Local date and time as a `datetime-local` input value, such as 2026-11-02T15:00. */
   readonly runAt: string;
@@ -225,10 +229,10 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     };
   }
   if (draft.scheduleMode === "idle_checkin")
-    return { type: "interval", everyMs: 1_800_000, idleCheckin: true };
+    return { ...draft.intervalOptions, type: "interval", everyMs: 1_800_000, idleCheckin: true };
   if (draft.scheduleMode === "interval") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
+    return { ...draft.intervalOptions, type: "interval", everyMs };
   }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {
@@ -246,6 +250,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       ? new Set(schedule.weekdays)
       : new Set([0, 1, 2, 3, 4, 5, 6]);
   return {
+    ...(schedule.type === "interval" ? { intervalOptions: schedule } : {}),
     editingId: task.id,
     title: task.title,
     prompt: task.prompt,

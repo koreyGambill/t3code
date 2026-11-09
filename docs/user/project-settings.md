@@ -96,9 +96,21 @@ a new thread there on its next run.
 On web and desktop, open a main conversation’s **Automations** panel and
 choose **Enable idle work check-in**. Manage it here in Scheduled tasks. Every
 30 minutes it checks whether that thread is idle with at most one working
-subagent. Busy checks are skipped. The reminder is labeled as an automated cron
+subagent. Busy checks are skipped. Check-ins also skip the model turn when the
+thread’s work, queue, and watched conditions have not changed since the last run.
+The task shows **skipped: no change**. Enable **Run even when unchanged** to
+always run an idle check-in. The reminder is labeled as an automated cron
 message and asks about ready, authorized work. Turn **Enabled** off here to stop
 it; the agent can also pause it when work is done or waiting for you.
+
+Ask the agent to resume this conversation when another thread or one of its
+delegated tasks finishes, or when a commit or branch lands on a repository’s local
+main branch. It can save a one-shot wake condition and end its turn. The server
+checks the condition at the saved interval, then queues one message saying what
+fired. Git conditions track the commit selected when the wake was saved, so they
+still work after the source branch is deleted. View and cancel wakes in the
+thread’s Automations panel or **Settings → Scheduled tasks**. Pausing or deleting
+the task cancels its pending wake.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.

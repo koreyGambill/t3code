@@ -1,3 +1,4 @@
+import { scheduledWakeLabel } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -303,6 +304,8 @@ const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  const wake = scheduledWakeLabel(schedule);
+  if (wake !== null) return wake;
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
@@ -792,7 +795,9 @@ function ScheduledTaskRow({
             )}
           </span>
           {task.lastRunStatus !== "never" ? (
-            <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
+            <Badge variant={statusVariant(task.lastRunStatus)}>
+              {task.lastRunStatus === "skipped" ? "skipped: no change" : task.lastRunStatus}
+            </Badge>
           ) : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
         </div>
@@ -1999,6 +2004,22 @@ function ScheduledTaskEditorForm({
             )}
           </div>
 
+          {draft.scheduleMode === "idle_checkin" ||
+          (draft.scheduleMode === "interval" && draft.intervalOptions?.checkin) ? (
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="scheduled-task-always-run">Run even when unchanged</Label>
+              <Switch
+                id="scheduled-task-always-run"
+                checked={draft.intervalOptions?.alwaysRun === true}
+                onCheckedChange={(alwaysRun) =>
+                  setDraft((current) => ({
+                    ...current,
+                    intervalOptions: { ...current.intervalOptions, alwaysRun },
+                  }))
+                }
+              />
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">
               <Label htmlFor="scheduled-task-enabled">Enabled</Label>
