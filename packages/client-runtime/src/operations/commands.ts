@@ -687,12 +687,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   if (input.expectedEnvironmentId !== undefined) {
     const config = yield* getInitialServerConfig();
     if (config.environment.environmentId !== input.expectedEnvironmentId) {
-      return yield* Effect.fail(
-        new ConnectionBlockedError({
-          reason: "configuration",
-          detail: "Connected to a different environment. Message was not sent.",
-        }),
-      );
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: "Connected to a different environment. Message was not sent.",
+      });
     }
   }
   const commandId = yield* allocateCommandId(input);
