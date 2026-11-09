@@ -83,11 +83,12 @@ async function run(command: string, args: string[], options: NodeChildProcess.Sp
 }
 
 async function snapshot(database: string, destination: string) {
-  const { DatabaseSync } = await import("node:sqlite");
+  const { DatabaseSync, backup } = await import("node:sqlite");
   const db = new DatabaseSync(database, { readOnly: true });
   try {
-    // VACUUM INTO holds one read transaction while WAL writers continue.
-    db.exec(`VACUUM INTO '${destination.replaceAll("'", "''")}'`);
+    // One step copies every page under one read snapshot, so WAL writers cannot restart it;
+    // VACUUM INTO rebuilds the database and took over 4 minutes on a 3 GB store.
+    await backup(db, destination, { rate: 2_147_483_647 });
   } finally {
     db.close();
   }
