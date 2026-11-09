@@ -5,6 +5,7 @@ profiles: [local]
 generated:
   - apps/mobile/.generated
   - apps/desktop/dist-electron
+  - apps/desktop/node_modules
 variables:
   T3CODE_PORT: { secret: false }
   T3CODE_WEB_PORT: { secret: false }
