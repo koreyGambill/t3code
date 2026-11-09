@@ -54,6 +54,8 @@ import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as Discovery from "../developmentEnvironments/DevelopmentEnvironmentDiscovery.ts";
+import * as ManagedFolders from "../project/ManagedProjectFolders.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -291,6 +293,8 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly discovery?: Discovery.DevelopmentEnvironmentDiscovery["Service"];
+  readonly scratch?: boolean;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -912,12 +916,13 @@ function makeLocalCommandHarness(input: {
           return { committed, storedEvents: [] };
         }),
   );
-  const resolveRuntimePolicy = vi.fn(
+  const resolveRuntimePolicy = vi.fn<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>(
     ({ thread }: Parameters<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>[0]) =>
       Effect.succeed({
         cwd: thread.worktreePath ?? "/tmp/native-account-command",
-        runtimeMode: thread.runtimeMode,
-      } as never),
+        runtimeMode: thread.runtimeMode ?? "full-access",
+        interactionMode: "default",
+      }),
   );
   const createWorktree = vi.fn<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>(() =>
     Effect.succeed({} as never),
@@ -938,6 +943,16 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        input.discovery === undefined
+          ? Layer.empty
+          : Layer.succeed(Discovery.DevelopmentEnvironmentDiscovery, input.discovery),
+        input.scratch !== true
+          ? Layer.empty
+          : Layer.mock(ManagedFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/tmp/projects",
+              isScratchProject: () => Effect.succeed(true),
+              sandboxFolderForThread: () => Effect.succeed("/tmp/isolated-scratch/thread"),
+            }),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
             input.sideChat?.nativeForkFrom === undefined
@@ -1872,3 +1887,39 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect.each(["auto-accept-edits", "approval-required", "full-access"] as const)(
+  "starts %s turns from persisted links without waiting for Xwing and isolates sandboxed scratch cwd",
+  (runtimeMode) =>
+    Effect.gen(function* () {
+      const refreshStarted = yield* Deferred.make<void>();
+      const releaseRefresh = yield* Deferred.make<void>();
+      const roots = vi.fn(() => Effect.succeed(["/tmp/linked-worktree"]));
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+        scratch: true,
+        discovery: {
+          refresh: () =>
+            Deferred.succeed(refreshStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseRefresh)),
+            ),
+          writableRoots: roots,
+        },
+      });
+      harness.resolveRuntimePolicy.mockReturnValue(
+        Effect.succeed({ cwd: "/home/user/code", runtimeMode, interactionMode: "default" }),
+      );
+      yield* harness.start;
+      expect(harness.startRootRun).toHaveBeenCalledTimes(1);
+      expect(harness.startRootRun.mock.calls[0]?.[0].runtimePolicy).toMatchObject({
+        cwd: runtimeMode === "full-access" ? "/home/user/code" : "/tmp/isolated-scratch/thread",
+      });
+      expect(roots).toHaveBeenCalledTimes(runtimeMode === "auto-accept-edits" ? 1 : 0);
+      if (runtimeMode === "auto-accept-edits")
+        expect(harness.startRootRun.mock.calls[0]?.[0].runtimePolicy.writableRoots).toEqual([
+          "/tmp/linked-worktree",
+        ]);
+      yield* Deferred.succeed(releaseRefresh, undefined);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

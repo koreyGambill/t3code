@@ -14,12 +14,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as XwingEnvironments from "../xwing/XwingEnvironments.ts";
 import * as Discovery from "./DevelopmentEnvironmentDiscovery.ts";
@@ -110,6 +108,16 @@ const fixture = Effect.gen(function* () {
       { name: "repo", sourcePath: source, path: checkout, branch: "work", present: true },
     ],
   };
+  yield* fs.makeDirectory(`${root}/env/.xwing-state`);
+  yield* fs.writeFileString(
+    `${root}/env/.xwing-state/events.jsonl`,
+    [
+      { type: "environment.created", agent: { harness: "claude-code", session: "child-native" } },
+      { type: "agent.session", agent: { harness: "codex", session: "root-native" } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n"),
+  );
   return { fs, run, root, source, checkout, environment };
 });
 
@@ -122,7 +130,7 @@ it.effect(
   "links descendant sessions to their thread and ancestors, matching the harness and avoiding duplicate events",
   () =>
     Effect.gen(function* () {
-      const { environment, source, checkout } = yield* fixture;
+      const { environment, checkout } = yield* fixture;
       const commands: OrchestrationV2ServerCommand[] = [];
       const threads = new Map([
         [id, thread()],
@@ -132,7 +140,7 @@ it.effect(
         [id, [providerThread(id, "codex", "root-native")]],
         [childId, [providerThread(childId, "claudeAgent", "child-native")]],
       ]);
-      const activityCalls: string[][] = [];
+      let catalogReads = 0;
       const service = yield* Discovery.make().pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -184,33 +192,10 @@ it.effect(
                 }),
             }),
             Layer.mock(XwingEnvironments.XwingEnvironments)({
-              list: () => Effect.succeed([environment]),
-            }),
-            Layer.mock(ProcessRunner.ProcessRunner)({
-              run: (input) =>
+              list: () =>
                 Effect.sync(() => {
-                  activityCalls.push([...input.args]);
-                  return {
-                    stdout: [
-                      {
-                        type: "agent.session",
-                        agent: { harness: "claude-code", session: "child-native" },
-                      },
-                      {
-                        type: "agent.session",
-                        agent: { harness: "claude-code", session: "root-native" },
-                      },
-                    ]
-                      .map((value) => JSON.stringify(value))
-                      .join("\n"),
-                    stderr: "",
-                    code: ChildProcessSpawner.ExitCode(0),
-                    timedOut: false,
-                    stdoutTruncated: false,
-                    stderrTruncated: false,
-                    stdoutInvalidUtf8: false,
-                    stderrInvalidUtf8: false,
-                  };
+                  catalogReads++;
+                  return [environment];
                 }),
             }),
           ),
@@ -231,11 +216,9 @@ it.effect(
           [id, [checkout]],
         ],
       );
-      assert.deepEqual(yield* service.writableRoots(id, null), [
-        checkout,
-        `${source}/.git`,
-        `${source}/.git/worktrees/repo`,
-      ]);
+      const beforeRoots = catalogReads;
+      assert.deepEqual(yield* service.writableRoots(id, null), [checkout]);
+      assert.equal(catalogReads, beforeRoots);
       yield* service.refresh(id);
       assert.equal(commands.length, 2);
       threads.set(id, thread());
@@ -245,91 +228,75 @@ it.effect(
       assert.equal(commands.length, 2);
       providers.set(id, []);
       providers.set(childId, []);
-      const count = activityCalls.length;
+      const count = catalogReads;
       yield* service.refresh(id);
-      assert.equal(activityCalls.length, count);
-      assert.isTrue(
-        activityCalls.every((args) => args[1] === "activity" && args.includes("--limit")),
-      );
+      assert.equal(catalogReads, count);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
-it.effect(
-  "grants only registered contained linked worktrees and their common Git directories",
-  () =>
-    Effect.gen(function* () {
-      const { fs, run, environment, root, source, checkout } = yield* fixture;
-      const t3Checkout = `${root}/t3-worktree`;
-      yield* run(source, ["worktree", "add", "-b", "t3", t3Checkout]);
-      const other = `${root}/other`;
-      yield* fs.makeDirectory(other);
-      yield* run(other, ["init", "--initial-branch=main"]);
-      const escaped = `${root}/env/escape`;
-      yield* fs.symlink(other, escaped);
-      const linked = {
-        ...thread(),
-        worktreePath: t3Checkout,
-        linkedDevelopmentEnvironments: [
-          {
-            xwingEnvironmentId: envId,
-            repositorySource: source,
-            checkoutPath: checkout,
-            number: 1,
-            name: "work",
-            selectedAt: now,
-          },
-        ],
-      };
-      const catalog = {
-        ...environment,
-        repositories: [
-          ...environment.repositories,
-          { name: "escape", sourcePath: other, path: escaped, branch: "main", present: true },
-          { name: "outside", sourcePath: source, path: t3Checkout, branch: "t3", present: true },
-          {
-            name: "mismatch",
-            sourcePath: source,
-            path: `${root}/env/unrelated`,
-            branch: "main",
-            present: true,
-          },
-        ],
-      };
-      yield* fs.makeDirectory(`${root}/env/unrelated`);
-      yield* run(`${root}/env/unrelated`, ["init", "--initial-branch=main"]);
-      const service = yield* Discovery.make().pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({
-              getThread: () => Effect.succeed(linked),
-            }),
-            Layer.mock(Orchestrator.OrchestratorV2)({}),
-            Layer.mock(XwingEnvironments.XwingEnvironments)({
-              list: () => Effect.succeed([catalog]),
-            }),
-            Layer.mock(ProcessRunner.ProcessRunner)({}),
-          ),
+it.effect("grants worktree files without granting any Git metadata", () =>
+  Effect.gen(function* () {
+    const { fs, run, environment, root, source, checkout } = yield* fixture;
+    const t3Checkout = `${root}/t3-worktree`;
+    yield* run(source, ["worktree", "add", "-b", "t3", t3Checkout]);
+    const other = `${root}/other`;
+    yield* fs.makeDirectory(other);
+    yield* run(other, ["init", "--initial-branch=main"]);
+    const escaped = `${root}/env/escape`;
+    yield* fs.symlink(other, escaped);
+    const linked = {
+      ...thread(),
+      worktreePath: t3Checkout,
+      linkedDevelopmentEnvironments: [
+        {
+          xwingEnvironmentId: envId,
+          repositorySource: source,
+          checkoutPath: checkout,
+          number: 1,
+          name: "work",
+          selectedAt: now,
+        },
+      ],
+    };
+    const catalog = {
+      ...environment,
+      repositories: [
+        ...environment.repositories,
+        { name: "escape", sourcePath: other, path: escaped, branch: "main", present: true },
+        { name: "outside", sourcePath: source, path: t3Checkout, branch: "t3", present: true },
+        {
+          name: "mismatch",
+          sourcePath: source,
+          path: `${root}/env/unrelated`,
+          branch: "main",
+          present: true,
+        },
+      ],
+    };
+    yield* fs.makeDirectory(`${root}/env/unrelated`);
+    yield* run(`${root}/env/unrelated`, ["init", "--initial-branch=main"]);
+    const service = yield* Discovery.make().pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(linked),
+          }),
+          Layer.mock(Orchestrator.OrchestratorV2)({}),
+          Layer.mock(XwingEnvironments.XwingEnvironments)({
+            list: () => Effect.succeed([catalog]),
+          }),
         ),
-      );
-      assert.deepEqual(yield* service.writableRoots(id, t3Checkout), [
-        checkout,
-        `${source}/.git`,
-        `${source}/.git/worktrees/repo`,
-        t3Checkout,
-        `${source}/.git/worktrees/t3-worktree`,
-      ]);
-      assert.deepEqual(yield* service.writableRoots(id, other), [
-        checkout,
-        `${source}/.git`,
-        `${source}/.git/worktrees/repo`,
-      ]);
-      const metadata = `${source}/.git/worktrees/repo`;
-      const outsideMetadata = `${root}/outside-metadata`;
-      yield* fs.rename(metadata, outsideMetadata);
-      yield* fs.writeFileString(`${outsideMetadata}/commondir`, `${source}/.git\n`);
-      yield* fs.symlink(outsideMetadata, metadata);
-      assert.deepEqual(yield* service.writableRoots(id, null), []);
-      yield* fs.remove(checkout, { recursive: true });
-      assert.deepEqual(yield* service.writableRoots(id, null), []);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+      ),
+    );
+    assert.deepEqual(yield* service.writableRoots(id, t3Checkout), [checkout]);
+    assert.deepEqual(yield* service.writableRoots(id, other), [checkout]);
+    const metadata = `${source}/.git/worktrees/repo`;
+    const outsideMetadata = `${root}/outside-metadata`;
+    yield* fs.rename(metadata, outsideMetadata);
+    yield* fs.writeFileString(`${outsideMetadata}/commondir`, `${source}/.git\n`);
+    yield* fs.symlink(outsideMetadata, metadata);
+    assert.deepEqual(yield* service.writableRoots(id, null), []);
+    yield* fs.remove(checkout, { recursive: true });
+    assert.deepEqual(yield* service.writableRoots(id, null), []);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

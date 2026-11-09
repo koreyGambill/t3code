@@ -8,6 +8,25 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
+  it.effect("strips the launching agent identity for every provider", () =>
+    Effect.gen(function* () {
+      const inherited = {
+        CLAUDE_CODE_SESSION_ID: "parent",
+        CODEX_THREAD_ID: "parent",
+        CODEX_SESSION_ID: "parent",
+        AI_AGENT: "claude",
+        CLAUDECODE: "1",
+        CLAUDE_CODE_MESSAGING_SOCKET: "/parent/socket",
+        PATH: "/bin",
+      };
+      const result = yield* mergeProviderInstanceEnvironment(undefined, inherited);
+      expect(result.PATH).toBe("/bin");
+      for (const name of Object.keys(inherited).filter((name) => name !== "PATH"))
+        expect(result[name]).toBe("");
+      expect(inherited.CODEX_THREAD_ID).toBe("parent");
+    }),
+  );
+
   it.effect.each([
     { value: "~/.account", tail: ".account" },
     { value: "~\\.account\\work", tail: ".account\\work" },

@@ -472,6 +472,7 @@ export const OrchestrationV2ThreadDevelopmentEnvironment = Schema.Struct({
   ...OrchestrationV2DevelopmentEnvironmentCheckout.fields,
   /** When this binding was selected; unchanged by later thread updates. */
   selectedAt: Schema.DateTimeUtc,
+  releasedAt: Schema.optional(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadDevelopmentEnvironment =
   typeof OrchestrationV2ThreadDevelopmentEnvironment.Type;
@@ -511,6 +512,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   linkedDevelopmentEnvironments: Schema.optional(
     Schema.Array(OrchestrationV2ThreadDevelopmentEnvironment),
   ),
+  unlinkedDevelopmentEnvironmentIds: Schema.optional(Schema.Array(XwingEnvironmentId)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2413,6 +2415,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
       OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
         ...environment,
         selectedAt: Schema.DateTimeUtcFromString,
+        releasedAt: Schema.optional(Schema.DateTimeUtcFromString),
       })),
     ),
   ),
@@ -2421,6 +2424,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
       OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
         ...environment,
         selectedAt: Schema.DateTimeUtcFromString,
+        releasedAt: Schema.optional(Schema.DateTimeUtcFromString),
       })),
     ),
   ),
@@ -2842,6 +2846,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
       OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
         ...environment,
         selectedAt: Schema.DateTimeUtcFromString,
+        releasedAt: Schema.optional(Schema.DateTimeUtcFromString),
       })),
     ),
   ),
@@ -3207,6 +3212,7 @@ export const OrchestrationV2Command = Schema.Union([
     linkDevelopmentEnvironments: Schema.optional(
       Schema.Array(OrchestrationV2DevelopmentEnvironmentCheckout),
     ),
+    unlinkDevelopmentEnvironmentId: Schema.optional(XwingEnvironmentId),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
@@ -4409,7 +4415,8 @@ export const OrchestrationV2RpcSchemas = {
       Schema.makeFilter(
         (command) =>
           command.type !== "thread.metadata.update" ||
-          command.linkDevelopmentEnvironments === undefined ||
+          (command.linkDevelopmentEnvironments === undefined &&
+            command.unlinkDevelopmentEnvironmentId === undefined) ||
           "Environment discovery links are set by the server.",
       ),
     ),

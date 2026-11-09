@@ -4285,16 +4285,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                             link.repositorySource === existing.repositorySource,
                         ),
                     ),
-                    ...command.linkDevelopmentEnvironments.map((link) => ({
-                      ...link,
-                      selectedAt:
-                        (thread.linkedDevelopmentEnvironments ?? []).find(
-                          (existing) =>
-                            existing.xwingEnvironmentId === link.xwingEnvironmentId &&
-                            existing.repositorySource === link.repositorySource &&
-                            existing.checkoutPath === link.checkoutPath,
-                        )?.selectedAt ?? now,
-                    })),
+                    ...command.linkDevelopmentEnvironments
+                      .filter(
+                        (link) =>
+                          !(thread.unlinkedDevelopmentEnvironmentIds ?? []).some(
+                            (id) => id === link.xwingEnvironmentId,
+                          ),
+                      )
+                      .map((link) => {
+                        const existing = (thread.linkedDevelopmentEnvironments ?? []).find(
+                          (candidate) =>
+                            candidate.xwingEnvironmentId === link.xwingEnvironmentId &&
+                            candidate.repositorySource === link.repositorySource,
+                        );
+                        return {
+                          ...link,
+                          selectedAt:
+                            existing?.checkoutPath === link.checkoutPath
+                              ? existing.selectedAt
+                              : now,
+                          ...(existing?.releasedAt === undefined
+                            ? {}
+                            : { releasedAt: existing.releasedAt }),
+                        };
+                      }),
+                  ],
+                }),
+            ...(command.unlinkDevelopmentEnvironmentId === undefined
+              ? {}
+              : {
+                  linkedDevelopmentEnvironments: (
+                    thread.linkedDevelopmentEnvironments ?? []
+                  ).filter(
+                    (link) => link.xwingEnvironmentId !== command.unlinkDevelopmentEnvironmentId,
+                  ),
+                  unlinkedDevelopmentEnvironmentIds: [
+                    ...new Set([
+                      ...(thread.unlinkedDevelopmentEnvironmentIds ?? []),
+                      command.unlinkDevelopmentEnvironmentId,
+                    ]),
                   ],
                 }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
@@ -4318,7 +4347,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             // A checkout chosen outside Xwing ends the thread's binding to an Xwing checkout.
             ...(command.worktreePath === undefined || command.worktreePath === thread.worktreePath
               ? {}
-              : { developmentEnvironment: null }),
+              : {
+                  developmentEnvironment: null,
+                  linkedDevelopmentEnvironments: (thread.linkedDevelopmentEnvironments ?? []).map(
+                    (link) => ({ ...link, releasedAt: link.releasedAt ?? now }),
+                  ),
+                }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -4359,6 +4393,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             worktreePath: command.worktreePath,
             branch: command.branch,
+            ...(command.worktreePath === thread.worktreePath
+              ? {}
+              : {
+                  linkedDevelopmentEnvironments: (thread.linkedDevelopmentEnvironments ?? []).map(
+                    (link) => ({ ...link, releasedAt: link.releasedAt ?? now }),
+                  ),
+                }),
             developmentEnvironment:
               command.developmentEnvironment === null
                 ? null

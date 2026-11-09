@@ -61,3 +61,8 @@ export const changeThreadFolder = createEnvironmentRpcCommand(connectionAtomRunt
   label: "threads:change-folder",
   tag: WS_METHODS.threadsChangeFolder,
 });
+
+export const unlinkThreadEnvironment = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "development-environments:unlink",
+  tag: WS_METHODS.developmentEnvironmentsUnlink,
+});

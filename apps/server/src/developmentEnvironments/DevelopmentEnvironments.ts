@@ -2,6 +2,7 @@ import {
   type CommandId,
   isProviderNativeSubagentThread,
   type ThreadChangeFolderInput,
+  type DevelopmentEnvironmentUnlinkInput,
   type ThreadChangeFolderError,
   ThreadFolderUnavailableError,
   type DevelopmentEnvironmentCheckoutChoice,
@@ -37,7 +38,6 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as DevelopmentEnvironmentCheckouts from "./DevelopmentEnvironmentCheckouts.ts";
 import * as DevelopmentEnvironmentHolds from "./DevelopmentEnvironmentHolds.ts";
-import * as DevelopmentEnvironmentDiscovery from "./DevelopmentEnvironmentDiscovery.ts";
 
 export {
   DevelopmentEnvironmentPersistenceError,
@@ -98,6 +98,9 @@ export class DevelopmentEnvironments extends Context.Service<
     readonly getWorktreeThreadIds: (input: {
       readonly worktreePath: string;
     }) => Effect.Effect<OrchestrationV2WorktreeThreadIds, Orchestrator.OrchestratorV2Error>;
+    readonly unlink: (
+      input: DevelopmentEnvironmentUnlinkInput,
+    ) => Effect.Effect<void, DevelopmentEnvironmentPersistenceError>;
     readonly changeFolder: (
       input: ThreadChangeFolderInput,
     ) => Effect.Effect<DevelopmentEnvironmentSelectionResult, ThreadChangeFolderError>;
@@ -182,9 +185,6 @@ const make = Effect.gen(function* () {
           (yield* ownership.ownerOf(worktreePath)) === null,
       };
     });
-  const discovery = yield* Effect.serviceOption(
-    DevelopmentEnvironmentDiscovery.DevelopmentEnvironmentDiscovery,
-  );
 
   const bindLaunch: DevelopmentEnvironments["Service"]["bindLaunch"] = (binding, launch) =>
     holds.retain(
@@ -393,9 +393,23 @@ const make = Effect.gen(function* () {
     return yield* checkouts.list({ workspaceRoot: yield* projectRoot(input.projectId) });
   });
 
+  const unlink: DevelopmentEnvironments["Service"]["unlink"] = Effect.fn(
+    "DevelopmentEnvironments.unlink",
+  )(function* (input) {
+    yield* threads
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        unlinkDevelopmentEnvironmentId: input.xwingEnvironmentId,
+      })
+      .pipe(
+        Effect.mapError(() => new DevelopmentEnvironmentPersistenceError({ operation: "unlink" })),
+      );
+  });
+
   const listUsage: DevelopmentEnvironments["Service"]["listUsage"] = (filter) =>
-    (Option.isSome(discovery) ? discovery.value.refresh(filter.threadId) : Effect.void).pipe(
-      Effect.andThen(projections.listDevelopmentEnvironmentUsage(filter)),
+    projections.listDevelopmentEnvironmentUsage(filter).pipe(
       Effect.tapError((cause) =>
         Effect.logWarning("Development environment usage read failed", cause),
       ),
@@ -407,6 +421,7 @@ const make = Effect.gen(function* () {
 
   return DevelopmentEnvironments.of({
     bindLaunch,
+    unlink,
     getWorktreeThreadIds,
     changeFolder,
     selectCheckout,

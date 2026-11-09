@@ -5438,12 +5438,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT 1 FROM json_each(thread.payload_json, '$.linkedDevelopmentEnvironments') AS link
                   WHERE json_extract(link.value, '$.xwingEnvironmentId') = usage.xwing_environment_id
                     AND json_extract(link.value, '$.repositorySource') = usage.repository_source
+                    AND json_extract(link.value, '$.releasedAt') IS NULL
                 )
               THEN 1 ELSE 0
             END AS "current"
           FROM orchestration_v2_projection_development_environment_usage AS usage
           JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = usage.thread_id
           WHERE thread.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(thread.payload_json, '$.unlinkedDevelopmentEnvironmentIds') AS unlinked
+              WHERE unlinked.value = usage.xwing_environment_id
+            )
             AND (${filter.xwingEnvironmentId ?? null} IS NULL
               OR usage.xwing_environment_id = ${filter.xwingEnvironmentId ?? null})
             AND (${filter.threadId ?? null} IS NULL OR usage.thread_id IN (SELECT thread_id FROM thread_tree))

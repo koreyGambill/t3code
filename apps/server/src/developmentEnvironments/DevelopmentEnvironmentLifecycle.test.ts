@@ -52,6 +52,7 @@ interface ThreadFixture {
   readonly background?: boolean;
   readonly terminal?: boolean;
   readonly linked?: boolean;
+  readonly released?: boolean;
 }
 
 /** Xwing's side as the CLI behaves: holds block deletion, dirty work blocks without discard. */
@@ -237,6 +238,7 @@ const records = (fixture: ThreadFixture) =>
               number: 7,
               name: "space name",
               selectedAt: NOW,
+              ...(fixture.released ? { releasedAt: NOW } : {}),
             },
           ]
         : [],
@@ -457,6 +459,13 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         runStatus: "running",
         linked: true,
       },
+      {
+        id: "released",
+        worktreePath: "/elsewhere",
+        linked: true,
+        released: true,
+        runStatus: "running",
+      },
     ];
     return Effect.gen(function* () {
       const assessment = yield* (yield* lifecycle).assessCleanup({
@@ -469,6 +478,7 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         [
           ["moved", false, null],
           ["scratch", true, "working"],
+          ["released", false, null],
           ["unsettled", true, "unsettled"],
           ["turn", true, "working"],
           ["queued", true, "working"],
@@ -498,7 +508,7 @@ describe("DevelopmentEnvironmentLifecycle", () => {
         makeLayer({
           xwing,
           threads,
-          usage: [usage("moved", false), usage("scratch", true)],
+          usage: [usage("moved", false), usage("scratch", true), usage("released", false)],
           schedules: [
             schedule("on-idle-thread", "idle", true),
             schedule("in-checkout", null, true),

@@ -381,7 +381,8 @@ const make = Effect.gen(function* () {
             within(preview.rootPath, cwd ?? thread.worktreePath) ||
             thread.developmentEnvironment?.xwingEnvironmentId === id ||
             (thread.linkedDevelopmentEnvironments ?? []).some(
-              (environment) => environment.xwingEnvironmentId === id,
+              (environment) =>
+                environment.xwingEnvironmentId === id && environment.releasedAt === undefined,
             );
           const block: DevelopmentEnvironmentThreadBlock | null = current
             ? yield* threadBlock(records, operation, id)

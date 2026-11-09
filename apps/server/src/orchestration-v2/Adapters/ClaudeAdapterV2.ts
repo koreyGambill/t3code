@@ -10775,7 +10775,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
         ) {
-          const queryPolicy = yield* queryPolicyForTurn(turnInput);
+          let queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const mcpOverrides = claudeMcpQueryOverrides({
             mcpSession,
@@ -10785,13 +10785,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(
             turnInput.modelSelection,
             modelCatalog,
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          // Directory refreshes must not replace a process that still owns background work.
+          if (
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            (yield* liveProcessRunsBackgroundWork(existing))
+          ) {
+            const { additionalDirectories: _directories, ...withoutDirectories } = queryPolicy;
+            const retained = {
+              ...withoutDirectories,
+              ...(existing.queryPolicy.additionalDirectories === undefined
+                ? {}
+                : { additionalDirectories: existing.queryPolicy.additionalDirectories }),
+            };
+            if (claudeEffectiveQueryPolicyKey(retained, mcpOverrides) === existing.queryPolicyKey)
+              queryPolicy = retained;
+          }
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
             existing !== null &&

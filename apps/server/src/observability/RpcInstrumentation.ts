@@ -183,6 +183,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.xwingEnvironmentsInspect]: "workspace",
   [WS_METHODS.developmentEnvironmentsListCheckouts]: "workspace",
   [WS_METHODS.developmentEnvironmentsListUsage]: "workspace",
+  [WS_METHODS.developmentEnvironmentsUnlink]: "workspace",
   [WS_METHODS.developmentEnvironmentsSelectCheckout]: "workspace",
   [WS_METHODS.developmentEnvironmentsCreate]: "workspace",
   [WS_METHODS.developmentEnvironmentsAttach]: "workspace",

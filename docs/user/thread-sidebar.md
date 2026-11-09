@@ -41,13 +41,15 @@ project in the heading.
 Threads without a project start in the server machine's `~/code` folder. Set
 `scratchStartDirectory` in that server's settings to use another existing folder.
 If the folder does not exist, T3 Code uses the `scratch` folder in its data directory.
-The start folder must sit outside a Git repository. Threads share it without
-creating a separate folder per thread. Older threads keep their existing folders.
-Deleting a thread keeps its files.
+The start folder must sit outside a Git repository and cannot be your home, `~/.xwing`, or a parent of T3 Code's data folder. Threads share it without
+creating a separate visible folder per thread. Sandboxed agents run from a private
+thread folder and can read the shared folder. Full-access agents run there directly.
+Older threads keep their existing folders. Deleting a thread keeps its files.
 
 File search in the shared start folder lists only its immediate files and folders.
-Choose a repository folder to search inside it. Ask the agent to create or reuse an
-Xwing environment for code changes and to keep throwaway files in `/tmp`.
+Choose a repository folder to search inside it. Ask the agent to create its own
+Xwing environment for code changes and keep throwaway files in `/tmp`.
+Sandboxed agents can edit linked worktrees but need approval to commit.
 
 Choose **Change folder** from a thread's menu or details to work somewhere else.
 Pick a recent folder, a project, or a linked Xwing environment, or enter a path.
@@ -57,7 +59,8 @@ folder with the conversation carried over. Finish or stop any work before moving
 The **Environments** tab shows Xwing environments used by the thread and its
 delegated children. Open an environment to see its repositories and apps, open a
 terminal, or review an archive or deletion. The compact list in thread details
-links to the same tab.
+links to the same tab. **Unlink** removes a link. Changing folder keeps earlier
+links as history and releases their cleanup protection.
 
 ### Start in the background
 

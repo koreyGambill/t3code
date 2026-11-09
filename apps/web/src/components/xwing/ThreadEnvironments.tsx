@@ -1,19 +1,25 @@
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useContext } from "react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import {
   AuthOrchestrationReadScope,
+  CommandId,
+  XwingEnvironmentId,
   type ScopedThreadRef,
   type XwingEnvironmentSummary,
   type OrchestrationV2DevelopmentEnvironmentUsage,
 } from "@t3tools/contracts";
 import { Boxes, ChevronRightIcon } from "lucide-react";
 
+import { useAtomCommand } from "../../state/use-atom-command";
+import { Button } from "../ui/button";
+import { randomUUID } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import {
   developmentEnvironmentUsage,
+  unlinkThreadEnvironment,
   useXwingEnvironmentsSupport,
   xwingEnvironmentInspect,
   xwingEnvironmentsList,
@@ -96,6 +102,7 @@ export function ThreadEnvironmentRows({
         No environments linked to this thread or its delegated children.
       </p>
     );
+  const rows = linked.usage.data;
   return (
     <div data-thread-environments-list className="divide-y divide-border/50">
       {linked.environments
@@ -111,12 +118,21 @@ export function ThreadEnvironmentRows({
             environment={environment}
             compact={compact}
             onSelect={onSelect}
+            usage={rows.filter((row) => row.xwingEnvironmentId === environment.id)}
+            onUnlink={linked.usage.refresh}
           />
         ))}
       {linked.missing
         .filter((row) => matches(`${row.name} ${row.number ?? ""}`))
         .map((row) => (
-          <MissingEnvironmentRow key={row.xwingEnvironmentId} row={row} />
+          <div key={row.xwingEnvironmentId}>
+            <MissingEnvironmentRow row={row} />
+            <UnlinkEnvironment
+              threadRef={threadRef}
+              usage={rows.filter((entry) => entry.xwingEnvironmentId === row.xwingEnvironmentId)}
+              onUnlink={linked.usage.refresh}
+            />
+          </div>
         ))}
     </div>
   );
@@ -127,8 +143,12 @@ function ThreadEnvironmentRow({
   environment,
   compact,
   onSelect,
+  usage,
+  onUnlink,
 }: {
   readonly threadRef: ScopedThreadRef;
+  readonly usage: readonly OrchestrationV2DevelopmentEnvironmentUsage[];
+  readonly onUnlink: () => void;
   readonly environment: XwingEnvironmentSummary;
   readonly compact: boolean;
   readonly onSelect: (id: string) => void;
@@ -150,6 +170,11 @@ function ThreadEnvironmentRow({
       <span className="flex min-w-0 items-center gap-1.5">
         <Boxes className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{xwingEnvironmentLabel(environment)}</span>
+        {usage.every((row) => !row.current) ? (
+          <Badge size="sm" variant="outline">
+            history
+          </Badge>
+        ) : null}
         {environment.status === "archived" ? (
           <Badge size="sm" variant="secondary">
             archived
@@ -183,24 +208,69 @@ function ThreadEnvironmentRow({
     </>
   );
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          compact ? (
-            <ThreadDetailsControl multiline onClick={() => onSelect(environment.id)} />
-          ) : (
-            <button
-              type="button"
-              className="flex w-full min-w-0 flex-col gap-1 px-2 py-2 text-left text-xs hover:bg-accent focus-visible:outline focus-visible:outline-ring"
-              onClick={() => onSelect(environment.id)}
-            />
-          )
+    <div>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            compact ? (
+              <ThreadDetailsControl multiline onClick={() => onSelect(environment.id)} />
+            ) : (
+              <button
+                type="button"
+                className="flex w-full min-w-0 flex-col gap-1 px-2 py-2 text-left text-xs hover:bg-accent focus-visible:outline focus-visible:outline-ring"
+                onClick={() => onSelect(environment.id)}
+              />
+            )
+          }
+        >
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left text-xs">{content}</span>
+        </TooltipTrigger>
+        <TooltipPopup>{environment.rootPath}</TooltipPopup>
+      </Tooltip>
+      <div className="flex justify-end px-2 pb-1">
+        <UnlinkEnvironment threadRef={threadRef} usage={usage} onUnlink={onUnlink} />
+      </div>
+    </div>
+  );
+}
+
+function UnlinkEnvironment({
+  threadRef,
+  usage,
+  onUnlink,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly usage: readonly OrchestrationV2DevelopmentEnvironmentUsage[];
+  readonly onUnlink: () => void;
+}) {
+  const unlink = useAtomCommand(unlinkThreadEnvironment, {
+    label: "unlink development environment",
+  });
+  const allowed = useAtomValue(unlinkThreadEnvironment.permissionAtom(threadRef.environmentId));
+  if (!allowed) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      onClick={async () => {
+        for (const row of usage.filter(
+          (entry, index, all) =>
+            all.findIndex((other) => other.threadId === entry.threadId) === index,
+        )) {
+          await unlink({
+            environmentId: threadRef.environmentId,
+            input: {
+              commandId: CommandId.make(randomUUID()),
+              threadId: row.threadId,
+              xwingEnvironmentId: XwingEnvironmentId.make(row.xwingEnvironmentId),
+            },
+          });
         }
-      >
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left text-xs">{content}</span>
-      </TooltipTrigger>
-      <TooltipPopup>{environment.rootPath}</TooltipPopup>
-    </Tooltip>
+        onUnlink();
+      }}
+    >
+      Unlink
+    </Button>
   );
 }
 

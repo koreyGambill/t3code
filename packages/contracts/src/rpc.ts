@@ -470,6 +470,7 @@ import {
   DevelopmentEnvironmentListUsageInput,
   DevelopmentEnvironmentPersistenceError,
   DevelopmentEnvironmentSelectCheckoutInput,
+  DevelopmentEnvironmentUnlinkInput,
   DevelopmentEnvironmentSelectCheckoutResult,
   DevelopmentEnvironmentSelectError,
   DevelopmentEnvironmentUsageList,
@@ -533,6 +534,7 @@ export const WS_METHODS = {
   developmentEnvironmentsListCheckouts: "developmentEnvironments.listCheckouts",
   developmentEnvironmentsListUsage: "developmentEnvironments.listUsage",
   developmentEnvironmentsSelectCheckout: "developmentEnvironments.selectCheckout",
+  developmentEnvironmentsUnlink: "developmentEnvironments.unlink",
   developmentEnvironmentsCreate: "developmentEnvironments.create",
   developmentEnvironmentsAttach: "developmentEnvironments.attach",
   developmentEnvironmentsRestore: "developmentEnvironments.restore",
@@ -1631,6 +1633,11 @@ const WsDevelopmentEnvironmentsListUsageRpc = Rpc.make(
     error: Schema.Union([DevelopmentEnvironmentPersistenceError, EnvironmentAuthorizationError]),
   },
 );
+const WsDevelopmentEnvironmentsUnlinkRpc = Rpc.make(WS_METHODS.developmentEnvironmentsUnlink, {
+  payload: DevelopmentEnvironmentUnlinkInput,
+  success: Schema.Void,
+  error: Schema.Union([DevelopmentEnvironmentPersistenceError, EnvironmentAuthorizationError]),
+});
 const WsDevelopmentEnvironmentsSelectCheckoutRpc = Rpc.make(
   WS_METHODS.developmentEnvironmentsSelectCheckout,
   {
@@ -2523,6 +2530,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDevelopmentEnvironmentsListCheckoutsRpc,
   WsDevelopmentEnvironmentsListUsageRpc,
   WsDevelopmentEnvironmentsSelectCheckoutRpc,
+  WsDevelopmentEnvironmentsUnlinkRpc,
   WsDevelopmentEnvironmentsCreateRpc,
   WsDevelopmentEnvironmentsAttachRpc,
   WsDevelopmentEnvironmentsRepairRpc,

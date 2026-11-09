@@ -150,6 +150,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const scope = yield* Effect.scope;
     const eventSink = yield* EventSink.EventSinkV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -727,10 +728,36 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      if (Option.isSome(discovery)) yield* discovery.value.refresh(input.threadId);
+      const isScratch =
+        Option.isSome(managedFolders) &&
+        (yield* managedFolders.value.isScratchProject(
+          projection.thread.projectId,
+          resolvedPolicy.success.cwd,
+        ));
+      if (Option.isSome(discovery))
+        yield* discovery.value.refresh(input.threadId).pipe(Effect.forkIn(scope));
+      const sandbox = resolvedPolicy.success.sandboxPolicy;
+      const sandboxKind =
+        typeof sandbox === "object" && sandbox !== null ? Reflect.get(sandbox, "type") : undefined;
+      const workspaceWrite =
+        sandboxKind === undefined
+          ? ["auto", "auto-accept-edits"].includes(resolvedPolicy.success.runtimeMode)
+          : sandboxKind === "workspaceWrite";
+      const sandboxed =
+        sandboxKind === undefined
+          ? resolvedPolicy.success.runtimeMode !== "full-access"
+          : !["dangerFullAccess", "externalSandbox"].includes(sandboxKind);
       const resolvedRuntimePolicy = {
         ...resolvedPolicy.success,
-        ...(Option.isSome(discovery)
+        ...(isScratch && sandboxed && Option.isSome(managedFolders)
+          ? {
+              cwd: yield* managedFolders.value.sandboxFolderForThread(
+                input.threadId,
+                resolvedPolicy.success.cwd,
+              ),
+            }
+          : {}),
+        ...(workspaceWrite && Option.isSome(discovery)
           ? {
               writableRoots: yield* discovery.value.writableRoots(
                 input.threadId,
@@ -1693,9 +1720,6 @@ export const layer: Layer.Layer<
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
-      const isScratch =
-        Option.isSome(managedFolders) &&
-        (yield* managedFolders.value.isScratchProject(projection.thread.projectId));
       const scratchSession = isScratch
         ? {
             ...deliverySession,
@@ -1706,7 +1730,7 @@ export const layer: Layer.Layer<
                   ...(turnInput.appContext ?? []),
                   {
                     key: "scratch-folder",
-                    text: "Put throwaway files in /tmp, not the thread folder; create or reuse an Xwing environment for real changes.",
+                    text: "This folder holds shared repositories; don't edit them here. Use /tmp for throwaway files and an Xwing environment you created for changes.",
                   },
                 ],
               }),

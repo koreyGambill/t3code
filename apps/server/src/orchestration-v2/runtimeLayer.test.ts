@@ -2820,6 +2820,36 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(usage[0]?.checkoutPath, checkout.checkoutPath);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.listDevelopmentEnvironmentUsage({ threadId }), usage);
+      yield* orchestrator.dispatch({
+        type: "thread.workspace.select",
+        commandId: CommandId.make("discovered-change-folder"),
+        threadId,
+        expected: { worktreePath: "/home/user/code", xwingEnvironmentId: null },
+        worktreePath: "/other/folder",
+        branch: null,
+        developmentEnvironment: null,
+      });
+      const history = yield* projections.listDevelopmentEnvironmentUsage({ threadId });
+      assert.lengthOf(history, 1);
+      assert.isFalse(history[0]?.current);
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("discovered-unlink"),
+        threadId,
+        unlinkDevelopmentEnvironmentId: XwingEnvironmentId.make(checkout.xwingEnvironmentId),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("discovered-stale-refresh"),
+        threadId,
+        linkDevelopmentEnvironments: [checkout],
+      });
+      const unlinked = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.deepEqual(unlinked.linkedDevelopmentEnvironments, []);
+      assert.include(unlinked.unlinkedDevelopmentEnvironmentIds ?? [], checkout.xwingEnvironmentId);
+      assert.deepEqual(yield* projections.listDevelopmentEnvironmentUsage({ threadId }), []);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* projections.listDevelopmentEnvironmentUsage({ threadId }), []);
     }),
   );
 

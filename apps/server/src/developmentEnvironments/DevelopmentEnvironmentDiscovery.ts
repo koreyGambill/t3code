@@ -15,7 +15,6 @@ import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as XwingEnvironments from "../xwing/XwingEnvironments.ts";
 
@@ -44,7 +43,6 @@ const linkKey = (link: OrchestrationV2DevelopmentEnvironmentCheckout) =>
 
 export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* () {
   const xwing = yield* XwingEnvironments.XwingEnvironments;
-  const runner = yield* ProcessRunner.ProcessRunner;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -137,8 +135,6 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
                 number: environment.number ?? null,
                 name: environment.name,
               } satisfies OrchestrationV2DevelopmentEnvironmentCheckout,
-              commonDir: target.commonDir,
-              gitDir: target.gitDir,
             };
           }).pipe(Effect.orElseSucceed(() => null)),
         { concurrency: 2 },
@@ -218,35 +214,22 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
       if ([...matches.values()].every((known) => known.size === 0)) return;
       const environments = yield* xwing.list();
       for (const environment of environments.filter((env) => env.status === "active")) {
-        const recorded = yield* runner
-          .run({
-            command: "xwing",
-            args: [
-              "env",
-              "activity",
-              "--session",
-              environment.id,
-              "--limit",
-              "2147483647",
-              "-o",
-              "json",
-            ],
-            env: XwingEnvironments.WITHOUT_AGENT_IDENTITY,
-          })
+        // Catalog activity has no cross-environment/session query; lifecycle events exclude read-only presence.
+        const recorded = yield* fs
+          .readFileString(path.join(environment.rootPath, ".xwing-state", "events.jsonl"))
           .pipe(
-            Effect.flatMap((output) =>
-              output.code === 0 && !output.stdoutTruncated
-                ? Effect.forEach(
-                    output.stdout.split("\n").filter((line) => line.trim() !== ""),
-                    (line) => decodeActivity(line),
-                  )
-                : Effect.succeed([]),
+            Effect.flatMap((text) =>
+              Effect.forEach(
+                text.split("\n").filter((line) => line.trim() !== ""),
+                (line) => decodeActivity(line),
+              ),
             ),
             Effect.orElseSucceed(() => []),
           );
         const identities = new Set(
           recorded.flatMap((event) =>
-            event.type === "agent.session" && event.agent?.session
+            (event.type === "environment.created" || event.type === "repository.added") &&
+            event.agent?.session
               ? [key(event.agent.harness, event.agent.session)]
               : [],
           ),
@@ -263,7 +246,13 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
         const existing = new Set(
           (threads.get(id)?.linkedDevelopmentEnvironments ?? []).map(linkKey),
         );
-        const additions = discovered.filter((link) => !existing.has(linkKey(link)));
+        const additions = discovered.filter(
+          (link) =>
+            !existing.has(linkKey(link)) &&
+            !(threads.get(id)?.unlinkedDevelopmentEnvironmentIds ?? []).some(
+              (unlinkedId) => unlinkedId === link.xwingEnvironmentId,
+            ),
+        );
         if (additions.length === 0) continue;
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
@@ -277,43 +266,36 @@ export const make = Effect.fn("DevelopmentEnvironmentDiscovery.make")(function* 
   );
 
   const writableRoots = Effect.fn("DevelopmentEnvironmentDiscovery.writableRoots")(
-    function* (threadId: ThreadId, cwd: string | null) {
+    function* (threadId: ThreadId, _cwd: string | null) {
       const thread = yield* store.getThread(threadId);
       const roots = new Set<string>();
-      const ids = new Set(
-        [thread.developmentEnvironment, ...(thread.linkedDevelopmentEnvironments ?? [])].flatMap(
-          (link) => (link ? [link.xwingEnvironmentId] : []),
+      const links = [
+        thread.developmentEnvironment,
+        ...(thread.linkedDevelopmentEnvironments ?? []).filter(
+          (link) => link.releasedAt === undefined,
         ),
-      );
-      if (ids.size > 0) {
-        const environments = yield* xwing.list();
-        for (const environment of environments.filter(
-          (env) => env.status === "active" && ids.has(env.id),
-        ))
-          for (const checkout of yield* checkouts(environment)) {
-            roots.add(checkout.link.checkoutPath);
-            roots.add(checkout.commonDir);
-            // Codex protects a worktree's Git metadata unless its exact directory is granted.
-            roots.add(checkout.gitDir);
-          }
-      }
-      if (cwd !== null && thread.worktreePath !== null) {
-        const realCwd = yield* fs.realPath(cwd).pipe(Effect.orElseSucceed(() => null));
-        const worktreePath = yield* fs
-          .realPath(thread.worktreePath)
-          .pipe(Effect.orElseSucceed(() => null));
-        if (realCwd !== null && realCwd === worktreePath) {
-          const repository = yield* repositoryOf(realCwd);
+      ];
+      for (const link of links) {
+        if (!link) continue;
+        const validated = yield* Effect.gen(function* () {
+          const checkout = yield* fs.realPath(link.checkoutPath);
+          if (checkout !== link.checkoutPath) return null;
+          const [source, target] = yield* Effect.all(
+            [repositoryOf(link.repositorySource), repositoryOf(checkout)],
+            { concurrency: 2 },
+          );
           if (
-            repository !== null &&
-            contained(path.join(repository.commonDir, "worktrees"), repository.gitDir) &&
-            (yield* registered(repository))
-          ) {
-            roots.add(realCwd);
-            roots.add(repository.commonDir);
-            roots.add(repository.gitDir);
-          }
-        }
+            source === null ||
+            target === null ||
+            source.commonDir !== target.commonDir ||
+            target.topLevel !== checkout ||
+            !contained(path.join(target.commonDir, "worktrees"), target.gitDir) ||
+            !(yield* registered(target))
+          )
+            return null;
+          return checkout;
+        }).pipe(Effect.orElseSucceed(() => null));
+        if (validated !== null) roots.add(validated);
       }
       return [...roots];
     },

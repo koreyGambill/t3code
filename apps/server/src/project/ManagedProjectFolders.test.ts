@@ -221,6 +221,8 @@ it.effect("starts scratch threads in the shared folder without creating thread f
       const fileSystem = yield* FileSystem.FileSystem;
       const { projectId } = yield* scratch.ensureScratchProject;
       const root = yield* requireRoot;
+      assert.isTrue(yield* scratch.isScratchProject(projectId, root));
+      assert.isFalse(yield* scratch.isScratchProject(projectId, "/explicitly-selected-folder"));
       for (const threadId of ["first", "second"]) {
         assert.equal(
           Option.getOrThrow(
@@ -534,4 +536,50 @@ it.effect("removes the folder when the create is cancelled before the project ex
       },
     );
   }),
+);
+
+it.effect("keeps sandbox scratch folders private and preserves legacy dated folders", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const fs = yield* FileSystem.FileSystem;
+      const privateCwd = yield* folders.sandboxFolderForThread(
+        ThreadId.make("isolated"),
+        "/home/user/code",
+      );
+      assert.equal(privateCwd, `${baseDir}/scratch/isolated`);
+      assert.deepEqual(yield* fs.readDirectory(privateCwd), []);
+      assert.equal(
+        yield* folders.sandboxFolderForThread(ThreadId.make("isolated"), null),
+        privateCwd,
+      );
+      const legacy = `${baseDir}/scratch/2026-01-01-existing-thread`;
+      yield* fs.makeDirectory(legacy);
+      yield* fs.writeFileString(`${legacy}/notes.txt`, "existing work");
+      assert.equal(yield* folders.sandboxFolderForThread(ThreadId.make("legacy"), legacy), legacy);
+      assert.equal(yield* fs.readFileString(`${legacy}/notes.txt`), "existing work");
+    }),
+  ),
+);
+
+it.effect.each(["home", "xwing", "data-parent"] as const)(
+  "refuses unsafe scratch start folder: %s",
+  (kind) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-scratch-safety-" });
+      const home = `${root}/home`;
+      const baseDir = `${root}/state/data`;
+      yield* fs.makeDirectory(`${home}/.xwing`, { recursive: true });
+      yield* fs.makeDirectory(baseDir, { recursive: true });
+      const scratchStartDirectory =
+        kind === "home" ? home : kind === "xwing" ? `${home}/.xwing` : `${root}/state`;
+      yield* Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        assert.isTrue(Option.isNone(yield* folders.scratchRoot));
+      }).pipe(
+        Effect.provide(layer(baseDir, { scratchStartDirectory })),
+        Effect.provideService(HostProcess.HomeDirectory, home),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

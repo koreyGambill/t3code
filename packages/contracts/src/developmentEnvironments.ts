@@ -67,6 +67,7 @@ export const DevelopmentEnvironmentSelectCheckoutResult = Schema.Struct({
     OrchestrationV2ThreadDevelopmentEnvironment.mapFields((environment) => ({
       ...environment,
       selectedAt: Schema.DateTimeUtcFromString,
+      releasedAt: Schema.optional(Schema.DateTimeUtcFromString),
     })),
   ),
 });
@@ -146,7 +147,7 @@ export class DevelopmentEnvironmentProjectNotFoundError extends Schema.TaggedErr
 export class DevelopmentEnvironmentPersistenceError extends Schema.TaggedError<DevelopmentEnvironmentPersistenceError>()(
   "DevelopmentEnvironmentPersistenceError",
   {
-    operation: Schema.Literals(["read-thread", "select-workspace", "list-usage"]),
+    operation: Schema.Literals(["read-thread", "select-workspace", "list-usage", "unlink"]),
   },
 ) {
   override get message(): string {
@@ -192,3 +193,10 @@ export const ThreadChangeFolderError = Schema.Union([
   ThreadFolderUnavailableError,
 ]);
 export type ThreadChangeFolderError = typeof ThreadChangeFolderError.Type;
+
+export const DevelopmentEnvironmentUnlinkInput = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  xwingEnvironmentId: XwingEnvironmentId,
+});
+export type DevelopmentEnvironmentUnlinkInput = typeof DevelopmentEnvironmentUnlinkInput.Type;

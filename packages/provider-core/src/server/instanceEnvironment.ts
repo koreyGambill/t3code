@@ -4,18 +4,36 @@ import * as Effect from "effect/Effect";
 
 import { expandHomePath } from "./pathExpansion.ts";
 
+// Child providers must create their own identity instead of inheriting the server's launcher.
+const AGENT_IDENTITY_VARIABLES = new Set([
+  "CLAUDECODE",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_HOST_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_DESKTOP_APP_VERSION",
+  "CLAUDE_EFFORT",
+  "CLAUDE_PID",
+  "CLAUDE_AGENT_SDK_VERSION",
+  "CODEX_THREAD_ID",
+  "CODEX_SESSION_ID",
+  "AI_AGENT",
+]);
+
 export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
-  if (!environment || environment.length === 0) {
-    return baseEnv;
-  }
-
   const home = yield* HostProcess.HomeDirectory;
   const windows = (yield* HostProcess.Platform) === "win32";
   const next: NodeJS.ProcessEnv = { ...baseEnv };
-  for (const variable of environment) {
+  for (const name of Object.keys(next)) {
+    if (AGENT_IDENTITY_VARIABLES.has(name.toUpperCase())) next[name] = "";
+  }
+  for (const variable of environment ?? []) {
     // An unresolved secret reference carries no value; the registry resolves it for the provider.
     if (typeof variable.value !== "string") continue;
     // Windows reads names without regard to case, and a child gets the first spelling in sort

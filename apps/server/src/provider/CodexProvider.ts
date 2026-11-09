@@ -454,8 +454,6 @@ export const codexAppServerEnvironment = (
 ): NodeJS.ProcessEnv => ({
   CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME,
   ...environment,
-  // A foreign harness marker must not override Codex's native per-tool session identity.
-  CLAUDE_CODE_SESSION_ID: "",
 });
 
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {

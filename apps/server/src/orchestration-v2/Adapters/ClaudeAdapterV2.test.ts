@@ -5963,6 +5963,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attachments: [],
               providerTurnOrdinal: ordinal,
               modelSelection,
+              runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, runtimeMode: "auto-accept-edits" },
             });
           const settle = Effect.gen(function* () {
             yield* harness.offerAndWait(turnOneResult);
@@ -5974,9 +5975,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* settle;
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-          yield* harness.runtime.startTurn(
-            turn(2, { ...normal, options: [{ id: "fastMode", value: false }] }),
-          );
+          yield* harness.runtime.startTurn({
+            ...turn(2, { ...normal, options: [{ id: "fastMode", value: false }] }),
+            runtimePolicy: {
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              runtimeMode: "auto-accept-edits",
+              writableRoots: ["/new/linked"],
+            },
+          });
           yield* settle;
           assert.deepEqual(harness.liveSelectionChanges, []);
 

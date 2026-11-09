@@ -92,12 +92,19 @@ export class ManagedProjectFolders extends Context.Service<
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
-    readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    readonly isScratchProject: (
+      projectId: ProjectId,
+      cwd?: string | null,
+    ) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
+    readonly sandboxFolderForThread: (
+      threadId: ThreadId,
+      previousCwd: string | null,
+    ) => Effect.Effect<string, ScratchFolderError>;
     readonly namedProjectsRoot: string;
     /** Removes failed/cancelled creations' folders only while no project owns them. */
     readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
@@ -229,7 +236,28 @@ const make = Effect.gen(function* () {
     const configured = path.resolve(
       expandHomePath((yield* settings.getSettings).scratchStartDirectory, home),
     );
-    const root = (yield* fileSystem.exists(configured)) ? configured : legacyScratchRoot;
+    const root = (yield* fileSystem.exists(configured))
+      ? yield* fileSystem.realPath(configured)
+      : legacyScratchRoot;
+    const realHome = yield* fileSystem
+      .realPath(home)
+      .pipe(Effect.orElseSucceed(() => path.resolve(home)));
+    const realXwing = yield* fileSystem
+      .realPath(path.join(realHome, ".xwing"))
+      .pipe(Effect.orElseSucceed(() => path.join(realHome, ".xwing")));
+    const dataDirectory = yield* fileSystem
+      .realPath(config.baseDir)
+      .pipe(Effect.orElseSucceed(() => path.resolve(config.baseDir)));
+    const dataRelative = path.relative(root, dataDirectory);
+    if (
+      root === realHome ||
+      root === realXwing ||
+      dataRelative === "" ||
+      (!dataRelative.startsWith(`..${path.sep}`) &&
+        dataRelative !== ".." &&
+        !path.isAbsolute(dataRelative))
+    )
+      return Option.none<string>();
     return yield* gitWorkflow.isRepository(root === legacyScratchRoot ? config.baseDir : root).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
       Effect.map((isRepository) => (isRepository ? Option.none<string>() : Option.some(root))),
@@ -301,10 +329,23 @@ const make = Effect.gen(function* () {
 
   const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = Effect.fn(
     "ManagedProjectFolders.isScratchProject",
-  )(function* (projectId) {
-    if (yield* isScratchRoot(projectId, legacyScratchRoot)) return true;
+  )(function* (projectId, cwd) {
     const root = yield* scratchRoot;
-    return Option.isSome(root) && (yield* isScratchRoot(projectId, root.value));
+    const scratch =
+      (yield* isScratchRoot(projectId, legacyScratchRoot)) ||
+      (Option.isSome(root) && (yield* isScratchRoot(projectId, root.value)));
+    if (!scratch || cwd === undefined || cwd === null) return scratch;
+    const realCwd = yield* fileSystem
+      .realPath(cwd)
+      .pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+    const legacyRoot = yield* fileSystem
+      .realPath(legacyScratchRoot)
+      .pipe(Effect.orElseSucceed(() => legacyScratchRoot));
+    return (
+      realCwd === legacyRoot ||
+      path.dirname(realCwd) === legacyRoot ||
+      (Option.isSome(root) && realCwd === root.value)
+    );
   });
 
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
@@ -315,6 +356,34 @@ const make = Effect.gen(function* () {
     yield* makeScratchFolder(root.value);
     return root;
   });
+
+  const sandboxFolderForThread = Effect.fn("ManagedProjectFolders.sandboxFolderForThread")(
+    function* (threadId: ThreadId, previousCwd: string | null) {
+      yield* makeScratchFolder(legacyScratchRoot);
+      const legacyRoot = yield* fileSystem
+        .realPath(legacyScratchRoot)
+        .pipe(
+          Effect.mapError((cause) => new ScratchFolderError({ folder: legacyScratchRoot, cause })),
+        );
+      if (previousCwd !== null) {
+        const previous = yield* fileSystem
+          .realPath(previousCwd)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (previous !== null && path.dirname(previous) === legacyRoot) return previous;
+      }
+      const folder = path.join(legacyRoot, encodeURIComponent(threadId));
+      yield* makeScratchFolder(folder);
+      const real = yield* fileSystem
+        .realPath(folder)
+        .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
+      if (real !== folder)
+        return yield* new ScratchFolderError({
+          folder,
+          cause: "Scratch folder must not be a symlink.",
+        });
+      return folder;
+    },
+  );
 
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");
 
@@ -440,6 +509,7 @@ const make = Effect.gen(function* () {
     isScratchProject,
     folderForThread,
     namedProjectsRoot,
+    sandboxFolderForThread,
     createNamedProject,
   });
 });

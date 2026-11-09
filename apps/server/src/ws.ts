@@ -3054,6 +3054,8 @@ export const layerWsRpc = (
           developmentEnvironments.listCheckouts(input),
         [WS_METHODS.developmentEnvironmentsListUsage]: (input) =>
           developmentEnvironments.listUsage(input),
+        [WS_METHODS.developmentEnvironmentsUnlink]: (input) =>
+          developmentEnvironments.unlink(input),
         [WS_METHODS.developmentEnvironmentsSelectCheckout]: (input) =>
           developmentEnvironments.selectCheckout({
             threadId: input.threadId,
