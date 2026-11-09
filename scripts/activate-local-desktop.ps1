@@ -123,12 +123,20 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination (Join-Path $payload $name) -Force }
     }
     Assert-UpdatePayload
-    $native = Join-Path $root 'native-probe'
+    # LMDB cannot open its databases through a WSL UNC path.
+    $native = Join-Path ([IO.Path]::GetTempPath()) ('weavewing-native-' + [guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Path $native | Out-Null
     $env:ELECTRON_RUN_AS_NODE = '1'
     $env:NODE_PATH = ''
     Remove-Item Env:NODE_OPTIONS, Env:ELECTRON_NO_ASAR -ErrorAction SilentlyContinue
-    try { $details.native = Invoke-UpdateProcess (Join-Path $payload 'Weavewing.exe') @('--no-global-search-paths', $worker, '--worker', 'native', $ConfigPath, $payload, $native) 'native' } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+    try { $details.native = Invoke-UpdateProcess (Join-Path $payload 'Weavewing.exe') @('--no-global-search-paths', $worker, '--worker', 'native', $ConfigPath, $payload, $native) 'native' } catch {
+      $details.error = $_.Exception.Message
+      Save-UpdateStatus 'verification-failed'
+      throw
+    } finally {
+      Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $native -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Save-UpdateStatus 'staged-and-verified'
     return
   }
