@@ -3059,7 +3059,8 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: `{${unpackGlobs.join(",")}}`,
+        // ASAR's unpack matcher skips hidden ancestors unless the pattern names them.
+        unpack: `{${unpackGlobs.map((glob) => `${input.sourceDir.split(path.sep).join("/")}/${glob}`).join(",")}}`,
         // glob 13 (@electron/asar 4) resolves ignores against cwd; anchor them at the source.
         globOptions: {
           cwd: input.sourceDir,

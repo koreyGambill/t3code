@@ -295,6 +295,30 @@ async function main() {
     throw new Error(
       "--output-dir must be a new absolute directory, outside the installation and candidate.",
     );
+  const outputWindows = run("wslpath", ["-w", output], { stdio: "pipe" }).toLowerCase();
+  const install = NodePath.win32.resolve(values["install-dir"]!);
+  const parent = NodePath.win32.dirname(install);
+  const name = NodePath.win32.basename(install);
+  for (const protectedPath of [
+    install,
+    NodePath.win32.join(parent, `.${name}-candidate`),
+    NodePath.win32.join(parent, `.${name}-local-update-rollback`),
+  ]) {
+    const relative = NodePath.win32.relative(protectedPath.toLowerCase(), outputWindows);
+    if (
+      !relative ||
+      (!relative.startsWith("..\\") && relative !== ".." && !NodePath.win32.isAbsolute(relative))
+    )
+      throw new Error(`--output-dir must be outside ${protectedPath}.`);
+  }
+  const stateRelative = NodePath.relative(NodePath.join(values["wsl-home"]!, "userdata"), output);
+  if (
+    !stateRelative ||
+    (!stateRelative.startsWith(`..${NodePath.sep}`) &&
+      stateRelative !== ".." &&
+      !NodePath.isAbsolute(stateRelative))
+  )
+    throw new Error("--output-dir must be outside the installed WSL userdata directory.");
   const vpHome = values["vp-home"]!;
   const vp = NodePath.join(vpHome, "current/bin/vp");
   for (const file of [
