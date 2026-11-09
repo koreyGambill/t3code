@@ -272,6 +272,9 @@ const make = Effect.gen(function* () {
   const scratchRoots = yield* Cache.make({ capacity: 1, lookup: resolveScratchRoot });
   const scratchRoot = settings.getSettings.pipe(
     Effect.flatMap((value) => Cache.get(scratchRoots, value.scratchStartDirectory)),
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+    ),
   );
 
   const makeScratchFolder = (folder: string) =>

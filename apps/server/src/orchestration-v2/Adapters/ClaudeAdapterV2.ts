@@ -2934,7 +2934,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
             .replaceAll("\\", "/")
             .replace(/^([A-Za-z]):/, (_, drive: string) => `/${drive.toLowerCase()}`)
         : root;
-      const escaped = absolute.replace(/[\\*?\[\]{}!]/g, "\\$&").replace(/\/$/, "");
+      const escaped = absolute.replace(/[\\*?[\]{}!]/g, "\\$&").replace(/\/$/, "");
       return `Read(/${escaped}/**)`;
     }) ?? [];
   const allowedTools =
