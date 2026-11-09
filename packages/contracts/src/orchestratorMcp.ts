@@ -585,7 +585,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   reply: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Default true: when the thread is done, its outcome arrives here as a message. false: fire and forget.",
+        "Default true: request a reply when the thread is done. false: skip this separate reply. Your own delegated tasks still report completion.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),

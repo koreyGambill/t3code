@@ -1309,6 +1309,24 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const ownsTaskCompletion = Effect.fn("OrchestratorMcpService.ownsTaskCompletion")(function* (
+    parentThreadId: ThreadId,
+    child: Pick<OrchestrationV2ThreadProjection["thread"], "id" | "forkedFrom">,
+    taskId: NodeId | undefined,
+  ) {
+    const id = taskId ?? (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined);
+    if (id === undefined) return false;
+    return (yield* loadTasks(parentThreadId, [id])).some(
+      (task) =>
+        task.id === id &&
+        task.origin === "app_owned" &&
+        task.threadId === parentThreadId &&
+        task.childThreadId === child.id &&
+        (taskId !== undefined || task.result === null) &&
+        task.completionDelivery?.state !== "disposed",
+    );
+  });
+
   // Task waits read on every wake of a parent that may hold thousands of
   // tasks, so they read only the task they watch and what its status needs.
   const loadTaskParent = (threadId: ThreadId) =>
@@ -3662,9 +3680,13 @@ const make = Effect.gen(function* () {
                 ),
           ),
         );
-      const reply = Option.isSome(replies)
+      const followedReply = Option.isSome(replies)
         ? yield* replies.value.followCommitted(messageId)
         : false;
+      const reply =
+        followedReply ||
+        (parent !== undefined &&
+          (yield* ownsTaskCompletion(parent.thread.id, target.thread, result.run.delegatedTaskId)));
       return {
         threadId: input.threadId,
         link: threadLinkFor(scope, input.threadId),
@@ -3696,15 +3718,7 @@ const make = Effect.gen(function* () {
         result.timedOut &&
         status !== "waiting" &&
         parent !== undefined &&
-        taskId !== undefined &&
-        (yield* loadTasks(parent.thread.id, [taskId])).some(
-          (task) =>
-            task.id === taskId &&
-            task.origin === "app_owned" &&
-            task.threadId === parent.thread.id &&
-            task.childThreadId === input.threadId &&
-            task.completionDelivery?.state !== "disposed",
-        );
+        (yield* ownsTaskCompletion(parent.thread.id, target.thread, taskId));
       // A child waiting on a question or approval needs an answer, not a wake.
       const childRequests = ownedTask
         ? (yield* threadManagement

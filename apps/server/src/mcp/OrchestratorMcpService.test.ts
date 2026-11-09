@@ -3767,6 +3767,108 @@ describe("OrchestratorMcpService thread lookup", () => {
       }).pipe(Effect.provide(service(shells, sent)));
     });
 
+  it.effect("reports a child's completion reply only to its owning parent", () =>
+    Effect.gen(function* () {
+      const parentId = ThreadId.make("thread:send-parent");
+      const siblingId = ThreadId.make("thread:send-sibling");
+      const childId = ThreadId.make("thread:send-child");
+      const taskId = NodeId.make("node:send-followup");
+      const run = {
+        id: RunId.make("run:send-followup"),
+        status: "starting",
+        delegatedTaskId: taskId,
+      } as const;
+      const parentShell = liveThreadShell(parentId);
+      const childShell = {
+        ...liveThreadShell(childId),
+        forkedFrom: { type: "node" as const, nodeId: taskId },
+        lineage: {
+          rootThreadId: parentId,
+          parentThreadId: parentId,
+          relationshipToParent: "subagent" as const,
+        },
+      };
+      const siblingShell = liveThreadShell(siblingId);
+      for (const [callerId, delivery, continued, taskResult, expected] of [
+        [parentId, "pending", true, null, true],
+        [parentId, "pending", false, null, true],
+        [parentId, "pending", false, "Earlier result", false],
+        [siblingId, "pending", true, null, false],
+        [parentId, "disposed", true, null, false],
+        [undefined, "pending", true, null, false],
+      ] as const) {
+        const sent = yield* Ref.make(0);
+        const projection = (threadId: ThreadId) =>
+          ({
+            ...idleThreadProjection(
+              threadId === childId
+                ? childShell
+                : threadId === siblingId
+                  ? siblingShell
+                  : parentShell,
+            ),
+            subagents:
+              threadId === parentId
+                ? [
+                    {
+                      id: taskId,
+                      origin: "app_owned",
+                      threadId: parentId,
+                      childThreadId: childId,
+                      completionDelivery: { state: delivery },
+                      result: taskResult,
+                    },
+                  ]
+                : [],
+          }) as unknown as OrchestrationV2ThreadProjection;
+        const caller: McpInvocationScope =
+          callerId === undefined
+            ? client
+            : {
+                ...client,
+                client: undefined,
+                thread: {
+                  threadId: callerId,
+                  providerSessionId: "send-session",
+                  providerInstanceId: parentShell.providerInstanceId,
+                },
+              };
+        yield* Effect.gen(function* () {
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+          for (const reply of [undefined, false]) {
+            const result = yield* mcp.sendToThread(caller, {
+              threadId: childId,
+              message: "Continue",
+              reply,
+            });
+            assert.equal(result.taskId, continued ? taskId : undefined);
+            assert.equal(result.reply, expected);
+          }
+          const waited = yield* mcp.waitForThread(caller, { threadId: childId });
+          assert.equal(waited.next, expected ? ORCHESTRATOR_MCP_RUNNING_TASK_NEXT : undefined);
+        }).pipe(
+          Effect.provide(
+            service([parentShell, childShell, siblingShell], sent, {
+              getThreadRecords: (threadId) => Effect.succeed(projection(threadId)),
+              getProjectThreadRecords: ({ threadId }) => Effect.succeed(projection(threadId)),
+              waitForThread: () =>
+                Effect.succeed({
+                  threadId: childId,
+                  run: continued ? run : { ...run, delegatedTaskId: undefined },
+                  timedOut: true,
+                } as never),
+              sendToThread: () =>
+                Effect.succeed({
+                  run: continued ? run : { ...run, delegatedTaskId: undefined },
+                  delivery: "started",
+                } as never),
+            }),
+          ),
+        );
+      }
+    }),
+  );
+
   it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
     Effect.gen(function* () {
       const { read, send, wait, sends } = yield* failuresFor([launched]);
