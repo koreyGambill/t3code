@@ -58,7 +58,13 @@ export function DevReplayHost() {
       environmentId,
       input: {
         threadId,
-        message: { messageId: newMessageId(), role: "user", text: title, attachments: [] },
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          origin: { kind: "user" },
+          text: title,
+          attachments: [],
+        },
         modelSelection,
         runtimeMode: "approval-required",
         interactionMode: "default",
