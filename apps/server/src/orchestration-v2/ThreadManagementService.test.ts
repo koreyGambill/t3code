@@ -310,7 +310,16 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
   }),
 );
 
-it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
+it.effect.each([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "idle",
+  "delivery done",
+  "background drained",
+  "run terminal",
+] as const)("waitForThread settles delegated work on %s", (settling) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-delegated");
     const threadId = ThreadId.make("thread:thread-management:wait-delegated");
@@ -328,8 +337,26 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
         completedAt: status === "running" ? null : at(end),
       }) as unknown as OrchestrationV2Run;
     // The run ended, but a task it delegated still runs and will wake the thread.
-    let runs = [run(runId, 1, "completed", 1)];
-    let subagents = [{ status: "running" }];
+    let runs = [run(runId, 1, settling === "run terminal" ? "running" : "completed", 1)];
+    let subagents =
+      settling === "background drained" || settling === "run terminal"
+        ? []
+        : [
+            {
+              status: settling === "delivery done" ? "completed" : "running",
+              completionDelivery: { state: "pending" },
+            },
+          ];
+    let providerThreads =
+      settling === "background drained"
+        ? [{ pendingBackgroundTasks: [{ taskId: "fixture", kind: "command" }] }]
+        : [];
+    const eventType =
+      settling === "background drained"
+        ? "provider-thread.updated"
+        : settling === "run terminal"
+          ? "run.updated"
+          : "subagent.updated";
     const stored = (sequence: number, event: object) =>
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
@@ -340,7 +367,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
           restartContinuationPending: () => Effect.succeed(false),
           delegatedTaskResultPending: () => Effect.succeed(false),
           streamStoredEventsFrom: (input) =>
-            input?.eventType === "subagent.updated"
+            input?.eventType === eventType
               ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
                   Stream.drain,
                   Stream.concat(Stream.fromQueue(events)),
@@ -354,7 +381,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
                   runs,
                   messages: [],
                   subagents,
-                  providerThreads: [],
+                  providerThreads,
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
         }),
@@ -365,14 +392,6 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
     );
-    // Without the option, the ended run is the answer, as before.
-    expect(
-      yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
-    ).toMatchObject({ timedOut: false, run: { id: runId } });
-    expect(
-      yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
-    ).not.toHaveProperty("resultRun");
-
     const fiber = yield* service
       .waitForThread({
         projectId,
@@ -385,9 +404,24 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
     // A wait that returns early fails below instead of hanging here.
     yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
     // The task finishes; its delivery wakes the thread, whose next run answers.
-    subagents = [{ status: "completed" }];
-    runs = [...runs, run(wakeRunId, 2, "completed", 3)];
-    yield* Queue.offer(events, stored(1, { type: "subagent.updated", payload: {} }));
+    subagents = [
+      {
+        status: settling.includes(" ") ? "completed" : settling,
+        completionDelivery: { state: "delivered" },
+      },
+    ];
+    providerThreads = [];
+    runs = [run(runId, 1, "completed", 1), run(wakeRunId, 2, "completed", 3)];
+    yield* Queue.offer(
+      events,
+      stored(1, {
+        type: eventType,
+        payload: {
+          status: settling.includes(" ") ? "completed" : settling,
+          pendingBackgroundTasks: [],
+        },
+      }),
+    );
     const result = yield* Fiber.join(fiber);
 
     expect(result).toMatchObject({
@@ -887,4 +921,97 @@ it.effect("a steer between turns queues while delegated work will wake the threa
       }
     }
   }),
+);
+
+it.effect.each(["subagent.updated", "provider-thread.updated"] as const)(
+  "waitForThread does not reload history for %s progress",
+  (eventType) =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:thread-management:wait-delegated");
+      const threadId = ThreadId.make("thread:thread-management:wait-delegated");
+      const runId = RunId.make("run:thread-management:wait-delegated");
+      const subscribed = yield* Deferred.make<void>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const progressConsumed = yield* Deferred.make<void>();
+      let reads = 0;
+      const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1_000);
+      const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"], end: number) =>
+        ({
+          id,
+          ordinal,
+          status,
+          startedAt: at(end - 1),
+          completedAt: status === "running" ? null : at(end),
+        }) as unknown as OrchestrationV2Run;
+      // The run ended, but a task it delegated still runs and will wake the thread.
+      const runs = [run(runId, 1, "completed", 1)];
+      const subagents = [{ status: "running" }];
+      const stored = (sequence: number, event: object) =>
+        ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadEventSequence: () => Effect.succeed(0),
+            restartContinuationPending: () => Effect.succeed(false),
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            streamStoredEventsFrom: (input) =>
+              input?.eventType === eventType
+                ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                    Stream.drain,
+                    Stream.concat(
+                      Stream.fromIterable(
+                        Array.from({ length: 50 }, (_, index) =>
+                          stored(index + 1, {
+                            type: eventType,
+                            payload: {
+                              status: ["pending", "running", "waiting"][index % 3],
+                              pendingBackgroundTasks: [{ taskId: "fixture", kind: "command" }],
+                            },
+                          }),
+                        ),
+                      ),
+                    ),
+                    Stream.concat(
+                      Stream.fromEffect(Deferred.succeed(progressConsumed, undefined)).pipe(
+                        Stream.drain,
+                      ),
+                    ),
+                    Stream.concat(Stream.fromQueue(events)),
+                  )
+                : Stream.never,
+            getThreadRecords: () =>
+              Effect.sync(() => {
+                reads++;
+                return {
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs,
+                  messages: [],
+                  subagents,
+                  providerThreads: [],
+                } as unknown as OrchestrationV2ThreadProjection;
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      const fiber = yield* service
+        .waitForThread({
+          projectId,
+          threadId,
+          runId,
+          timeoutMs: 60 * 60 * 1_000,
+          untilDelegatedWorkSettled: true,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(progressConsumed);
+      yield* TestClock.adjust(Duration.hours(1));
+      const result = yield* Fiber.join(fiber);
+      expect(result.timedOut).toBe(true);
+      expect(reads).toBe(4);
+    }),
 );

@@ -13,6 +13,7 @@ import {
   type OrchestrationMessageContext,
   CommandId,
   isListedThreadLineage,
+  isOrchestrationV2WorkActive,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -42,6 +43,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1074,6 +1076,15 @@ const make = Effect.gen(function* () {
         { concurrency: "unbounded" },
       ).pipe(
         Stream.mapError(loadError),
+        // Progress cannot finish delegated work; every follower would otherwise decode its history.
+        Stream.filter((stored) =>
+          stored.event.type === "subagent.updated"
+            ? !isOrchestrationV2WorkActive(stored.event.payload.status)
+            : stored.event.type !== "provider-thread.updated" ||
+              !backgroundWorkHoldsCompletion(stored.event.payload.pendingBackgroundTasks ?? [], {
+                awaitUnmarked: true,
+              }),
+        ),
         Stream.filter(
           (stored) =>
             untilDelegatedWorkSettled ||
