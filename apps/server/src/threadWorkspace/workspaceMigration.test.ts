@@ -41,7 +41,6 @@ it("migrates real-shaped Workspace records without losing verification or questi
     "Original work source",
     "Remaining validation",
     "QA needs mobile",
-    "original-author-thread",
     "Implementation details",
     "Changed parser",
     "Two tests passed",
@@ -54,6 +53,11 @@ it("migrates real-shaped Workspace records without losing verification or questi
     "Verified sample behavior",
   ])
     expect(details).toContain(value);
+  expect(details).toContain(
+    "Verified by reviewer (executed) on abc123: partial; gaps: Mobile untested",
+  );
+  expect(details).not.toContain("recordedByThreadId");
+  expect(details).not.toContain('"workId"');
   const questions = migrated.artifacts.find((artifact) => artifact.id === "workspace-questions")!
     .versions[0]!;
   expect(parseArtifactQuestions(questions.content)).toEqual(questions.questions);

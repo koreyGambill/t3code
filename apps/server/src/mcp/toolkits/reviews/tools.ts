@@ -3,6 +3,7 @@ import {
   ThreadId,
   ThreadWorkspace,
   ThreadListEntry,
+  ListItem,
   ThreadListReadInput,
   ThreadListUpdateInput,
   ThreadListRewriteInput,
@@ -25,11 +26,18 @@ const dependencies = [
 const common = { failure: OrchestratorMcpFailure, failureMode: "return" as const, dependencies };
 const optionalThread = { threadId: Schema.optional(ThreadId) };
 const listMutationResult = Schema.Struct({
-  threadId: ThreadId,
   revision: ThreadWorkspace.fields.revision,
-  items: ThreadWorkspace.fields.items,
-  summaryNotes: Schema.String,
-  childPreamble: Schema.String,
+  items: Schema.Array(
+    Schema.Struct({
+      id: ListItem.fields.id,
+      text: ListItem.fields.text,
+      state: ListItem.fields.state,
+      owner: ListItem.fields.owner,
+      links: ListItem.fields.links,
+      needsQa: ListItem.fields.needsQa,
+      doneAt: ListItem.fields.doneAt,
+    }),
+  ),
 });
 const artifactWriteResult = Schema.Struct({
   threadId: ThreadId,

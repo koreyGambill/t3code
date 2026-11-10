@@ -34,7 +34,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as TicketTracker from "../ticketTracker/TicketTracker.ts";
-import { LegacyWorkspace, migrateWorkspace } from "./workspaceMigration.ts";
+import { LegacyWorkspace, migrateWorkspace, cleanMigratedDetails } from "./workspaceMigration.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   formatComposerContextHref,
@@ -216,7 +216,27 @@ const make = Effect.gen(function* () {
     if (current._tag === "Success") {
       if (current.success.workspace.threadId !== threadId)
         return yield* storage("Thread identity mismatch.");
-      return yield* submittedAnswers(current.success.workspace);
+      let workspace = current.success.workspace;
+      if (workspace.items.some((item) => /recordedByThreadId|"workId"/.test(item.details))) {
+        const backup = yield* fs.readFileString(`${filePath(threadId)}.format2.bak`).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed(null),
+          ),
+          Effect.mapError(storage),
+        );
+        const original = backup === null ? null : yield* decodeOld(backup).pipe(Effect.result);
+        const items = workspace.items.map((item) => ({
+          ...item,
+          details: cleanMigratedDetails(
+            item.details,
+            original?._tag === "Success" ? original.success.workspace : undefined,
+          ),
+        }));
+        if (items.some((item, index) => item.details !== workspace.items[index]!.details))
+          workspace = yield* write({ ...workspace, items });
+      }
+      return yield* submittedAnswers(workspace);
     }
     const old = yield* decodeOld(contents).pipe(Effect.mapError(storage));
     if (old.workspace.threadId !== threadId) return yield* storage("Thread identity mismatch.");

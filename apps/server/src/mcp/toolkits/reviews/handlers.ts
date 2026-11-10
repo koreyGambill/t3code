@@ -15,13 +15,28 @@ const failure = (error: ThreadWorkspaceError) =>
     message: error.message,
   });
 
-const listResult = ({
-  threadId,
-  revision,
-  items,
-  summaryNotes,
-  childPreamble,
-}: WorkspaceDocument) => ({ threadId, revision, items, summaryNotes, childPreamble });
+const listResult = (
+  workspace: WorkspaceDocument,
+  changes: ReadonlyArray<{ readonly id?: string | undefined }>,
+  before?: WorkspaceDocument,
+) => {
+  const requested = new Set(changes.flatMap((item) => (item.id ? [item.id] : [])));
+  const existing = before && new Set(before.items.map((item) => item.id));
+  return {
+    revision: workspace.revision,
+    items: workspace.items
+      .filter((item) => requested.has(item.id) || (existing && !existing.has(item.id)))
+      .map(({ id, text, state, owner, links, needsQa, doneAt }) => ({
+        id,
+        text,
+        state,
+        owner,
+        links,
+        needsQa,
+        doneAt,
+      })),
+  };
+};
 
 export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   list_read: McpToolAccess.reads((input) =>
@@ -45,9 +60,13 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       Effect.gen(function* () {
         const { projection } = yield* readThread(input.threadId);
         const workspace = yield* ThreadWorkspace;
-        return yield* workspace
-          .update({ ...input, threadId: projection.thread.id })
-          .pipe(Effect.map(listResult), Effect.mapError(failure));
+        const before = input.changes.some((item) => item.id === undefined)
+          ? yield* workspace.get({ threadId: projection.thread.id }).pipe(Effect.mapError(failure))
+          : undefined;
+        return yield* workspace.update({ ...input, threadId: projection.thread.id }).pipe(
+          Effect.map((result) => listResult(result, input.changes, before)),
+          Effect.mapError(failure),
+        );
       }),
   ),
   list_rewrite: McpToolAccess.writesThreads(
@@ -56,9 +75,13 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       Effect.gen(function* () {
         const { projection } = yield* readThread(input.threadId);
         const workspace = yield* ThreadWorkspace;
-        return yield* workspace
-          .rewrite({ ...input, threadId: projection.thread.id })
-          .pipe(Effect.map(listResult), Effect.mapError(failure));
+        const before = input.items.some((item) => item.id === undefined)
+          ? yield* workspace.get({ threadId: projection.thread.id }).pipe(Effect.mapError(failure))
+          : undefined;
+        return yield* workspace.rewrite({ ...input, threadId: projection.thread.id }).pipe(
+          Effect.map((result) => listResult(result, input.items, before)),
+          Effect.mapError(failure),
+        );
       }),
   ),
   artifact_write: McpToolAccess.writesThreads(

@@ -18,6 +18,18 @@ const targetId = ThreadId.make("list-target");
 const workspace = {
   ...emptyWorkspace(threadId),
   revision: 3,
+  items: Array.from({ length: 40 }, (_, index) => ({
+    id: `item-${index}`,
+    text: `Task ${index}`,
+    state: "open" as const,
+    owner: "agent" as const,
+    links: [],
+    needsQa: false,
+    doneAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    parentId: null,
+    details: "Private migration details ".repeat(100),
+  })),
   artifacts: [
     {
       id: "design",
@@ -44,6 +56,22 @@ const workspace = {
     },
   ],
 };
+const mutationWorkspace = (
+  changes: ReadonlyArray<{ readonly id?: string | undefined; readonly text?: string | undefined }>,
+) => ({
+  ...workspace,
+  revision: 4,
+  items: [
+    ...changes
+      .filter((item) => item.id === undefined)
+      .map((item, index) => ({
+        ...workspace.items[0]!,
+        id: `created-${index}`,
+        text: item.text ?? "",
+      })),
+    ...workspace.items,
+  ],
+});
 const scope: Invocation.McpInvocationScope = {
   environmentId: EnvironmentId.make("review-environment"),
   requestNamespace: "review-session",
@@ -89,6 +117,7 @@ const call = (
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(
           Layer.mock(ThreadWorkspace)({
+            get: () => Effect.succeed(workspace),
             listRead: ({ allThreads }) =>
               Effect.succeed([
                 {
@@ -100,13 +129,13 @@ const call = (
                   childPreamble: "",
                 },
               ]),
-            update: ({ threadId, expectedRevision }) =>
+            update: ({ threadId, expectedRevision, changes }) =>
               expectedRevision === 3
-                ? Effect.succeed({ ...workspace, threadId, revision: 4 })
+                ? Effect.succeed({ ...mutationWorkspace(changes), threadId })
                 : Effect.fail(
                     new ThreadWorkspaceError({ code: "conflict", message: "Read again." }),
                   ),
-            rewrite: () => Effect.succeed({ ...workspace, revision: 4 }),
+            rewrite: ({ items }) => Effect.succeed(mutationWorkspace(items)),
             artifactWrite: () => Effect.succeed({ ...workspace, revision: 4 }),
             artifactList: () =>
               Effect.succeed([
@@ -162,7 +191,7 @@ it.effect("reads and updates the calling thread and reports revision conflicts",
     const read = yield* call("list_read", {});
     expect(read.structuredContent).toMatchObject([{ threadId, revision: 3 }]);
     const update = yield* call("list_update", { expectedRevision: 3, changes: [{ text: "Ship" }] });
-    expect(update.structuredContent).toMatchObject({ threadId, revision: 4 });
+    expect(update.structuredContent).toMatchObject({ revision: 4 });
     expect(failureCode(yield* call("list_update", { expectedRevision: 2, changes: [] }))).toBe(
       "invalid_request",
     );
@@ -257,7 +286,48 @@ it.effect.each(["list_update", "list_rewrite", "artifact_write"])(
           createdAt: "2026-01-01T00:00:00.000Z",
           unansweredQuestions: 0,
         });
-      else expect(result.structuredContent).toMatchObject({ threadId, revision: 4, items: [] });
+      else expect(result.structuredContent).toEqual({ revision: 4, items: [] });
       expect(JSON.stringify(result.structuredContent)).not.toContain("Private");
+    }),
+);
+
+it.effect.each(["list_update", "list_rewrite"])(
+  "%s returns compact changed items in a 40-item list",
+  (name) =>
+    Effect.gen(function* () {
+      const changes = [{ id: "item-39", text: "Task 39" }];
+      const result = yield* call(name, { expectedRevision: 3, changes, items: changes });
+      expect(result.structuredContent).toEqual({
+        revision: 4,
+        items: [
+          {
+            id: "item-39",
+            text: "Task 39",
+            state: "open",
+            owner: "agent",
+            links: [],
+            needsQa: false,
+            doneAt: null,
+          },
+        ],
+      });
+      expect(JSON.stringify(result.structuredContent).length).toBe(130);
+      const batch = Array.from({ length: 11 }, (_, index) => ({
+        id: `item-${index + 29}`,
+        text: `Task ${index + 29}`,
+      }));
+      const updated = yield* call(name, { expectedRevision: 3, changes: batch, items: batch });
+      expect(JSON.stringify(updated.structuredContent).length).toBe(1190);
+      const additions = [{ text: "New item" }];
+      const created = yield* call(name, {
+        expectedRevision: 3,
+        changes: additions,
+        items: additions,
+      });
+      expect(created.structuredContent).toMatchObject({
+        revision: 4,
+        items: [{ id: "created-0", text: "New item" }],
+      });
+      expect(JSON.stringify(created.structuredContent)).not.toContain("details");
     }),
 );

@@ -76,17 +76,59 @@ export const LegacyWorkspace = Schema.Struct({
   childPreamble: Schema.optional(Schema.String),
   designNotes: Schema.optional(Schema.String),
 });
+const line = (value: unknown) =>
+  typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+const verificationLine = (record: Record<string, unknown>) =>
+  [
+    `Verified by ${line(record.verifier) || "unknown"}${record.method ? ` (${line(record.method)})` : ""}${record.testedRevision ? ` on ${line(record.testedRevision)}` : ""}: ${line(record.result) || "unknown"}`,
+    ...(["gaps", "details", "evidence"] as const).flatMap((key) =>
+      line(record[key]) ? [`${key}: ${line(record[key])}`] : [],
+    ),
+  ].join("; ");
+
+export function cleanMigratedDetails(
+  details: string,
+  original?: typeof LegacyWorkspace.Type,
+): string {
+  return details
+    .replace(/^recordedByThreadId:.*(?:\n|$)/gm, "")
+    .split("\n\n")
+    .flatMap((paragraph) => {
+      if (paragraph.trimStart().startsWith("{")) {
+        try {
+          const record: Record<string, unknown> = JSON.parse(paragraph);
+          if (typeof record.workId === "string" && typeof record.verifier === "string") {
+            return [
+              verificationLine(
+                original?.verifications?.find((entry) => entry.id === record.id) ?? record,
+              ),
+            ];
+          }
+        } catch {
+          /* User details can begin with a brace. */
+        }
+      }
+      return [paragraph];
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function migrateWorkspace(old: typeof LegacyWorkspace.Type, now: string): ThreadWorkspace {
   const createdAt = old.updatedAt ?? now;
   const details = (row: typeof Row.Type) =>
     [
       row.details,
-      row.changed,
-      row.checks,
-      row.qaSteps,
-      ...(["source", "remaining", "userQaNote", "recordedByThreadId"] as const).flatMap((key) =>
-        row[key] ? [`${key}: ${row[key]}`] : [],
-      ),
+      ...(
+        [
+          ["Changed", row.changed],
+          ["Checks", row.checks],
+          ["QA steps", row.qaSteps],
+          ["Source", row.source],
+          ["Remaining", row.remaining],
+          ["QA note", row.userQaNote],
+        ] as const
+      ).flatMap(([label, value]) => (line(value) ? [`${label}: ${line(value)}`] : [])),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -100,7 +142,7 @@ export function migrateWorkspace(old: typeof LegacyWorkspace.Type, now: string):
       row.completedAt ?? (row.status === "done" || row.status === "landed" ? createdAt : null),
     details: [
       details(row),
-      ...(old.verifications ?? []).filter((v) => v.workId === row.id).map((v) => JSON.stringify(v)),
+      ...(old.verifications ?? []).filter((v) => v.workId === row.id).map(verificationLine),
     ]
       .filter(Boolean)
       .join("\n\n"),
