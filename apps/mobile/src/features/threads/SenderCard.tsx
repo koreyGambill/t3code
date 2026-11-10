@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import Svg, { Path } from "react-native-svg";
+import { MaskedView } from "@expo/ui/community/masked-view";
+import Svg, { Defs, LinearGradient, Rect, Stop, Path } from "react-native-svg";
 import type { TurnOrigin } from "@t3tools/contracts";
 import { senderCardDetails } from "@t3tools/client-runtime/user-message";
 import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
@@ -40,28 +41,30 @@ export function SenderCard(props: {
         <View
           pointerEvents="none"
           className="absolute inset-0"
-          style={{ backgroundColor: color, opacity: 0.06 }}
+          style={{ backgroundColor: color, opacity: themeAppearance === "dark" ? 0.06 : 0.1 }}
         />
       ) : null}
-      <View className="mb-2 flex-row flex-wrap items-center gap-2">
-        {glyph ? (
-          <Svg
-            width={16}
-            height={16}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke={color}
-            strokeWidth={1.6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            {glyph.paths.map((path) => (
-              <Path key={path} d={path} />
-            ))}
-          </Svg>
-        ) : (
-          <SymbolView name="gearshape" size={16} tintColorClassName="accent-foreground-muted" />
-        )}
+      <View className="mb-2 flex-row items-center gap-2">
+        <View className="shrink-0">
+          {glyph ? (
+            <Svg
+              width={16}
+              height={16}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={color}
+              strokeWidth={1.6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {glyph.paths.map((path) => (
+                <Path key={path} d={path} />
+              ))}
+            </Svg>
+          ) : (
+            <SymbolView name="gearshape" size={16} tintColorClassName="accent-foreground-muted" />
+          )}
+        </View>
         {sender ? (
           <Pressable
             className="min-w-0 shrink"
@@ -69,28 +72,56 @@ export function SenderCard(props: {
             accessibilityLabel={details.title}
             onPress={() => openThread(sender)}
           >
-            <Text className="font-t3-bold text-sm text-foreground-muted" style={{ color }}>
+            <Text
+              numberOfLines={1}
+              className="min-w-0 shrink font-t3-bold text-sm text-foreground-muted"
+              style={{ color }}
+            >
               {details.title}
             </Text>
           </Pressable>
         ) : (
-          <Text className="font-t3-bold text-sm text-foreground-muted" style={{ color }}>
+          <Text
+            numberOfLines={1}
+            className="min-w-0 shrink font-t3-bold text-sm text-foreground-muted"
+            style={{ color }}
+          >
             {details.title}
           </Text>
         )}
-        <Text className="text-xs text-foreground-muted">· {details.relationship}</Text>
-        <Chip label={details.event} size="small" />
-        {details.noReply ? (
-          <Text className="text-xs text-foreground-muted">no reply expected</Text>
-        ) : null}
-        {props.queued ? (
-          <Text className="text-xs text-foreground-muted">queued for next turn</Text>
-        ) : null}
+        <Text className="shrink-0 text-xs text-foreground-muted">{details.relationship}</Text>
+        <View className="shrink-0">
+          <Chip
+            label={details.event}
+            size="small"
+            tone={details.event === "failed" ? "error" : "neutral"}
+          />
+        </View>
       </View>
-      {long && !expanded ? (
-        <Text numberOfLines={6} className="text-sm text-foreground">
-          {props.text}
+      {details.noReply || props.queued ? (
+        <Text className="mb-2 text-xs text-foreground-muted">
+          {props.queued ? "queued for next turn" : "no reply expected"}
         </Text>
+      ) : null}
+      {long && !expanded ? (
+        <MaskedView
+          style={{ maxHeight: 176, overflow: "hidden" }}
+          maskElement={
+            <Svg width="100%" height="100%">
+              <Defs>
+                <LinearGradient id="sender-fade" x1="0%" x2="0%" y1="0%" y2="100%">
+                  <Stop offset="0.85" stopColor="white" />
+                  <Stop offset="1" stopColor="white" stopOpacity={0} />
+                </LinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#sender-fade)" />
+            </Svg>
+          }
+        >
+          <View>
+            {props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>}
+          </View>
+        </MaskedView>
       ) : (
         (props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>)
       )}

@@ -10,6 +10,7 @@ import { useQuietThreadShell } from "../../state/entities";
 import { ThreadGlyph } from "../ThreadGlyph";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
 import { findRevealRef } from "./markdownFindContext";
 
@@ -35,7 +36,7 @@ export function SenderCard(props: {
   const style: CSSProperties = {
     borderInlineStartColor: color,
     borderInlineStartWidth: 3,
-    backgroundColor: `color-mix(in srgb, ${color} 6%, transparent)`,
+    backgroundColor: `light-dark(color-mix(in srgb, ${color} 10%, transparent), color-mix(in srgb, ${color} 6%, transparent))`,
   };
   return (
     <section
@@ -47,49 +48,70 @@ export function SenderCard(props: {
       )}
       style={style}
     >
-      <div className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <div className="mb-2 flex min-w-0 items-center gap-2 text-xs">
         {sender ? (
-          <ThreadGlyph threadId={sender.threadId} seed={shell?.glyphSeed} className="size-4" />
+          <ThreadGlyph
+            threadId={sender.threadId}
+            seed={shell?.glyphSeed}
+            className="size-4 shrink-0"
+          />
         ) : (
           <SettingsIcon className="size-4 shrink-0 text-muted-foreground" />
         )}
-        <span
-          className="min-w-0 break-words font-semibold [--inline-button-white-space:normal] [--inline-button-text-align:start]"
-          style={{ color }}
-        >
-          {sender ? (
-            <InlineButton
-              role="link"
-              tone="inherit"
+        <span className="min-w-0 truncate font-semibold" style={{ color }}>
+          <Tooltip>
+            <TooltipTrigger
               render={
-                sender.environmentId === props.environmentId ? undefined : (
-                  <Link to="/$environmentId/$threadId" params={buildThreadRouteParams(sender)} />
+                sender ? (
+                  <InlineButton
+                    className="max-w-full"
+                    role="link"
+                    tone="inherit"
+                    render={
+                      sender.environmentId === props.environmentId ? undefined : (
+                        <Link
+                          to="/$environmentId/$threadId"
+                          params={buildThreadRouteParams(sender)}
+                        />
+                      )
+                    }
+                    onClick={
+                      sender.environmentId === props.environmentId
+                        ? () => props.onOpenThread(sender.threadId)
+                        : undefined
+                    }
+                  >
+                    <span className="truncate">{details.title}</span>
+                  </InlineButton>
+                ) : (
+                  <span>{details.title}</span>
                 )
               }
-              onClick={
-                sender.environmentId === props.environmentId
-                  ? () => props.onOpenThread(sender.threadId)
-                  : undefined
-              }
-            >
-              {details.title}
-            </InlineButton>
-          ) : (
-            details.title
-          )}
+            />
+            <TooltipPopup>{details.title}</TooltipPopup>
+          </Tooltip>
         </span>
-        <span className="text-muted-foreground">· {details.relationship}</span>
-        <Badge variant="outline">{details.event}</Badge>
-        {details.noReply ? <span className="text-muted-foreground">no reply expected</span> : null}
-        {props.queued ? <span className="text-muted-foreground">queued for next turn</span> : null}
+        <span className="shrink-0 text-muted-foreground">{details.relationship}</span>
+        <Badge variant={details.event === "failed" ? "error-outline" : "outline"}>
+          {details.event}
+        </Badge>
       </div>
+      {details.noReply || props.queued ? (
+        <p className="mb-2 text-xs text-muted-foreground">
+          {props.queued ? "queued for next turn" : "no reply expected"}
+        </p>
+      ) : null}
       <div
         ref={revealRef}
         data-thread-find-text="true"
         data-thread-find-fold={collapsed ? "" : undefined}
-        className={cn("wrap-anywhere", collapsed && "max-h-36 overflow-hidden")}
+        className={cn(
+          "wrap-anywhere text-sm",
+          collapsed &&
+            "max-h-44 overflow-hidden [mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
+        )}
       >
-        {collapsed ? <p className="whitespace-pre-wrap">{props.text}</p> : props.children}
+        {props.children}
       </div>
       {long ? (
         <div className="mt-1 flex justify-end">

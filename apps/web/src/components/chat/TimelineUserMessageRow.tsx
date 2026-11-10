@@ -706,7 +706,7 @@ function UserTimelineRow({
 
   // Touch shows actions all the time, and narrow lanes have no room beside the
   // bubble, so both keep the actions on their own line.
-  const floatActions = row.groupedWithNext === true && !coarsePointer;
+  const floatActions = !cardBody && row.groupedWithNext === true && !coarsePointer;
   const messageActions = (
     <div
       className={cn(
@@ -771,7 +771,7 @@ function UserTimelineRow({
     <div
       className={cn(
         "group @container flex flex-col gap-1",
-        cardBody ? "items-stretch" : "items-end",
+        cardBody ? "relative items-stretch" : "items-end",
       )}
       data-user-message-attribution={folded ? "agent" : undefined}
     >
@@ -1000,7 +1000,9 @@ function UserTimelineRow({
       {!folded || expanded ? (
         <div
           className={cn(
-            "flex w-full max-w-[80%] justify-end pe-1",
+            cardBody
+              ? "absolute bottom-0 end-0 flex justify-end bg-background/95"
+              : "flex w-full max-w-[80%] justify-end pe-1",
             floatActions && "@min-[37rem]:hidden",
             ACTIONS_REVEAL_CLASS_NAME,
           )}

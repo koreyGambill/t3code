@@ -1,3 +1,4 @@
+import ChatMarkdown from "../ChatMarkdown";
 import { SenderCard } from "./SenderCard";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
@@ -465,7 +466,7 @@ function QueuedMessage(props: {
           text={props.previewText}
           queued
         >
-          <p className="whitespace-pre-wrap">{props.previewText}</p>
+          <ChatMarkdown text={props.previewText} cwd={undefined} lineBreaks parseRawHtml={false} />
         </SenderCard>
       ) : (
         <div

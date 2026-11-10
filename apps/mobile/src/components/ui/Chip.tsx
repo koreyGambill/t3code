@@ -14,6 +14,7 @@ const ChipGlass = withUniwind(GlassView, {
 
 export function Chip(props: {
   readonly label: string;
+  readonly tone?: "neutral" | "error";
   readonly selected?: boolean;
   readonly icon?: AppSymbolName;
   readonly trailingIcon?: AppSymbolName;
@@ -42,7 +43,11 @@ export function Chip(props: {
           "shrink",
           !small && "max-w-[180px]",
           !small && "font-t3-medium",
-          props.selected ? "text-primary-foreground" : "text-foreground-muted",
+          props.tone === "error"
+            ? "text-danger-foreground"
+            : props.selected
+              ? "text-primary-foreground"
+              : "text-foreground-muted",
         )}
       >
         {props.label}
@@ -66,6 +71,7 @@ export function Chip(props: {
       <View
         className={cn(
           layout,
+          props.tone === "error" && "border border-danger-border",
           props.selected ? "bg-primary" : small ? "bg-grouped-card" : "bg-subtle",
         )}
       >
