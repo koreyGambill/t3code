@@ -1644,7 +1644,7 @@ export default function GitActionsControl({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+                  <span className="pointer-events-auto hidden min-w-0 truncate text-xs text-muted-foreground @min-[300px]:inline" />
                 }
               >
                 {changesBaseLabel}

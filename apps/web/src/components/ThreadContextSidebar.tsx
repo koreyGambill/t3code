@@ -344,7 +344,7 @@ function ThreadContextSidebar({
                 />
               ) : null}
               {count ? (
-                <span className="pointer-events-none absolute -right-1.5 -top-1.5 rounded-full ring-2 ring-background">
+                <span className="pointer-events-none absolute -right-2.5 -top-2 rounded-full bg-muted ring-1 ring-background">
                   <Badge size="sm" variant="secondary">
                     {count}
                   </Badge>
@@ -393,7 +393,10 @@ function SidebarSection({
       return <SidebarRelated threadRef={threadRef} />;
     case "details":
       return (
-        <div ref={detailsRef} className="group/details-destination">
+        <div
+          ref={detailsRef}
+          className="@container group/details-destination mx-auto w-full max-w-4xl"
+        >
           <div className="text-xs group-has-[[data-context-thread-details]]/details-destination:hidden">
             <SidebarThreadSummary threadRef={threadRef} />
           </div>

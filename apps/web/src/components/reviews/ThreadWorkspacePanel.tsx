@@ -384,7 +384,13 @@ function ArtifactDocument({
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">Question</span>
           <Badge
-            variant={saved?.submittedAt && !drafts[entry.id] ? "success" : "secondary"}
+            variant={
+              saved?.submittedAt && !drafts[entry.id]
+                ? "success"
+                : status === "Answered · queued"
+                  ? "info"
+                  : "secondary"
+            }
             size="sm"
           >
             {saved?.submittedAt && !drafts[entry.id] ? <CheckIcon /> : null}

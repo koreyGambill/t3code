@@ -18,7 +18,7 @@ import {
   ChevronRightIcon,
   MoreHorizontalIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -64,6 +64,7 @@ export function ThreadListView({
   );
   const canWrite = useAtomValue(threadListUpdate.permissionAtom(threadRef.environmentId));
   const update = useAtomCommand(threadListUpdate, { reportFailure: false });
+  const newItemRef = useRef<HTMLInputElement>(null);
   const [saved, setSaved] = useState<ThreadListEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
@@ -167,6 +168,7 @@ export function ThreadListView({
                 })
               }
               onAddChild={depth < LIST_MAX_DEPTH - 1 ? () => setParent(item) : undefined}
+              newItemRef={newItemRef}
               disabled={!canWrite || busy}
               onChange={(changes) => void mutate({ changes: [{ id: item.id, ...changes }] })}
               onMove={supplied ? undefined : (direction) => move(item.id, direction)}
@@ -218,6 +220,7 @@ export function ThreadListView({
           ) : null}
           <div className="flex items-center gap-2">
             <Input
+              ref={newItemRef}
               aria-label="New list item"
               placeholder="Add an item…"
               value={text}
@@ -246,6 +249,7 @@ function ListRow({
   collapsed,
   onToggle,
   onAddChild,
+  newItemRef,
   disabled,
   onChange,
   onMove,
@@ -258,6 +262,7 @@ function ListRow({
   collapsed: boolean;
   onToggle: () => void;
   onAddChild: (() => void) | undefined;
+  newItemRef: React.RefObject<HTMLInputElement | null>;
   disabled: boolean;
   onChange: (change: ThreadListUpdateInput["changes"][number]) => void;
   onMove?: ((direction: number) => void) | undefined;
@@ -265,6 +270,7 @@ function ListRow({
   artifactTitles: Map<string, string>;
   threadRef: ScopedThreadRef;
 }) {
+  const focusNewItem = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
@@ -351,7 +357,9 @@ function ListRow({
           >
             <ChevronRightIcon className={collapsed ? "" : "rotate-90"} />
           </Button>
-        ) : null}
+        ) : (
+          <span className="size-7 shrink-0 sm:size-6" aria-hidden />
+        )}
         <Checkbox
           aria-label={terminal ? `Reopen ${item.text}` : `Complete ${item.text}`}
           checked={terminal}
@@ -392,8 +400,21 @@ function ListRow({
           >
             <MoreHorizontalIcon />
           </MenuTrigger>
-          <MenuPopup>
-            <MenuItem disabled={disabled || !onAddChild} onClick={onAddChild}>
+          <MenuPopup
+            finalFocus={() => {
+              if (!focusNewItem.current) return true;
+              focusNewItem.current = false;
+              newItemRef.current?.scrollIntoView({ block: "nearest" });
+              return newItemRef.current;
+            }}
+          >
+            <MenuItem
+              disabled={disabled || !onAddChild}
+              onClick={() => {
+                focusNewItem.current = true;
+                onAddChild?.();
+              }}
+            >
               Add sub-item
             </MenuItem>
             <MenuItem onClick={() => setExpanded(!expanded)}>
