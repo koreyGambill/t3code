@@ -433,7 +433,7 @@ describe("MessagesTimeline messages", () => {
     };
 
     await vi.waitFor(() => expect(screen.text()).toContain("Turn 118:"));
-    expect(screen.text()).not.toContain("Turn 60:");
+    expect(headings().length).toBeLessThan(entries.length / 2);
     // Wrapping follows DOM order, so the ends must also sit first and last.
     await vi.waitFor(() => {
       expect(headings()[0]).toBe(headingFor("First turn"));
