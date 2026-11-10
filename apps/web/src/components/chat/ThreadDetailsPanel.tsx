@@ -1,3 +1,4 @@
+import { ThreadListSummary } from "../reviews/ThreadListView";
 import { ThreadDetailsLocation } from "./ThreadDetailsDestination";
 import { openChangeThreadFolder } from "./changeThreadFolderDialogState";
 import { useAtomValue } from "@effect/atom-react";
@@ -168,6 +169,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         return (
           <>
             <div className="group/details-items">
+              <ThreadListSummary
+                threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+              />
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection
                   headingId="thread-details-workspace-heading"

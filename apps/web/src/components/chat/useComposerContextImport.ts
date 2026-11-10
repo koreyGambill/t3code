@@ -337,7 +337,9 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "environment" ||
+                  existing?.kind === "artifact-answer"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -411,6 +413,13 @@ export function useComposerContextImport(input: {
           addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
             appendReference: false,
           });
+          rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "artifact-answer": {
+          useComposerDraftStore
+            .getState()
+            .addArtifactAnswers(composerDraftTarget, [record], { appendReference: false });
           rewritten.set(record.contextId, record.contextId);
           break;
         }

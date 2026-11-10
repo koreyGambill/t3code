@@ -562,7 +562,9 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="text-xs font-medium text-foreground">
-          {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
+          {comment.filePath.startsWith("artifact:")
+            ? comment.sectionTitle
+            : formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
         <div className="text-2xs text-muted-foreground">
           {comment.sectionTitle} · {comment.rangeLabel}

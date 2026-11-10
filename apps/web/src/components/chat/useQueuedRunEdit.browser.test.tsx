@@ -171,6 +171,7 @@ const savedContent = (prompt: string) => ({
   previewAnnotations: [],
   threadContexts: [],
   environmentContexts: [],
+  artifactAnswers: [],
 });
 
 const promptOf = (ref: ScopedThreadRef) =>

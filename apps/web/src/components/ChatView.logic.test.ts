@@ -15,6 +15,7 @@ import { ensureInlineContextReferences } from "../lib/composerContextReferences"
 import { terminalContextReference } from "../lib/composerContextRecords";
 import {
   CommandId,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -1041,6 +1042,22 @@ describe("snapshotComposerSend", () => {
   };
   const live = { ...expired, id: "ctx-live", text: "pnpm test", lineStart: 9, lineEnd: 9 };
 
+  const answers = [
+    {
+      version: 1 as const,
+      kind: "artifact-answer" as const,
+      contextId: ComposerContextId.make("answer-snapshot"),
+      label: "Rollout",
+      artifactId: "rollout",
+      title: "Rollout",
+      artifactVersion: 1,
+      questionId: "q1",
+      answerRevision: 2,
+      question: "How?",
+      choice: "Gradual",
+      note: "Watch errors",
+    },
+  ];
   it("drops expired terminal contexts from the contexts and from the prompt", () => {
     const snapshot = snapshotComposerSend({
       prompt: ensureInlineContextReferences("run", [
@@ -1055,8 +1072,11 @@ describe("snapshotComposerSend", () => {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      artifactAnswers: answers,
     });
 
+    expect(snapshot.artifactAnswers).toEqual(answers);
+    expect(snapshot.artifactAnswers).not.toBe(answers);
     expect(snapshot.terminalContexts).toEqual([live]);
     expect(snapshot.messageText).toBe(
       ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
@@ -1160,6 +1180,7 @@ describe("restorePlanFollowUpComposer", () => {
       snapshot: {
         prompt: "Tighten step 2",
         environmentContexts: [],
+        artifactAnswers: [],
         terminalContexts: [],
         reviewComments: [],
         previewAnnotations: [],
@@ -1178,6 +1199,7 @@ describe("restorePlanFollowUpComposer", () => {
       writePreviewAnnotations: () => undefined,
       writeThreadContexts: () => undefined,
       writeEnvironmentContexts: () => undefined,
+      writeArtifactAnswers: () => undefined,
       resetCursor: ({ prompt }) => {
         composer.cursor = prompt;
       },

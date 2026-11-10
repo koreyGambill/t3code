@@ -408,7 +408,7 @@ function RightPanelEmptyState(props: {
     ...(props.onAddReviews
       ? [
           {
-            label: "Workspace",
+            label: "Artifacts",
             icon: Zap,
             shortcut: "R",
             available: true,
@@ -642,7 +642,7 @@ export function surfaceTitle(
     case "side-chat":
       return "Side chat";
     case "reviews":
-      return "Workspace";
+      return surface.workspaceSection === "qa" ? "Your QA" : "Artifacts";
     case "notes":
       return "Notes";
     case "inspect":
@@ -1209,7 +1209,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     ...(props.onAddReviews
       ? [
           {
-            label: "Workspace",
+            label: "Artifacts",
             icon: Zap,
             shortcut: "R",
             available: true,

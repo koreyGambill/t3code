@@ -4,6 +4,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 
 export type ThreadContextSection =
+  | "list"
+  | "artifacts"
   | "marks"
   | "related"
   | "details"
@@ -19,6 +21,7 @@ interface ThreadContextSidebarState {
   toggle: () => void;
   pin: (thread: ScopedThreadRef | null) => void;
   setExpanded: (section: ThreadContextSection, expanded: boolean) => void;
+  openList: (thread: ScopedThreadRef) => void;
   openEnvironments: (thread?: ScopedThreadRef, id?: string) => void;
   selectEnvironment: (thread: ScopedThreadRef, id: string | null) => void;
 }
@@ -28,12 +31,18 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
     (set) => ({
       open: false,
       pinned: null,
-      expanded: { marks: true },
+      expanded: { list: true, artifacts: true, marks: true },
       environmentSelection: null,
       toggle: () => set((state) => ({ open: !state.open })),
       pin: (pinned) => set({ pinned }),
       setExpanded: (section, expanded) =>
         set((state) => ({ expanded: { ...state.expanded, [section]: expanded } })),
+      openList: (thread) =>
+        set((state) => ({
+          open: true,
+          pinned: thread,
+          expanded: { ...state.expanded, list: true },
+        })),
       openEnvironments: (thread, id) =>
         set((state) => ({
           open: true,

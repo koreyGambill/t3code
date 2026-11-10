@@ -103,7 +103,9 @@ export function RightPanelSurfaceContent(props: {
           <ThreadWorkspacePanel
             surfaceId={surface.id}
             key={`${threadRef.environmentId}:${threadRef.threadId}`}
-            section={surface.workspaceSection ?? "list"}
+            section={surface.workspaceSection ?? "artifacts"}
+            composerDraftTarget={props.composerDraftTarget}
+            workspaceMutationId={props.workspaceMutationId}
             threadRef={threadRef}
             reviewId={surface.reviewId}
             visible={visible}

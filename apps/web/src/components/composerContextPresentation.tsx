@@ -3,6 +3,7 @@ import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type {
   EnvironmentContextRecord,
+  ArtifactAnswerContextRecord,
   PreviewAnnotationPayload,
   ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -66,7 +67,8 @@ export type ComposerDraftContextRecord =
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "thread"; record: ThreadContextRecord }
-  | { kind: "environment"; record: EnvironmentContextRecord };
+  | { kind: "environment"; record: EnvironmentContextRecord }
+  | { kind: "artifact-answer"; record: ArtifactAnswerContextRecord };
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
@@ -106,6 +108,7 @@ export function composerContextRecordsFromDraft(input: {
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  artifactAnswers?: ReadonlyArray<ArtifactAnswerContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -144,6 +147,9 @@ export function composerContextRecordsFromDraft(input: {
   }
   for (const record of input.environmentContexts ?? []) {
     records.set(record.contextId, { kind: "environment", record });
+  }
+  for (const record of input.artifactAnswers ?? []) {
+    records.set(record.contextId, { kind: "artifact-answer", record });
   }
   return records;
 }
@@ -300,7 +306,9 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
   return (
     <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
-        <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
+        <div className="truncate text-xs font-medium text-foreground">
+          {comment.filePath.startsWith("artifact:") ? comment.sectionTitle : comment.filePath}
+        </div>
         <div className="text-secondary-label text-2xs">
           {comment.sectionTitle} · {comment.rangeLabel}
         </div>
@@ -385,8 +393,27 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
     "preview-annotation",
     "thread",
     "environment",
+    "artifact-answer",
   ],
   handlers: [
+    {
+      kind: "artifact-answer",
+      canRender: (entry) => entry.kind === "artifact-answer",
+      render: (entry) =>
+        entry.kind === "artifact-answer" ? (
+          <Tooltip>
+            <TooltipTrigger render={<span />}>{entry.record.label}</TooltipTrigger>
+            <TooltipPopup>
+              {[entry.record.question, entry.record.choice, entry.record.note]
+                .filter(Boolean)
+                .join("\n")}
+            </TooltipPopup>
+          </Tooltip>
+        ) : (
+          <></>
+        ),
+    },
+
     {
       kind: "terminal",
       canRender: (entry) => entry.kind === "terminal",

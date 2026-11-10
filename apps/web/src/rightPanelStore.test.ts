@@ -356,6 +356,7 @@ describe("rightPanelStore", () => {
       id: "reviews",
       kind: "reviews",
       reviewId: "review-linked",
+      workspaceSection: "artifacts",
     });
   });
 

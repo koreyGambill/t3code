@@ -11,6 +11,7 @@ import type {
   ComposerContextId,
   ComposerContextRecord,
   EnvironmentContextRecord,
+  ArtifactAnswerContextRecord,
   EnvironmentId,
   FileContextRecord,
   ImageContextRecord,
@@ -67,6 +68,8 @@ function basename(filePath: string): string {
 }
 
 export function reviewCommentContextLabel(comment: ReviewCommentPresentation): string {
+  if (comment.filePath.startsWith("artifact:"))
+    return `${comment.sectionTitle} ${comment.rangeLabel}`;
   const pullRequestNumber = pullRequestContextNumber(comment);
   if (isPullRequestSummaryContext(comment) && pullRequestNumber !== null) {
     return `#${pullRequestNumber}`;
@@ -167,6 +170,12 @@ export function environmentContextReference(
   record: EnvironmentContextRecord,
 ): ComposerContextReference {
   return { kind: "environment", contextId: record.contextId, label: record.label };
+}
+
+export function artifactAnswerReference(
+  record: ArtifactAnswerContextRecord,
+): ComposerContextReference {
+  return { kind: "artifact-answer", contextId: record.contextId, label: record.label };
 }
 
 export function environmentContextRecord(
@@ -326,6 +335,7 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  artifactAnswers?: ReadonlyArray<ArtifactAnswerContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -338,6 +348,7 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.artifactAnswers ?? []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

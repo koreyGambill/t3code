@@ -1,3 +1,4 @@
+import { threadArtifactList } from "../state/threadWorkspace";
 import { useAtomValue } from "@effect/atom-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { AuthOrchestrationReadScope, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ import { ThreadDetailsDestination } from "./chat/ThreadDetailsDestination";
 import { ThreadContextPanel } from "./insights/ThreadContextPanel";
 import { RightPanelResizeHandle } from "./preview/RightPanelResizeHandle";
 import { Button } from "./ui/button";
+import { ThreadListView } from "./reviews/ThreadListView";
 import { XwingEnvironmentsPanel } from "./xwing/XwingEnvironmentsPanel";
 
 const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -39,6 +41,8 @@ const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRu
 });
 
 const sections = [
+  ["list", "List"],
+  ["artifacts", "Artifacts"],
   ["marks", "Marks"],
   ["related", "Related threads"],
   ["details", "Details"],
@@ -218,6 +222,15 @@ function SidebarSection({
   detailsRef: (element: HTMLDivElement | null) => void;
 }) {
   switch (section) {
+    case "list":
+      return (
+        <ThreadListView
+          key={`${threadRef.environmentId}:${threadRef.threadId}`}
+          threadRef={threadRef}
+        />
+      );
+    case "artifacts":
+      return <SidebarArtifacts threadRef={threadRef} />;
     case "marks":
       return <SidebarMarks threadRef={threadRef} />;
     case "related":
@@ -437,6 +450,47 @@ function SidebarThreadSummary({ threadRef }: { threadRef: ScopedThreadRef }) {
       >
         Open conversation details
       </Link>
+    </div>
+  );
+}
+
+function SidebarArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
+  const query = useEnvironmentQuery(
+    canRead
+      ? threadArtifactList({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  return (
+    <div className="space-y-1 px-3 pb-3 text-xs">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          const p = useRightPanelStore.getState();
+          p.openReviews(threadRef);
+          p.setWorkspaceSection(threadRef, "qa");
+        }}
+      >
+        Needs your QA · all threads
+      </Button>
+      {query.data?.map((artifact) => (
+        <button
+          key={artifact.id}
+          className="flex w-full items-center justify-between gap-2 py-1 text-left hover:underline"
+          onClick={() => useRightPanelStore.getState().openReviews(threadRef, artifact.id)}
+        >
+          <span className="truncate">{artifact.title}</span>
+          <span className="shrink-0 text-muted-foreground">
+            v{artifact.version}
+            {artifact.unansweredQuestions ? ` · ${artifact.unansweredQuestions} unanswered` : ""}
+          </span>
+        </button>
+      ))}
+      {query.data?.length === 0 ? <p className="text-muted-foreground">No artifacts.</p> : null}
     </div>
   );
 }

@@ -35,7 +35,7 @@ const RIGHT_PANEL_KINDS = [
   "inspect",
   "notes",
 ] as const;
-export type ThreadWorkspaceSection = "list" | "artifacts" | "summary" | "marks" | "threads";
+export type ThreadWorkspaceSection = "list" | "artifacts" | "qa" | "summary" | "marks" | "threads";
 export type ThreadInspectSection = "loads" | "tokens" | "context";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -604,7 +604,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         (surface.reviewId === null || typeof surface.reviewId === "string")
                         ? [
                             surface.workspaceSection === undefined ||
-                            ["list", "artifacts", "summary", "marks", "threads"].includes(
+                            ["list", "artifacts", "qa", "summary", "marks", "threads"].includes(
                               surface.workspaceSection,
                             )
                               ? surface
@@ -884,6 +884,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surface: RightPanelSurface = {
               id: "reviews",
               kind: "reviews",
+              workspaceSection: "artifacts",
               reviewId: reviewId ?? null,
             };
             const next = upsertSurface(current, surface);

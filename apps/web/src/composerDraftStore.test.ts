@@ -22,6 +22,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   EnvironmentId,
+  ComposerContextId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -769,6 +770,25 @@ describe("composerDraftStore environment contexts", () => {
 
   it("mentions a machine once, survives persistence, and sends only its identity", () => {
     const store = useComposerDraftStore.getState();
+    const answer = {
+      version: 1 as const,
+      kind: "artifact-answer" as const,
+      contextId: ComposerContextId.make("answer-test"),
+      label: "Rollout",
+      artifactId: "rollout",
+      title: "Rollout",
+      artifactVersion: 1,
+      questionId: "q1",
+      answerRevision: 3,
+      question: "How?",
+      choice: "Gradual",
+      note: "Check health",
+    };
+    store.addArtifactAnswers(threadRef, [answer]);
+    store.addArtifactAnswers(threadRef, [answer]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.artifactAnswers).toEqual([answer]);
+    store.setArtifactAnswers(threadRef, []);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
     store.setPrompt(threadRef, "Run it on");
     store.addEnvironmentContexts(threadRef, [vps]);
     store.addEnvironmentContexts(threadRef, [{ ...vps, label: "renamed" }]);
@@ -780,6 +800,7 @@ describe("composerDraftStore environment contexts", () => {
       `Run it on [${vps.label}](t3-context://v1/environment/${vps.contextId}) `,
     );
 
+    store.addArtifactAnswers(threadRef, [answer]);
     const merge = useComposerDraftStore.persist.getOptions().merge!;
     const hydrated = merge(
       JSON.parse(
@@ -789,7 +810,16 @@ describe("composerDraftStore environment contexts", () => {
     );
     const restored = hydrated.draftsByThreadKey[scopedThreadKey(threadRef)];
     expect(restored?.environmentContexts).toEqual([vps]);
-    expect(restored?.prompt).toBe(draft?.prompt);
+    expect(restored?.artifactAnswers).toEqual([answer]);
+    expect(restored?.prompt).toContain("t3-context://v1/artifact-answer/answer-test");
+    expect(
+      buildMessageContext({
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+        artifactAnswers: restored?.artifactAnswers ?? [],
+      })?.records,
+    ).toEqual([answer]);
 
     expect(
       buildMessageContext({

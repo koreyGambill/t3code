@@ -27,6 +27,7 @@ import type {
   PreviewAnnotationPayload,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  ArtifactAnswerContextRecord,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
   RuntimeMode,
@@ -332,6 +333,7 @@ export interface ChatComposerHandle {
     reviewComments: ReviewCommentContext[];
     threadContexts: ThreadContextRecord[];
     environmentContexts: EnvironmentContextRecord[];
+    artifactAnswers: ArtifactAnswerContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelSelection: ModelSelection;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
@@ -714,6 +716,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerReviewComments = composerDraft.reviewComments;
   const composerThreadContexts = attachmentDraft.threadContexts;
   const composerEnvironmentContexts = composerDraft.environmentContexts;
+  const composerArtifactAnswers = composerDraft.artifactAnswers;
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -765,6 +768,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     previewAnnotations: composerPreviewAnnotations,
     threadContexts: composerThreadContexts,
     environmentContexts: composerEnvironmentContexts,
+    artifactAnswers: composerArtifactAnswers,
     images: composerImages,
     files: composerFiles,
     uploadsByImageId,
@@ -1330,6 +1334,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.setEnvironmentContexts,
   );
+  const setComposerDraftArtifactAnswerContexts = useComposerDraftStore(
+    (store) => store.setArtifactAnswers,
+  );
   const buildContextClipboardFragment = (contextIds: ReadonlyArray<string>): string | null => {
     const wanted = new Set(contextIds);
     const copiedFiles = new Map<string, File>();
@@ -1347,6 +1354,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         .map(terminalContextRecord),
       ...composerThreadContexts.filter((record) => wanted.has(record.contextId)),
       ...composerEnvironmentContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerArtifactAnswers.filter((record) => wanted.has(record.contextId)),
       ...composerReviewComments
         .filter((c) => wanted.has(reviewCommentContextId(c.id)))
         .map(reviewCommentContextRecord),
@@ -1698,6 +1706,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       restoredEnvironments.length > 0
     ) {
       setComposerDraftEnvironmentContexts(composerDraftTarget, nextEnvironments);
+    }
+
+    const liveArtifactAnswerIds = new Set<string>(
+      composerArtifactAnswers.map((record) => record.contextId),
+    );
+    const restoredArtifactAnswers = [...referenced].flatMap((contextId) => {
+      if (liveArtifactAnswerIds.has(contextId)) return [];
+      const record = retained.artifactAnswers.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextArtifactAnswers = [
+      ...composerArtifactAnswers.filter((record) => referenced.has(record.contextId)),
+      ...restoredArtifactAnswers,
+    ];
+    for (const record of composerArtifactAnswers) {
+      if (!referenced.has(record.contextId)) retained.artifactAnswers.set(record.contextId, record);
+    }
+    if (
+      nextArtifactAnswers.length !== composerArtifactAnswers.length ||
+      restoredArtifactAnswers.length > 0
+    ) {
+      setComposerDraftArtifactAnswerContexts(composerDraftTarget, nextArtifactAnswers);
     }
 
     for (const comment of composerReviewComments) {
@@ -3028,6 +3058,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         reviewComments: composerReviewComments,
         threadContexts: composerThreadContexts,
         environmentContexts: composerEnvironmentContexts,
+        artifactAnswers: composerArtifactAnswers,
         selectedPromptEffort,
         selectedModelSelection,
         multipleModelSelections:
@@ -3084,6 +3115,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerReviewComments,
       composerThreadContexts,
       composerEnvironmentContexts,
+      composerArtifactAnswers,
       focusComposer,
       environmentId,
       primaryEnvironmentId,

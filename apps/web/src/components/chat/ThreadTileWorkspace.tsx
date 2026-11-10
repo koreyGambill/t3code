@@ -426,7 +426,7 @@ export function ThreadTileWorkspace(props: {
     { label: "Terminal", enabled: props.panels.terminalAvailable, run: props.panels.onAddTerminal },
     { label: "Files", enabled: props.panels.filesAvailable, run: props.panels.onAddFiles },
     {
-      label: "Workspace",
+      label: "Artifacts",
       enabled: Boolean(props.panels.onAddReviews),
       run: props.panels.onAddReviews,
     },

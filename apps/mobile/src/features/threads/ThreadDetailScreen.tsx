@@ -1,3 +1,4 @@
+import { ThreadListPanel } from "./ThreadListPanel";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
@@ -1447,6 +1448,7 @@ function ThreadDetailBody(
                 : "absolute inset-0 bg-screen"
             }
           />
+          <ThreadListPanel environmentId={props.environmentId} threadId={props.selectedThread.id} />
           <RenderErrorBoundary
             key={selectedThreadKey}
             resetKeys={[props.threadCwd]}
