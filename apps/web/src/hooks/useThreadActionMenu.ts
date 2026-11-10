@@ -1,5 +1,5 @@
 import { openChangeThreadFolder } from "../components/chat/changeThreadFolderDialogState";
-import { nextThreadGlyphSeed } from "../threadGlyphs";
+import { nextThreadGlyphSeed } from "@t3tools/client-runtime/thread-glyphs";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";

@@ -111,7 +111,7 @@ it("previews assistant quotes as readable text and preserves the citation when e
   );
 });
 
-it("shows who sent a queued message and folds automation and agent prompts", async () => {
+it("opens the sender thread from a queued incoming card", async () => {
   setup();
   const message = (id: string, fields: Record<string, unknown>) => ({
     id,
@@ -165,18 +165,10 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
   const onOpenThread = vi.fn();
   await using _screen = await renderQueue({ onOpenThread });
 
-  const automation = page.getByRole("button", { name: /PR dispatcher/ });
-  await expect.element(automation).toHaveAttribute("aria-expanded", "false");
-  await expect.element(page.getByText(/Follow the runbook/)).not.toBeInTheDocument();
-  await automation.click();
   await expect.element(page.getByText(/Follow the runbook/)).toBeVisible();
-  await expect.element(page.getByRole("link", { name: "Open automation" })).toBeInTheDocument();
-
-  await expect.element(page.getByRole("button", { name: /Release lead/ })).toBeVisible();
-  await page.getByRole("button", { name: "Open thread" }).click({ force: true });
+  await expect.element(page.getByRole("link", { name: "Release lead", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Release lead", exact: true }).click();
   expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead");
-
-  await expect.element(page.getByText("Sent by T3 Code")).toBeVisible();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
 });
 

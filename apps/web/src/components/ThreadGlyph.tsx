@@ -1,7 +1,7 @@
 import { type CSSProperties } from "react";
 
 import { observeVisibleAnimation } from "../lib/visibleAnimation";
-import { resolveThreadGlyph } from "../threadGlyphs";
+import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 
 export function ThreadGlyph({
   threadId,

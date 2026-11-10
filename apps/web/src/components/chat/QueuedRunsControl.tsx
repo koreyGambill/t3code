@@ -1,3 +1,4 @@
+import { SenderCard } from "./SenderCard";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -12,7 +13,10 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  nonUserMessageOrigin,
+  resolveUserMessagePresentation,
+} from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -444,6 +448,7 @@ function QueuedMessage(props: {
         : null;
   const bodyVisible = fold === null || expanded;
 
+  const origin = props.message ? nonUserMessageOrigin(props.message) : null;
   return (
     <>
       {attribution === "t3code" ? (
@@ -452,62 +457,73 @@ function QueuedMessage(props: {
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
       )}
-      {/* Dashed and unfilled: a turn that has not been sent yet. */}
-      <div
-        className={cn(
-          "flex min-w-0 max-w-[80%] flex-col rounded-2xl border border-dashed text-sm",
-          props.isEditing
-            ? "border-primary/60 text-foreground"
-            : attribution === "guest"
-              ? "border-guest/50 text-muted-foreground"
-              : "border-muted-foreground/40 text-muted-foreground",
-          fold === null && "px-3 py-2",
-          fold !== null && expanded && "w-full",
-        )}
-      >
-        {fold ? (
-          <FoldedMessageHeader
-            icon={fold.icon}
-            label={fold.label}
-            summary={fold.summary}
-            expanded={expanded}
-            onToggle={() => setExpanded((value) => !value)}
-          />
-        ) : null}
-        {bodyVisible ? (
-          <div
-            className={cn(
-              "flex flex-col gap-2",
-              fold !== null && "max-h-96 overflow-auto px-3 pb-2",
-            )}
-          >
-            {props.thumbnails.length > 0 ? (
-              <span className="flex flex-wrap items-center gap-1">
-                {props.thumbnails.map((thumbnail) => (
-                  <span
-                    key={thumbnail.key}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
-                  >
-                    {thumbnail.url ? (
-                      <img
-                        src={thumbnail.url}
-                        alt={thumbnail.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
-                    )}
-                  </span>
-                ))}
-              </span>
-            ) : null}
-            {/* In full, like a sent turn: a queued message is read before it is sent. */}
-            {props.previewText ? (
-              <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+      {origin ? (
+        <SenderCard
+          origin={origin}
+          environmentId={props.environmentId}
+          onOpenThread={props.onOpenThread}
+          text={props.previewText}
+          queued
+        >
+          <p className="whitespace-pre-wrap">{props.previewText}</p>
+        </SenderCard>
+      ) : (
+        <div
+          className={cn(
+            "flex min-w-0 max-w-[80%] flex-col rounded-2xl border border-dashed text-sm",
+            props.isEditing
+              ? "border-primary/60 text-foreground"
+              : attribution === "guest"
+                ? "border-guest/50 text-muted-foreground"
+                : "border-muted-foreground/40 text-muted-foreground",
+            fold === null && "px-3 py-2",
+            fold !== null && expanded && "w-full",
+          )}
+        >
+          {fold ? (
+            <FoldedMessageHeader
+              icon={fold.icon}
+              label={fold.label}
+              summary={fold.summary}
+              expanded={expanded}
+              onToggle={() => setExpanded((value) => !value)}
+            />
+          ) : null}
+          {bodyVisible ? (
+            <div
+              className={cn(
+                "flex flex-col gap-2",
+                fold !== null && "max-h-96 overflow-auto px-3 pb-2",
+              )}
+            >
+              {props.thumbnails.length > 0 ? (
+                <span className="flex flex-wrap items-center gap-1">
+                  {props.thumbnails.map((thumbnail) => (
+                    <span
+                      key={thumbnail.key}
+                      className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
+                    >
+                      {thumbnail.url ? (
+                        <img
+                          src={thumbnail.url}
+                          alt={thumbnail.name}
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
+                      )}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
+              {/* In full, like a sent turn: a queued message is read before it is sent. */}
+              {props.previewText ? (
+                <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
       <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
         {props.message ? (
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">

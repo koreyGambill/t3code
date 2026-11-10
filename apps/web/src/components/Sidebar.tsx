@@ -1,5 +1,5 @@
 import { openChangeThreadFolder } from "./chat/changeThreadFolderDialogState";
-import { nextThreadGlyphSeed } from "../threadGlyphs";
+import { nextThreadGlyphSeed } from "@t3tools/client-runtime/thread-glyphs";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";

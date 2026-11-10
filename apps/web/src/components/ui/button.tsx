@@ -105,6 +105,7 @@ const inlineButtonVariants = cva(
     variants: {
       tone: {
         default: "text-foreground",
+        inherit: "text-inherit [font-weight:inherit]",
         muted: "text-muted-foreground hover:text-foreground",
         destructive: "text-destructive/80 hover:text-destructive",
         picker:

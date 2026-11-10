@@ -1,10 +1,14 @@
+import { SenderCard } from "./SenderCard";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunsAtom,
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  nonUserMessageOrigin,
+  resolveUserMessagePresentation,
+} from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
@@ -308,24 +312,28 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       attachments={attachments}
                     />
                     <View className="min-w-0 flex-1 gap-0.5">
-                      {message ? (
+                      {message && nonUserMessageOrigin(message) ? (
+                        <IncomingQueuedCard message={message} />
+                      ) : message ? (
                         <QueuedRunSender environmentId={target.environmentId} message={message} />
                       ) : null}
-                      <Text
-                        className={
-                          controls.isEditing
-                            ? "text-sm text-foreground-muted"
-                            : "text-sm text-foreground"
-                        }
-                        numberOfLines={1}
-                      >
-                        {context?.guest === undefined ? null : (
-                          <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
-                            {`${context.guest.name}  `}
-                          </Text>
-                        )}
-                        {title}
-                      </Text>
+                      {message && nonUserMessageOrigin(message) ? null : (
+                        <Text
+                          className={
+                            controls.isEditing
+                              ? "text-sm text-foreground-muted"
+                              : "text-sm text-foreground"
+                          }
+                          numberOfLines={1}
+                        >
+                          {context?.guest === undefined ? null : (
+                            <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
+                              {`${context.guest.name}  `}
+                            </Text>
+                          )}
+                          {title}
+                        </Text>
+                      )}
                     </View>
                     {controls.isEditing ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
@@ -504,4 +512,9 @@ function QueueAttachmentThumbnail(props: {
       accessibilityIgnoresInvertColors
     />
   );
+}
+
+function IncomingQueuedCard({ message }: { readonly message: QueuedRunMessage }) {
+  const origin = nonUserMessageOrigin(message);
+  return origin ? <SenderCard origin={origin} text={message.text} queued /> : null;
 }

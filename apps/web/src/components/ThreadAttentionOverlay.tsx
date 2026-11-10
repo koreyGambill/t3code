@@ -8,7 +8,7 @@ import {
   subscribeThreadAttention,
   THREAD_ATTENTION_DURATION_MS,
 } from "../threadAttention";
-import { resolveThreadGlyph } from "../threadGlyphs";
+import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 import { ThreadGlyph } from "./ThreadGlyph";
 
 export function ThreadAttentionOverlay() {

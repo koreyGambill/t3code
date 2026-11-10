@@ -755,31 +755,14 @@ describe("MessagesTimeline citations", () => {
 });
 
 describe("MessagesTimeline automation prompts", () => {
-  it("folds an automation prompt into a bubble titled by its task", async () => {
+  it("keeps automation prompts readable and copyable in their sender card", async () => {
     setup({ scheduledTasks: [{ id: TASK_ID, title: "Nightly triage" }] });
     await using screen = await renderTimeline([
       message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
     ]);
-    const row = screen.button(/^Automation/);
-    expect(row.textContent).toContain("Nightly triage");
-    expect(row.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.text()).not.toContain("close duplicates");
-
-    await click(row);
+    expect(screen.text()).toContain("Nightly triage");
     expect(screen.text()).toContain("Label every new issue and close duplicates.");
-    const link = [...screen.container.querySelectorAll("a")].find(
-      (anchor) => anchor.textContent === "Open automation",
-    );
-    expect(link?.getAttribute("href")).toContain(`taskId=${TASK_ID}`);
     expect(screen.buttons(/copy/i)).not.toHaveLength(0);
-  });
-
-  it("falls back to the prompt's first line without a task title", async () => {
-    setup();
-    await using screen = await renderTimeline([
-      message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
-    ]);
-    expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
   });
 
   it("leaves ordinary user messages as full bubbles", async () => {
@@ -798,7 +781,7 @@ describe("MessagesTimeline automation prompts", () => {
       activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
     });
     await vi.waitFor(() =>
-      expect(screen.button(/^Automation/).getAttribute("aria-expanded")).toBe("true"),
+      expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
     const details = screen.container.querySelector("[data-thread-find-text]")!;
@@ -810,7 +793,7 @@ describe("MessagesTimeline automation prompts", () => {
     );
   });
 
-  it("shows edit-from-here once an automation prompt is expanded", async () => {
+  it("keeps edit-from-here available on an automation prompt", async () => {
     setup();
     const runId = RunId.make("run-1");
     await using screen = await renderTimeline(
@@ -838,8 +821,6 @@ describe("MessagesTimeline automation prompts", () => {
         ],
       },
     );
-    expect(screen.buttons("Edit from here")).toHaveLength(0);
-    await click(screen.button(/^Automation/));
     expect(screen.buttons("Edit from here")).toHaveLength(1);
   });
 });
@@ -848,7 +829,7 @@ const SENDER_THREAD_ID = ThreadId.make("thread-sender");
 const AGENT_MESSAGE = "Review finished\n\nThe migration drops the index before backfilling it.";
 
 describe("MessagesTimeline agent messages", () => {
-  it("folds a message from another agent into a one-line preview", async () => {
+  it("opens the source thread from its sender card", async () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
@@ -866,22 +847,12 @@ describe("MessagesTimeline agent messages", () => {
       ],
       { onOpenThread },
     );
-    const row = screen.button(/^Agent/);
-    expect(row.textContent).toContain("Review finished");
-    expect(row.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.text()).not.toContain("drops the index");
-    expect(screen.buttons("Open thread")).toHaveLength(0);
-
-    await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
     await screen.getByRole("link", { name: "Agent", exact: true }).click();
     expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
-
-    await click(screen.button(/^Agent/));
-    expect(screen.text()).not.toContain("drops the index");
   });
 
-  it("leaves messages sent by T3 Code as full bubbles", async () => {
+  it("keeps messages sent by T3 Code readable", async () => {
     setup();
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),
@@ -913,7 +884,7 @@ describe("MessagesTimeline agent messages", () => {
       },
     );
     await vi.waitFor(() =>
-      expect(screen.button(/^Agent/).getAttribute("aria-expanded")).toBe("true"),
+      expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
     const body = screen.container.querySelector("[data-user-message-body]")!;

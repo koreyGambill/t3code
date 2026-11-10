@@ -1,3 +1,4 @@
+import { SenderCard } from "./SenderCard";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -38,6 +39,7 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
   resolveUserMessageFileCards,
+  nonUserMessageOrigin,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -56,7 +58,6 @@ import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
-  type ScheduledTaskId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
@@ -260,8 +261,6 @@ import {
   useThreadChipIcons,
 } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -286,7 +285,6 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
-import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
@@ -1451,121 +1449,6 @@ function OpenSenderThreadButton(props: {
   );
 }
 
-/** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
-function ThreadAutomationMessageRow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly text: string;
-  readonly context?: OrchestrationMessageContext;
-  readonly scheduledTaskId: ScheduledTaskId | undefined;
-  readonly timestampLabel: string;
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
-  readonly bubbleColor: ColorValue;
-  readonly bubbleMaxWidth: number | "85%";
-  readonly contentMaxWidth: number;
-  readonly iconSubtleColor: ColorValue;
-  readonly markdownStyles: MarkdownStyleSet;
-  readonly reviewCommentColors: ReviewCommentColors;
-  readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
-  readonly linkHandlers: MarkdownLinkHandlers;
-  readonly renderImage: MarkdownImageRenderer;
-}) {
-  const navigation = useNavigation();
-  const tasks = useEnvironmentQuery(
-    props.scheduledTaskId
-      ? serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} })
-      : null,
-  );
-  const taskTitle = tasks.data?.tasks.find((task) => task.id === props.scheduledTaskId)?.title;
-  const summary = taskTitle ?? props.text.trim().split(/\r?\n/, 1)[0] ?? "";
-
-  return (
-    <View className="mb-5 items-end">
-      <View
-        className="min-w-0 rounded-[20px]"
-        style={{
-          backgroundColor: props.bubbleColor,
-          maxWidth: props.bubbleMaxWidth,
-          ...(props.expanded ? { width: props.bubbleMaxWidth } : null),
-        }}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Automation: ${summary}`}
-          accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
-          accessibilityState={{ expanded: props.expanded }}
-          hitSlop={4}
-          className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
-          onPress={() => {
-            void Haptics.selectionAsync();
-            props.onToggle();
-          }}
-        >
-          <SymbolView
-            name="calendar.badge.clock"
-            size={14}
-            weight="medium"
-            tintColorClassName="accent-user-bubble-foreground-muted"
-            type="monochrome"
-          />
-          <Text className="font-t3-medium text-sm text-user-bubble-foreground-muted">
-            Automation
-          </Text>
-          <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
-            {summary}
-          </Text>
-          <ThreadDisclosureChevron
-            expanded={props.expanded}
-            collapsedDirection="down"
-            size={11}
-            tintColor={props.iconSubtleColor}
-          />
-        </Pressable>
-        {props.expanded ? (
-          <View className="px-3.5 pb-2.5">
-            <MarkdownImageAvailableWidthContext value={props.contentMaxWidth}>
-              <UserMessageContent
-                text={renderAssistantCitationsAsText(props.text)}
-                environmentId={props.environmentId}
-                context={props.context}
-                markdownStyles={props.markdownStyles}
-                reviewCommentColors={props.reviewCommentColors}
-                skills={props.skills}
-                linkHandlers={props.linkHandlers}
-                renderImage={props.renderImage}
-              />
-            </MarkdownImageAvailableWidthContext>
-          </View>
-        ) : null}
-      </View>
-      {props.expanded ? (
-        <View className="mt-1 flex-row items-center justify-end gap-2 pr-0.5">
-          {props.scheduledTaskId ? (
-            <Pressable
-              accessibilityRole="link"
-              hitSlop={6}
-              onPress={() => openSettings(navigation, "SettingsScheduledTasks")}
-            >
-              <Text className="font-t3-medium text-xs text-foreground-secondary">
-                Open automation
-              </Text>
-            </Pressable>
-          ) : null}
-          <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-            {props.timestampLabel}
-          </Text>
-          <UserMessageCopyButton
-            text={props.text}
-            onCopy={undefined}
-            tintColor={props.iconSubtleColor}
-          />
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-/** Leads with why T3 Code compacted, when it did so without being asked. */
 function compactionLabel(label: string, title: string | undefined) {
   return title !== undefined && label.startsWith("Context compacted")
     ? title + label.slice("Context compacted".length)
@@ -1920,27 +1803,31 @@ function renderFeedEntry(
         />
       );
     }
-    if (isUser && presentation.attribution === "automation") {
-      const rowId = `automation:${message.id}`;
+    const origin = isUser ? nonUserMessageOrigin(message) : null;
+    if (origin) {
       return (
-        <ThreadAutomationMessageRow
-          environmentId={props.environmentId}
-          text={presentation.text}
-          context={message.context}
-          scheduledTaskId={presentation.scheduledTaskId}
-          timestampLabel={timestampLabel}
-          expanded={props.expandedWorkRows[rowId] ?? false}
-          onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
-          bubbleColor={userBubbleColor}
-          bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
-          contentMaxWidth={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
-          iconSubtleColor={iconSubtleColor}
-          markdownStyles={markdownStyles.user}
-          reviewCommentColors={props.reviewCommentColors}
-          skills={props.skills}
-          linkHandlers={props.markdownLinkHandlers}
-          renderImage={props.renderMarkdownImage}
-        />
+        <View className="mb-5 w-full">
+          <SenderCard origin={origin} text={presentation.text}>
+            <MessageAttachmentList
+              attachments={attachments}
+              environmentId={props.environmentId}
+              onPressPreview={props.onPressPreview}
+              onPlaybackStart={props.onPlaybackStart}
+            />
+            <MarkdownImageAvailableWidthContext value={props.userBubbleMaxWidth}>
+              <UserMessageContent
+                text={renderedText}
+                environmentId={props.environmentId}
+                context={message.context}
+                markdownStyles={markdownStyles.assistant}
+                reviewCommentColors={props.reviewCommentColors}
+                skills={props.skills}
+                linkHandlers={props.markdownLinkHandlers}
+                renderImage={props.renderMarkdownImage}
+              />
+            </MarkdownImageAvailableWidthContext>
+          </SenderCard>
+        </View>
       );
     }
     if (isUser) {

@@ -147,3 +147,45 @@ export function resolveUserMessageGrouping(
     continuesSteer: groupedWithPrevious && isSteer(message) && isSteer(previous),
   };
 }
+
+export function senderCardDetails(origin: Exclude<TurnOrigin, { kind: "user" }>) {
+  switch (origin.kind) {
+    case "thread":
+      return {
+        title: origin.title || "Thread",
+        relationship: "peer thread",
+        event: origin.event,
+        noReply: origin.reply === "not expected",
+      };
+    case "subagent":
+      return {
+        title: origin.title || "Agent",
+        relationship: "subagent",
+        event: origin.event,
+        noReply: false,
+      };
+    case "scheduled-task":
+      return {
+        title: origin.title,
+        relationship: "scheduled task",
+        event: "fired",
+        noReply: false,
+      };
+    case "wake":
+      return { title: "Wake", relationship: "T3 Code", event: "fired", noReply: false };
+    case "system":
+      return { title: "T3 Code", relationship: "T3 Code", event: origin.event, noReply: false };
+  }
+}
+
+export function nonUserMessageOrigin(
+  message: Parameters<typeof resolveUserMessagePresentation>[0],
+): Exclude<TurnOrigin, { kind: "user" }> | null {
+  if (message.origin !== undefined) return message.origin.kind === "user" ? null : message.origin;
+  const presentation = resolveUserMessagePresentation(message);
+  return presentation.attribution === "automation"
+    ? { kind: "scheduled-task", title: "Automation" }
+    : presentation.attribution === "agent" || presentation.attribution === "t3code"
+      ? { kind: "system", event: "message" }
+      : null;
+}

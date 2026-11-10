@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { nextThreadGlyphSeed, resolveThreadGlyph } from "./threadGlyphs";
+import { nextThreadGlyphSeed, resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 
 describe("threadGlyphs", () => {
   it("retains a thread's identity across repeated resolutions and saved rerolls", () => {
