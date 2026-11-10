@@ -1,3 +1,4 @@
+import * as Stream from "effect/Stream";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
@@ -30,7 +31,9 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamDomainEvents: Stream.empty,
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
     yield* Effect.gen(function* () {
@@ -78,7 +81,9 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamDomainEvents: Stream.empty,
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
     yield* Effect.gen(function* () {
@@ -133,7 +138,9 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamDomainEvents: Stream.empty,
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
     yield* Effect.gen(function* () {
@@ -193,7 +200,9 @@ it.effect(
           namedProjectsRoot: "/projects",
           isScratchProject: () => Effect.succeed(false),
         }),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamDomainEvents: Stream.empty,
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
       );
       yield* Effect.gen(function* () {

@@ -1,3 +1,16 @@
+import * as Stream from "effect/Stream";
+import * as Queue from "effect/Queue";
+import * as DateTime from "effect/DateTime";
+import {
+  EventId,
+  MessageId,
+  RunId,
+  ThreadId,
+  ProviderInstanceId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
+} from "@t3tools/contracts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
@@ -33,6 +46,7 @@ const input = {
 };
 const decode = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 const fixture = Effect.gen(function* () {
+  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const tick = yield* Ref.make<Effect.Effect<void>>(Effect.void);
   const sends = yield* Ref.make<ThreadManagementService.ThreadManagementSendInput[]>([]);
   const landed = yield* Ref.make(false);
@@ -50,6 +64,7 @@ const fixture = Effect.gen(function* () {
     Layer.succeed(Scheduler.Scheduler, scheduler),
     Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
+      streamDomainEvents: Stream.fromQueue(events),
       sendToThread: (message) =>
         Ref.update(sends, (all) => [...all, message]).pipe(Effect.as({} as never)),
     }),
@@ -76,6 +91,7 @@ const fixture = Effect.gen(function* () {
   return {
     tick: Ref.get(tick).pipe(Effect.flatten),
     sends,
+    events,
     landed,
     layer: ScheduledTaskService.layer.pipe(Layer.provide(dependencies)),
   };
@@ -192,11 +208,94 @@ it.effect("idle check-ins retain their baseline across restart and detect queue 
       VALUES ('queued', 'thread:main', 1, 'codex', 'queued', '2026-01-01T00:00:00Z', '{}')`;
       yield* TestClock.adjust("30 minutes");
       yield* f.tick;
-      expect(yield* Ref.get(f.sends)).toHaveLength(2);
+      expect(yield* Ref.get(f.sends)).toHaveLength(1);
       yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'cancelled' WHERE run_id = 'queued'`;
       yield* TestClock.adjust("30 minutes");
       yield* f.tick;
-      expect(yield* Ref.get(f.sends)).toHaveLength(3);
+      expect(yield* Ref.get(f.sends)).toHaveLength(2);
     }).pipe(Effect.provide(f.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("idle check-ins reset on terminal runs and never fire during work", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const { task } = yield* service.upsert(
+        yield* decode({
+          ...input,
+          schedule: { type: "interval", everyMs: 1_800_000, idleCheckin: true },
+        }),
+      );
+      const updates = yield* Queue.unbounded<unknown>();
+      yield* service.subscribeList().pipe(
+        Stream.runForEach((list) => Queue.offer(updates, list)),
+        Effect.forkScoped,
+      );
+      yield* Queue.take(updates);
+      const startedAt = yield* DateTime.now;
+      const run: OrchestrationV2Run = {
+        id: RunId.make("idle-run"),
+        threadId: ThreadId.make(input.threadId),
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("idle-input"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running",
+        requestedAt: startedAt,
+        startedAt,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const publish = (value: OrchestrationV2Run) =>
+        Effect.gen(function* () {
+          const event: OrchestrationV2DomainEvent = {
+            id: EventId.make(`idle:${value.status}:${value.ordinal}`),
+            type: "run.updated",
+            threadId: value.threadId,
+            runId: value.id,
+            occurredAt: yield* DateTime.now,
+            payload: value,
+          };
+          yield* store.apply(event);
+          yield* Queue.offer(f.events, event);
+          yield* Queue.take(updates);
+        });
+      yield* publish(run);
+      yield* TestClock.adjust("30 minutes");
+      yield* f.tick;
+      expect(yield* Ref.get(f.sends)).toHaveLength(0);
+      yield* Queue.take(updates);
+      const completedAt = yield* DateTime.now;
+      yield* publish({ ...run, status: "completed", completedAt });
+      expect((yield* service.list()).tasks[0]?.nextRunAt).toBe(
+        DateTime.formatIso(DateTime.addDuration(completedAt, 1_800_000)),
+      );
+      yield* TestClock.adjust("29 minutes");
+      yield* f.tick;
+      expect(yield* Ref.get(f.sends)).toHaveLength(0);
+      yield* publish({
+        ...run,
+        id: RunId.make("idle-run-2"),
+        ordinal: 2,
+        status: "completed",
+        completedAt: yield* DateTime.now,
+      });
+      yield* TestClock.adjust("1 minute");
+      yield* f.tick;
+      expect(yield* Ref.get(f.sends)).toHaveLength(0);
+      yield* TestClock.adjust("29 minutes");
+      yield* f.tick;
+      expect(yield* Ref.get(f.sends)).toHaveLength(1);
+      expect(
+        (yield* service.list()).tasks.find((entry) => entry.id === task.id)?.lastRunStatus,
+      ).toBe("succeeded");
+    }).pipe(Effect.provide(Layer.mergeAll(f.layer, ProjectionStore.layer)));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

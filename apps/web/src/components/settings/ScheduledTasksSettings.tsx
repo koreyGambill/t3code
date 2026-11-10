@@ -309,7 +309,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
-    if (schedule.idleCheckin) return "Idle work check-in · every 30 min";
+    if (schedule.idleCheckin) return "Idle work check-in · after 30 min idle";
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
       ? `Every ${minutes} min`

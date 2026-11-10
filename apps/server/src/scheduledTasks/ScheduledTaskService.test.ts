@@ -210,7 +210,9 @@ it.effect(
                   namedProjectsRoot: "/projects",
                   isScratchProject: () => Effect.succeed(false),
                 }),
-                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  streamDomainEvents: Stream.empty,
+                }),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
@@ -308,7 +310,9 @@ it.effect(
                   namedProjectsRoot: "/projects",
                   isScratchProject: () => Effect.succeed(false),
                 }),
-                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  streamDomainEvents: Stream.empty,
+                }),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
@@ -354,6 +358,7 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
             sendToThread: () =>
               Deferred.succeed(started, undefined).pipe(
                 Effect.andThen(Deferred.await(release)),
@@ -424,6 +429,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
             sendToThread: (input) =>
               Ref.updateAndGet(sends, (all) => [
                 ...all,
@@ -502,6 +508,7 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
               ),
           }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
             getThreadShell: () => Effect.succeed({ deletedAt: null } as never),
             sendToThread: (input) =>
               Ref.update(sends, (all) => [
@@ -584,6 +591,7 @@ it.effect("a first run whose thread was deleted before it bound removes the task
           }),
           // Deleted before the binding landed, so its cleanup found no task to remove.
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
             getThreadShell: () =>
               Effect.succeed({ deletedAt: DateTime.makeUnsafe("2026-11-03T00:00:00Z") } as never),
           }),
@@ -638,7 +646,9 @@ it.effect.each(["recreated under the same id", "moved to another project"] as co
                   } as never),
                 ),
             }),
-            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              streamDomainEvents: Stream.empty,
+            }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
               namedProjectsRoot: "/projects",
@@ -694,7 +704,9 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
             limits: { maxRuntimeMode: "auto-accept-edits" },
           }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
+          }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
@@ -764,7 +776,9 @@ it.effect("a run interrupted right after it reserves the task does not block the
                 Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),
               ),
           }),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
+          }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
@@ -838,6 +852,7 @@ it.effect("idle check-ins persist their cadence, skip busy ticks, and pause with
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamDomainEvents: Stream.empty,
             sendToThread: (input) =>
               Ref.get(busy).pipe(
                 Effect.flatMap((blocked) =>

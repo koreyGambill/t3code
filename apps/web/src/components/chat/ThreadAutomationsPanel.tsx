@@ -212,7 +212,7 @@ export function ThreadAutomationsPanel(props: {
           disabled={!canCreate || !shell || busyTaskId !== null}
           onClick={() => void enableCheckin()}
         >
-          <span className="whitespace-normal">Enable idle work check-in · every 30 min</span>
+          <span className="whitespace-normal">Enable idle work check-in · after 30 min idle</span>
         </ThreadDetailsControl>
       ) : null}
       <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">

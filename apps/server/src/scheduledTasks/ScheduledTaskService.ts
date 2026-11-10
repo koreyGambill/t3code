@@ -53,6 +53,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { forkParked } from "../serverActivation.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
@@ -505,6 +506,40 @@ export const layer = Layer.effect(
       Effect.asVoid,
     );
 
+    yield* forkParked(
+      Stream.runForEach(threadManagement.streamDomainEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type !== "run.updated" && event.type !== "run.created") return;
+          const run = event.payload;
+          const terminal = [
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "rolled_back",
+          ].includes(run.status);
+          const anchor = DateTime.formatIso(
+            terminal ? (run.completedAt ?? event.occurredAt) : event.occurredAt,
+          );
+          const changed = yield* sql`
+            UPDATE scheduled_tasks
+            SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', ${anchor},
+              '+' || (json_extract(schedule_json, '$.everyMs') / 1000.0) || ' seconds')
+            WHERE thread_id = ${run.threadId} AND enabled = 1
+              AND json_extract(schedule_json, '$.idleCheckin') = 1
+              AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${run.threadId} AND ordinal > ${run.ordinal})
+            RETURNING task_id
+          `;
+          if (changed.length > 0) yield* notifyChanged;
+        }).pipe(
+          Effect.catch((cause) => Effect.logWarning("Could not reset idle check-in", { cause })),
+        ),
+      ).pipe(
+        Effect.catch((cause) => Effect.logWarning("Idle check-in event stream failed", { cause })),
+      ),
+    );
+
     const selectAllRows = () =>
       sql<ScheduledTaskRow>`
       SELECT
@@ -909,6 +944,42 @@ export const layer = Layer.effect(
                     ? "The task was paused before this delivery ran."
                     : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
+        }
+
+        if (
+          active.threadId !== null &&
+          active.schedule.type === "interval" &&
+          active.schedule.idleCheckin
+        ) {
+          const [latest] = yield* sql<{ status: string; completed_at: string | null }>`
+            SELECT status, completed_at FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${active.threadId} ORDER BY ordinal DESC LIMIT 1
+          `.pipe(
+            Effect.mapError((cause) => taskError("Could not inspect idle thread.", { cause })),
+          );
+          const running =
+            latest !== undefined &&
+            !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+              latest.status,
+            );
+          const idleUntil =
+            latest?.completed_at === null || latest?.completed_at === undefined
+              ? null
+              : DateTime.formatIso(
+                  DateTime.addDuration(
+                    DateTime.makeUnsafe(latest.completed_at),
+                    active.schedule.everyMs,
+                  ),
+                );
+          if (running || (idleUntil !== null && idleUntil > startedAtIso)) {
+            const next = running ? nextRunAt(active, startedAt) : idleUntil;
+            yield* sql`UPDATE scheduled_tasks SET next_run_at = ${next}
+              WHERE task_id = ${active.id} AND next_run_at = ${active.nextRunAt}`.pipe(
+              Effect.mapError((cause) => taskError("Could not postpone idle check-in.", { cause })),
+            );
+            yield* notifyChanged;
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
         }
 
         const wake = active.schedule.type === "interval" ? active.schedule.wakeWhen : undefined;
