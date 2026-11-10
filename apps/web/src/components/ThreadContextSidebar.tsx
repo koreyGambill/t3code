@@ -1,9 +1,23 @@
-import { threadArtifactList } from "../state/threadWorkspace";
 import { useAtomValue } from "@effect/atom-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { AuthOrchestrationReadScope, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
-import { PanelRightIcon, PinIcon, PinOffIcon, XIcon } from "lucide-react";
+import {
+  PanelRightIcon,
+  PinIcon,
+  PinOffIcon,
+  XIcon,
+  ListChecksIcon,
+  FilesIcon,
+  BookmarkIcon,
+  NetworkIcon,
+  InfoIcon,
+  BoxesIcon,
+  BrainIcon,
+  TicketIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+} from "lucide-react";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useResizableWidth } from "../hooks/useResizableWidth";
@@ -32,6 +46,8 @@ import { RightPanelResizeHandle } from "./preview/RightPanelResizeHandle";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { ThreadListView } from "./reviews/ThreadListView";
+import { ArtifactsPanel } from "./reviews/ThreadWorkspacePanel";
+import { Badge } from "./ui/badge";
 import { XwingEnvironmentsPanel } from "./xwing/XwingEnvironmentsPanel";
 
 const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -42,14 +58,14 @@ const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRu
 });
 
 const sections = [
-  ["list", "List"],
-  ["artifacts", "Artifacts"],
-  ["marks", "Marks"],
-  ["related", "Related threads"],
-  ["details", "Details"],
-  ["environments", "Environments"],
-  ["context", "Context"],
-  ["ticket", "Ticket"],
+  ["list", "List", ListChecksIcon],
+  ["artifacts", "Artifacts", FilesIcon],
+  ["marks", "Marks", BookmarkIcon],
+  ["related", "Related threads", NetworkIcon],
+  ["details", "Details", InfoIcon],
+  ["environments", "Environments", BoxesIcon],
+  ["context", "Context", BrainIcon],
+  ["ticket", "Ticket", TicketIcon],
 ] as const;
 
 export function ThreadContextSidebarHost({ children }: { children: ReactNode }) {
@@ -62,11 +78,9 @@ export function ThreadContextSidebarHost({ children }: { children: ReactNode }) 
   const layout = useRightPanelStore((state) =>
     owner ? selectThreadTileLayout(state.byThreadKey, owner) : null,
   );
-  const { open, pinned, expanded } = useThreadContextSidebarStore();
+  const { open, pinned, view } = useThreadContextSidebarStore();
   const selected = selectContextThread(owner, layout, panels?.surfaces ?? [], pinned);
   const [detailsElement, setDetailsElement] = useState<HTMLDivElement | null>(null);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const shortcut = shortcutLabelForCommand(keybindings, "threadContext.toggle");
   const [commandsRef] = useState(() => (node: HTMLDivElement | null) => {
     if (!node) return;
     const toggle = () => useThreadContextSidebarStore.getState().toggle();
@@ -83,8 +97,20 @@ export function ThreadContextSidebarHost({ children }: { children: ReactNode }) 
           !(event.target instanceof Element && event.target.closest("[data-keybinding-capture]")),
       },
     );
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        useThreadContextSidebarStore.getState().maximized
+      ) {
+        useThreadContextSidebarStore.getState().restore();
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", escape);
     const disposeMenu = registerMenuAction("threadContext.toggle", toggle);
     return () => {
+      window.removeEventListener("keydown", escape);
       dispose();
       disposeMenu();
     };
@@ -93,39 +119,19 @@ export function ThreadContextSidebarHost({ children }: { children: ReactNode }) 
   return (
     <ThreadDetailsDestination
       value={
-        show && expanded.details && detailsElement
+        show && view === "details" && detailsElement
           ? { threadRef: selected, element: detailsElement }
           : null
       }
     >
-      <div ref={commandsRef} className="flex min-h-0 min-w-0 flex-1">
+      <div ref={commandsRef} className="relative flex min-h-0 min-w-0 flex-1">
         {children}
-        {show ? (
+        {selected && owner ? (
           <ThreadContextSidebar
             key={`${selected.environmentId}:${selected.threadId}`}
             threadRef={selected}
             detailsRef={setDetailsElement}
           />
-        ) : null}
-        {owner && !show ? (
-          <div className="absolute right-[var(--workspace-controls-right)] top-[var(--workspace-controls-top)] z-40 flex h-[var(--workspace-topbar-height)] items-center">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label="Open thread sidebar"
-                    aria-expanded={false}
-                    onClick={() => useThreadContextSidebarStore.getState().toggle()}
-                  />
-                }
-              >
-                <PanelRightIcon />
-              </TooltipTrigger>
-              <TooltipPopup>Open thread sidebar · {shortcut ?? "Mod+Alt+I"}</TooltipPopup>
-            </Tooltip>
-          </div>
         ) : null}
       </div>
     </ThreadDetailsDestination>
@@ -142,7 +148,29 @@ function ThreadContextSidebar({
   const shell = useThreadShell(threadRef);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "threadContext.toggle") ?? "Mod+Alt+I";
-  const { pinned, expanded } = useThreadContextSidebarStore();
+  const { open, pinned, view, maximized } = useThreadContextSidebarStore();
+  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
+  const workspace = useEnvironmentQuery(
+    canRead
+      ? sidebarWorkspaceGet({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  const listCount = workspace.data?.items.filter((item) => item.state === "open").length ?? 0;
+  const ticketState = workspace.data?.items
+    .flatMap((item) => item.linkStates ?? [])
+    .find((link) => link.type === "ticket");
+  const questionCount =
+    workspace.data?.artifacts.reduce((total, artifact) => {
+      const version = artifact.versions.at(-1);
+      return (
+        total +
+        (version?.questions.filter((question) => !version.answers[question.id]?.submittedAt)
+          .length ?? 0)
+      );
+    }, 0) ?? 0;
   const resize = useResizableWidth({
     storageKey: "t3code:thread-context-width",
     defaultWidth: 340,
@@ -155,91 +183,167 @@ function ThreadContextSidebar({
       {...workspaceAreaProps("details", 3, "Thread sidebar")}
       aria-label="Thread sidebar"
       data-context-thread-id={threadRef.threadId}
-      className="relative flex h-full min-h-0 shrink-0 flex-col border-l border-border bg-background [width:min(var(--resizable-width),85vw)]"
+      className={
+        maximized && open
+          ? "absolute inset-0 z-40 flex min-h-0 border-l border-border bg-background"
+          : "relative flex h-full min-h-0 shrink-0 border-l border-border bg-background"
+      }
       style={{ "--resizable-width": `${resize.width}px` } as CSSProperties}
     >
-      <RightPanelResizeHandle
-        handlers={resize.handlers}
-        label="Thread sidebar width"
-        tabIndex={0}
-        aria-valuenow={resize.width}
-        aria-valuemin={260}
-        aria-valuemax={640}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-            event.preventDefault();
-            resize.setWidth(resize.width + (event.key === "ArrowLeft" ? 20 : -20));
+      {open ? (
+        <div
+          className={
+            maximized
+              ? "flex min-h-0 min-w-0 flex-1 flex-col"
+              : "flex min-h-0 min-w-0 flex-col [width:min(var(--resizable-width),75vw)]"
           }
-        }}
-      />
-      <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 border-b border-border pl-2 pr-[max(--spacing(2),var(--workspace-native-controls-inset))] [-webkit-app-region:no-drag]">
-        <div className="min-w-0 flex-1">
-          <Tooltip>
-            <TooltipTrigger render={<p className="truncate text-xs font-medium" />}>
-              {shell?.title ?? "Thread"}
-            </TooltipTrigger>
-            <TooltipPopup>{shell?.title ?? "Thread"}</TooltipPopup>
-          </Tooltip>
-          <p className="truncate text-3xs text-muted-foreground">
-            {pinned ? "Pinned thread" : "Following focused tile"}
-          </p>
-        </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={pinned ? "Unpin thread sidebar" : "Pin thread sidebar"}
-                aria-pressed={pinned !== null}
-                onClick={() =>
-                  useThreadContextSidebarStore.getState().pin(pinned ? null : threadRef)
+        >
+          <div className="h-[var(--native-titlebar-height)] shrink-0" />
+          {!maximized ? (
+            <RightPanelResizeHandle
+              handlers={resize.handlers}
+              label="Thread sidebar width"
+              tabIndex={0}
+              aria-valuenow={resize.width}
+              aria-valuemin={260}
+              aria-valuemax={640}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                  event.preventDefault();
+                  resize.setWidth(resize.width + (event.key === "ArrowLeft" ? 20 : -20));
                 }
-              />
-            }
+              }}
+            />
+          ) : null}
+          <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 border-b border-border px-2 [-webkit-app-region:no-drag]">
+            <div className="min-w-0 flex-1">
+              <Tooltip>
+                <TooltipTrigger render={<p className="truncate text-xs font-medium" />}>
+                  {sections.find(([id]) => id === view)?.[1]}
+                </TooltipTrigger>
+                <TooltipPopup>{shell?.title ?? "Thread"}</TooltipPopup>
+              </Tooltip>
+              <p className="truncate text-3xs text-muted-foreground">{shell?.title ?? "Thread"}</p>
+            </div>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={maximized ? "Restore thread sidebar" : "Maximize thread sidebar"}
+                    onClick={() => useThreadContextSidebarStore.getState().toggleMaximized()}
+                  />
+                }
+              >
+                {maximized ? <Minimize2Icon /> : <Maximize2Icon />}
+              </TooltipTrigger>
+              <TooltipPopup>{maximized ? "Restore · Escape" : "Maximize"}</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={pinned ? "Unpin thread sidebar" : "Pin thread sidebar"}
+                    aria-pressed={pinned !== null}
+                    onClick={() =>
+                      useThreadContextSidebarStore.getState().pin(pinned ? null : threadRef)
+                    }
+                  />
+                }
+              >
+                {pinned ? <PinOffIcon /> : <PinIcon />}
+              </TooltipTrigger>
+              <TooltipPopup>{pinned ? "Follow focused tile" : "Pin this thread"}</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Close thread sidebar"
+                    aria-expanded
+                    onClick={() => useThreadContextSidebarStore.getState().toggle()}
+                  />
+                }
+              >
+                <XIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Close thread sidebar · {shortcut}</TooltipPopup>
+            </Tooltip>
+          </header>
+          <div
+            className="flex min-h-0 flex-1 flex-col overflow-auto"
+            key={`${threadRef.threadId}:${view}`}
           >
-            {pinned ? <PinOffIcon /> : <PinIcon />}
-          </TooltipTrigger>
-          <TooltipPopup>{pinned ? "Follow focused tile" : "Pin this thread"}</TooltipPopup>
-        </Tooltip>
+            <SidebarSection section={view} threadRef={threadRef} detailsRef={detailsRef} />
+          </div>
+        </div>
+      ) : null}
+      <nav
+        aria-label="Thread sidebar views"
+        className="flex w-11 shrink-0 flex-col items-center gap-2 border-l border-border bg-muted/20 pb-2 [-webkit-app-region:no-drag]"
+      >
+        <div className="h-[var(--workspace-topbar-height)] shrink-0" />
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
-                variant="ghost"
+                variant="outline"
                 size="icon-sm"
-                aria-label="Close thread sidebar"
-                aria-expanded
+                aria-label={open ? "Close thread sidebar" : "Open thread sidebar"}
+                aria-expanded={open}
                 onClick={() => useThreadContextSidebarStore.getState().toggle()}
               />
             }
           >
-            <XIcon />
+            <PanelRightIcon />
           </TooltipTrigger>
-          <TooltipPopup>Close thread sidebar · {shortcut}</TooltipPopup>
+          <TooltipPopup>
+            {open ? "Close" : "Open"} thread sidebar · {shortcut}
+          </TooltipPopup>
         </Tooltip>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {sections.map(([id, title]) => (
-          <details
-            key={id}
-            open={expanded[id] ?? false}
-            className="border-b border-border/60"
-            onToggle={(event) => {
-              const next = event.currentTarget.open;
-              if (next !== (expanded[id] ?? false))
-                useThreadContextSidebarStore.getState().setExpanded(id, next);
-            }}
-          >
-            <summary className="cursor-pointer px-3 py-2 text-xs font-medium select-none">
-              {title}
-            </summary>
-            {expanded[id] ? (
-              <SidebarSection section={id} threadRef={threadRef} detailsRef={detailsRef} />
-            ) : null}
-          </details>
-        ))}
-      </div>
+        {sections.map(([id, title, Icon]) => {
+          const count = id === "list" ? listCount : id === "artifacts" ? questionCount : 0;
+          return (
+            <div key={id} className="relative">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant={open && view === id ? "secondary" : "ghost"}
+                      size="icon-sm"
+                      aria-label={title}
+                      aria-pressed={open && view === id}
+                      onClick={() => useThreadContextSidebarStore.getState().selectView(id)}
+                    />
+                  }
+                >
+                  <Icon />
+                </TooltipTrigger>
+                <TooltipPopup>{title}</TooltipPopup>
+              </Tooltip>
+              {id === "ticket" && ticketState ? (
+                <span className="pointer-events-none absolute -right-1 -top-1">
+                  <Badge size="sm" variant={ticketState.state === "closed" ? "success" : "info"}>
+                    •
+                  </Badge>
+                </span>
+              ) : null}
+              {count ? (
+                <span className="pointer-events-none absolute -right-1 -top-1">
+                  <Badge size="sm" variant="secondary">
+                    {count}
+                  </Badge>
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
+      </nav>
     </aside>
   );
 }
@@ -262,7 +366,14 @@ function SidebarSection({
         />
       );
     case "artifacts":
-      return <SidebarArtifacts threadRef={threadRef} />;
+      return (
+        <ArtifactsPanel
+          threadRef={threadRef}
+          selectedId={null}
+          workspaceMutationId={null}
+          composerDraftTarget={threadRef}
+        />
+      );
     case "marks":
       return <SidebarMarks threadRef={threadRef} />;
     case "related":
@@ -304,7 +415,15 @@ function SidebarTickets({ threadRef }: { threadRef: ScopedThreadRef }) {
   return tickets.length ? (
     <ul className="space-y-2 px-3 pb-3 text-xs">
       {tickets.map((ticket) => (
-        <li key={ticket}>{ticket}</li>
+        <li key={ticket} className="flex items-center justify-between gap-2">
+          <span>{ticket}</span>
+          <Badge variant="secondary">
+            {workspace.data?.items
+              .flatMap((item) => item.linkStates ?? [])
+              .find((link) => link.type === "ticket" && link.target === ticket)?.label ??
+              "Unavailable"}
+          </Badge>
+        </li>
       ))}
     </ul>
   ) : (
@@ -482,53 +601,6 @@ function SidebarThreadSummary({ threadRef }: { threadRef: ScopedThreadRef }) {
       >
         Open conversation details
       </Link>
-    </div>
-  );
-}
-
-function SidebarArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
-  const query = useEnvironmentQuery(
-    canRead
-      ? threadArtifactList({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
-  return (
-    <div className="space-y-1 px-3 pb-3 text-xs">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => {
-          const p = useRightPanelStore.getState();
-          p.openReviews(threadRef);
-          p.setWorkspaceSection(threadRef, "qa");
-        }}
-      >
-        Needs your QA · all threads
-      </Button>
-      {query.data?.map((artifact) => (
-        <Tooltip key={artifact.id}>
-          <TooltipTrigger
-            render={
-              <button
-                className="flex w-full items-center justify-between gap-2 py-1 text-left hover:underline"
-                onClick={() => useRightPanelStore.getState().openReviews(threadRef, artifact.id)}
-              />
-            }
-          >
-            <span className="truncate">{artifact.title}</span>
-            <span className="shrink-0 text-muted-foreground">
-              v{artifact.version}
-              {artifact.unansweredQuestions ? ` · ${artifact.unansweredQuestions} unanswered` : ""}
-            </span>
-          </TooltipTrigger>
-          <TooltipPopup>{artifact.title}</TooltipPopup>
-        </Tooltip>
-      ))}
-      {query.data?.length === 0 ? <p className="text-muted-foreground">No artifacts.</p> : null}
     </div>
   );
 }

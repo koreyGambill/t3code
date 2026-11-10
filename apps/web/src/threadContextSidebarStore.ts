@@ -16,11 +16,14 @@ export type ThreadContextSection =
 interface ThreadContextSidebarState {
   open: boolean;
   pinned: ScopedThreadRef | null;
-  expanded: Partial<Record<ThreadContextSection, boolean>>;
+  view: ThreadContextSection;
+  maximized: boolean;
+  selectView: (view: ThreadContextSection) => void;
+  toggleMaximized: () => void;
+  restore: () => void;
   environmentSelection: { thread: ScopedThreadRef; id: string } | null;
   toggle: () => void;
   pin: (thread: ScopedThreadRef | null) => void;
-  setExpanded: (section: ThreadContextSection, expanded: boolean) => void;
   openList: (thread: ScopedThreadRef) => void;
   openEnvironments: (thread?: ScopedThreadRef, id?: string) => void;
   selectEnvironment: (thread: ScopedThreadRef, id: string | null) => void;
@@ -31,25 +34,22 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
     (set) => ({
       open: false,
       pinned: null,
-      expanded: { list: true, artifacts: true, marks: true },
+      view: "list",
+      maximized: false,
+      selectView: (view) => set((state) => ({ view, open: !state.open || state.view !== view })),
+      toggleMaximized: () => set((state) => ({ maximized: !state.maximized })),
+      restore: () => set({ maximized: false }),
       environmentSelection: null,
       toggle: () => set((state) => ({ open: !state.open })),
       pin: (pinned) => set({ pinned }),
-      setExpanded: (section, expanded) =>
-        set((state) => ({ expanded: { ...state.expanded, [section]: expanded } })),
-      openList: (thread) =>
-        set((state) => ({
-          open: true,
-          pinned: thread,
-          expanded: { ...state.expanded, list: true },
-        })),
+      openList: (thread) => set({ open: true, pinned: thread, view: "list" }),
       openEnvironments: (thread, id) =>
-        set((state) => ({
+        set({
           open: true,
           ...(thread ? { pinned: thread } : {}),
-          expanded: { ...state.expanded, environments: true },
+          view: "environments",
           environmentSelection: thread && id ? { thread, id } : null,
-        })),
+        }),
       selectEnvironment: (thread, id) => set({ environmentSelection: id ? { thread, id } : null }),
     }),
     {
@@ -57,7 +57,7 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window === "undefined" ? undefined : window.localStorage),
       ),
-      partialize: ({ open, expanded }) => ({ open, expanded }),
+      partialize: ({ open, view }) => ({ open, view }),
     },
   ),
 );

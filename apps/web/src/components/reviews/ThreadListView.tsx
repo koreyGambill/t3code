@@ -9,8 +9,19 @@ import {
   type ThreadListUpdateInput,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowDownIcon, ArrowUpIcon, LoaderCircleIcon, PlusIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  LoaderCircleIcon,
+  PlusIcon,
+  ChevronRightIcon,
+  MoreHorizontalIcon,
+} from "lucide-react";
 import { useState } from "react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadArtifactList, threadListRead, threadListUpdate } from "../../state/threadWorkspace";
@@ -51,22 +62,28 @@ export function ThreadListView({
       : null,
   );
   const canWrite = useAtomValue(threadListUpdate.permissionAtom(threadRef.environmentId));
-  const update = useAtomCommand(threadListUpdate);
+  const update = useAtomCommand(threadListUpdate, { reportFailure: false });
   const [saved, setSaved] = useState<ThreadListEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
   const [history, setHistory] = useState(false);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [parent, setParent] = useState<ListItem | null>(null);
+  const [error, setError] = useState("");
   const remote = supplied ?? query.data?.[0];
   const entry = saved && (!remote || saved.revision > remote.revision) ? saved : remote;
   const mutate = async (change: Pick<ThreadListUpdateInput, "changes" | "order">) => {
     if (!entry || busy || !canWrite) return;
     setBusy(true);
+    setError("");
+    let ok = false;
     {
       const result = await update({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId, expectedRevision: entry.revision, ...change },
       });
       if (result._tag === "Success") {
+        ok = true;
         setSaved({
           ...entry,
           ...result.value,
@@ -75,9 +92,13 @@ export function ThreadListView({
         query.refresh();
         artifacts.refresh();
         onRefresh?.();
-      } else query.refresh();
+      } else {
+        setError(squashAtomCommandFailure(result).message);
+        query.refresh();
+      }
     }
     setBusy(false);
+    return ok;
   };
   if (!readable)
     return (
@@ -88,9 +109,22 @@ export function ThreadListView({
   const shown = entry.items.filter(
     (item) => supplied || history || item.state === "open" || item.state === "handed_off",
   );
-  const ordered = shown
-    .filter((item) => !item.parentId || !shown.some((parent) => parent.id === item.parentId))
-    .flatMap((item) => [item, ...shown.filter((child) => child.parentId === item.id)]);
+  const children = (id: string): ListItem[] =>
+    entry.items
+      .filter((item) => item.parentId === id)
+      .flatMap((item) => [item, ...children(item.id)]);
+  const rows = (parentId: string | null, depth: number): { item: ListItem; depth: number }[] =>
+    shown
+      .filter((item) =>
+        parentId === null
+          ? !item.parentId || !shown.some((parent) => parent.id === item.parentId)
+          : item.parentId === parentId,
+      )
+      .flatMap((item) => [
+        { item, depth },
+        ...(collapsed.has(item.id) || depth >= 3 ? [] : rows(item.id, depth + 1)),
+      ]);
+  const ordered = rows(null, 0);
   const move = (id: string, direction: number) => {
     const order = entry.items.map((item) => item.id);
     const from = order.indexOf(id),
@@ -100,7 +134,7 @@ export function ThreadListView({
     void mutate({ changes: [], order });
   };
   return (
-    <div className="space-y-2 p-3 text-xs">
+    <div className="@container space-y-2 p-3 text-xs">
       <div className="flex items-center justify-between">
         <span>
           {entry.items.filter((item) => item.state === "done").length}/{entry.items.length} done
@@ -111,23 +145,29 @@ export function ThreadListView({
           </Button>
         ) : null}
       </div>
-      <div
-        className="max-h-96 space-y-1 overflow-y-auto overflow-x-hidden"
-        aria-label="Thread list"
-      >
-        {ordered.map((item, index) => (
-          <div key={item.id} className={item.parentId ? "ml-4" : ""}>
-            {index === 0 ||
-            new Date(
-              ordered[index - 1]!.doneAt ?? ordered[index - 1]!.createdAt,
-            ).toLocaleDateString() !==
-              new Date(item.doneAt ?? item.createdAt).toLocaleDateString() ? (
-              <p className="py-1 text-3xs text-muted-foreground">
-                {new Date(item.doneAt ?? item.createdAt).toLocaleDateString()}
-              </p>
-            ) : null}
+      <div className="space-y-1" aria-label="Thread list">
+        {ordered.map(({ item, depth }) => (
+          <div
+            key={item.id}
+            className={depth === 3 ? "ml-9" : depth === 2 ? "ml-6" : depth === 1 ? "ml-3" : ""}
+          >
             <ListRow
               item={item}
+              progress={
+                children(item.id).length
+                  ? `${children(item.id).filter((child) => child.state === "done").length}/${children(item.id).length}`
+                  : null
+              }
+              collapsed={collapsed.has(item.id)}
+              onToggle={() =>
+                setCollapsed((current) => {
+                  const next = new Set(current);
+                  if (next.has(item.id)) next.delete(item.id);
+                  else next.add(item.id);
+                  return next;
+                })
+              }
+              onAddChild={depth < 3 ? () => setParent(item) : undefined}
               disabled={!canWrite || busy}
               onChange={(changes) => void mutate({ changes: [{ id: item.id, ...changes }] })}
               onMove={supplied ? undefined : (direction) => move(item.id, direction)}
@@ -148,33 +188,53 @@ export function ThreadListView({
       {entry.summaryNotes ? (
         <p className="whitespace-pre-wrap text-muted-foreground">{entry.summaryNotes}</p>
       ) : null}
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
       {!supplied ? (
         <form
-          className="flex items-center gap-2"
+          className="space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
             if (text.trim())
-              void mutate({ changes: [{ text: text.trim(), owner: "you" }] }).then(() =>
-                setText(""),
-              );
+              void mutate({
+                changes: [{ text: text.trim(), owner: "you", parentId: parent?.id ?? null }],
+              }).then((ok) => {
+                if (ok) {
+                  setText("");
+                  setParent(null);
+                }
+              });
           }}
         >
-          <Input
-            aria-label="New list item"
-            placeholder="Add an item…"
-            value={text}
-            disabled={!canWrite || busy}
-            onChange={(event) => setText(event.target.value)}
-          />
-          <Button
-            type="submit"
-            size="icon"
-            variant="outline"
-            aria-label="Add list item"
-            disabled={!canWrite || busy || !text.trim()}
-          >
-            <PlusIcon />
-          </Button>
+          {parent ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate">Under: {parent.text}</span>
+              <Button size="xs" variant="ghost" onClick={() => setParent(null)}>
+                Cancel
+              </Button>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label="New list item"
+              placeholder="Add an item…"
+              value={text}
+              disabled={!canWrite || busy}
+              onChange={(event) => setText(event.target.value)}
+            />
+            <Button
+              type="submit"
+              size="icon"
+              variant="outline"
+              aria-label="Add list item"
+              disabled={!canWrite || busy || !text.trim()}
+            >
+              <PlusIcon />
+            </Button>
+          </div>
         </form>
       ) : null}
     </div>
@@ -183,6 +243,10 @@ export function ThreadListView({
 
 function ListRow({
   item,
+  progress,
+  collapsed,
+  onToggle,
+  onAddChild,
   disabled,
   onChange,
   onMove,
@@ -191,6 +255,10 @@ function ListRow({
   threadRef,
 }: {
   item: ListItem;
+  progress: string | null;
+  collapsed: boolean;
+  onToggle: () => void;
+  onAddChild: (() => void) | undefined;
   disabled: boolean;
   onChange: (change: ThreadListUpdateInput["changes"][number]) => void;
   onMove?: ((direction: number) => void) | undefined;
@@ -203,9 +271,85 @@ function ListRow({
   const [text, setText] = useState<string | null>(null);
   const terminal = item.state === "done" || item.state === "dropped";
   const openLink = listItemNeedsHandoff(item);
+  const links = item.links.map((link) => {
+    const state = item.linkStates?.find(
+      (live) => live.type === link.type && live.target === link.target,
+    );
+    const label =
+      (link.type === "artifact" ? artifactTitles.get(link.target) : undefined) ??
+      state?.label ??
+      link.target;
+    const count = link.type === "artifact" ? artifactCounts.get(link.target) : undefined;
+    const content = (
+      <>
+        {link.type === "thread" && state?.state === "open" ? (
+          <LoaderCircleIcon className="size-3" aria-label="Lane running" />
+        ) : null}
+        <span className="min-w-0 truncate">{label}</span>
+        {count ? <span className="shrink-0">· {count}</span> : null}
+      </>
+    );
+    const description = `${label}${state?.state === "needs_review" ? " · needs review" : ""}${count ? ` · ${count} unanswered` : ""}`;
+    const chip =
+      link.type === "artifact" ? (
+        <Badge
+          variant="secondary"
+          size="sm"
+          render={
+            <button
+              type="button"
+              aria-label={`Open artifact: ${description}`}
+              onClick={() => useRightPanelStore.getState().openReviews(threadRef, link.target)}
+            />
+          }
+        >
+          <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+        </Badge>
+      ) : link.type === "thread" ? (
+        <Badge
+          variant="secondary"
+          size="sm"
+          render={
+            <Link
+              to="/$environmentId/$threadId"
+              params={{
+                environmentId: threadRef.environmentId,
+                threadId: ThreadId.make(link.target),
+              }}
+            />
+          }
+        >
+          <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+        </Badge>
+      ) : (
+        <Badge
+          variant="secondary"
+          size="sm"
+          render={<a href={state?.url ?? link.target} target="_blank" rel="noreferrer" />}
+        >
+          <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+        </Badge>
+      );
+    return (
+      <Tooltip key={`${link.type}:${link.target}`}>
+        <TooltipTrigger render={<span className="min-w-0 truncate" />}>{chip}</TooltipTrigger>
+        <TooltipPopup>{description}</TooltipPopup>
+      </Tooltip>
+    );
+  });
   return (
     <div className="rounded-lg border border-border/60 hover:bg-muted/30">
       <div className="flex min-h-10 min-w-0 items-center gap-2 px-2 py-1.5">
+        {progress ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.text}`}
+            onClick={onToggle}
+          >
+            <ChevronRightIcon className={collapsed ? "" : "rotate-90"} />
+          </Button>
+        ) : null}
         <Checkbox
           aria-label={terminal ? `Reopen ${item.text}` : `Complete ${item.text}`}
           checked={terminal}
@@ -214,91 +358,53 @@ function ListRow({
             onChange({ state: terminal ? "open" : openLink ? "handed_off" : "done" })
           }
         />
-        <button
-          type="button"
-          className="min-w-0 flex-1 truncate text-left hover:underline"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {item.owner === "you" ? "You · " : ""}
-          {item.text}
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left hover:underline"
+                aria-expanded={expanded}
+                onClick={() => setExpanded(!expanded)}
+              />
+            }
+          >
+            {item.owner === "you" ? "You · " : ""}
+            {item.text}
+          </TooltipTrigger>
+          <TooltipPopup>{item.text}</TooltipPopup>
+        </Tooltip>
+        {progress ? (
+          <Badge size="sm" variant="secondary">
+            {progress}
+          </Badge>
+        ) : null}
         {item.state === "dropped" ? <span className="text-muted-foreground">dropped</span> : null}
-        <div className="flex min-w-0 max-w-[45%] items-center gap-1 overflow-hidden">
-          {item.links.map((link) => {
-            const state = item.linkStates?.find(
-              (live) => live.type === link.type && live.target === link.target,
-            );
-            const label =
-              (link.type === "artifact" ? artifactTitles.get(link.target) : undefined) ??
-              state?.label ??
-              link.target;
-            const count = link.type === "artifact" ? artifactCounts.get(link.target) : undefined;
-            const content = (
-              <>
-                {link.type === "thread" && state?.state === "open" ? (
-                  <LoaderCircleIcon className="size-3" aria-label="Lane running" />
-                ) : null}
-                <span className="min-w-0 truncate">{label}</span>
-                {count ? <span className="shrink-0">· {count}</span> : null}
-              </>
-            );
-            const description = `${label}${state?.state === "needs_review" ? " · needs review" : ""}${count ? ` · ${count} unanswered` : ""}`;
-            const chip =
-              link.type === "artifact" ? (
-                <Badge
-                  variant="secondary"
-                  size="sm"
-                  render={
-                    <button
-                      type="button"
-                      aria-label={`Open artifact: ${description}`}
-                      onClick={() =>
-                        useRightPanelStore.getState().openReviews(threadRef, link.target)
-                      }
-                    />
-                  }
-                >
-                  <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
-                </Badge>
-              ) : link.type === "thread" ? (
-                <Badge
-                  variant="secondary"
-                  size="sm"
-                  render={
-                    <Link
-                      to="/$environmentId/$threadId"
-                      params={{
-                        environmentId: threadRef.environmentId,
-                        threadId: ThreadId.make(link.target),
-                      }}
-                    />
-                  }
-                >
-                  <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
-                </Badge>
-              ) : (
-                <Badge
-                  variant="secondary"
-                  size="sm"
-                  render={<a href={state?.url ?? link.target} target="_blank" rel="noreferrer" />}
-                >
-                  <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
-                </Badge>
-              );
-            return (
-              <Tooltip key={`${link.type}:${link.target}`}>
-                <TooltipTrigger render={<span className="min-w-0 truncate" />}>
-                  {chip}
-                </TooltipTrigger>
-                <TooltipPopup>{description}</TooltipPopup>
-              </Tooltip>
-            );
-          })}
+        <div className="hidden min-w-0 max-w-[30%] items-center gap-1 overflow-hidden @md:flex">
+          {links}
         </div>
+        <ItemTimestamp item={item} />
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button variant="ghost" size="icon-xs" aria-label={`Actions for ${item.text}`} />
+            }
+          >
+            <MoreHorizontalIcon />
+          </MenuTrigger>
+          <MenuPopup>
+            <MenuItem disabled={disabled || !onAddChild} onClick={onAddChild}>
+              Add sub-item
+            </MenuItem>
+            <MenuItem onClick={() => setExpanded(!expanded)}>
+              {expanded ? "Hide details" : "Edit details"}
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
       {expanded ? (
         <div className="space-y-2 border-t border-border/60 p-2">
+          <div className="flex flex-wrap gap-2">{links}</div>
           <Input
             aria-label={`Text for ${item.text}`}
             value={text ?? item.text}
@@ -431,5 +537,21 @@ export function YourQaView({ threadRef }: { threadRef: ScopedThreadRef }) {
         <p className="py-3 text-xs text-muted-foreground">Nothing needs your QA.</p>
       ) : null}
     </div>
+  );
+}
+
+function ItemTimestamp({ item }: { item: ListItem }) {
+  const nowMinute = useNowMinute();
+  const timestamp = item.doneAt ?? item.createdAt;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<time dateTime={timestamp} className="shrink-0 text-3xs text-muted-foreground" />}
+      >
+        {item.doneAt ? "done" : "added"}{" "}
+        {formatRelativeTimeLabel(timestamp, Date.parse(`${nowMinute}:00.000Z`))}
+      </TooltipTrigger>
+      <TooltipPopup>{new Date(timestamp).toLocaleString()}</TooltipPopup>
+    </Tooltip>
   );
 }

@@ -32,6 +32,24 @@ describe("thread context sidebar selection", () => {
   it("keeps a pinned thread across focus and environment changes, then resumes following", () => {
     useThreadContextSidebarStore.setState(useThreadContextSidebarStore.getInitialState());
     const store = useThreadContextSidebarStore.getState();
+    store.selectView("artifacts");
+    store.toggleMaximized();
+    store.selectView("list");
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({
+      open: true,
+      view: "list",
+      maximized: true,
+    });
+    store.selectView("list");
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({ open: false, view: "list" });
+    store.toggle();
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({
+      open: true,
+      view: "list",
+      maximized: true,
+    });
+    store.restore();
+    expect(useThreadContextSidebarStore.getState().maximized).toBe(false);
     store.pin(child);
     const other = { environmentId: EnvironmentId.make("remote"), threadId: owner.threadId };
     expect(

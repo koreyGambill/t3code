@@ -60,7 +60,7 @@ export function ThreadWorkspacePanel(props: {
 const latestUserMessageId = (items: readonly ThreadStructureVisibleTurnItem[]) =>
   items.findLast((entry) => entry.item.type === "user_message")?.item.id ?? null;
 
-function ArtifactsPanel({
+export function ArtifactsPanel({
   threadRef,
   selectedId,
   workspaceMutationId,
