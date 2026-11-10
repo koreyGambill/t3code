@@ -58,10 +58,12 @@ folder with the conversation carried over. Finish or stop any work before moving
 
 Open the right thread sidebar with `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows
 and Linux. It follows the focused tile. Pin it to keep one thread while you move
-between tiles or conversations. The open state and width stay on this device.
-The full Workspace remains available for questions, work records and design notes.
+between tiles or conversations. The last view, open state and width stay on this
+device. Choose a view from the right rail. Selecting the active view collapses the
+panel to the rail. Maximize the panel for more room and press Escape to restore it.
+Artifacts can also open in a tile.
 
-The sidebar's **Environments** section shows Xwing environments used by the thread
+The sidebar's **Environments** view shows Xwing environments used by the thread
 and its delegated children. Open an environment to see its repositories and apps,
 open a terminal, or review an archive or deletion. **Unlink** removes a link to a
 folder the thread is not using. Select it again with **Change folder** to restore

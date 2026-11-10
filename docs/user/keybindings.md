@@ -198,6 +198,5 @@ application menu always quits immediately.
 
 Toggle the thread sidebar with `mod+alt+i` (`threadContext.toggle`). It follows the
 focused tile. Pin it to keep one thread while you switch tiles or conversations.
-The sidebar remembers its open state and width on this device. Its collapsible
-sections contain Marks, Related threads, Details, Environments, Context and Ticket.
-The full Workspace remains available from the tile menu.
+The sidebar remembers its last view, open state and width on this device. Press
+Escape to restore a maximized sidebar. Artifacts also open from the tile menu.
