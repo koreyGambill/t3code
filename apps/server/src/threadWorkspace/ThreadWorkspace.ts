@@ -35,7 +35,10 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as TicketTracker from "../ticketTracker/TicketTracker.ts";
 import { LegacyWorkspace, migrateWorkspace } from "./workspaceMigration.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { formatComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import {
+  formatComposerContextHref,
+  sanitizeComposerContextLabel,
+} from "@t3tools/shared/composerContextReferences";
 import { migrateAnnotations } from "./ThreadMarks.ts";
 
 export class ThreadWorkspace extends Context.Service<
@@ -519,7 +522,7 @@ const make = Effect.gen(function* () {
         records.push({
           contextId: ComposerContextId.make(`answer_${key}`),
           kind: "artifact-answer" as const,
-          label: version.title,
+          label: sanitizeComposerContextLabel(version.title, "artifact-answer"),
           artifactId: artifact.id,
           title: version.title,
           version: 1 as const,
