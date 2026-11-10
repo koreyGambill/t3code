@@ -23,6 +23,7 @@ import {
   selectDevelopmentEnvironmentCheckout,
   useXwingEnvironmentsSupport,
 } from "../../state/xwingEnvironments";
+import { ThreadDetailsControl } from "../chat/ThreadDetailsControl";
 import { ComposerControl } from "../chat/ComposerControl";
 import { useComposerMenuProps } from "../chat/composerEventScope";
 import { ComposerContextLabel } from "../ComposerContextLabel";
@@ -54,6 +55,7 @@ export function XwingCheckoutChooser({
   draftId,
   projectId,
   createOpen = false,
+  showLabel = false,
   onCreateOpenChange,
 }: {
   readonly environmentId: EnvironmentId;
@@ -61,6 +63,7 @@ export function XwingCheckoutChooser({
   readonly draftId: DraftId | null | undefined;
   readonly projectId: ProjectId;
   readonly createOpen?: boolean;
+  readonly showLabel?: boolean;
   readonly onCreateOpenChange?: (open: boolean) => void;
 }) {
   const supported = useXwingEnvironmentsSupport(environmentId);
@@ -206,7 +209,7 @@ export function XwingCheckoutChooser({
           <TooltipTrigger
             render={
               <ComboboxTrigger
-                render={<ComposerControl size="xs" />}
+                render={showLabel ? <ThreadDetailsControl /> : <ComposerControl size="xs" />}
                 className="min-w-0 shrink active:scale-100"
                 aria-label="Xwing environment"
                 data-composer-context-control
@@ -214,7 +217,9 @@ export function XwingCheckoutChooser({
             }
           >
             <Boxes className="size-3 shrink-0" />
-            {selected ? <ComposerContextLabel>{selected.label}</ComposerContextLabel> : null}
+            {selected || showLabel ? (
+              <ComposerContextLabel>{selected?.label ?? "Choose environment"}</ComposerContextLabel>
+            ) : null}
           </TooltipTrigger>
           <TooltipPopup>
             {selected

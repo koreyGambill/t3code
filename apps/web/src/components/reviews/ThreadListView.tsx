@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationReadScope,
   ThreadId,
+  LIST_MAX_DEPTH,
   listItemNeedsHandoff,
   type ListItem,
   type ScopedThreadRef,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { useEnvironmentQuery } from "../../state/query";
@@ -123,7 +124,7 @@ export function ThreadListView({
       )
       .flatMap((item) => [
         { item, depth },
-        ...(collapsed.has(item.id) || depth >= 3 ? [] : rows(item.id, depth + 1)),
+        ...(collapsed.has(item.id) || depth >= LIST_MAX_DEPTH - 1 ? [] : rows(item.id, depth + 1)),
       ]);
   const ordered = rows(null, 0);
   const move = (id: string, direction: number) => {
@@ -135,7 +136,7 @@ export function ThreadListView({
     void mutate({ changes: [], order });
   };
   return (
-    <div className="@container space-y-2 p-3 text-xs">
+    <div className="@container mx-auto w-full max-w-4xl space-y-3 text-xs">
       <div className="flex items-center justify-between">
         <span>
           {entry.items.filter((item) => item.state === "done").length}/{entry.items.length} done
@@ -148,10 +149,7 @@ export function ThreadListView({
       </div>
       <div className="space-y-1" aria-label="Thread list">
         {ordered.map(({ item, depth }) => (
-          <div
-            key={item.id}
-            className={depth === 3 ? "ml-9" : depth === 2 ? "ml-6" : depth === 1 ? "ml-3" : ""}
-          >
+          <div key={item.id} className={depth === 2 ? "ml-4" : depth === 1 ? "ml-2" : ""}>
             <ListRow
               item={item}
               progress={
@@ -168,7 +166,7 @@ export function ThreadListView({
                   return next;
                 })
               }
-              onAddChild={depth < 3 ? () => setParent(item) : undefined}
+              onAddChild={depth < LIST_MAX_DEPTH - 1 ? () => setParent(item) : undefined}
               disabled={!canWrite || busy}
               onChange={(changes) => void mutate({ changes: [{ id: item.id, ...changes }] })}
               onMove={supplied ? undefined : (direction) => move(item.id, direction)}
@@ -278,7 +276,7 @@ function ListRow({
     );
     const label =
       (link.type === "artifact" ? artifactTitles.get(link.target) : undefined) ??
-      state?.label ??
+      (link.type === "ticket" ? link.target : state?.title) ??
       link.target;
     const count = link.type === "artifact" ? artifactCounts.get(link.target) : undefined;
     const content = (
@@ -286,15 +284,18 @@ function ListRow({
         {link.type === "thread" && state?.state === "open" ? (
           <LoaderCircleIcon className="size-3" aria-label="Lane running" />
         ) : null}
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="min-w-0 truncate">
+          {label}
+          {state && link.type !== "artifact" ? ` · ${state.label}` : ""}
+        </span>
         {count ? <span className="shrink-0">· {count}</span> : null}
       </>
     );
-    const description = `${label}${state?.state === "needs_review" ? " · needs review" : ""}${count ? ` · ${count} unanswered` : ""}`;
+    const description = `${label}${state && link.type !== "artifact" ? ` · ${state.label}` : ""}${count ? ` · ${count} unanswered` : ""}`;
     const chip =
       link.type === "artifact" ? (
         <Badge
-          variant="secondary"
+          variant="outline"
           size="sm"
           render={
             <button
@@ -304,11 +305,11 @@ function ListRow({
             />
           }
         >
-          <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+          <span className="flex min-w-0 max-w-48 items-center gap-1">{content}</span>
         </Badge>
       ) : link.type === "thread" ? (
         <Badge
-          variant="secondary"
+          variant="outline"
           size="sm"
           render={
             <Link
@@ -320,15 +321,15 @@ function ListRow({
             />
           }
         >
-          <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+          <span className="flex min-w-0 max-w-48 items-center gap-1">{content}</span>
         </Badge>
       ) : (
         <Badge
-          variant="secondary"
+          variant="outline"
           size="sm"
           render={<a href={state?.url ?? link.target} target="_blank" rel="noreferrer" />}
         >
-          <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+          <span className="flex min-w-0 max-w-48 items-center gap-1">{content}</span>
         </Badge>
       );
     return (
@@ -364,13 +365,13 @@ function ListRow({
             render={
               <button
                 type="button"
-                className="min-w-0 flex-1 truncate text-left hover:underline"
+                className="min-w-0 flex-1 text-left hover:underline"
                 aria-expanded={expanded}
                 onClick={() => setExpanded(!expanded)}
               />
             }
           >
-            {item.text}
+            <span className="line-clamp-2 break-words leading-5">{item.text}</span>
           </TooltipTrigger>
           <TooltipPopup>
             {item.text} · Assigned to {item.owner === "you" ? "you" : "the agent"}
@@ -382,9 +383,6 @@ function ListRow({
           </Badge>
         ) : null}
         {item.state === "dropped" ? <span className="text-muted-foreground">dropped</span> : null}
-        <div className="hidden min-w-0 max-w-[30%] items-center gap-1 overflow-hidden @md:flex">
-          {links}
-        </div>
         <ItemTimestamp item={item} />
         <Menu>
           <MenuTrigger
@@ -404,14 +402,22 @@ function ListRow({
           </MenuPopup>
         </Menu>
       </div>
+      {links.length ? (
+        <div className="hidden flex-wrap items-center gap-1 px-2 pb-2 @md:flex">{links}</div>
+      ) : null}
       {expanded ? (
         <div className="space-y-2 border-t border-border/60 p-2">
           <div className="flex flex-wrap gap-2">{links}</div>
-          <Input
+          <p className="text-muted-foreground">
+            {item.doneAt ? "Completed" : "Added"}{" "}
+            {new Date(item.doneAt ?? item.createdAt).toLocaleString()}
+          </p>
+          <Textarea
+            size="sm"
             aria-label={`Text for ${item.text}`}
             value={text ?? item.text}
             disabled={disabled}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => setText(event.target.value.replace(/[\r\n]+/g, " "))}
             onBlur={() => {
               if (text?.trim() && text.trim() !== item.text) onChange({ text: text.trim() });
               setText(null);
@@ -548,10 +554,14 @@ function ItemTimestamp({ item }: { item: ListItem }) {
   return (
     <Tooltip>
       <TooltipTrigger
-        render={<time dateTime={timestamp} className="shrink-0 text-3xs text-muted-foreground" />}
+        render={
+          <time
+            dateTime={timestamp}
+            className="hidden shrink-0 text-3xs text-muted-foreground @min-[320px]:inline"
+          />
+        }
       >
-        {item.doneAt ? "done" : "added"}{" "}
-        {formatRelativeTimeLabel(timestamp, Date.parse(`${nowMinute}:00.000Z`))}
+        {formatElapsedDurationLabel(timestamp, Date.parse(`${nowMinute}:00.000Z`))}
       </TooltipTrigger>
       <TooltipPopup>{new Date(timestamp).toLocaleString()}</TooltipPopup>
     </Tooltip>

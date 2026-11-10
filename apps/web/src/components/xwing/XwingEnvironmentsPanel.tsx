@@ -32,6 +32,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
+import { Empty, EmptyMedia, EmptyDescription } from "../ui/empty";
 import { Button } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { RefreshIcon } from "../ui/refresh-icon";
@@ -402,7 +403,15 @@ function EnvironmentList({
   readonly currentWorkspacePath: string | null;
   readonly onSelect: (id: string) => void;
 }) {
-  if (total === 0) return <Notice>Xwing has no environments on this machine.</Notice>;
+  if (total === 0)
+    return (
+      <Empty size="compact">
+        <EmptyMedia variant="icon">
+          <Boxes />
+        </EmptyMedia>
+        <EmptyDescription>Environments created on this machine appear here.</EmptyDescription>
+      </Empty>
+    );
   if (environments.length === 0) return <Notice>No environment matches.</Notice>;
   return (
     <ul className="divide-y divide-border">

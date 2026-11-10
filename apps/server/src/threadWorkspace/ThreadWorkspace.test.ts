@@ -181,7 +181,7 @@ it.effect("requires handed_off while a ticket is open and reads its live state",
     h.closeTicket();
     expect((yield* h.service.get({ threadId })).items[0]).toMatchObject({
       state: "handed_off",
-      linkStates: [{ state: "closed" }],
+      linkStates: [{ state: "closed", title: "Sample ticket" }],
     });
     const done = yield* h.service.update({
       threadId,

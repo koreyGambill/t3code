@@ -3,6 +3,9 @@ import { useState, type ReactNode } from "react";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadContextGet } from "../../state/threadInsights";
+import { createPortal } from "react-dom";
+import { RefreshCwIcon } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Button } from "../ui/button";
 
 const number = (value: number | null) => (value === null ? "?" : value.toLocaleString());
@@ -10,10 +13,12 @@ export function ThreadContextPanel({
   threadRef,
   visible,
   tabs,
+  headerActions,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly visible: boolean;
   readonly tabs: ReactNode;
+  readonly headerActions?: HTMLElement | null;
 }) {
   const [beforeOrdinal, setBeforeOrdinal] = useState<number | undefined>();
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
@@ -29,17 +34,34 @@ export function ThreadContextPanel({
         })
       : null,
   );
+  const refreshAction = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Refresh context"
+            onClick={() => query.refresh()}
+          />
+        }
+      >
+        <RefreshCwIcon />
+      </TooltipTrigger>
+      <TooltipPopup>Refresh context</TooltipPopup>
+    </Tooltip>
+  );
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-      <header className="flex h-7 shrink-0 items-center gap-1 border-b px-1">
-        {tabs}
-        <div className="ml-auto">
-          <Button variant="ghost" size="xs" onClick={() => query.refresh()}>
-            Refresh
-          </Button>
-        </div>
-      </header>
-      <div className="space-y-3 p-2 text-xs">
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto scrollbar-gutter-both">
+      {headerActions ? (
+        createPortal(refreshAction, headerActions)
+      ) : (
+        <header className="flex shrink-0 items-center justify-between">
+          {tabs}
+          {refreshAction}
+        </header>
+      )}
+      <div className="mx-auto w-full max-w-4xl space-y-3 text-xs">
         <p className="text-muted-foreground">
           Context records by turn. Highlighted reads repeat or load at least 32 KB. Input tokens are
           billed input across model calls. ? means unavailable.
@@ -169,12 +191,10 @@ export function ThreadContextPanel({
             Older turns
           </Button>
         </div>
-        <p className="text-muted-foreground">
-          Optional Haiku reviews are configured in Settings → Scheduled tasks → Watchers. New
-          context watchers start paused, propose Workspace decisions, and have a $0.05 budget per
-          run.
-        </p>
-        {query.data && <p className="text-muted-foreground">{query.data.coverage}</p>}
+        <details className="space-y-2 text-muted-foreground">
+          <summary className="cursor-pointer">How context is measured</summary>
+          {query.data && <p>{query.data.coverage}</p>}
+        </details>
       </div>
     </div>
   );

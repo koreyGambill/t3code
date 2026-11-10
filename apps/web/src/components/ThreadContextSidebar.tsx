@@ -17,7 +17,10 @@ import {
   TicketIcon,
   Maximize2Icon,
   Minimize2Icon,
+  RefreshCwIcon,
 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Empty, EmptyMedia, EmptyDescription } from "./ui/empty";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useResizableWidth } from "../hooks/useResizableWidth";
@@ -149,6 +152,7 @@ function ThreadContextSidebar({
   detailsRef: (element: HTMLDivElement | null) => void;
 }) {
   const shell = useThreadShell(threadRef);
+  const [actions, setActions] = useState<HTMLDivElement | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "threadContext.toggle") ?? "Mod+Alt+I";
   const { open, pinned, view, maximized } = useThreadContextSidebarStore();
@@ -221,13 +225,13 @@ function ThreadContextSidebar({
           <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 border-b border-border px-2 [-webkit-app-region:no-drag]">
             <div className="min-w-0 flex-1">
               <Tooltip>
-                <TooltipTrigger render={<p className="truncate text-xs font-medium" />}>
+                <TooltipTrigger render={<p className="truncate text-sm font-medium" />}>
                   {sections.find(([id]) => id === view)?.[1]}
                 </TooltipTrigger>
                 <TooltipPopup>{shell?.title ?? "Thread"}</TooltipPopup>
               </Tooltip>
-              <p className="truncate text-3xs text-muted-foreground">{shell?.title ?? "Thread"}</p>
             </div>
+            <div ref={setActions} className="flex items-center" />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -279,10 +283,15 @@ function ThreadContextSidebar({
             </Tooltip>
           </header>
           <div
-            className="flex min-h-0 flex-1 flex-col overflow-auto"
+            className="flex min-h-0 flex-1 flex-col overflow-auto scrollbar-gutter-both px-3 py-3"
             key={`${threadRef.threadId}:${view}`}
           >
-            <SidebarSection section={view} threadRef={threadRef} detailsRef={detailsRef} />
+            <SidebarSection
+              section={view}
+              threadRef={threadRef}
+              detailsRef={detailsRef}
+              actions={actions}
+            />
           </div>
         </div>
       ) : null}
@@ -295,7 +304,7 @@ function ThreadContextSidebar({
           <TooltipTrigger
             render={
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon-sm"
                 aria-label={open ? "Close thread sidebar" : "Open thread sidebar"}
                 aria-expanded={open}
@@ -327,17 +336,15 @@ function ThreadContextSidebar({
                 >
                   <Icon />
                 </TooltipTrigger>
-                <TooltipPopup>{title}</TooltipPopup>
+                <TooltipPopup>{open && view === id ? "Hide panel" : title}</TooltipPopup>
               </Tooltip>
               {id === "ticket" && ticketState ? (
-                <span className="pointer-events-none absolute -right-1 -top-1">
-                  <Badge size="sm" variant={ticketState.state === "closed" ? "success" : "info"}>
-                    •
-                  </Badge>
-                </span>
+                <span
+                  className={`pointer-events-none absolute right-0 top-0 size-1.5 rounded-full ring-2 ring-background ${ticketState.state === "closed" ? "bg-success" : "bg-info"}`}
+                />
               ) : null}
               {count ? (
-                <span className="pointer-events-none absolute -right-1 -top-1">
+                <span className="pointer-events-none absolute -right-1.5 -top-1.5 rounded-full ring-2 ring-background">
                   <Badge size="sm" variant="secondary">
                     {count}
                   </Badge>
@@ -355,10 +362,12 @@ function SidebarSection({
   section,
   threadRef,
   detailsRef,
+  actions,
 }: {
   section: ThreadContextSection;
   threadRef: ScopedThreadRef;
   detailsRef: (element: HTMLDivElement | null) => void;
+  actions: HTMLDivElement | null;
 }) {
   switch (section) {
     case "list":
@@ -371,6 +380,7 @@ function SidebarSection({
     case "artifacts":
       return (
         <ArtifactsPanel
+          inSidebar
           threadRef={threadRef}
           selectedId={null}
           workspaceMutationId={null}
@@ -378,13 +388,13 @@ function SidebarSection({
         />
       );
     case "marks":
-      return <SidebarMarks threadRef={threadRef} />;
+      return <SidebarMarks threadRef={threadRef} actions={actions} />;
     case "related":
       return <SidebarRelated threadRef={threadRef} />;
     case "details":
       return (
         <div ref={detailsRef} className="group/details-destination">
-          <div className="p-3 text-xs group-has-[[data-context-thread-details]]/details-destination:hidden">
+          <div className="text-xs group-has-[[data-context-thread-details]]/details-destination:hidden">
             <SidebarThreadSummary threadRef={threadRef} />
           </div>
         </div>
@@ -392,7 +402,9 @@ function SidebarSection({
     case "environments":
       return <SidebarEnvironments threadRef={threadRef} />;
     case "context":
-      return <ThreadContextPanel threadRef={threadRef} visible tabs={null} />;
+      return (
+        <ThreadContextPanel threadRef={threadRef} visible tabs={null} headerActions={actions} />
+      );
     case "ticket":
       return <SidebarTickets threadRef={threadRef} />;
   }
@@ -416,21 +428,49 @@ function SidebarTickets({ threadRef }: { threadRef: ScopedThreadRef }) {
     ),
   ];
   return tickets.length ? (
-    <ul className="space-y-2 px-3 pb-3 text-xs">
-      {tickets.map((ticket) => (
-        <li key={ticket} className="flex items-center justify-between gap-2">
-          <span>{ticket}</span>
-          <Badge variant="secondary">
-            {workspace.data?.items
-              .flatMap((item) => item.linkStates ?? [])
-              .find((link) => link.type === "ticket" && link.target === ticket)?.label ??
-              "Unavailable"}
-          </Badge>
-        </li>
-      ))}
+    <ul className="space-y-2 text-xs">
+      {tickets.map((ticket) => {
+        const state = workspace.data?.items
+          .flatMap((item) => item.linkStates ?? [])
+          .find((link) => link.type === "ticket" && link.target === ticket);
+        return (
+          <li key={ticket} className="space-y-1 rounded-lg border border-border/60 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <a
+                href={state?.url ?? ticket}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-primary hover:underline"
+              >
+                {ticket}
+              </a>
+              <Badge
+                size="sm"
+                variant={
+                  state?.state === "closed"
+                    ? "success"
+                    : state?.state === "open"
+                      ? "info"
+                      : "outline"
+                }
+              >
+                {state?.label ?? "Unavailable"}
+              </Badge>
+            </div>
+            <p className="break-words leading-5 text-muted-foreground">
+              {state?.title ?? "Ticket details unavailable"}
+            </p>
+          </li>
+        );
+      })}
     </ul>
   ) : (
-    <p className="px-3 pb-3 text-xs text-muted-foreground">No linked ticket.</p>
+    <Empty size="compact">
+      <EmptyMedia variant="icon">
+        <TicketIcon />
+      </EmptyMedia>
+      <EmptyDescription>Tickets linked from List items appear here.</EmptyDescription>
+    </Empty>
   );
 }
 
@@ -451,7 +491,13 @@ function SidebarEnvironments({ threadRef }: { threadRef: ScopedThreadRef }) {
   );
 }
 
-function SidebarMarks({ threadRef }: { threadRef: ScopedThreadRef }) {
+function SidebarMarks({
+  threadRef,
+  actions,
+}: {
+  threadRef: ScopedThreadRef;
+  actions: HTMLDivElement | null;
+}) {
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
   const marks = useEnvironmentQuery(
     canRead
@@ -463,25 +509,41 @@ function SidebarMarks({ threadRef }: { threadRef: ScopedThreadRef }) {
   );
   const rows = marks.data ?? [];
   return (
-    <div className="space-y-2 px-3 pb-3 text-xs">
-      <Button
-        variant="ghost"
-        size="xs"
-        disabled={!canRead}
-        onClick={() => {
-          marks.refresh();
-        }}
-      >
-        Refresh marks
-      </Button>
+    <div className="space-y-2 text-xs">
+      {actions
+        ? createPortal(
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Refresh marks"
+                    disabled={!canRead}
+                    onClick={() => marks.refresh()}
+                  />
+                }
+              >
+                <RefreshCwIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Refresh marks</TooltipPopup>
+            </Tooltip>,
+            actions,
+          )
+        : null}
       {!canRead ? (
         <p className="text-muted-foreground">This connection cannot read marks.</p>
       ) : null}
       {marks.error ? <p role="alert">Could not load marks.</p> : null}
       {!rows.length ? (
-        <p className="text-muted-foreground">
-          {marks.isPending ? "Loading marks…" : "No marks in this thread."}
-        </p>
+        <Empty size="compact">
+          <EmptyMedia variant="icon">
+            <BookmarkIcon />
+          </EmptyMedia>
+          <EmptyDescription>
+            {marks.isPending ? "Loading marks…" : "Saved thread marks appear here."}
+          </EmptyDescription>
+        </Empty>
       ) : null}
       {rows.map((mark) => (
         <div key={mark.url} className="min-w-0 break-words">
@@ -570,7 +632,7 @@ function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
       return relation ? [{ entry, relation }] : [];
     });
   return (
-    <div className="space-y-2 px-3 pb-3 text-xs">
+    <div className="space-y-2 text-xs">
       {related.map(({ entry, relation }) => (
         <Link
           key={entry.id}
@@ -585,7 +647,14 @@ function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
           <span className="text-primary hover:underline">{entry.title}</span>
         </Link>
       ))}
-      {!related.length ? <p className="text-muted-foreground">No related threads.</p> : null}
+      {!related.length ? (
+        <Empty size="compact">
+          <EmptyMedia variant="icon">
+            <NetworkIcon />
+          </EmptyMedia>
+          <EmptyDescription>Forked threads and reply targets appear here.</EmptyDescription>
+        </Empty>
+      ) : null}
     </div>
   );
 }

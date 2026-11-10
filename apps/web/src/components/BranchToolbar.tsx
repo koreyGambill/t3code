@@ -735,6 +735,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       <div className="flex w-full flex-col" data-thread-panel-run-context>
         {showGitControls && showXwingChooser && panelSection !== "branch" ? (
           <XwingCheckoutChooser
+            showLabel
             environmentId={environmentId}
             threadId={threadId}
             draftId={draftId}

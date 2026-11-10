@@ -28,6 +28,7 @@ export const ListLinkState = Schema.Struct({
   ...ListLink.fields,
   state: Schema.Literals(["open", "closed", "needs_review", "unknown"]),
   label: Schema.String,
+  title: Schema.optional(Schema.String),
   url: Schema.optional(Schema.String),
 });
 export const LIST_MAX_DEPTH = 3;

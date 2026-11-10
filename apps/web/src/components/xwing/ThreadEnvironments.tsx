@@ -25,6 +25,7 @@ import {
   xwingEnvironmentsList,
 } from "../../state/xwingEnvironments";
 import { ThreadDetailsControl } from "../chat/ThreadDetailsControl";
+import { Empty, EmptyMedia, EmptyDescription } from "../ui/empty";
 import { Badge } from "../ui/badge";
 import { xwingEnvironmentLabel } from "./xwingEnvironments.logic";
 
@@ -97,9 +98,14 @@ export function ThreadEnvironmentRows({
     return <p className="p-2 text-xs text-muted-foreground">Loading linked environments…</p>;
   if (linked.usage.data.length === 0)
     return compact ? null : (
-      <p className="p-2 text-xs text-muted-foreground">
-        No environments linked to this thread or its delegated children.
-      </p>
+      <Empty size="compact">
+        <EmptyMedia variant="icon">
+          <Boxes />
+        </EmptyMedia>
+        <EmptyDescription>
+          Environments used by this thread and its delegated work appear here.
+        </EmptyDescription>
+      </Empty>
     );
   const rows = linked.usage.data;
   return (

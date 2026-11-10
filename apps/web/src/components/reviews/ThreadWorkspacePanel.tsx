@@ -43,7 +43,12 @@ export function ThreadWorkspacePanel(props: {
   readonly section: ThreadWorkspaceSection;
 }) {
   if (!props.visible) return null;
-  if (props.section === "list") return <ThreadListView threadRef={props.threadRef} />;
+  if (props.section === "list")
+    return (
+      <div className="p-3">
+        <ThreadListView threadRef={props.threadRef} />
+      </div>
+    );
   if (props.section === "qa") return <YourQaView threadRef={props.threadRef} />;
   if (props.section === "summary") return <ThreadListSummary threadRef={props.threadRef} />;
   return (
@@ -65,11 +70,13 @@ export function ArtifactsPanel({
   selectedId,
   workspaceMutationId,
   composerDraftTarget,
+  inSidebar = false,
 }: {
   threadRef: ScopedThreadRef;
   selectedId: string | null;
   workspaceMutationId: string | null;
   composerDraftTarget: ComposerThreadTarget;
+  inSidebar?: boolean;
 }) {
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
   const query = useEnvironmentQuery(
@@ -104,41 +111,43 @@ export function ArtifactsPanel({
     artifact?.versions.find((entry) => entry.version === versionNumber) ??
     artifact?.versions.at(-1);
   const ready =
-    workspace?.artifacts.flatMap((entry) => {
-      const latest = entry.versions.at(-1);
-      return latest
-        ? latest.questions.flatMap((question): ArtifactAnswerContextRecord[] => {
-            const answer = latest.answers[question.id];
-            if (
-              !answer ||
-              answer.submittedAt ||
-              (!answer.chosenOptionIds.length && !answer.notes.trim())
-            )
-              return [];
-            return [
-              {
-                version: 1,
-                kind: "artifact-answer",
-                contextId: toComposerContextId(
-                  `answer_${threadRef.threadId}:${entry.id}:${latest.version}:${question.id}:${answer.draftRevision ?? 0}`,
-                ),
-                label: `${latest.title}: ${question.prompt}`.slice(0, 200),
-                artifactId: entry.id,
-                title: latest.title.slice(0, 200),
-                artifactVersion: latest.version,
-                questionId: question.id,
-                answerRevision: answer.draftRevision ?? 0,
-                question: question.prompt,
-                choice: question.options
-                  .filter((option) => answer.chosenOptionIds.includes(option.id))
-                  .map((option) => option.label)
-                  .join(", "),
-                note: answer.notes,
-              },
-            ];
-          })
-        : [];
-    }) ?? [];
+    workspace?.artifacts
+      .filter((entry) => entry.id === artifact?.id)
+      .flatMap((entry) => {
+        const latest = entry.versions.at(-1);
+        return latest
+          ? latest.questions.flatMap((question): ArtifactAnswerContextRecord[] => {
+              const answer = latest.answers[question.id];
+              if (
+                !answer ||
+                answer.submittedAt ||
+                (!answer.chosenOptionIds.length && !answer.notes.trim())
+              )
+                return [];
+              return [
+                {
+                  version: 1,
+                  kind: "artifact-answer",
+                  contextId: toComposerContextId(
+                    `answer_${threadRef.threadId}:${entry.id}:${latest.version}:${question.id}:${answer.draftRevision ?? 0}`,
+                  ),
+                  label: `${latest.title}: ${question.prompt}`.slice(0, 200),
+                  artifactId: entry.id,
+                  title: latest.title.slice(0, 200),
+                  artifactVersion: latest.version,
+                  questionId: question.id,
+                  answerRevision: answer.draftRevision ?? 0,
+                  question: question.prompt,
+                  choice: question.options
+                    .filter((option) => answer.chosenOptionIds.includes(option.id))
+                    .map((option) => option.label)
+                    .join(", "),
+                  note: answer.notes,
+                },
+              ];
+            })
+          : [];
+      }) ?? [];
   const send = () => {
     useComposerDraftStore.getState().addArtifactAnswers(composerDraftTarget, ready);
     setNotice(
@@ -147,10 +156,12 @@ export function ArtifactsPanel({
   };
   if (!workspace) return <p role="status">{query.error ?? "Loading artifacts…"}</p>;
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+    <div className="@container flex min-h-0 flex-1 flex-col overflow-auto scrollbar-gutter-both">
       {artifact && version ? (
         <>
-          <header className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background p-3">
+          <header
+            className={`sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background ${inSidebar ? "pb-3" : "p-3"}`}
+          >
             <div className="min-w-0 flex-1 basis-48">
               <Select
                 value={artifact.id}
@@ -160,7 +171,11 @@ export function ArtifactsPanel({
                 }}
               >
                 <Tooltip>
-                  <TooltipTrigger render={<SelectTrigger size="sm" aria-label="Artifact" />}>
+                  <TooltipTrigger
+                    render={
+                      <SelectTrigger size="sm" aria-label="Artifact" title={artifact.title} />
+                    }
+                  >
                     <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
                   </TooltipTrigger>
                   <TooltipPopup>{artifact.title}</TooltipPopup>
@@ -173,10 +188,19 @@ export function ArtifactsPanel({
                         (question) => !current.answers[question.id]?.submittedAt,
                       ).length ?? 0;
                     return (
-                      <SelectItem key={entry.id} value={entry.id} label={entry.title}>
+                      <SelectItem
+                        key={entry.id}
+                        value={entry.id}
+                        label={entry.title}
+                        title={entry.title}
+                      >
                         <div className="flex max-w-96 items-center gap-3">
                           <Tooltip>
-                            <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                            <TooltipTrigger
+                              render={
+                                <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal break-words" />
+                              }
+                            >
                               {entry.title}
                             </TooltipTrigger>
                             <TooltipPopup>{entry.title}</TooltipPopup>
@@ -213,9 +237,18 @@ export function ArtifactsPanel({
                 </SelectPopup>
               </Select>
             </div>
-            <Badge variant="outline">{version.format === "html" ? "HTML" : "Markdown"}</Badge>
+            <Badge size="sm" variant="outline">
+              {version.format === "html" ? "HTML" : "Markdown"}
+            </Badge>
             {version.questions.length ? (
-              <Badge variant="secondary">
+              <Badge
+                size="sm"
+                variant={
+                  version.questions.some((question) => !version.answers[question.id]?.submittedAt)
+                    ? "warning"
+                    : "success"
+                }
+              >
                 {
                   version.questions.filter((question) => !version.answers[question.id]?.submittedAt)
                     .length
@@ -224,7 +257,7 @@ export function ArtifactsPanel({
               </Badge>
             ) : null}
           </header>
-          <div className="px-4 py-6 sm:px-6">
+          <div className={inSidebar ? "py-4" : "px-3 py-4 @min-[320px]:px-6 @min-[320px]:py-6"}>
             <ArtifactDocument
               key={`${artifact.id}:${version.version}`}
               artifact={artifact}
@@ -244,8 +277,10 @@ export function ArtifactsPanel({
         <p className="p-4 text-sm text-muted-foreground">No artifacts yet.</p>
       )}
       {ready.length ? (
-        <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t border-border bg-background p-3">
-          <div className="grid min-w-0 max-w-sm flex-1 grid-cols-1">
+        <div
+          className={`sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t border-border bg-background ${inSidebar ? "py-3" : "p-3"}`}
+        >
+          <div className="mx-auto grid w-full max-w-[72ch] grid-cols-1">
             <Button size="sm-multiline" disabled={!canAnswer} onClick={send}>
               <SendIcon />
               <span className="whitespace-normal">
@@ -306,7 +341,7 @@ function ArtifactDocument({
     const options = entry.options.map((option) => (
       <label
         key={option.id}
-        className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/40 has-[[data-checked]]:border-primary/60 has-[[data-checked]]:bg-primary/5 has-[[data-disabled]]:cursor-default"
+        className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 gap-y-1 rounded-lg border border-border p-3 transition-colors hover:bg-muted/40 has-[[data-checked]]:border-primary/60 has-[[data-checked]]:bg-primary/5 has-[[data-disabled]]:cursor-default"
       >
         {entry.multiSelect ? (
           <Checkbox
@@ -323,7 +358,7 @@ function ArtifactDocument({
         ) : (
           <Radio value={option.id} disabled={disabled} />
         )}
-        <span className="min-w-0 flex-1 space-y-1">
+        <span className="min-w-0 contents">
           <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
             {option.label}
             {entry.recommendedOptionIds.includes(option.id) ? (
@@ -333,7 +368,7 @@ function ArtifactDocument({
             ) : null}
           </span>
           {option.description ? (
-            <span className="block text-xs leading-relaxed text-muted-foreground">
+            <span className="col-span-2 block text-xs leading-relaxed text-muted-foreground @min-[320px]:col-start-2 @min-[320px]:col-span-1">
               {option.description}
             </span>
           ) : null}
@@ -344,7 +379,7 @@ function ArtifactDocument({
       <section
         key={entry.id}
         aria-label={entry.prompt}
-        className="space-y-4 rounded-xl border border-border bg-background p-4"
+        className="space-y-4 rounded-xl border border-border bg-background p-3 @min-[320px]:p-4"
       >
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">Question</span>

@@ -273,7 +273,7 @@ const make = Effect.gen(function* () {
                       ? ("closed" as const)
                       : ("open" as const),
                 label: ticket?.stage ?? "Unavailable",
-                ...(ticket ? { url: ticket.url } : {}),
+                ...(ticket ? { url: ticket.url, title: ticket.title } : {}),
               };
             }
             if (link.type === "thread") {
@@ -290,6 +290,7 @@ const make = Effect.gen(function* () {
                       ? ("needs_review" as const)
                       : ("open" as const),
                 label: run?.status ?? "Unavailable",
+                ...(lane ? { title: lane.thread.title } : {}),
               };
             }
             return { ...link, state: "unknown" as const, label: link.target };
