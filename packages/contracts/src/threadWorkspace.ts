@@ -30,6 +30,7 @@ export const ListLinkState = Schema.Struct({
   label: Schema.String,
   url: Schema.optional(Schema.String),
 });
+export const LIST_MAX_DEPTH = 3;
 export const ListItem = Schema.Struct({
   id: TrimmedNonEmptyString,
   text: TrimmedNonEmptyString.check(Schema.isPattern(/^[^\r\n]+$/)),
@@ -38,7 +39,10 @@ export const ListItem = Schema.Struct({
   createdAt: IsoDateTime,
   doneAt: Schema.NullOr(IsoDateTime),
   details: Schema.String,
-  parentId: Schema.NullOr(TrimmedNonEmptyString),
+  parentId: Schema.NullOr(TrimmedNonEmptyString).annotate({
+    description:
+      "Parent item ID, or null for a root. Three levels: root, child, grandchild. No cycles.",
+  }),
   links: Schema.Array(ListLink),
   needsQa: Schema.Boolean,
   linkStates: Schema.optional(Schema.Array(ListLinkState)),

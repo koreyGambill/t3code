@@ -288,10 +288,45 @@ it.effect("rewrites open items while retaining history and validates explicit or
         (item) => item.id,
       ),
     ).toEqual(["done"]);
+    const tree = yield* h.service.update({
+      threadId,
+      expectedRevision: 4,
+      changes: [
+        { id: "root", text: "Open root" },
+        { id: "finished-child", text: "Finished child", parentId: "root", state: "done" },
+        {
+          id: "finished-grandchild",
+          text: "Finished grandchild",
+          parentId: "finished-child",
+          state: "dropped",
+        },
+        { id: "open-grandchild", text: "Open grandchild", parentId: "finished-child" },
+      ],
+    });
+    const rewritten = yield* h.service.rewrite({
+      threadId,
+      expectedRevision: tree.revision,
+      items: [],
+    });
+    expect(rewritten.items.map((item) => item.id)).toEqual([
+      "handoff",
+      "dropped",
+      "done",
+      "finished-child",
+      "finished-grandchild",
+    ]);
+    expect(rewritten.items.find((item) => item.id === "finished-child")).toMatchObject({
+      state: "done",
+      parentId: null,
+    });
+    expect(rewritten.items.find((item) => item.id === "finished-grandchild")).toMatchObject({
+      state: "dropped",
+      parentId: "finished-child",
+    });
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect("keeps artifact versions and rejects nested children or missing artifact links", () =>
+it.effect("keeps artifact versions and validates three list levels and artifact links", () =>
   Effect.gen(function* () {
     const h = yield* harness();
     yield* h.service.artifactWrite({
@@ -328,15 +363,48 @@ it.effect("keeps artifact versions and rejects nested children or missing artifa
         { id: "child", text: "Child", parentId: "parent" },
       ],
     });
+    const nested = yield* h.service.update({
+      threadId,
+      expectedRevision: 3,
+      changes: [
+        { id: "grandchild", text: "Grandchild", parentId: "child" },
+        { id: "other", text: "Other root" },
+      ],
+    });
     for (const change of [
-      { text: "Grandchild", parentId: "child" },
+      { text: "Too deep", parentId: "grandchild" },
+      { id: "parent", parentId: "grandchild" },
+      { id: "parent", parentId: "parent" },
+      { id: "child", parentId: "missing" },
+      { id: "parent", parentId: "other" },
       { text: "Missing", links: [{ type: "artifact" as const, target: "absent" }] },
     ])
       expect(
         (yield* h.service
-          .update({ threadId, expectedRevision: 3, changes: [change] })
+          .update({ threadId, expectedRevision: nested.revision, changes: [change] })
           .pipe(Effect.result))._tag,
       ).toBe("Failure");
+    const moved = yield* h.service.update({
+      threadId,
+      expectedRevision: nested.revision,
+      changes: [{ id: "child", parentId: "other" }],
+    });
+    expect(moved.items.find((item) => item.id === "grandchild")?.parentId).toBe("child");
+    const completed = yield* h.service.update({
+      threadId,
+      expectedRevision: moved.revision,
+      changes: [{ id: "other", state: "done" }],
+    });
+    const dropped = yield* h.service.update({
+      threadId,
+      expectedRevision: completed.revision,
+      changes: [{ id: "other", state: "dropped" }],
+    });
+    expect(
+      dropped.items
+        .filter((item) => ["child", "grandchild"].includes(item.id))
+        .map((item) => item.state),
+    ).toEqual(["open", "open"]);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

@@ -13,6 +13,7 @@ import {
   type ThreadArtifactSubmitInput,
   listItemNeedsHandoff,
   type ListItem,
+  LIST_MAX_DEPTH,
   type ThreadWorkspaceGetInput,
   type ThreadListUpdateInput,
   type ThreadListRewriteInput,
@@ -315,10 +316,16 @@ const make = Effect.gen(function* () {
     for (const item of next.items) {
       if (!item.text.trim() || /[\r\n]/.test(item.text))
         return yield* invalid("Item text must be one nonempty line.");
-      if (item.parentId !== null) {
-        const parent = next.items.find((entry) => entry.id === item.parentId);
-        if (!parent || parent.parentId !== null || parent.id === item.id)
-          return yield* invalid("Children must have an existing top-level parent.");
+      const ancestors = new Set([item.id]);
+      let parentId = item.parentId;
+      while (parentId !== null) {
+        if (ancestors.has(parentId)) return yield* invalid("List items cannot form a cycle.");
+        ancestors.add(parentId);
+        if (ancestors.size > LIST_MAX_DEPTH)
+          return yield* invalid("List items support only root, child, and grandchild levels.");
+        const parent = next.items.find((entry) => entry.id === parentId);
+        if (!parent) return yield* invalid("Parent item does not exist.");
+        parentId = parent.parentId;
       }
       if (
         item.links.some(
@@ -436,9 +443,16 @@ const make = Effect.gen(function* () {
         input.items,
         DateTime.formatIso(yield* DateTime.now),
       );
+      const survivingIds = new Set([...retained, ...replacements].map((item) => item.id));
+      const history = retained.map((item) => {
+        let parentId = item.parentId;
+        while (parentId !== null && !survivingIds.has(parentId))
+          parentId = current.items.find((entry) => entry.id === parentId)?.parentId ?? null;
+        return parentId === item.parentId ? item : { ...item, parentId };
+      });
       return yield* commit(
         current,
-        { ...current, items: [...retained, ...replacements] },
+        { ...current, items: [...history, ...replacements] },
         input.expectedRevision,
       );
     }, lock.withPermit),
