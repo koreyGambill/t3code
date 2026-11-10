@@ -45,6 +45,7 @@ import {
 } from "@t3tools/contracts";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -56,6 +57,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -977,71 +979,136 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         cause,
       });
-    // Taken before the first read, so a run update between that read and
-    // the subscription below still replays.
+    const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
+    // Replay covers commits between the watermark and acquiring the live subscriptions.
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const target = yield* getProjectThreadRecords(input, ["runs"]);
+    // One stream preserves creation/terminal order across record types.
+    const events = yield* orchestrator
+      .streamStoredEventsFrom({ threadId: input.threadId, afterSequence })
+      .pipe(
+        Stream.filter(
+          ({ event }) =>
+            event.type === "run.updated" ||
+            event.type === "thread.deleted" ||
+            (untilDelegatedWorkSettled &&
+              (event.type === "run.created" ||
+                event.type === "message.updated" ||
+                event.type === "subagent.updated" ||
+                event.type === "provider-thread.updated")),
+        ),
+        Stream.mapError(loadError),
+        Stream.toQueue({ capacity: "unbounded" }),
+      );
+    const read = () =>
+      getProjectThreadRecords(
+        input,
+        untilDelegatedWorkSettled ? ["runs", "messages", "subagents", "providerThreads"] : ["runs"],
+        { messageRoles: ["user"], monitorNotificationsOnly: true },
+      );
+    const target = yield* read();
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)
-        : target.runs.find((candidate) => candidate.id === input.runId);
-    if (input.runId !== undefined && selectedRun === undefined) {
+        : target.runs.find((run) => run.id === input.runId);
+    if (input.runId !== undefined && selectedRun === undefined)
       return yield* new ThreadManagementRunNotFoundError({
         threadId: input.threadId,
         runId: input.runId,
       });
-    }
-    if (selectedRun === undefined) {
-      return { threadId: input.threadId, run: null, timedOut: false };
-    }
-    // A restart cuts a run and continues it as a new run. Follow that chain,
-    // so a cut run is not the answer while its continuation is pending.
-    // Runs per matching event and is already covered by the waitForThread span.
-    const outcome = Effect.fnUntraced(function* (runs: ReadonlyArray<OrchestrationV2Run>) {
-      const current = runs.find((candidate) => candidate.id === selectedRun.id);
-      if (current === undefined) {
+    if (selectedRun === undefined) return { threadId: input.threadId, run: null, timedOut: false };
+
+    const pending = new Set<string>();
+    const monitorRuns = new Set<RunId | null>();
+    let awaitedRunId = selectedRun.id;
+    const continuationWakes = yield* Queue.unbounded<RunId>();
+    const watchingContinuations = new Set<RunId>();
+    const track = (key: string, active: boolean) => {
+      if (active) pending.add(key);
+      else pending.delete(key);
+    };
+    const trackRun = (run: OrchestrationV2Run) =>
+      track(
+        `run:${run.id}`,
+        !isTerminalRunStatus(run.status) &&
+          (run.id === awaitedRunId ||
+            (!monitorRuns.has(run.id) && !(run.status === "queued" && run.queueHeld === true))),
+      );
+    const trackTask = (task: OrchestrationV2ThreadProjection["subagents"][number]) => {
+      track(`task:${task.id}`, isOrchestrationV2WorkActive(task.status));
+      track(
+        `delivery:${task.id}`,
+        task.status !== "idle" &&
+          (task.completionDelivery?.state === "pending" ||
+            task.completionDelivery?.state === "claimed"),
+      );
+    };
+    const trackBackground = (thread: OrchestrationV2ThreadProjection["providerThreads"][number]) =>
+      track(
+        `background:${thread.id}`,
+        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [], { awaitUnmarked: true }),
+      );
+    // The evaluation owns the span; the wait scope owns its continuation fibers.
+    const watchContinuation = Effect.fnUntraced(function* (run: OrchestrationV2Run) {
+      pending.add(`continuation:${run.id}`);
+      if (watchingContinuations.has(run.id)) return;
+      watchingContinuations.add(run.id);
+      yield* orchestrator
+        .awaitRestartContinuation(run)
+        .pipe(Effect.andThen(Queue.offer(continuationWakes, run.id)), Effect.forkScoped);
+    });
+    const evaluate = Effect.fn("orchestrationV2.threadManagement.evaluate")(function* (
+      records: typeof target,
+    ) {
+      pending.clear();
+      const original = records.runs.find((run) => run.id === selectedRun.id);
+      if (original === undefined)
         return yield* new ThreadManagementRunNotFoundError({
           threadId: input.threadId,
           runId: selectedRun.id,
         });
-      }
-      const run = latestRestartContinuation(runs, current);
-      const pending =
+      const run = latestRestartContinuation(records.runs, original);
+      awaitedRunId = run.id;
+      const continuationPending =
         isTerminalRunStatus(run.status) && (yield* orchestrator.restartContinuationPending(run));
-      return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
-    });
-    const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
-    const delegatedWorkResult = Effect.gen(function* () {
-      const records = yield* getProjectThreadRecords(
-        input,
-        ["runs", "messages", "subagents", "providerThreads"],
-        { messageRoles: ["user"], monitorNotificationsOnly: true },
-      );
-      const progress = delegatedTaskProgress(records);
-      // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
-      if (
-        progress.resultRun === undefined &&
-        records.runs.every((run) => isTerminalRunStatus(run.status))
-      ) {
-        return latestRun(records);
+      if (continuationPending) yield* watchContinuation(run);
+      if (untilDelegatedWorkSettled) {
+        monitorRuns.clear();
+        for (const message of records.messages)
+          if (message.notification?.source.kind === "monitor") monitorRuns.add(message.runId);
+        for (const candidate of records.runs) trackRun(candidate);
+        for (const task of records.subagents) trackTask(task);
+        for (const provider of records.providerThreads) trackBackground(provider);
+      } else trackRun(run);
+      let resultRun: OrchestrationV2Run | undefined;
+      let settled = isTerminalRunStatus(run.status) && !continuationPending;
+      if (settled && untilDelegatedWorkSettled) {
+        const progress = delegatedTaskProgress(records);
+        if (
+          progress.resultRun === undefined &&
+          records.runs.every((candidate) => isTerminalRunStatus(candidate.status))
+        )
+          resultRun = latestRun(records);
+        else if (progress.state === "result_available") {
+          const resultPending = yield* orchestrator
+            .delegatedTaskResultPending(input.threadId)
+            .pipe(Effect.mapError(loadError));
+          if (!resultPending) resultRun = progress.resultRun;
+          else if (progress.resultRun !== undefined) {
+            for (const candidate of records.runs) {
+              if (
+                (candidate.id === progress.resultRun.id ||
+                  runRanAfter(candidate, progress.resultRun)) &&
+                (yield* orchestrator.restartContinuationPending(candidate))
+              )
+                yield* watchContinuation(candidate);
+            }
+          }
+        }
+        settled = resultRun !== undefined;
       }
-      if (progress.state !== "result_available") return undefined;
-      const pending = yield* orchestrator
-        .delegatedTaskResultPending(input.threadId)
-        .pipe(Effect.mapError(loadError));
-      return pending ? undefined : progress.resultRun;
-    });
-    const evaluate = Effect.fn("orchestrationV2.threadManagement.evaluate")(function* (
-      runs: ReadonlyArray<OrchestrationV2Run>,
-    ) {
-      const current = yield* outcome(runs);
-      if (!current.settled || !untilDelegatedWorkSettled) {
-        return { ...current, resultRun: undefined };
-      }
-      const resultRun = yield* delegatedWorkResult;
-      return { ...current, settled: resultRun !== undefined, resultRun };
+      return { run, settled, resultRun };
     });
     const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({
       threadId: input.threadId,
@@ -1049,70 +1116,66 @@ const make = Effect.gen(function* () {
       timedOut: !current.settled,
       ...(current.resultRun === undefined ? {} : { resultRun: current.resultRun }),
     });
-    const initial = yield* evaluate(target.runs);
+    const initial = yield* evaluate(target);
     if (initial.settled) return settledResult(initial);
 
-    // A declined continuation records no event, so its effect settling wakes
-    // the wait too.
     const wait = Stream.merge(
-      Stream.mergeAll(
-        (
-          [
-            "run.updated",
-            "thread.deleted",
-            // What delegated work reads besides runs: tasks and their
-            // deliveries, and a provider thread's background tasks.
-            ...(untilDelegatedWorkSettled
-              ? (["subagent.updated", "provider-thread.updated"] as const)
-              : []),
-          ] as const
-        ).map((eventType) =>
-          orchestrator.streamStoredEventsFrom({
-            threadId: input.threadId,
-            afterSequence,
-            eventType,
-          }),
-        ),
-        { concurrency: "unbounded" },
-      ).pipe(
-        Stream.mapError(loadError),
-        // Progress cannot finish delegated work; every follower would otherwise decode its history.
-        Stream.filter((stored) =>
-          stored.event.type === "subagent.updated"
-            ? !isOrchestrationV2WorkActive(stored.event.payload.status)
-            : stored.event.type !== "provider-thread.updated" ||
-              !backgroundWorkHoldsCompletion(stored.event.payload.pendingBackgroundTasks ?? [], {
-                awaitUnmarked: true,
-              }),
-        ),
-        Stream.filter(
-          (stored) =>
-            untilDelegatedWorkSettled ||
-            stored.event.type !== "run.updated" ||
-            stored.event.payload.id === selectedRun.id ||
-            stored.event.payload.restartContinuationOfRunId !== undefined,
-        ),
+      Stream.fromQueue(events).pipe(Stream.map((stored) => ({ kind: "event" as const, stored }))),
+      Stream.fromQueue(continuationWakes).pipe(
+        Stream.map((runId) => ({ kind: "continuation" as const, runId })),
       ),
-      initial.pending
-        ? Stream.fromEffect(orchestrator.awaitRestartContinuation(initial.run))
-        : Stream.empty,
     ).pipe(
-      Stream.mapEffect(() =>
-        getProjectThreadRecords(input, ["runs"]).pipe(
-          Effect.flatMap((current) => evaluate(current.runs)),
-        ),
-      ),
-      Stream.filter((current) => current.settled),
+      Stream.mapEffect((update) => {
+        const shouldRead = (() => {
+          if (update.kind === "continuation") {
+            watchingContinuations.delete(update.runId);
+            return pending.delete(`continuation:${update.runId}`) && pending.size === 0;
+          }
+          const { event } = update.stored;
+          const before = pending.size;
+          switch (event.type) {
+            case "thread.deleted":
+              return true;
+            case "run.created":
+            case "run.updated":
+              if (
+                !untilDelegatedWorkSettled &&
+                event.payload.id !== selectedRun.id &&
+                event.payload.restartContinuationOfRunId === undefined
+              )
+                return false;
+              trackRun(event.payload);
+              if (event.payload.restartContinuationOfRunId !== undefined)
+                pending.delete(`continuation:${event.payload.restartContinuationOfRunId}`);
+              break;
+            case "message.updated":
+              if (event.payload.notification?.source.kind !== "monitor") return false;
+              monitorRuns.add(event.payload.runId);
+              if (event.payload.runId !== awaitedRunId)
+                pending.delete(`run:${event.payload.runId}`);
+              break;
+            case "subagent.updated":
+              trackTask(event.payload);
+              break;
+            case "provider-thread.updated":
+              trackBackground(event.payload);
+              break;
+            default:
+              return false;
+          }
+          // Only removal of the last member needs another authoritative snapshot.
+          return pending.size === 0 && before > 0;
+        })();
+        return shouldRead ? read().pipe(Effect.flatMap(evaluate)) : Effect.succeed(undefined);
+      }),
+      Stream.filter((current): current is NonNullable<typeof current> => current?.settled === true),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);
-    // The run may have reached a terminal status while the timeout was
-    // winning the race; the final projection read decides what actually
-    // happened, so only a still-active run counts as timed out.
-    return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
-  });
+    return settledResult(yield* evaluate(yield* read()));
+  }, Effect.scoped);
 
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.settleAfterRun",
