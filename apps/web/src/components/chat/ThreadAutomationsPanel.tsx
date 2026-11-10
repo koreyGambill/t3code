@@ -207,11 +207,12 @@ export function ThreadAutomationsPanel(props: {
       !boundTasks.some((task) => task.schedule.type === "interval" && task.schedule.idleCheckin) ? (
         <ThreadDetailsControl
           size="sm"
+          multiline
           variant="ghost"
           disabled={!canCreate || !shell || busyTaskId !== null}
           onClick={() => void enableCheckin()}
         >
-          Enable idle work check-in · every 30 min
+          <span className="whitespace-normal">Enable idle work check-in · every 30 min</span>
         </ThreadDetailsControl>
       ) : null}
       <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">

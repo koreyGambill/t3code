@@ -245,10 +245,14 @@ export function ArtifactsPanel({
       )}
       {ready.length ? (
         <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t border-border bg-background p-3">
-          <Button size="sm" disabled={!canAnswer} onClick={send}>
-            <SendIcon />
-            Send {ready.length} queued {ready.length === 1 ? "answer" : "answers"} to composer
-          </Button>
+          <div className="grid min-w-0 max-w-sm flex-1 grid-cols-1">
+            <Button size="sm-multiline" disabled={!canAnswer} onClick={send}>
+              <SendIcon />
+              <span className="whitespace-normal">
+                Send {ready.length} queued {ready.length === 1 ? "answer" : "answers"} to composer
+              </span>
+            </Button>
+          </div>
         </div>
       ) : null}
       {notice ? (
@@ -487,7 +491,7 @@ function ArtifactDocument({
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              size="sm"
+              size="sm-multiline"
               variant="outline"
               disabled={!comment.trim() || !canAnswer}
               onClick={() => {

@@ -93,7 +93,8 @@ export function ThreadListView({
         artifacts.refresh();
         onRefresh?.();
       } else {
-        setError(squashAtomCommandFailure(result).message);
+        const cause = squashAtomCommandFailure(result);
+        setError(cause instanceof Error ? cause.message : String(cause));
         query.refresh();
       }
     }
@@ -339,7 +340,7 @@ function ListRow({
   });
   return (
     <div className="rounded-lg border border-border/60 hover:bg-muted/30">
-      <div className="flex min-h-10 min-w-0 items-center gap-2 px-2 py-1.5">
+      <div className="flex min-h-10 min-w-0 items-center gap-1 px-2 py-1.5">
         {progress ? (
           <Button
             variant="ghost"
@@ -369,10 +370,11 @@ function ListRow({
               />
             }
           >
-            {item.owner === "you" ? "You · " : ""}
             {item.text}
           </TooltipTrigger>
-          <TooltipPopup>{item.text}</TooltipPopup>
+          <TooltipPopup>
+            {item.text} · Assigned to {item.owner === "you" ? "you" : "the agent"}
+          </TooltipPopup>
         </Tooltip>
         {progress ? (
           <Badge size="sm" variant="secondary">
