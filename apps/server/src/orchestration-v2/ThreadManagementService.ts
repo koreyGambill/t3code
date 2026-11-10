@@ -1104,6 +1104,8 @@ const make = Effect.gen(function* () {
               )
                 yield* watchContinuation(candidate);
             }
+            // A continuation may settle between checking it and installing its waiter.
+            if (pending.size === 0) yield* watchContinuation(progress.resultRun);
           }
         }
         settled = resultRun !== undefined;
@@ -1132,18 +1134,19 @@ const make = Effect.gen(function* () {
             return pending.delete(`continuation:${update.runId}`) && pending.size === 0;
           }
           const { event } = update.stored;
+          if (!untilDelegatedWorkSettled)
+            return (
+              event.type === "thread.deleted" ||
+              (event.type === "run.updated" &&
+                (event.payload.id === selectedRun.id ||
+                  event.payload.restartContinuationOfRunId !== undefined))
+            );
           const before = pending.size;
           switch (event.type) {
             case "thread.deleted":
               return true;
             case "run.created":
             case "run.updated":
-              if (
-                !untilDelegatedWorkSettled &&
-                event.payload.id !== selectedRun.id &&
-                event.payload.restartContinuationOfRunId === undefined
-              )
-                return false;
               trackRun(event.payload);
               if (event.payload.restartContinuationOfRunId !== undefined)
                 pending.delete(`continuation:${event.payload.restartContinuationOfRunId}`);
@@ -1166,7 +1169,7 @@ const make = Effect.gen(function* () {
           // Only removal of the last member needs another authoritative snapshot.
           return pending.size === 0 && before > 0;
         })();
-        return shouldRead ? read().pipe(Effect.flatMap(evaluate)) : Effect.succeed(undefined);
+        return shouldRead ? read().pipe(Effect.flatMap(evaluate)) : Effect.undefined;
       }),
       Stream.filter((current): current is NonNullable<typeof current> => current?.settled === true),
       Stream.runHead,

@@ -1022,7 +1022,7 @@ it.effect.each(["subagent.updated", "provider-thread.updated"] as const)(
     }),
 );
 
-it.effect.each(["non-member", "new task", "rebuild"] as const)(
+it.effect.each(["non-member", "new task", "rebuild", "continuation settled"] as const)(
   "waitForThread tracks pending membership across %s events",
   (scenario) =>
     Effect.gen(function* () {
@@ -1033,6 +1033,7 @@ it.effect.each(["non-member", "new task", "rebuild"] as const)(
       const run = { id: runId, ordinal: 1, status: "completed", startedAt: at, completedAt: at };
       const consumed = yield* Deferred.make<void>();
       let reads = 0;
+      let continuationChecks = 0;
       const task = (id: string, status: string) => ({ id, status });
       const event = (sequence: number, id: string, status: string) =>
         ({
@@ -1040,18 +1041,22 @@ it.effect.each(["non-member", "new task", "rebuild"] as const)(
           event: { threadId, type: "subagent.updated", payload: task(id, status) },
         }) as unknown as OrchestrationV2StoredEvent;
       const updates =
-        scenario === "non-member"
-          ? [event(1, "other", "completed")]
-          : scenario === "new task"
-            ? [event(1, "new", "running"), event(2, "original", "completed")]
-            : [event(1, "original", "completed"), event(2, "new", "completed")];
+        scenario === "continuation settled"
+          ? []
+          : scenario === "non-member"
+            ? [event(1, "other", "completed")]
+            : scenario === "new task"
+              ? [event(1, "new", "running"), event(2, "original", "completed")]
+              : [event(1, "original", "completed"), event(2, "new", "completed")];
       const layerTest = ThreadManagementService.layer.pipe(
         Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
         Layer.provide(
           Layer.mock(Orchestrator.OrchestratorV2)({
             getThreadEventSequence: () => Effect.succeed(0),
             restartContinuationPending: () => Effect.succeed(false),
-            delegatedTaskResultPending: () => Effect.succeed(false),
+            delegatedTaskResultPending: () =>
+              Effect.sync(() => scenario === "continuation settled" && continuationChecks++ === 0),
+            awaitRestartContinuation: () => Effect.void,
             streamStoredEventsFrom: (input) =>
               input?.eventType === undefined || input?.eventType === "subagent.updated"
                 ? Stream.fromIterable(updates).pipe(
@@ -1065,7 +1070,7 @@ it.effect.each(["non-member", "new task", "rebuild"] as const)(
               Effect.sync(() => {
                 reads++;
                 const subagents =
-                  scenario === "rebuild" && reads === 3
+                  scenario === "continuation settled" || (scenario === "rebuild" && reads === 3)
                     ? []
                     : [
                         task(
@@ -1099,9 +1104,10 @@ it.effect.each(["non-member", "new task", "rebuild"] as const)(
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(consumed);
-      if (scenario !== "rebuild") yield* TestClock.adjust(Duration.minutes(1));
+      if (scenario === "non-member" || scenario === "new task")
+        yield* TestClock.adjust(Duration.minutes(1));
       const result = yield* Fiber.join(fiber);
-      expect(result.timedOut).toBe(scenario !== "rebuild");
+      expect(result.timedOut).toBe(scenario === "non-member" || scenario === "new task");
       expect(reads).toBe(scenario === "rebuild" ? 3 : 2);
     }),
 );
