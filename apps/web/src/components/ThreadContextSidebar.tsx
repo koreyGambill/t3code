@@ -100,17 +100,20 @@ export function ThreadContextSidebarHost({ children }: { children: ReactNode }) 
     const escape = (event: KeyboardEvent) => {
       if (
         event.key === "Escape" &&
-        !event.defaultPrevented &&
-        useThreadContextSidebarStore.getState().maximized
+        useThreadContextSidebarStore.getState().maximized &&
+        !document.querySelector(
+          '[data-slot="menu-popup"], [data-slot="select-popup"], [role="dialog"]',
+        )
       ) {
         useThreadContextSidebarStore.getState().restore();
         event.preventDefault();
+        event.stopPropagation();
       }
     };
-    window.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape, true);
     const disposeMenu = registerMenuAction("threadContext.toggle", toggle);
     return () => {
-      window.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape, true);
       dispose();
       disposeMenu();
     };
