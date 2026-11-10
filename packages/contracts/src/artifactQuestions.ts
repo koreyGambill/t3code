@@ -20,6 +20,7 @@ export const ArtifactAnswer = Schema.Struct({
   chosenOptionIds: Schema.Array(TrimmedNonEmptyString),
   notes: Schema.String,
   submittedAt: Schema.NullOr(IsoDateTime),
+  draftRevision: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ArtifactAnswer = typeof ArtifactAnswer.Type;
 

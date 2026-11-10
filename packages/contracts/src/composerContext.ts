@@ -194,6 +194,8 @@ export const ArtifactAnswerContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("artifact-answer"),
   artifactId: TrimmedNonEmptyString,
+  questionId: TrimmedNonEmptyString,
+  answerRevision: NonNegativeInt,
   title: ShortString,
   artifactVersion: PositiveInt,
   question: Schema.String,

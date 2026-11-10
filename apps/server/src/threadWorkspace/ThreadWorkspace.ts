@@ -11,6 +11,7 @@ import {
   parseArtifactQuestions,
   type ThreadArtifactAnswerInput,
   type ThreadArtifactSubmitInput,
+  listItemNeedsHandoff,
   type ListItem,
   type ThreadWorkspaceGetInput,
   type ThreadListUpdateInput,
@@ -143,6 +144,64 @@ const make = Effect.gen(function* () {
     );
     return workspace;
   }, Effect.mapError(storage));
+  const submittedAnswers = Effect.fn("ThreadWorkspace.submittedAnswers")(function* (
+    workspace: Workspace,
+  ) {
+    if (
+      !workspace.artifacts.some((a) =>
+        a.versions.some((v) =>
+          Object.values(v.answers).some((answer) => answer.submittedAt === null),
+        ),
+      )
+    )
+      return workspace;
+    const records = yield* orchestrator
+      .getThreadRecords(workspace.threadId, ["messages"], { messageRoles: ["user"] })
+      .pipe(Effect.mapError(storage));
+    return {
+      ...workspace,
+      artifacts: workspace.artifacts.map((artifact) => ({
+        ...artifact,
+        versions: artifact.versions.map((version) => ({
+          ...version,
+          answers: Object.fromEntries(
+            Object.entries(version.answers).map(([id, answer]) => {
+              const question = version.questions.find((q) => q.id === id);
+              if (answer.submittedAt || !question) return [id, answer];
+              const choice = question.options
+                .filter((o) => answer.chosenOptionIds.includes(o.id))
+                .map((o) => o.label)
+                .join(", ");
+              const message = records.messages.findLast(
+                (m) =>
+                  m.role === "user" &&
+                  !m.streaming &&
+                  m.origin?.kind === "user" &&
+                  m.context?.records.some(
+                    (r) =>
+                      r.kind === "artifact-answer" &&
+                      "artifactId" in r &&
+                      r.artifactId === artifact.id &&
+                      r.artifactVersion === version.version &&
+                      r.questionId === id &&
+                      r.answerRevision === (answer.draftRevision ?? 0) &&
+                      r.question === question.prompt &&
+                      r.choice === choice &&
+                      r.note === answer.notes,
+                  ),
+              );
+              return [
+                id,
+                message
+                  ? { ...answer, submittedAt: DateTime.formatIso(message.createdAt) }
+                  : answer,
+              ];
+            }),
+          ),
+        })),
+      })),
+    };
+  });
   const read = Effect.fn("ThreadWorkspace.read")(function* (threadId: ThreadId) {
     yield* requireThread(threadId);
     const contents = yield* fs.readFileString(filePath(threadId)).pipe(
@@ -157,16 +216,25 @@ const make = Effect.gen(function* () {
     if (current._tag === "Success") {
       if (current.success.workspace.threadId !== threadId)
         return yield* storage("Thread identity mismatch.");
-      return current.success.workspace;
+      return yield* submittedAnswers(current.success.workspace);
     }
     const old = yield* decodeOld(contents).pipe(Effect.mapError(storage));
     if (old.workspace.threadId !== threadId) return yield* storage("Thread identity mismatch.");
+    yield* fs
+      .writeFileString(`${filePath(threadId)}.format2.bak`, contents, { flag: "wx", mode: 0o600 })
+      .pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "AlreadyExists",
+          () => Effect.void,
+        ),
+        Effect.mapError(storage),
+      );
     const workspace = migrateWorkspace(old.workspace, DateTime.formatIso(yield* DateTime.now));
     yield* migrateAnnotations(threadId, contents).pipe(
       Effect.provide(services),
       Effect.mapError(storage),
     );
-    return yield* write(workspace);
+    return yield* submittedAnswers(yield* write(workspace));
   });
   const enrich = Effect.fn("ThreadWorkspace.enrich")(function* (workspace: Workspace) {
     const items = yield* Effect.forEach(workspace.items, (item) =>
@@ -260,14 +328,7 @@ const make = Effect.gen(function* () {
         const changed =
           current.items.find((entry) => entry.id === item.id) !==
           next.items.find((entry) => entry.id === item.id);
-        if (
-          changed &&
-          item.linkStates?.some(
-            (link) =>
-              (link.type === "ticket" && link.state !== "closed") ||
-              (link.type === "thread" && link.state !== "needs_review"),
-          )
-        )
+        if (changed && listItemNeedsHandoff(item))
           return yield* invalid(
             "An open or unavailable ticket or lane cannot be done. Use handed_off.",
           );
@@ -479,7 +540,7 @@ const make = Effect.gen(function* () {
           )
         )
           return yield* invalid("Answer choices must match the question.");
-        answers[id] = { ...answer, submittedAt: null };
+        answers[id] = { ...answer, submittedAt: null, draftRevision: current.revision + 1 };
       }
       return yield* commit(
         current,
@@ -537,7 +598,9 @@ const make = Effect.gen(function* () {
           kind: "artifact-answer" as const,
           label: sanitizeComposerContextLabel(version.title, "artifact-answer"),
           artifactId: artifact.id,
-          title: version.title,
+          questionId: question.id,
+          answerRevision: answer.draftRevision ?? 0,
+          title: version.title.slice(0, 200),
           version: 1 as const,
           artifactVersion: version.version,
           question: question.prompt,
@@ -556,6 +619,7 @@ const make = Effect.gen(function* () {
         .digest("hex");
       yield* threads
         .sendToThread({
+          origin: { kind: "user" },
           projectId: owner.projectId,
           threadId: input.threadId,
           commandId: CommandId.make(`artifact-submit:${key}`),

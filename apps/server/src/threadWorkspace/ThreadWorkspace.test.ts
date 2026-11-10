@@ -4,11 +4,13 @@ import { expect, it } from "@effect/vitest";
 import {
   RunId,
   MessageId,
+  ComposerContextId,
   EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2Run,
+  type OrchestrationV2ConversationMessage,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Context from "effect/Context";
@@ -66,6 +68,7 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   let staleClosed = false;
   let laneStatus: OrchestrationV2Run["status"] = "running";
   const sends: ThreadManagement.ThreadManagementSendInput[] = [];
+  const messages: OrchestrationV2ConversationMessage[] = [];
   const run = (): OrchestrationV2Run => ({
     id: RunId.make("run"),
     threadId,
@@ -102,6 +105,7 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
       getThreadRecords: (id) =>
         Effect.sync(() => ({
           ...projection,
+          messages,
           thread: { ...projection.thread, id },
           runs: id === threadId ? [] : [run()],
         })),
@@ -138,6 +142,7 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   return {
     service: Context.get(context, Workspaces.ThreadWorkspace),
     sends,
+    messages,
     fs,
     path,
     config,
@@ -376,6 +381,7 @@ it.effect(
         questionIds: ["mode"],
       });
       expect(h.sends).toHaveLength(1);
+      expect(h.sends[0]?.origin).toEqual({ kind: "user" });
       expect((yield* h.service.artifactList({ threadId }))[0]?.unansweredQuestions).toBe(0);
       expect(h.sends[0]?.context?.records).toEqual([
         expect.objectContaining({
@@ -459,6 +465,65 @@ it.effect(
         content: content.replace("Choose mode", "Choose a new mode"),
       });
       expect(third.artifacts[0]?.versions[2]?.answers).toEqual({});
+      const queued = yield* h.service.artifactAnswer({
+        threadId,
+        expectedRevision: third.revision,
+        id: "plan",
+        version: 3,
+        answers: {
+          mode: {
+            chosenOptionIds: ["safe"],
+            notes: "Only sent notes become public",
+            submittedAt: null,
+          },
+        },
+      });
+      const record = {
+        version: 1 as const,
+        kind: "artifact-answer" as const,
+        contextId: ComposerContextId.make("queued-answer"),
+        label: "Plan",
+        artifactId: "plan",
+        artifactVersion: 3,
+        questionId: "mode",
+        answerRevision: queued.revision,
+        title: "Plan",
+        question: "Choose a new mode",
+        choice: "Safe",
+        note: "Only sent notes become public",
+      };
+      expect((yield* h.service.artifactRead({ threadId, id: "plan" })).answers).toEqual({});
+      h.messages.push({
+        id: MessageId.make("sent-answer"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "user",
+        origin: { kind: "user" },
+        createdBy: "user",
+        creationSource: "web",
+        text: "Attached answer",
+        context: { version: 1, records: [record] },
+        attachments: [],
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+      });
+      expect(
+        (yield* h.service.artifactRead({ threadId, id: "plan" })).answers.mode?.submittedAt,
+      ).toBe(DateTime.formatIso(at));
+      const redrafted = yield* h.service.artifactAnswer({
+        threadId,
+        expectedRevision: queued.revision,
+        id: "plan",
+        version: 3,
+        answers: { mode: { chosenOptionIds: ["safe"], notes: record.note, submittedAt: null } },
+      });
+      expect(redrafted.artifacts[0]?.versions[2]?.answers.mode?.draftRevision).toBe(
+        redrafted.revision,
+      );
+      expect((yield* h.service.artifactRead({ threadId, id: "plan" })).answers).toEqual({});
+
       expect((yield* h.service.artifactList({ threadId }))[0]?.unansweredQuestions).toBe(1);
       expect(
         (yield* h.service.artifactRead({ threadId, id: "plan", version: 1 })).answers.mode?.notes,
@@ -477,6 +542,7 @@ it.effect("migrates a legacy file once and persists mark annotations outside the
       file,
       JSON.stringify({ formatVersion: 2, workspace: { ...fixture, threadId } }),
     );
+    const original = yield* h.fs.readFileString(file);
     const first = yield* h.service.get({ threadId });
     expect(first.revision).toBe(fixture.revision);
     expect(first.items.find((item) => item.id === "work-1")?.details).toContain(
@@ -484,6 +550,7 @@ it.effect("migrates a legacy file once and persists mark annotations outside the
     );
     const saved = yield* h.fs.readFileString(file);
     expect(JSON.parse(saved).formatVersion).toBe(3);
+    expect(yield* h.fs.readFileString(`${file}.format2.bak`)).toBe(original);
     expect(JSON.parse(saved).workspace.markAnnotations).toBeUndefined();
     expect(
       JSON.parse(yield* h.fs.readFileString(h.path.join(h.config.stateDir, "thread-marks", name))),
@@ -494,5 +561,9 @@ it.effect("migrates a legacy file once and persists mark annotations outside the
     const reloaded = Context.get(reloadedContext, Workspaces.ThreadWorkspace);
     expect(yield* reloaded.get({ threadId })).toEqual(first);
     expect(yield* h.fs.readFileString(file)).toBe(saved);
+    yield* h.fs.writeFileString(file, original);
+    yield* h.fs.writeFileString(`${file}.format2.bak`, "Preexisting backup bytes");
+    yield* reloaded.get({ threadId });
+    expect(yield* h.fs.readFileString(`${file}.format2.bak`)).toBe("Preexisting backup bytes");
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

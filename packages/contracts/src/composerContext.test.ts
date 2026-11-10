@@ -19,6 +19,8 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     kind: "artifact-answer",
     label: "Architecture answer",
     artifactId: "architecture",
+    questionId: "q1",
+    answerRevision: 0,
     title: "Architecture",
     artifactVersion: 2,
     question: "Which store?",

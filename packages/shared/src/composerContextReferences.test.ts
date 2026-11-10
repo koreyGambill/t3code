@@ -133,6 +133,8 @@ describe("provider projection", () => {
       contextId: ctx("answer_1"),
       label: "Architecture answer",
       artifactId: "architecture",
+      questionId: "q1",
+      answerRevision: 0,
       title: "Architecture",
       artifactVersion: 2,
       question: "Which store?",

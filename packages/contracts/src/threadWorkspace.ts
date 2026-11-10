@@ -164,3 +164,11 @@ export const ThreadArtifactSubmitInput = Schema.Struct({
   questionIds: Schema.Array(TrimmedNonEmptyString),
 });
 export type ThreadArtifactSubmitInput = typeof ThreadArtifactSubmitInput.Type;
+
+/** Linked work stays handed off until its ticket closes or its lane is ready for review. */
+export const listItemNeedsHandoff = (item: Pick<ListItem, "linkStates">) =>
+  item.linkStates?.some(
+    (link) =>
+      (link.type === "ticket" && link.state !== "closed") ||
+      (link.type === "thread" && link.state !== "needs_review"),
+  ) ?? false;
