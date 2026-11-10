@@ -63,6 +63,7 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
     },
   });
   let closed = false;
+  let staleClosed = false;
   let laneStatus: OrchestrationV2Run["status"] = "running";
   const sends: ThreadManagement.ThreadManagementSendInput[] = [];
   const run = (): OrchestrationV2Run => ({
@@ -85,14 +86,17 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
   const dependencies = Layer.mergeAll(
     Layer.succeed(ServerConfig.ServerConfig, config),
     Layer.succeed(TicketTracker.TicketTracker, {
-      get: (key) =>
-        Effect.sync(() => ({
-          key,
-          title: "Sample ticket",
-          stage: closed ? "closed" : "active",
-          terminal: closed,
-          url: "https://example.com/ticket",
-        })),
+      get: (key, fresh) =>
+        Effect.sync(() => {
+          if (fresh) staleClosed = false;
+          return {
+            key,
+            title: "Sample ticket",
+            stage: closed || staleClosed ? "closed" : "active",
+            terminal: closed || staleClosed,
+            url: "https://example.com/ticket",
+          };
+        }),
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadRecords: (id) =>
@@ -141,6 +145,10 @@ const harness = Effect.fn("test.workspaceHarness")(function* () {
     closeTicket: () => {
       closed = true;
     },
+    reopenTicket: () => {
+      closed = false;
+      staleClosed = true;
+    },
     finishLane: () => {
       laneStatus = "completed";
     },
@@ -176,6 +184,21 @@ it.effect("requires handed_off while a ticket is open and reads its live state",
       changes: [{ id: "ticket", state: "done" }],
     });
     expect(done.items[0]?.doneAt).not.toBeNull();
+    h.reopenTicket();
+    const reopened = yield* h.service.update({
+      threadId,
+      expectedRevision: done.revision,
+      changes: [{ id: "ticket", state: "handed_off" }],
+    });
+    expect(
+      (yield* h.service
+        .update({
+          threadId,
+          expectedRevision: reopened.revision,
+          changes: [{ id: "ticket", state: "done" }],
+        })
+        .pipe(Effect.result))._tag,
+    ).toBe("Failure");
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
@@ -246,6 +269,20 @@ it.effect("rewrites open items while retaining history and validates explicit or
       order: ["new", "handoff", "dropped", "done"],
     });
     expect(ordered.items.map((item) => item.id)).toEqual(["new", "handoff", "dropped", "done"]);
+    expect((yield* h.service.listRead({ threadId }))[0]?.items.map((item) => item.id)).toEqual([
+      "new",
+      "handoff",
+    ]);
+    yield* h.service.update({
+      threadId,
+      expectedRevision: ordered.revision,
+      changes: [{ id: "done", needsQa: true }],
+    });
+    expect(
+      (yield* h.service.listRead({ allThreads: true, all: true, needsQa: true }))[0]?.items.map(
+        (item) => item.id,
+      ),
+    ).toEqual(["done"]);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
@@ -327,6 +364,7 @@ it.effect(
         answers: { mode: { chosenOptionIds: ["safe"], notes: "Private note", submittedAt: null } },
       });
       expect((yield* h.service.artifactRead({ threadId, id: "plan" })).answers).toEqual({});
+      expect((yield* h.service.artifactList({ threadId }))[0]?.unansweredQuestions).toBe(1);
       expect(
         (yield* h.service.get({ threadId })).artifacts[0]?.versions[0]?.answers.mode?.notes,
       ).toBe("Private note");
@@ -338,6 +376,7 @@ it.effect(
         questionIds: ["mode"],
       });
       expect(h.sends).toHaveLength(1);
+      expect((yield* h.service.artifactList({ threadId }))[0]?.unansweredQuestions).toBe(0);
       expect(h.sends[0]?.context?.records).toEqual([
         expect.objectContaining({
           kind: "artifact-answer",
@@ -420,6 +459,7 @@ it.effect(
         content: content.replace("Choose mode", "Choose a new mode"),
       });
       expect(third.artifacts[0]?.versions[2]?.answers).toEqual({});
+      expect((yield* h.service.artifactList({ threadId }))[0]?.unansweredQuestions).toBe(1);
       expect(
         (yield* h.service.artifactRead({ threadId, id: "plan", version: 1 })).answers.mode?.notes,
       ).toBe("Private note");

@@ -85,6 +85,9 @@ it.effect("parses Bitwing state labels and workflow dispositions from CLI fixtur
     yield* TestClock.adjust("31 seconds");
     const cancelled = yield* h.tracker.get("BW-42");
     expect(cancelled?.terminal).toBe(true);
+    h.output(JSON.stringify(ticket));
+    expect((yield* h.tracker.get("BW-42"))?.terminal).toBe(true);
+    expect((yield* h.tracker.get("BW-42", true))?.terminal).toBe(false);
     expect(cancelled?.workflow?.find((step) => step.stage === "acme/app / Release")?.done).toBe(
       false,
     );

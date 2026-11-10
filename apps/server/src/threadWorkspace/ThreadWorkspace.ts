@@ -241,6 +241,19 @@ const make = Effect.gen(function* () {
       )
         return yield* invalid("Artifact link does not exist in this thread.");
     }
+    const ticketsToCheck = [
+      ...new Set(
+        next.items
+          .filter(
+            (item) =>
+              item.state === "done" && current.items.find((entry) => entry.id === item.id) !== item,
+          )
+          .flatMap((item) =>
+            item.links.filter((link) => link.type === "ticket").map((link) => link.target),
+          ),
+      ),
+    ];
+    yield* Effect.forEach(ticketsToCheck, (key) => tracker.get(key, true), { concurrency: 2 });
     const live = yield* enrich(next);
     for (const item of live.items)
       if (item.state === "done") {
@@ -550,7 +563,7 @@ const make = Effect.gen(function* () {
           text: records
             .map(
               (record) =>
-                `[${version.title}](${formatComposerContextHref("artifact-answer", record.contextId)})`,
+                `[${record.label}](${formatComposerContextHref("artifact-answer", record.contextId)})`,
             )
             .join("\n\n"),
           context: { version: 1, records },
