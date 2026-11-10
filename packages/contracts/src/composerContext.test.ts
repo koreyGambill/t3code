@@ -14,6 +14,17 @@ const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
 const base = { version: 1, contextId: "ctx_1" } as const;
 
 const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<string, unknown>> = {
+  "artifact-answer": {
+    ...base,
+    kind: "artifact-answer",
+    label: "Architecture answer",
+    artifactId: "architecture",
+    title: "Architecture",
+    artifactVersion: 2,
+    question: "Which store?",
+    choice: "SQLite",
+    note: "Keep it local.",
+  },
   image: {
     ...base,
     kind: "image",

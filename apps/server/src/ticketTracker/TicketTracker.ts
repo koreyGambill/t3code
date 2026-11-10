@@ -57,12 +57,6 @@ export class TicketTracker extends Context.Service<
   }
 >()("t3/ticketTracker/TicketTracker") {}
 
-/** Link only a single distinct provider key; repeated mentions do not make it ambiguous. */
-export function inferTicketKey(title: string, source: string): string | undefined {
-  const keys = [...new Set(`${title}\n${source}`.match(/\bBW-\d+\b/g) ?? [])];
-  return keys.length === 1 ? keys[0] : undefined;
-}
-
 const make = Effect.gen(function* () {
   const processes = yield* ProcessRunner.ProcessRunner;
   const run = Effect.fn("TicketTracker.bitwing")(function* (args: ReadonlyArray<string>) {
@@ -94,6 +88,7 @@ const make = Effect.gen(function* () {
       key,
       title: ticket.title,
       stage: ticket.workflow_metadata.label,
+      terminal: ticket.workflow_metadata.terminal ?? false,
       url: url.href,
       ...(Option.isSome(workflow)
         ? {

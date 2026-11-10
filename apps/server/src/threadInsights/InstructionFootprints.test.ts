@@ -60,7 +60,7 @@ it.effect(
         providerTurnOrdinal: 1,
         attemptId: "attempt/one",
         source: "actual test payload",
-        injectedTools: ["t3_context_read", "thread_workspace_read"],
+        injectedTools: ["t3_context_read", "list_read"],
         instructionSources: [source],
         entries,
       });
@@ -100,7 +100,7 @@ it.effect(
       ).toHaveLength(64);
       expect(saved.find((item) => item.attemptId === "attempt/one")?.injectedTools).toEqual([
         "t3_context_read",
-        "thread_workspace_read",
+        "list_read",
       ]);
       expect(saved.find((item) => item.attemptId === "attempt/two")).toMatchObject({
         injectedToolCount: 300,
@@ -113,7 +113,7 @@ it.effect(
       expect(saved[0]?.parts.reduce((sum, part) => sum + part.bytes, 0)).toBe(
         Buffer.byteLength(orchestration + secretText),
       );
-      expect(saved[0]?.parts.some((part) => part.label === "Workspace")).toBe(true);
+      expect(saved[0]?.parts.some((part) => part.label === "Thread list and artifacts")).toBe(true);
       expect(saved[0]?.parts.filter((part) => part.category === "custom")).toMatchObject([
         { bytes: Buffer.byteLength(secretText) },
       ]);

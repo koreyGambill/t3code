@@ -75,6 +75,7 @@ export * from "./clientRpcPermissions.ts";
 
 export * from "./reviewArtifacts.ts";
 export * from "./threadWorkspace.ts";
+export * from "./artifactQuestions.ts";
 
 export * from "./threadNotes.ts";
 export * from "./threadInsights.ts";

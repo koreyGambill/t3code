@@ -62,6 +62,7 @@ it.effect("parses Bitwing state labels and workflow dispositions from CLI fixtur
       key: "BW-42",
       title: "Example ticket",
       stage: "in flight",
+      terminal: false,
       url: "https://tracker.example.com/tasks/BW-42",
       workflow: [
         {
@@ -83,6 +84,7 @@ it.effect("parses Bitwing state labels and workflow dispositions from CLI fixtur
     );
     yield* TestClock.adjust("31 seconds");
     const cancelled = yield* h.tracker.get("BW-42");
+    expect(cancelled?.terminal).toBe(true);
     expect(cancelled?.workflow?.find((step) => step.stage === "acme/app / Release")?.done).toBe(
       false,
     );

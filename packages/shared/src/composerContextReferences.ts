@@ -331,6 +331,15 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       }
       return lines.join("\n");
     }
+    case "artifact-answer":
+      return [
+        `artifactId: ${record.artifactId}`,
+        `title: ${record.title}`,
+        `version: ${record.artifactVersion}`,
+        `question: ${record.question}`,
+        `choice: ${record.choice}`,
+        `note: ${record.note}`,
+      ].join("\n");
     case "mention":
       return `path: ${record.path}`;
     case "skill":

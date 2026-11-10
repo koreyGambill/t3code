@@ -1,0 +1,180 @@
+{
+  "threadId": "thread-fixture",
+  "revision": 7,
+  "groups": [
+    {
+      "id": "fixture-id",
+      "parentId": null,
+      "title": "fixture-title"
+    }
+  ],
+  "questions": [
+    {
+      "id": "question-1",
+      "ref": "fixture-ref",
+      "groupId": "fixture-groupId",
+      "title": "Choose sample mode",
+      "details": "Choose one",
+      "options": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "description": "Fast mode"
+        },
+        {
+          "id": "safe",
+          "label": "Safe",
+          "description": "Safe mode"
+        }
+      ],
+      "recommendedOptionIds": ["safe"],
+      "recommendation": "fixture-recommendation",
+      "multiSelect": false
+    },
+    {
+      "id": "question-2",
+      "ref": "fixture-ref",
+      "groupId": "fixture-groupId",
+      "title": "Choose draft mode",
+      "details": "Choose one",
+      "options": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "description": "Fast mode"
+        },
+        {
+          "id": "safe",
+          "label": "Safe",
+          "description": "Safe mode"
+        }
+      ],
+      "recommendedOptionIds": ["safe"],
+      "recommendation": "fixture-recommendation",
+      "multiSelect": false
+    }
+  ],
+  "actionItems": [
+    {
+      "id": "action-1",
+      "ref": "fixture-ref",
+      "groupId": "fixture-groupId",
+      "title": "Review sample",
+      "details": "fixture-details",
+      "status": "open"
+    }
+  ],
+  "designDocuments": [
+    {
+      "id": "design-1",
+      "ref": "fixture-ref",
+      "groupId": "fixture-groupId",
+      "title": "Sample design",
+      "markdown": "# Sample design",
+      "html": null
+    }
+  ],
+  "agentWork": [
+    {
+      "id": "work-1",
+      "ref": "fixture-ref",
+      "title": "Implement sample",
+      "status": "done",
+      "remaining": "Remaining validation",
+      "source": "Original work source",
+      "details": "Implementation details",
+      "changed": "Changed parser",
+      "qaSteps": "Open sample",
+      "checks": "Two tests passed",
+      "userQa": "pending",
+      "userQaNote": "QA needs mobile",
+      "completedAt": "2026-11-01T00:00:00.000Z",
+      "recordedByThreadId": "original-author-thread",
+      "ticket": "BW-1"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "fixture-id",
+      "ref": "fixture-ref",
+      "workId": "work-1",
+      "verifier": "reviewer",
+      "method": "executed",
+      "details": "Verified sample behavior",
+      "testedRevision": "abc123",
+      "result": "partial",
+      "gaps": "Mobile untested",
+      "evidence": "/evidence/sample.txt",
+      "at": "2026-11-01T00:00:00.000Z",
+      "recordedBy": "agent",
+      "recordedByThreadId": "fixture-recordedByThreadId"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "fixture-id",
+      "ref": "fixture-ref",
+      "groupId": "fixture-groupId",
+      "title": "fixture-title",
+      "rationale": "fixture-rationale",
+      "decidedBy": "user",
+      "status": "accepted",
+      "source": "fixture-source",
+      "recordedBy": "agent"
+    }
+  ],
+  "contextItems": [
+    {
+      "id": "fixture-id",
+      "ref": "fixture-ref",
+      "groupId": "fixture-groupId",
+      "category": "preference",
+      "title": "fixture-title",
+      "details": "fixture-details",
+      "source": "fixture-source",
+      "recordedBy": "agent"
+    }
+  ],
+  "designNotes": "",
+  "summaryNotes": "Sample summary",
+  "childPreamble": "Follow sample constraints",
+  "relatedThreads": [],
+  "markAnnotations": [
+    {
+      "url": "fixture-url",
+      "description": "fixture-description"
+    }
+  ],
+  "userDraft": {
+    "questionAnswers": {
+      "question-1": {
+        "selectedOptionIds": ["safe"],
+        "notes": "Submitted note"
+      },
+      "question-2": {
+        "selectedOptionIds": ["fast"],
+        "notes": "Private draft note"
+      }
+    },
+    "actionNotes": {
+      "action-1": "Private action note"
+    }
+  },
+  "submissions": [
+    {
+      "key": "submission-1",
+      "itemIds": ["question-1"],
+      "messageId": "message-1",
+      "submittedAt": "2026-11-02T00:00:00.000Z",
+      "markdown": "[Sample](t3-context://v1/thread/workspace-question-1)\nQuestion: Choose sample mode\nAnswer: Safe\nNotes: Submitted note"
+    },
+    {
+      "key": "submission-2",
+      "itemIds": ["question-2"],
+      "messageId": "message-2",
+      "submittedAt": "2026-11-02T00:00:00.000Z",
+      "markdown": "[Draft](t3-context://v1/thread/workspace-question-2)\nQuestion: Choose draft mode\nAnswer: Fast\nNotes: Private draft note expanded before edit"
+    }
+  ],
+  "updatedAt": "2026-11-01T00:00:00.000Z"
+}

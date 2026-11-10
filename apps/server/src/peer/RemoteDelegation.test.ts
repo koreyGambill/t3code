@@ -37,6 +37,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -492,7 +493,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
   });
   return Layer.merge(
-    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
+    McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
+    ),
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -598,7 +601,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-      Layer.provide(ThreadWorkspace.layerTest),
+      Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
 
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(

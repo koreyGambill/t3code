@@ -135,13 +135,13 @@ export function projectLoadEvent(
       )
         label = item.input.skill;
     } else if (
-      /read.*resource|resource.*read|t3_(?:thread_read|context_read)|thread_workspace_read|skills[._/].*read/i.test(
+      /read.*resource|resource.*read|t3_(?:thread_read|context_read)|list_read|artifact_read|skills[._/].*read/i.test(
         toolName,
       )
     ) {
       kind = "resource";
       label = toolName;
-      if (/t3_(?:thread_read|context_read)|thread_workspace_read/.test(toolName)) {
+      if (/t3_(?:thread_read|context_read)|list_read|artifact_read/.test(toolName)) {
         const target =
           typeof item.input === "object" &&
           item.input !== null &&

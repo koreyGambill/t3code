@@ -1,4 +1,5 @@
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as MonitoringFollowup from "./MonitoringFollowup.ts";
 import * as MonitoringSnapshot from "./MonitoringSnapshot.ts";
@@ -168,7 +169,7 @@ it.effect("keeps an alert without waking idle or unsupported agents and steers a
     const status = yield* Ref.make("idle");
     const sends = yield* Ref.make<ThreadManagement.ThreadManagementSendInput[]>([]);
     const layer = MonitoringDelivery.layer.pipe(
-      Layer.provide(ThreadWorkspace.layerTest),
+      Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getProjectThreadRecords: () =>
@@ -453,7 +454,7 @@ it.effect("reassesses from a fresh snapshot and rejects citations outside it", (
 it.effect("retries a context proposal after a concurrent Workspace edit", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
-    const workspaceLayer = ThreadWorkspace.layerTest;
+    const workspaceLayer = Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest);
     const layer = MonitoringDelivery.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -463,7 +464,7 @@ it.effect("retries a context proposal after a concurrent Workspace edit", () =>
               const workspace = yield* ThreadWorkspace.ThreadWorkspace;
               return {
                 ...workspace,
-                mutate: (input) =>
+                update: (input) =>
                   Ref.updateAndGet(attempts, (n) => n + 1).pipe(
                     Effect.flatMap((n) =>
                       n === 1
@@ -476,9 +477,8 @@ it.effect("retries a context proposal after a concurrent Workspace edit", () =>
                           )
                         : workspace.get({ threadId: input.threadId }).pipe(
                             Effect.map((current) => ({
-                              threadId: input.threadId,
+                              ...current,
                               revision: current.revision + 1,
-                              groups: current.groups,
                               items: [],
                             })),
                           ),

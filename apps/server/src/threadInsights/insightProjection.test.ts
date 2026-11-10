@@ -62,13 +62,15 @@ describe("load event projection", () => {
         projectLoadEvent({ ...base, type: "command_execution", input: command, output: "notes" }),
       ).toMatchObject({ kind: "knowledge", evidence: "inferred", label: command });
     }
-    expect(
-      projectLoadEvent({
-        ...read,
-        toolName: "mcp__t3_code__thread_workspace_read",
-        input: { threadId: "other" },
-      }),
-    ).toMatchObject({ kind: "resource", label: "mcp__t3_code__thread_workspace_read other" });
+    for (const toolName of ["mcp__t3_code__list_read", "mcp__t3_code__artifact_read"]) {
+      expect(
+        projectLoadEvent({
+          ...read,
+          toolName,
+          input: { threadId: "other" },
+        }),
+      ).toMatchObject({ kind: "resource", label: `${toolName} other` });
+    }
     expect(projectLoadEvent({ ...read, toolName: "write_file" })).toBeNull();
     for (const [input, path] of [
       ["/usr/bin/zsh -lc 'cat /repo/AGENTS.md'", "/repo/AGENTS.md"],

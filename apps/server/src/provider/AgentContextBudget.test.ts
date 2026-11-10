@@ -27,6 +27,7 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ThreadSearch } from "../orchestration-v2/ThreadSearch.ts";
+import { ThreadMarks } from "../threadWorkspace/ThreadMarks.ts";
 import { ThreadWorkspace } from "../threadWorkspace/ThreadWorkspace.ts";
 import { ReviewArtifacts } from "../reviewArtifacts/ReviewArtifacts.ts";
 import { PeerForwarding } from "../peer/PeerForwarding.ts";
@@ -80,6 +81,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ReviewArtifacts)({}),
   Layer.mock(ThreadWorkspace)({}),
+  Layer.mock(ThreadMarks)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(StatusSources)({}),
   Layer.mock(SecretRequests)({}),

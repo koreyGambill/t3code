@@ -15,7 +15,12 @@ import {
   MonitoringRespondInput,
   MonitoringRespondResult,
 } from "./monitoring.ts";
-import { ThreadMark, ThreadMarksGetInput, ThreadMarksError } from "./threadMarks.ts";
+import {
+  ThreadMark,
+  ThreadMarksGetInput,
+  ThreadMarksAnnotateInput,
+  ThreadMarksError,
+} from "./threadMarks.ts";
 import {
   ThreadInsights,
   ThreadInsightsGetInput,
@@ -35,14 +40,18 @@ import {
 } from "./threadNotes.ts";
 import {
   ThreadWorkspace,
-  ThreadWorkspaceCounts,
-  ThreadWorkspaceListWorkInput,
-  ThreadWorkspaceWorkEntry,
   ThreadWorkspaceError,
   ThreadWorkspaceGetInput,
-  ThreadWorkspaceMutateInput,
-  ThreadWorkspaceSaveDraftInput,
-  ThreadWorkspaceSubmitInput,
+  ThreadListReadInput,
+  ThreadListEntry,
+  ThreadArtifactReadInput,
+  ThreadArtifactVersion,
+  ThreadArtifactMetadata,
+  ThreadListUpdateInput,
+  ThreadListRewriteInput,
+  ThreadArtifactWriteInput,
+  ThreadArtifactAnswerInput,
+  ThreadArtifactSubmitInput,
 } from "./threadWorkspace.ts";
 import {
   ReviewArtifact,
@@ -527,6 +536,7 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
   threadMarksGet: "threadMarks.get",
+  threadMarksAnnotate: "threadMarks.annotate",
   threadInsightsGet: "threadInsights.get",
   threadContextGet: "threadInsights.context",
   threadNotesGet: "threadNotes.get",
@@ -535,11 +545,14 @@ export const WS_METHODS = {
   threadNotesUpdateSettings: "threadNotes.updateSettings",
   threadNotesSendSelection: "threadNotes.sendSelection",
   threadWorkspaceGet: "threadWorkspace.get",
-  threadWorkspaceCounts: "threadWorkspace.counts",
-  threadWorkspaceListWork: "threadWorkspace.listWork",
-  threadWorkspacePatch: "threadWorkspace.patch",
-  threadWorkspaceSaveDraft: "threadWorkspace.saveDraft",
-  threadWorkspaceSubmit: "threadWorkspace.submit",
+  threadListRead: "threadWorkspace.listRead",
+  threadArtifactRead: "threadWorkspace.artifactRead",
+  threadArtifactList: "threadWorkspace.artifactList",
+  threadListUpdate: "threadWorkspace.update",
+  threadListRewrite: "threadWorkspace.rewrite",
+  threadArtifactWrite: "threadWorkspace.artifactWrite",
+  threadArtifactAnswer: "threadWorkspace.artifactAnswer",
+  threadArtifactSubmit: "threadWorkspace.artifactSubmit",
   reviewsCreate: "reviews.create",
   reviewsList: "reviews.list",
   reviewsGet: "reviews.get",
@@ -1534,6 +1547,12 @@ const WsThreadMarksGetRpc = Rpc.make(WS_METHODS.threadMarksGet, {
   error: Schema.Union([ThreadMarksError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadMarksAnnotateRpc = Rpc.make(WS_METHODS.threadMarksAnnotate, {
+  payload: ThreadMarksAnnotateInput,
+  success: Schema.Array(ThreadMark),
+  error: Schema.Union([ThreadMarksError, EnvironmentAuthorizationError]),
+});
+
 const WsThreadContextGetRpc = Rpc.make(WS_METHODS.threadContextGet, {
   payload: ThreadContextGetInput,
   success: ThreadContextResult,
@@ -1572,14 +1591,19 @@ const WsThreadNotesSendSelectionRpc = Rpc.make(WS_METHODS.threadNotesSendSelecti
   error: Schema.Union([ThreadNotesError, EnvironmentAuthorizationError]),
 });
 
-const WsThreadWorkspaceListWorkRpc = Rpc.make(WS_METHODS.threadWorkspaceListWork, {
-  payload: ThreadWorkspaceListWorkInput,
-  success: Schema.Array(ThreadWorkspaceWorkEntry),
+const WsThreadListReadRpc = Rpc.make(WS_METHODS.threadListRead, {
+  payload: ThreadListReadInput,
+  success: Schema.Array(ThreadListEntry),
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
-const WsThreadWorkspaceCountsRpc = Rpc.make(WS_METHODS.threadWorkspaceCounts, {
+const WsThreadArtifactReadRpc = Rpc.make(WS_METHODS.threadArtifactRead, {
+  payload: ThreadArtifactReadInput,
+  success: ThreadArtifactVersion,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+const WsThreadArtifactListRpc = Rpc.make(WS_METHODS.threadArtifactList, {
   payload: ThreadWorkspaceGetInput,
-  success: ThreadWorkspaceCounts,
+  success: Schema.Array(ThreadArtifactMetadata),
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
 const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
@@ -1587,19 +1611,28 @@ const WsThreadWorkspaceGetRpc = Rpc.make(WS_METHODS.threadWorkspaceGet, {
   success: ThreadWorkspace,
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
-const WsThreadWorkspacePatchRpc = Rpc.make(WS_METHODS.threadWorkspacePatch, {
-  payload: ThreadWorkspaceMutateInput,
+const WsThreadListUpdateRpc = Rpc.make(WS_METHODS.threadListUpdate, {
+  payload: ThreadListUpdateInput,
   success: ThreadWorkspace,
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
-
-const WsThreadWorkspaceSaveDraftRpc = Rpc.make(WS_METHODS.threadWorkspaceSaveDraft, {
-  payload: ThreadWorkspaceSaveDraftInput,
+const WsThreadListRewriteRpc = Rpc.make(WS_METHODS.threadListRewrite, {
+  payload: ThreadListRewriteInput,
   success: ThreadWorkspace,
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
-const WsThreadWorkspaceSubmitRpc = Rpc.make(WS_METHODS.threadWorkspaceSubmit, {
-  payload: ThreadWorkspaceSubmitInput,
+const WsThreadArtifactWriteRpc = Rpc.make(WS_METHODS.threadArtifactWrite, {
+  payload: ThreadArtifactWriteInput,
+  success: ThreadWorkspace,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+const WsThreadArtifactAnswerRpc = Rpc.make(WS_METHODS.threadArtifactAnswer, {
+  payload: ThreadArtifactAnswerInput,
+  success: ThreadWorkspace,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+const WsThreadArtifactSubmitRpc = Rpc.make(WS_METHODS.threadArtifactSubmit, {
+  payload: ThreadArtifactSubmitInput,
   success: ThreadWorkspace,
   error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
@@ -2570,6 +2603,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
   WsThreadMarksGetRpc,
+  WsThreadMarksAnnotateRpc,
   WsThreadInsightsGetRpc,
   WsThreadContextGetRpc,
   WsThreadNotesGetRpc,
@@ -2578,11 +2612,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadNotesUpdateSettingsRpc,
   WsThreadNotesSendSelectionRpc,
   WsThreadWorkspaceGetRpc,
-  WsThreadWorkspaceCountsRpc,
-  WsThreadWorkspaceListWorkRpc,
-  WsThreadWorkspacePatchRpc,
-  WsThreadWorkspaceSaveDraftRpc,
-  WsThreadWorkspaceSubmitRpc,
+  WsThreadListReadRpc,
+  WsThreadArtifactReadRpc,
+  WsThreadArtifactListRpc,
+  WsThreadListUpdateRpc,
+  WsThreadListRewriteRpc,
+  WsThreadArtifactWriteRpc,
+  WsThreadArtifactAnswerRpc,
+  WsThreadArtifactSubmitRpc,
   WsReviewsCreateRpc,
   WsReviewsListRpc,
   WsReviewsGetRpc,

@@ -39,15 +39,21 @@ describe("RPC authorization scopes", () => {
   it("keeps review drafts and sends under their read and operate scopes", () => {
     for (const method of [
       WS_METHODS.threadWorkspaceGet,
-      WS_METHODS.threadWorkspaceCounts,
-      WS_METHODS.threadWorkspaceListWork,
+      WS_METHODS.threadListRead,
+      WS_METHODS.threadArtifactRead,
+      WS_METHODS.threadArtifactList,
       WS_METHODS.reviewsGet,
       WS_METHODS.reviewsList,
       WS_METHODS.reviewsDue,
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     for (const method of [
-      WS_METHODS.threadWorkspacePatch,
+      WS_METHODS.threadListUpdate,
+      WS_METHODS.threadListRewrite,
+      WS_METHODS.threadArtifactWrite,
+      WS_METHODS.threadArtifactAnswer,
+      WS_METHODS.threadArtifactSubmit,
+      WS_METHODS.threadMarksAnnotate,
       WS_METHODS.reviewsCreate,
       WS_METHODS.reviewsSave,
       WS_METHODS.reviewsSubmit,

@@ -42,11 +42,12 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-  Layer.provide(ThreadWorkspace.layerTest),
+  Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 

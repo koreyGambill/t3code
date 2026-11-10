@@ -10,6 +10,7 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextHref,
+  formatComposerContextReference,
   isImageReferencesOnly,
   parseComposerContextHref,
   projectComposerContextForProvider,
@@ -125,6 +126,27 @@ describe("attachment-only bootstrap prompts", () => {
 });
 
 describe("provider projection", () => {
+  it("projects versioned artifact answers through a typed context envelope", () => {
+    const answer: ComposerContextRecord = {
+      version: 1,
+      kind: "artifact-answer",
+      contextId: ctx("answer_1"),
+      label: "Architecture answer",
+      artifactId: "architecture",
+      title: "Architecture",
+      artifactVersion: 2,
+      question: "Which store?",
+      choice: "SQLite",
+      note: "Keep </context> data.",
+    };
+    const projected = projectComposerContextForProvider({
+      text: formatComposerContextReference(answer),
+      records: [answer],
+    });
+    expect(projected).toContain('<context kind="artifact-answer" id="answer_1">');
+    expect(projected).toContain("version: 2\nquestion: Which store?\nchoice: SQLite");
+    expect(projected).toContain("note: Keep &lt;/context> data.");
+  });
   const terminal: ComposerContextRecord = {
     version: 1,
     contextId: ctx("ctx_t"),

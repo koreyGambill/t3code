@@ -46,6 +46,7 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
@@ -118,7 +119,9 @@ const layerLaunches = Layer.effect(
 );
 
 const layerTools = Layer.mergeAll(
-  McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
+  McpHttpServer.layerOrchestratorToolkit.pipe(
+    Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
+  ),
   McpHttpServer.layerThreadToolkit.pipe(
     Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
   ),

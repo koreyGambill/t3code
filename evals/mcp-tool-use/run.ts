@@ -1260,29 +1260,38 @@ export const t3Default = (
     }
     case "html_preview":
       return { width: 728, contentHeight: 560, capturedHeight: 560, consoleMessages: [] };
-    case "thread_workspace_read":
-    case "thread_workspace_update":
+    case "list_read":
+      return [
+        {
+          threadId: input.threadId ?? "current-thread",
+          threadTitle: "Example",
+          revision: 7,
+          items: [],
+          summaryNotes: "",
+          childPreamble: "",
+        },
+      ];
+    case "list_update":
+    case "list_rewrite":
+    case "artifact_write":
       return {
         threadId: input.threadId ?? "current-thread",
-        revision: name === "thread_workspace_read" ? 0 : Number(input.expectedRevision) + 1,
-        groups: [{ id: "ungrouped", parentId: null, title: "Ungrouped" }],
+        revision: Number(input.expectedRevision) + 1,
         items: [],
-        ...(input.section === "design" ? { designDocuments: [] } : {}),
-        ...(input.section === "questions" ? { questions: [], submissions: [] } : {}),
-        ...(input.section === "actions" ? { actionItems: [], submissions: [] } : {}),
-        ...(input.section === "summary" ? { summaryNotes: "" } : {}),
+        artifacts: [],
+        summaryNotes: input.summaryNotes ?? "",
+        childPreamble: input.childPreamble ?? "",
+        updatedAt: "2026-01-01T00:00:00.000Z",
       };
-    case "review_create":
+    case "artifact_list":
+      return [];
+    case "artifact_read":
       return {
-        reviewId: "00000000-0000-4000-8000-000000000001",
-        threadId: input.threadId ?? "current-thread",
-      };
-    case "review_read":
-      return {
-        id: input.reviewId,
-        threadId: "current-thread",
-        content: { title: "Rollout choices", summary: "Review the rollout.", sections: [] },
-        lastSubmission: null,
+        version: input.version ?? 1,
+        title: "Design",
+        format: "markdown",
+        content: "Use gradual rollout.",
+        createdAt: "2026-01-01T00:00:00.000Z",
       };
     case "html_render":
       return {

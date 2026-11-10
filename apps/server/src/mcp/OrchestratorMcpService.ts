@@ -137,6 +137,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { summarizeThreadProgress } from "../peer/threadProgress.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
 import {
   describeCheckpointDrift,
@@ -1121,6 +1122,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const threadWorkspace = yield* ThreadWorkspace.ThreadWorkspace;
+  const threadMarks = yield* ThreadMarks.ThreadMarks;
   const withParentPreamble = Effect.fn("OrchestratorMcpService.withParentPreamble")(function* (
     parentThreadId: ThreadId,
     task: string,
@@ -1131,7 +1133,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((error) =>
           failure(
             "orchestration_error",
-            `Unable to read this thread's Workspace child preamble: ${error.message}`,
+            `Unable to read this thread's child preamble: ${error.message}`,
           ),
         ),
       );
@@ -1164,17 +1166,14 @@ const make = Effect.gen(function* () {
           ? { type: "checkpoint", checkpointId: selector.checkpointId }
           : { type: "latest_stable" };
     if (selector.mark !== undefined) {
-      const workspace = yield* threadWorkspace
+      const annotations = yield* threadMarks
         .get({ threadId: scope.thread.threadId })
         .pipe(
           Effect.mapError((error) =>
-            failure(
-              "orchestration_error",
-              `Unable to read this thread's Workspace: ${error.message}`,
-            ),
+            failure("orchestration_error", `Unable to read marks: ${error}`),
           ),
         );
-      const marks = workspace.markAnnotations.filter(
+      const marks = annotations.filter(
         (mark) =>
           mark.contextSource !== undefined &&
           (mark.url === selector.mark || mark.name === selector.mark),
@@ -1185,7 +1184,7 @@ const make = Effect.gen(function* () {
           "invalid_request",
           marks.length > 1
             ? `Several context marks are named "${selector.mark}". Pass the mark's url.`
-            : `No context mark "${selector.mark}" is in this thread's Workspace.`,
+            : `No context mark "${selector.mark}" is in this thread's marks.`,
         );
       }
       threadId = mark.threadId;
@@ -3866,6 +3865,7 @@ export const layer: Layer.Layer<
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | ThreadWorkspace.ThreadWorkspace
+  | ThreadMarks.ThreadMarks
   | GitVcsDriver.GitVcsDriver
   | ProviderRegistry.ProviderRegistry
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2

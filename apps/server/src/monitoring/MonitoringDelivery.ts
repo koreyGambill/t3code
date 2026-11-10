@@ -56,21 +56,20 @@ export const layer = Layer.effect(
             !profile.targets.threadIds.includes(finding.threadId))
         )
           return { delivery: "alert_only", messageId: null };
-        const source = `Context review ${finding.id}`;
+        const id = `context-review:${finding.id}`;
         yield* Effect.gen(function* () {
           const current = yield* workspace.get({ threadId: finding.threadId });
-          if (current.decisions.some((decision) => decision.source === source)) return;
-          yield* workspace.mutate({
+          if (current.items.some((item) => item.id === id)) return;
+          yield* workspace.update({
             threadId: finding.threadId,
             expectedRevision: current.revision,
             changes: [
               {
-                kind: "decision",
-                title: finding.summary,
-                rationale: `${finding.detail}\n\nEvidence:\n${finding.evidence.map((item) => `${item.messageId}: ${item.excerpt}`).join("\n")}\n\nAdvisory from ${profile.modelSelection.model}. Accept or reject before changing instructions, skills or knowledge.`,
-                status: "proposed",
-                decidedBy: "agent",
-                source,
+                id,
+                text: finding.summary,
+                owner: "you",
+                state: "open",
+                details: `${finding.detail}\n\nEvidence:\n${finding.evidence.map((item) => `${item.messageId}: ${item.excerpt}`).join("\n")}\n\nAdvisory from ${profile.modelSelection.model}. Accept or reject before changing instructions, skills or knowledge.`,
               },
             ],
           });

@@ -1,12 +1,21 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  RunId,
   EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   MessageId,
   type OrchestrationV2ConversationMessage,
+  type ThreadMarkAnnotation,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as ServerConfig from "../config.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -60,9 +69,11 @@ const message = (id: string, text: string, date: string): OrchestrationV2Convers
   createdAt: DateTime.makeUnsafe(date),
   updatedAt: DateTime.makeUnsafe(date),
 });
-const getMarks = (deleted: boolean) =>
+const getMarksWithConfig = (deleted: boolean, annotation?: ThreadMarkAnnotation) =>
   ThreadMarks.ThreadMarks.pipe(
-    Effect.flatMap((service) => service.get({ threadId })),
+    Effect.flatMap((service) =>
+      annotation ? service.annotate({ threadId, annotation }) : service.get({ threadId }),
+    ),
     Effect.provide(
       ThreadMarks.layer.pipe(
         Layer.provide(
@@ -92,6 +103,25 @@ const getMarks = (deleted: boolean) =>
             getThreadRecords: () =>
               Effect.succeed({
                 ...projection,
+                runs: [
+                  {
+                    id: RunId.make("finished-run"),
+                    status: "completed" as const,
+                    threadId,
+                    ordinal: 1,
+                    providerInstanceId: projection.thread.providerInstanceId,
+                    modelSelection: projection.thread.modelSelection,
+                    providerThreadId: null,
+                    userMessageId: MessageId.make("message"),
+                    rootNodeId: null,
+                    activeAttemptId: null,
+                    requestedAt: at,
+                    startedAt: null,
+                    completedAt: at,
+                    checkpointId: null,
+                    contextHandoffId: null,
+                  },
+                ],
                 thread: { ...projection.thread, deletedAt: deleted ? at : null },
                 messages: [
                   message(
@@ -111,6 +141,15 @@ const getMarks = (deleted: boolean) =>
       ),
     ),
   );
+
+const getMarks = (deleted: boolean) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "thread-marks-test-" });
+    return yield* getMarksWithConfig(deleted).pipe(
+      Effect.provide(ServerConfig.layerTest(root, root)),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 it.effect(
   "derives compact marks across full message history and keeps the earliest duplicate timestamp",
@@ -137,4 +176,85 @@ it.effect("refuses deleted thread data", () =>
     const result = yield* Effect.result(getMarks(true));
     expect(Result.isFailure(result) && result.failure.message).toBe("This thread was deleted.");
   }),
+);
+
+it.effect(
+  "reads legacy annotations before migration and retains their context point outside Workspace",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "thread-marks-migration-" });
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const directory = path.join(config.stateDir, "thread-workspaces");
+        const file = path.join(
+          directory,
+          `${NodeCrypto.createHash("sha256").update(threadId).digest("hex")}.json`,
+        );
+        const annotation = {
+          url: "https://notion.so/repeated",
+          description: "Useful context",
+          name: "Before implementation",
+          contextSource: {
+            threadId,
+            runId: RunId.make("finished-run"),
+            checkpointId: CheckpointId.make("checkpoint"),
+          },
+        };
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(
+          file,
+          JSON.stringify({
+            formatVersion: 2,
+            workspace: { threadId, markAnnotations: [annotation] },
+          }),
+        );
+        expect(
+          (yield* getMarksWithConfig(false)).find((mark) => mark.url === annotation.url),
+        ).toMatchObject(annotation);
+        expect(
+          (yield* getMarksWithConfig(false, {
+            ...annotation,
+            description: "Annotated context",
+          })).find((mark) => mark.url === annotation.url)?.description,
+        ).toBe("Annotated context");
+        const persisted = { ...annotation, description: "Annotated context" };
+        yield* Effect.all(
+          [
+            getMarksWithConfig(false, {
+              url: "https://notion.so/old",
+              description: "First",
+              name: "First name",
+            }),
+            getMarksWithConfig(false, {
+              url: "https://github.com/new",
+              description: "Second",
+              name: "Second name",
+            }),
+            ThreadMarks.migrateAnnotations(
+              threadId,
+              JSON.stringify({ workspace: { markAnnotations: [annotation] } }),
+            ),
+          ],
+          { concurrency: 2 },
+        );
+        const annotations = yield* ThreadMarks.readAnnotations(threadId);
+        expect(annotations).toEqual(
+          expect.arrayContaining([
+            persisted,
+            expect.objectContaining({ url: "https://notion.so/old", name: "First name" }),
+            expect.objectContaining({ url: "https://github.com/new", name: "Second name" }),
+          ]),
+        );
+        yield* fs.writeFileString(
+          file,
+          JSON.stringify({ formatVersion: 3, workspace: { threadId } }),
+        );
+        expect(yield* ThreadMarks.readAnnotations(threadId)).toEqual(annotations);
+        expect(
+          (yield* getMarksWithConfig(false)).find((mark) => mark.url === annotation.url),
+        ).toMatchObject(persisted);
+      }).pipe(Effect.provide(ServerConfig.layerTest(root, root)));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

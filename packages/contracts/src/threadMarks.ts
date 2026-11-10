@@ -1,10 +1,36 @@
 import * as Schema from "effect/Schema";
-import { ThreadId, IsoDateTime } from "./baseSchemas.ts";
+import {
+  ThreadId,
+  IsoDateTime,
+  RunId,
+  CheckpointId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { XwingEnvironmentId } from "./xwingEnvironments.ts";
 
+export const ThreadMarkAnnotation = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  description: Schema.String,
+  name: Schema.optional(TrimmedNonEmptyString),
+  contextSource: Schema.optional(
+    Schema.Struct({
+      threadId: ThreadId,
+      runId: RunId,
+      checkpointId: Schema.optional(CheckpointId),
+    }),
+  ),
+});
+export type ThreadMarkAnnotation = typeof ThreadMarkAnnotation.Type;
+export const ThreadMarksAnnotateInput = Schema.Struct({
+  threadId: ThreadId,
+  annotation: ThreadMarkAnnotation,
+});
+export type ThreadMarksAnnotateInput = typeof ThreadMarksAnnotateInput.Type;
 export const ThreadMark = Schema.Struct({
   /** A web URL, or for an in-app link a stable identifier to copy and search by. */
   url: Schema.String,
+  name: ThreadMarkAnnotation.fields.name,
+  contextSource: ThreadMarkAnnotation.fields.contextSource,
   service: Schema.String,
   timestamp: IsoDateTime,
   description: Schema.String,

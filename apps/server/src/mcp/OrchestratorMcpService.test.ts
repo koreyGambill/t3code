@@ -71,6 +71,7 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import { resolveRuntimeMode, withChildPreamble } from "./delegatedTaskModes.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -78,8 +79,9 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(ThreadMarks.layerTest),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-  Layer.provide(ThreadWorkspace.layerTest),
+  Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
@@ -1889,21 +1891,21 @@ describe("OrchestratorMcpService provider resolution", () => {
                 }),
               ),
               Layer.provide(
-                Layer.mock(ThreadWorkspace.ThreadWorkspace)({
-                  get: ({ threadId }) =>
-                    Effect.succeed({
-                      ...ThreadWorkspace.emptyWorkspace(threadId),
-                      markAnnotations: [
-                        {
-                          url: "t3-context-mark:scout",
-                          description: "",
-                          name: "scout final",
-                          contextSource: { threadId: scoutThreadId, runId: scoutRunId },
-                        },
-                      ],
-                    }),
+                Layer.mock(ThreadMarks.ThreadMarks)({
+                  get: () =>
+                    Effect.succeed([
+                      {
+                        url: "t3-context-mark:scout",
+                        description: "",
+                        service: "Mark",
+                        timestamp: "2026-11-09T00:00:00.000Z",
+                        name: "scout final",
+                        contextSource: { threadId: scoutThreadId, runId: scoutRunId },
+                      },
+                    ]),
                 }),
               ),
+              Layer.provide(ThreadWorkspace.layerTest),
               Layer.provide(layerDependencies),
             ),
           ),
@@ -2278,6 +2280,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         }).pipe(
           Effect.provide(
             OrchestratorMcpService.layer.pipe(
+              Layer.provide(ThreadMarks.layerTest),
               Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
               Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
               Layer.provide(
@@ -3140,8 +3143,9 @@ describe("OrchestratorMcpService provider resolution", () => {
       modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
+        Layer.provide(ThreadMarks.layerTest),
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-        Layer.provide(ThreadWorkspace.layerTest),
+        Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
         Layer.provide(
           Layer.mergeAll(

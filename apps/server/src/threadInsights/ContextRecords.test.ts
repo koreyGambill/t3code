@@ -63,7 +63,7 @@ it.effect(
         ["mcp-a", "mcp__t3_code__t3_thread_read", { threadId: "a" }],
         ["mcp-b", "mcp__t3_code__t3_thread_read", { threadId: "b" }],
         ["mcp-a-again", "mcp__t3_code__t3_thread_read", { threadId: "a" }],
-        ["ws-a", "mcp__t3_code__thread_workspace_read", { threadId: "a" }],
+        ["ws-a", "mcp__t3_code__list_read", { threadId: "a" }],
         ["uri-a", "mcp__resources__read_resource", { uri: "notes://latest" }],
         ["uri-b", "mcp__resources__read_resource", { uri: "notes://latest" }],
       ] as const) {
@@ -127,7 +127,7 @@ it.effect(
           expect.objectContaining({ label: "/repo/README.md", count: 3 }),
           expect.objectContaining({ label: "mcp__t3_code__t3_thread_read a", count: 2 }),
           expect.objectContaining({ label: "mcp__t3_code__t3_thread_read b", count: 1 }),
-          expect.objectContaining({ label: "mcp__t3_code__thread_workspace_read a", count: 1 }),
+          expect.objectContaining({ label: "mcp__t3_code__list_read a", count: 1 }),
         ]),
       );
       expect(

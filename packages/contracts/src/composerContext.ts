@@ -21,6 +21,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "element",
   "preview-annotation",
   "review-comment",
+  "artifact-answer",
   "mention",
   "skill",
   "thread",
@@ -189,6 +190,18 @@ export const ReviewCommentContextRecord = Schema.Struct({
 }).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 
+export const ArtifactAnswerContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("artifact-answer"),
+  artifactId: TrimmedNonEmptyString,
+  title: ShortString,
+  artifactVersion: PositiveInt,
+  question: Schema.String,
+  choice: Schema.String,
+  note: Schema.String,
+});
+export type ArtifactAnswerContextRecord = typeof ArtifactAnswerContextRecord.Type;
+
 export const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
@@ -206,8 +219,6 @@ export type SkillContextRecord = typeof SkillContextRecord.Type;
 export const ThreadContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("thread"),
-  workspaceItemId: Schema.optional(TrimmedNonEmptyString),
-  workspaceSection: Schema.optional(Schema.Literals(["questions", "actions", "design", "summary"])),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: ContextLabel,
@@ -253,6 +264,7 @@ export const KnownComposerContextRecord = Schema.Union([
   ElementContextRecord,
   PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
+  ArtifactAnswerContextRecord,
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,

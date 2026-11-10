@@ -1,59 +1,48 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  MessageId,
   ProviderInstanceId,
-  ReviewId,
   ThreadId,
-  type ReviewArtifact,
-  type ThreadWorkspace as ThreadWorkspaceDocument,
   ThreadWorkspaceError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
-
 import { ThreadWorkspace, emptyWorkspace } from "../../../threadWorkspace/ThreadWorkspace.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as ReviewArtifacts from "../../../reviewArtifacts/ReviewArtifacts.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as Invocation from "../../McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../../McpToolAccess.testkit.ts";
-
-const threadId = ThreadId.make("review-caller");
-const targetId = ThreadId.make("review-target");
-const reviewId = ReviewId.make("00000000-0000-4000-8000-000000000001");
-const content = { title: "Deployment choices", summary: "Choose a rollout.", sections: [] };
-const artifact: ReviewArtifact = {
-  id: reviewId,
-  threadId,
-  content,
-  revision: 1,
-  draft: { answers: {}, annotations: [], notes: "Unfinished private notes", remindAt: null },
-  lastSubmission: {
-    revision: 1,
-    messageId: MessageId.make("submitted-review"),
-    submittedAt: "2026-01-01T00:00:00.000Z",
-    markdown: "Approved the gradual rollout.",
-  },
-  createdAt: "2026-01-01T00:00:00.000Z",
-  updatedAt: "2026-01-01T00:00:00.000Z",
-};
-const workspace: ThreadWorkspaceDocument = {
+const threadId = ThreadId.make("list-caller");
+const targetId = ThreadId.make("list-target");
+const workspace = {
   ...emptyWorkspace(threadId),
-  threadId,
   revision: 3,
-  actionItems: [
+  artifacts: [
     {
-      id: "credentials",
-      title: "Provide credentials",
-      details: "Use the secure form.",
-      status: "deferred",
+      id: "design",
+      title: "Design",
+      format: "markdown" as const,
+      versions: [
+        {
+          version: 1,
+          title: "Design",
+          format: "markdown" as const,
+          content: "Saved",
+          questions: [],
+          answers: {
+            draft: { chosenOptionIds: [], notes: "Private", submittedAt: null },
+            submitted: {
+              chosenOptionIds: [],
+              notes: "Public",
+              submittedAt: "2026-01-01T00:00:00.000Z",
+            },
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
     },
   ],
-  designNotes: "Keep deployment reversible.",
-  summaryNotes: "Rollout implementation is in progress.",
-  updatedAt: "2026-01-01T00:00:00.000Z",
 };
 const scope: Invocation.McpInvocationScope = {
   environmentId: EnvironmentId.make("review-environment"),
@@ -100,55 +89,45 @@ const call = (
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(
           Layer.mock(ThreadWorkspace)({
-            query: ({ threadId }) =>
-              Effect.succeed({
-                threadId,
-                revision: workspace.revision,
-                groups: workspace.groups,
-                items: [
-                  {
-                    id: "credentials",
-                    ref: "A-001",
-                    groupId: "ungrouped",
-                    kind: "action",
-                    title: "Provide credentials",
-                  },
-                ],
-              }),
-            importReview: () => Effect.void,
-            mutate: ({ threadId, expectedRevision }) =>
-              expectedRevision === workspace.revision
-                ? Effect.succeed({
-                    threadId,
-                    revision: workspace.revision + 1,
-                    groups: workspace.groups,
-                    items: [
-                      {
-                        id: "credentials",
-                        ref: "A-001",
-                        groupId: "ungrouped",
-                        kind: "action",
-                        title: "Provide credentials",
-                      },
-                    ],
-                  })
+            listRead: ({ allThreads }) =>
+              Effect.succeed([
+                {
+                  threadId: allThreads ? targetId : threadId,
+                  threadTitle: "List",
+                  revision: 3,
+                  items: [],
+                  summaryNotes: "",
+                  childPreamble: "",
+                },
+              ]),
+            update: ({ threadId, expectedRevision }) =>
+              expectedRevision === 3
+                ? Effect.succeed({ ...workspace, threadId, revision: 4 })
                 : Effect.fail(
-                    new ThreadWorkspaceError({
-                      code: "conflict",
-                      message: "Workspace changed; read it again.",
-                    }),
+                    new ThreadWorkspaceError({ code: "conflict", message: "Read again." }),
                   ),
-          }),
-        ),
-        Layer.provide(
-          Layer.mock(ReviewArtifacts.ReviewArtifacts)({
-            create: (input) => Effect.succeed({ ...artifact, ...input }),
-            getPublished: () =>
+            rewrite: () => Effect.succeed({ ...workspace, revision: 4 }),
+            artifactWrite: () => Effect.succeed({ ...workspace, revision: 4 }),
+            artifactList: () =>
+              Effect.succeed([
+                {
+                  id: "design",
+                  title: "Design",
+                  format: "markdown",
+                  version: 2,
+                  unansweredQuestions: 0,
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                },
+              ]),
+            artifactRead: ({ version }) =>
               Effect.succeed({
-                id: reviewId,
-                threadId,
-                content,
-                lastSubmission: artifact.lastSubmission,
+                questions: [],
+                answers: {},
+                version: version ?? 2,
+                title: "Design",
+                format: "markdown",
+                content: "Saved",
+                createdAt: "2026-01-01T00:00:00.000Z",
               }),
           }),
         ),
@@ -156,7 +135,7 @@ const call = (
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) =>
               Effect.succeed(
-                missingOwner
+                missingOwner && id === targetId
                   ? null
                   : liveThreadShell(
                       id,
@@ -178,133 +157,107 @@ const failureCode = (result: McpSchema.CallToolResult) => {
   return result.isError && block?.type === "text" ? JSON.parse(block.text).code : undefined;
 };
 
-it.effect("publishes to the calling planning thread without exposing draft data", () =>
+it.effect("reads and updates the calling thread and reports revision conflicts", () =>
   Effect.gen(function* () {
-    const result = yield* call("review_create", { content });
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toEqual({ reviewId, threadId });
+    const read = yield* call("list_read", {});
+    expect(read.structuredContent).toMatchObject([{ threadId, revision: 3 }]);
+    const update = yield* call("list_update", { expectedRevision: 3, changes: [{ text: "Ship" }] });
+    expect(update.structuredContent).toMatchObject({ threadId, revision: 4 });
+    expect(failureCode(yield* call("list_update", { expectedRevision: 2, changes: [] }))).toBe(
+      "invalid_request",
+    );
   }),
 );
-
-it.effect("checks cross-thread mode limits before publication", () =>
+it.effect("checks every thread in an all-threads read", () =>
   Effect.gen(function* () {
-    const result = yield* call("review_create", { threadId: targetId, content });
-    expect(failureCode(result)).toBe("runtime_mode_escalation_denied");
+    const read = yield* call("list_read", { allThreads: true }, scope, true);
+    expect(failureCode(read)).toBe("thread_not_found");
+    expect(read.structuredContent).toBeUndefined();
   }),
 );
-
-it.effect("requires an outside client's target and publishes to that exact thread", () =>
+it.effect("checks cross-thread write mode limits and read-only access", () =>
   Effect.gen(function* () {
+    expect(
+      failureCode(
+        yield* call("list_rewrite", { threadId: targetId, expectedRevision: 3, items: [] }),
+      ),
+    ).toBe("runtime_mode_escalation_denied");
     const invocation: Invocation.McpInvocationScope = {
       ...scope,
       thread: undefined,
-      client: { sessionId: "client", label: "Publisher", access: "full-access" },
+      client: { sessionId: "reader", label: "Reader", access: "read-only" },
     };
-    const missingTarget = yield* call("review_create", { content }, invocation);
-    expect(failureCode(missingTarget)).toBe("target_required");
-    const published = yield* call("review_create", { threadId: targetId, content }, invocation);
-    expect(published.structuredContent).toEqual({ reviewId, threadId: targetId });
+    expect(
+      failureCode(
+        yield* call(
+          "artifact_write",
+          { threadId, expectedRevision: 3, title: "Design", format: "markdown", content: "Saved" },
+          invocation,
+        ),
+      ),
+    ).toBe("capability_denied");
+    expect(
+      (yield* call("artifact_read", { threadId, id: "design", version: 1 }, invocation))
+        .structuredContent,
+    ).toMatchObject({ version: 1, content: "Saved" });
   }),
 );
-
-it.effect("lets a read-only client read submitted feedback but refuses publication", () =>
+it.effect("exposes only the list and artifact schemas", () =>
   Effect.gen(function* () {
-    const invocation: Invocation.McpInvocationScope = {
-      ...scope,
-      thread: undefined,
-      client: { sessionId: "client", label: "Reader", access: "read-only" },
-    };
-    const published = yield* call("review_read", { reviewId }, invocation);
-    expect(published.structuredContent).toEqual({
-      id: reviewId,
-      threadId,
-      content,
-      lastSubmission: artifact.lastSubmission,
-    });
-    const create = yield* call("review_create", { threadId, content }, invocation);
-    expect(failureCode(create)).toBe("capability_denied");
-    const read = yield* call("thread_workspace_read", { threadId }, invocation);
-    expect(read.structuredContent).toMatchObject({ threadId, revision: 3 });
-    expect(read.structuredContent).not.toHaveProperty("userDraft");
-    const update = yield* call(
-      "thread_workspace_update",
-      { threadId, expectedRevision: 3, changes: [], summaryNotes: "Changed" },
-      invocation,
-    );
-    expect(failureCode(update)).toBe("capability_denied");
-  }),
+    const server = yield* McpServer.McpServer;
+    const tools = server.tools
+      .map(({ tool }) => tool)
+      .filter((tool) => /^(list_|artifact_|thread_workspace_|review_)/.test(tool.name));
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "artifact_list",
+      "artifact_read",
+      "artifact_write",
+      "list_read",
+      "list_rewrite",
+      "list_update",
+    ]);
+    expect(
+      tools.find((tool) => tool.name === "artifact_write")?.inputSchema.properties,
+    ).toHaveProperty("format");
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerReviewToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(Layer.mock(ThreadWorkspace)({})),
+        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+      ),
+    ),
+  ),
 );
 
-it.effect.each([
-  "review_create",
-  "review_read",
-  "thread_workspace_read",
-  "thread_workspace_update",
-])("requires orchestration access for %s", (name) =>
-  Effect.gen(function* () {
-    const result = yield* call(
-      name,
-      { content, reviewId, expectedRevision: 3, changes: [] },
-      { ...scope, capabilities: new Set() },
-    );
-    expect(failureCode(result)).toBe("capability_denied");
-  }),
-);
-
-it.effect("refuses reading a review whose owning thread is unavailable", () =>
-  Effect.gen(function* () {
-    const result = yield* call("review_read", { reviewId }, scope, true);
-    expect(failureCode(result)).toBe("thread_not_found");
-    expect(result.structuredContent).toBeUndefined();
-  }),
-);
-
-it.effect(
-  "reads and updates the calling planning thread without changing unrelated workspace fields",
-  () =>
+it.effect.each(["list_update", "list_rewrite", "artifact_write"])(
+  "%s omits artifact contents and answer history",
+  (name) =>
     Effect.gen(function* () {
-      const read = yield* call("thread_workspace_read", {});
-      expect(read.structuredContent).toMatchObject({ threadId, revision: 3 });
-      expect(read.structuredContent).not.toHaveProperty("userDraft");
-      const update = yield* call("thread_workspace_update", {
+      const result = yield* call(name, {
         expectedRevision: 3,
         changes: [],
-        summaryNotes: "Ready for testing.",
+        items: [],
+        title: "Design",
+        format: "markdown",
+        content: "Saved",
       });
-      expect(update.structuredContent).toMatchObject({ threadId, revision: 4 });
-      const conflict = yield* call("thread_workspace_update", {
-        expectedRevision: 2,
-        changes: [],
-        summaryNotes: "Stale.",
-      });
-      expect(failureCode(conflict)).toBe("invalid_request");
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).not.toHaveProperty("artifacts");
+      expect(result.structuredContent).not.toHaveProperty("answers");
+      expect(result.structuredContent).not.toHaveProperty("content");
+      if (name === "artifact_write")
+        expect(result.structuredContent).toEqual({
+          threadId,
+          revision: 4,
+          id: "design",
+          title: "Design",
+          format: "markdown",
+          version: 1,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          unansweredQuestions: 0,
+        });
+      else expect(result.structuredContent).toMatchObject({ threadId, revision: 4, items: [] });
+      expect(JSON.stringify(result.structuredContent)).not.toContain("Private");
     }),
-);
-
-it.effect("applies workspace target and ownership checks before access", () =>
-  Effect.gen(function* () {
-    const invocation: Invocation.McpInvocationScope = {
-      ...scope,
-      thread: undefined,
-      client: { sessionId: "client", label: "Publisher", access: "full-access" },
-    };
-    const missing = yield* call("thread_workspace_read", {}, invocation);
-    expect(failureCode(missing)).toBe("target_required");
-    const explicit = yield* call(
-      "thread_workspace_update",
-      { threadId: targetId, expectedRevision: 3, changes: [], summaryNotes: "Target summary." },
-      invocation,
-    );
-    expect(explicit.structuredContent).toMatchObject({ threadId: targetId, revision: 4 });
-    const escalated = yield* call("thread_workspace_update", {
-      threadId: targetId,
-      expectedRevision: 3,
-      changes: [],
-      summaryNotes: "Target summary.",
-    });
-    expect(failureCode(escalated)).toBe("runtime_mode_escalation_denied");
-    const unavailable = yield* call("thread_workspace_read", {}, scope, true);
-    expect(failureCode(unavailable)).toBe("thread_not_found");
-    expect(unavailable.structuredContent).toBeUndefined();
-  }),
 );

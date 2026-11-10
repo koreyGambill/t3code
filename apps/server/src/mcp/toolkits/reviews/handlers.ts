@@ -1,63 +1,107 @@
 import {
   OrchestratorMcpFailure,
-  type ReviewArtifactError,
   type ThreadWorkspaceError,
+  type ThreadWorkspace as WorkspaceDocument,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-
 import { ThreadWorkspace } from "../../../threadWorkspace/ThreadWorkspace.ts";
-import * as ReviewArtifacts from "../../../reviewArtifacts/ReviewArtifacts.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { readThread } from "../../threadAccess.ts";
+import { readCaller, readThread } from "../../threadAccess.ts";
 import { ReviewToolkit } from "./tools.ts";
 
-const failure = (error: ReviewArtifactError | ThreadWorkspaceError) =>
+const failure = (error: ThreadWorkspaceError) =>
   new OrchestratorMcpFailure({
     code: error.code === "storage" ? "orchestration_error" : "invalid_request",
     message: error.message,
   });
 
+const listResult = ({
+  threadId,
+  revision,
+  items,
+  summaryNotes,
+  childPreamble,
+}: WorkspaceDocument) => ({ threadId, revision, items, summaryNotes, childPreamble });
+
 export const layer = McpToolAccess.toLayer(ReviewToolkit, {
-  thread_workspace_read: McpToolAccess.reads((input) =>
+  list_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { projection } = yield* readThread(input.threadId);
       const workspace = yield* ThreadWorkspace;
+      if (input.allThreads) {
+        yield* readCaller();
+        const entries = yield* workspace.listRead(input).pipe(Effect.mapError(failure));
+        yield* Effect.forEach(entries, (entry) => readThread(entry.threadId));
+        return entries;
+      }
+      const { projection } = yield* readThread(input.threadId);
       return yield* workspace
-        .query({ ...input, threadId: projection.thread.id })
+        .listRead({ ...input, threadId: projection.thread.id })
         .pipe(Effect.mapError(failure));
     }),
   ),
-  thread_workspace_update: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    (input) =>
-      Effect.gen(function* () {
-        const { projection, caller } = yield* readThread(input.threadId);
-        const workspace = yield* ThreadWorkspace;
-        return yield* workspace
-          .mutate({ ...input, threadId: projection.thread.id }, caller?.id ?? null)
-          .pipe(Effect.mapError(failure));
-      }),
-  ),
-  review_create: McpToolAccess.writesThreads(
+  list_update: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
         const { projection } = yield* readThread(input.threadId);
-        const reviews = yield* ReviewArtifacts.ReviewArtifacts;
-        const review = yield* reviews
-          .create({ threadId: projection.thread.id, content: input.content })
-          .pipe(Effect.mapError(failure));
         const workspace = yield* ThreadWorkspace;
-        yield* workspace.importReview(review).pipe(Effect.mapError(failure));
-        return { reviewId: review.id, threadId: review.threadId };
+        return yield* workspace
+          .update({ ...input, threadId: projection.thread.id })
+          .pipe(Effect.map(listResult), Effect.mapError(failure));
       }),
   ),
-  review_read: McpToolAccess.reads((input) =>
+  list_rewrite: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const { projection } = yield* readThread(input.threadId);
+        const workspace = yield* ThreadWorkspace;
+        return yield* workspace
+          .rewrite({ ...input, threadId: projection.thread.id })
+          .pipe(Effect.map(listResult), Effect.mapError(failure));
+      }),
+  ),
+  artifact_write: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const { projection } = yield* readThread(input.threadId);
+        const workspace = yield* ThreadWorkspace;
+        const result = yield* workspace
+          .artifactWrite({ ...input, threadId: projection.thread.id })
+          .pipe(Effect.mapError(failure));
+        const artifact = result.artifacts.at(-1)!;
+        const version = artifact.versions.at(-1)!;
+        return {
+          threadId: result.threadId,
+          revision: result.revision,
+          id: artifact.id,
+          title: version.title,
+          format: version.format,
+          version: version.version,
+          createdAt: version.createdAt,
+          unansweredQuestions: version.questions.filter(
+            (question) => !version.answers[question.id]?.submittedAt,
+          ).length,
+        };
+      }),
+  ),
+  artifact_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const reviews = yield* ReviewArtifacts.ReviewArtifacts;
-      const review = yield* reviews.getPublished(input).pipe(Effect.mapError(failure));
-      yield* readThread(review.threadId);
-      return review;
+      const { projection } = yield* readThread(input.threadId);
+      const workspace = yield* ThreadWorkspace;
+      return yield* workspace
+        .artifactRead({ ...input, threadId: projection.thread.id })
+        .pipe(Effect.mapError(failure));
+    }),
+  ),
+  artifact_list: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId);
+      const workspace = yield* ThreadWorkspace;
+      return yield* workspace
+        .artifactList({ threadId: projection.thread.id })
+        .pipe(Effect.mapError(failure));
     }),
   ),
 });

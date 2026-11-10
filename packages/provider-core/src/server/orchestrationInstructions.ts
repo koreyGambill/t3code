@@ -9,16 +9,13 @@ T3 agent tool reference.
 
 - Native subagents (Claude \`Agent\`, foreground or \`run_in_background:true\`; Codex \`spawn_agent\`) show nested under this thread.
 - \`delegate_task\` starts a child T3 thread. \`orchestrator_capabilities\` lists providers, models and \`target.options\`. \`isolation:"worktree"\` prepares a child checkout; shell checkouts do not bind it. Unavailable targets fail.
-- Omitted \`context\` starts fresh. \`context.threadId\` selects its latest finished turn; \`context.runId\`, \`context.checkpointId\` or \`context.mark\` selects a point. Reuse the returned \`context.runId\` to fan out from a scout. Forking context does not rewind files. Workspace marks name points; \`childPreamble\` adds a shared child brief.
+- Omitted \`context\` starts fresh. \`context.threadId\` selects its latest finished turn; \`context.runId\`, \`context.checkpointId\` or \`context.mark\` selects a point. Reuse the returned \`context.runId\` to fan out from a scout. Forking context does not rewind files. Thread marks name points; \`childPreamble\` adds a shared child brief.
 - \`t3_thread_launch\` and \`create_threads\` make top-level threads in the sidebar. \`workspaceStrategy\` selects their checkout; without it they use the project root.`,
   `- Given a thread id, \`t3_thread_read\` it before you answer about it. Mention a thread by its \`link\`, verbatim, never a plain title or bare id.
 - Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` to a T3 tool to act there; ids are then that machine's, so pass \`threadId\`. An unlinked machine the user names: \`t3_environment_link\` with a \`hint\` from their words, not a pairing code in chat.
 - A login, token, PIN or pairing code only the user can give: \`request_secret\`. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
-  `### Thread workspace
-
-- Workspace is an intentional scratchboard, not automatic chat extraction. Use it when asked ("workspace this for later") or when durable questions/context help; ordinary questions can stay in chat.
-- Use \`thread_workspace_read\` for a compact index or scoped detail and \`thread_workspace_update\` for batch edits. You may organize nested groups and create/edit/move/remove questions, actions, and freeform design. IDs/refs stay stable. Recommendations are explicit, never preselected. Keep future work in Actions and whole-thread catch-up in Summary. Private user drafts/notes are unavailable until explicitly added to chat. Read only what you need; do not poll or repeat the workspace in chat.`,
+  `- Use \`list_read\`, \`list_update\` and \`list_rewrite\` for thread commitments and human tasks; \`artifact_write\`, \`artifact_read\` and \`artifact_list\` keep versioned Markdown or sandboxed HTML. Read only when needed; keep routine questions in chat.`,
   `### Visuals and preview
 
 - Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.

@@ -1,98 +1,82 @@
 import {
   OrchestratorMcpFailure,
-  ReviewContent,
-  ReviewId,
-  ReviewPublished,
   ThreadId,
-  WorkspaceQuery,
-  WorkspaceQueryResult,
-  ThreadWorkspaceMutateInput,
+  ThreadWorkspace,
+  ThreadListEntry,
+  ThreadListReadInput,
+  ThreadListUpdateInput,
+  ThreadListRewriteInput,
+  ThreadArtifactWriteInput,
+  ThreadArtifactReadInput,
+  ThreadArtifactVersion,
+  ThreadArtifactMetadata,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-
 import { ThreadWorkspace as ThreadWorkspaceService } from "../../../threadWorkspace/ThreadWorkspace.ts";
-import * as ReviewArtifacts from "../../../reviewArtifacts/ReviewArtifacts.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const dependencies = [
-  ReviewArtifacts.ReviewArtifacts,
   ThreadWorkspaceService,
   ThreadManagement.ThreadManagementService,
   McpInvocationContext.McpInvocationContext,
 ];
-
-// Like HTML publishing, this changes the thread's presentation rather than its filesystem.
-const ReviewCreateTool = Tool.make("review_create", {
-  description:
-    "Publish organized questions in the thread's Workspace Questions section when the user asks to workspace them for later or a durable structured review is useful. Add context, options, and recommendations where useful. Ordinary questions and interviews can stay in chat. The user can save answers and notes and send feedback later. Returns immediately; continue independent work. Omit threadId for this thread. Secrets use request_secret.",
-  parameters: Schema.Struct({
-    threadId: Schema.optional(ThreadId),
-    content: ReviewContent,
-  }),
-  success: Schema.Struct({ reviewId: ReviewId, threadId: ThreadId }),
-  failure: OrchestratorMcpFailure,
-  failureMode: "return",
-  dependencies,
-})
-  .annotate(Tool.Title, "Publish a review")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, false);
-
-const ReviewReadTool = Tool.make("review_read", {
-  description:
-    "Read a published review and its last submitted feedback by reviewId. Unfinished user drafts stay private until the user sends them. Read when you need the review; do not poll for answers.",
-  parameters: Schema.Struct({ reviewId: ReviewId }),
-  success: ReviewPublished,
-  failure: OrchestratorMcpFailure,
-  failureMode: "return",
-  dependencies,
-})
-  .annotate(Tool.Title, "Read a review")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
-
-const WorkspaceReadTool = Tool.make("thread_workspace_read", {
-  description:
-    "Read Workspace when needed, never poll. Default index returns groups and stable item references; select a section, groupId, itemIds, or status (question open/answered; action open/deferred/done; work queued/active/blocked/done/landed) for detail. Questions and actions include submitted: the answer and notes the user sent to chat. section work lists your Agent work with verifications and live ticketData (title, stage, url, workflow; null when unavailable); filter userQa pending/passed/issues for the human QA queue. section record is the durable work record: your Agent work (open plus recent done), the user's open Actions, active decisions, context, and Summary. Read it after compaction, resume, or handoff before continuing; your provider summary may omit it. Only submitted user feedback is visible; private drafts and personal notes are excluded. Omit threadId for this thread.",
-  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId), ...WorkspaceQuery.fields }),
-  success: WorkspaceQueryResult,
-  failure: OrchestratorMcpFailure,
-  failureMode: "return",
-  dependencies,
-})
-  .annotate(Tool.Title, "Read thread workspace")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
-
-const WorkspaceUpdateTool = Tool.make("thread_workspace_update", {
-  description:
-    "Intentionally maintain the thread's Workspace scratchboard. Read its revision, then batch create/edit/move/delete groups, questions, actions, work, decisions, context, freeform design (Markdown or sandboxed HTML), related threads, and mark descriptions. kind mark with name and contextSource ({} is this thread's latest finished turn; or threadId, runId, checkpointId) pins a context point for `delegate_task` context.mark; renaming keeps its url and point. Omit change.id to create; use returned id/ref to edit; omitted fields stay unchanged, remove deletes. Edits merge per field: a stale revision fails only when the same field changed since, so reread and reapply just that. kind action is the user's own to-do list; never put your work there. kind work is your list of thread-level commitments you own: status queued/active/blocked/done/landed, title, remaining checks, source (who asked, where), and when finished changed, qaSteps (short human QA steps), checks (what you ran), userQa pending. Set ticket to its tracker key (such as BW-42), or null to unlink; one distinct key in title/source links automatically. Read ticketData for live tracker status instead of copying it into details; keep finished items as your record and keep native plan steps out of it. userQa is the human's pass/issues and never blocks authorized landing. kind verification records evidence on work: workId, verifier, method executed (tests run or client clicked) or source-review, details, testedRevision, result pass/fail/partial, gaps, evidence; your own thread's verification is self-report, not independent proof. kind decision: title, rationale, source, decidedBy user only when the user made the call, else agent. Use status accepted for a choice already made by either actor, or proposed for an unresolved choice. Routine agent decisions do not need user acceptance. kind context: category context/preference/constraint for durable thread facts. For a substantive design or related items, reuse a relevant group or create a concise topical group first, then add items using its returned id and revision. Use Ungrouped intentionally for standalone or uncategorized items. Omitted groupId preserves an existing item's group and puts new items in Ungrouped. Keep recommendations explicit and unselected; choose multiSelect when needed. Summary is thread catch-up, without next steps. `childPreamble` is standing context prepended to future `delegate_task` briefs from this thread. Never put secrets here. No chat message or agent run is started; private user answers are never overwritten. Returns the new revision and only changed items and groups; pass fullIndex for the whole index.",
-  parameters: Schema.Struct({
-    threadId: Schema.optional(ThreadId),
-    expectedRevision: ThreadWorkspaceMutateInput.fields.expectedRevision,
-    changes: ThreadWorkspaceMutateInput.fields.changes,
-    summaryNotes: Schema.optional(Schema.String),
-    childPreamble: ThreadWorkspaceMutateInput.fields.childPreamble,
-    fullIndex: ThreadWorkspaceMutateInput.fields.fullIndex,
-  }),
-  success: WorkspaceQueryResult,
-  failure: OrchestratorMcpFailure,
-  failureMode: "return",
-  dependencies,
-})
-  .annotate(Tool.Title, "Update thread workspace")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, false);
-
+const common = { failure: OrchestratorMcpFailure, failureMode: "return" as const, dependencies };
+const optionalThread = { threadId: Schema.optional(ThreadId) };
+const listMutationResult = Schema.Struct({
+  threadId: ThreadId,
+  revision: ThreadWorkspace.fields.revision,
+  items: ThreadWorkspace.fields.items,
+  summaryNotes: Schema.String,
+  childPreamble: Schema.String,
+});
+const artifactWriteResult = Schema.Struct({
+  threadId: ThreadId,
+  revision: ThreadWorkspace.fields.revision,
+  ...ThreadArtifactMetadata.fields,
+});
 export const ReviewToolkit = Toolkit.make(
-  ReviewCreateTool,
-  ReviewReadTool,
-  WorkspaceReadTool,
-  WorkspaceUpdateTool,
+  Tool.make("list_read", {
+    ...common,
+    description:
+      "Read the thread list and revision. Defaults to open and handed-off items; all includes history. allThreads searches accessible threads; needsQa filters the QA queue. Omit threadId for this thread.",
+    parameters: ThreadListReadInput,
+    success: Schema.Array(ThreadListEntry),
+  }).annotate(Tool.Readonly, true),
+  Tool.make("list_update", {
+    ...common,
+    description:
+      "Batch add or edit list items using the read revision. Omit id to create; omitted fields stay unchanged. owner you is the human's work. Use handed_off while a linked ticket or lane stays open. childPreamble applies to future delegates. Omit threadId for this thread.",
+    parameters: Schema.Struct({ ...ThreadListUpdateInput.fields, ...optionalThread }),
+    success: listMutationResult,
+  }).annotate(Tool.Readonly, false),
+  Tool.make("list_rewrite", {
+    ...common,
+    description:
+      "Replace open list items using the read revision. Done and dropped history stays. Omit threadId for this thread.",
+    parameters: Schema.Struct({ ...ThreadListRewriteInput.fields, ...optionalThread }),
+    success: listMutationResult,
+  }).annotate(Tool.Readonly, false),
+  Tool.make("artifact_write", {
+    ...common,
+    description:
+      "Save a thread Markdown or sandboxed-HTML document. Omit id to create; supply id to update. Every write keeps a version. Markdown questions use fenced t3-question JSON: {id,prompt,options:[{id,label,description}],recommendedOptionIds:[],multiSelect:false}; recommendations stay unselected. Use the list revision; omit threadId for this thread.",
+    parameters: Schema.Struct({ ...ThreadArtifactWriteInput.fields, ...optionalThread }),
+    success: artifactWriteResult,
+  }).annotate(Tool.Readonly, false),
+  Tool.make("artifact_read", {
+    ...common,
+    description:
+      "Read a thread artifact's latest version or a numbered version. Omit threadId for this thread.",
+    parameters: Schema.Struct({ ...ThreadArtifactReadInput.fields, ...optionalThread }),
+    success: ThreadArtifactVersion,
+  }).annotate(Tool.Readonly, true),
+  Tool.make("artifact_list", {
+    ...common,
+    description:
+      "List a thread's artifact titles, formats and latest versions. Omit threadId for this thread.",
+    parameters: Schema.Struct(optionalThread),
+    success: Schema.Array(ThreadArtifactMetadata),
+  }).annotate(Tool.Readonly, true),
 );

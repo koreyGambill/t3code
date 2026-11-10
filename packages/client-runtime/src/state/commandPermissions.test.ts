@@ -195,24 +195,31 @@ describe("command permissions", () => {
         }),
       ),
   );
-  it.effect.each([WS_METHODS.threadsChangeFolder, WS_METHODS.developmentEnvironmentsUnlink])(
-    "guards %s with the destination operate grant",
-    (method) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const registry = yield* setup;
-          const change = createCommandPermissions(runtime, method);
-          registry.mount(sessions(other));
-          registry.set(sessions(env), AsyncResult.success(grant(true)));
-          registry.set(sessions(other), AsyncResult.success(grant(false)));
-          expect(registry.get(change.permissionAtom(env))).toBe(true);
-          yield* change.authorize(registry, env);
-          expect(registry.get(change.permissionAtom(other))).toBe(false);
-          expect((yield* change.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
-            "EnvironmentAuthorizationError",
-          );
-        }),
-      ),
+  it.effect.each([
+    WS_METHODS.threadsChangeFolder,
+    WS_METHODS.developmentEnvironmentsUnlink,
+    WS_METHODS.threadListUpdate,
+    WS_METHODS.threadListRewrite,
+    WS_METHODS.threadArtifactWrite,
+    WS_METHODS.threadArtifactAnswer,
+    WS_METHODS.threadArtifactSubmit,
+    WS_METHODS.threadMarksAnnotate,
+  ])("guards %s with the destination operate grant", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const change = createCommandPermissions(runtime, method);
+        registry.mount(sessions(other));
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(change.permissionAtom(env))).toBe(true);
+        yield* change.authorize(registry, env);
+        expect(registry.get(change.permissionAtom(other))).toBe(false);
+        expect((yield* change.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
   );
   it.effect("waits for an initial grant", () =>
     Effect.scoped(

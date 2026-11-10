@@ -31,7 +31,7 @@ export interface PreparedContext {
   readonly entries: ReadonlyArray<{ readonly key: string; readonly text: string }>;
 }
 
-/** Extracts Workspace child preambles for instruction-size accounting. */
+/** Extracts thread child preambles for instruction-size accounting. */
 export function childPreambleEntries(text: string): PreparedContext["entries"] {
   const entries: PreparedContext["entries"][number][] = [];
   const closingTag = "</child_preamble>";
@@ -73,8 +73,8 @@ export class InstructionFootprints extends Context.Service<
 >()("t3/threadInsights/InstructionFootprints") {}
 
 const sectionLabel = (text: string) =>
-  text.includes("### Thread workspace")
-    ? "Workspace"
+  text.includes("`list_read`")
+    ? "Thread list and artifacts"
     : text.includes("### Visuals and preview")
       ? "Visuals and preview"
       : text.includes("## T3 Code orchestration")

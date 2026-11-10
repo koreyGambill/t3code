@@ -16,12 +16,16 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.threadListUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadListRewrite]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadArtifactWrite]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadArtifactAnswer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadArtifactSubmit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadMarksAnnotate]: AuthOrchestrationOperateScope,
+
   [WS_METHODS.threadNotesSave]: AuthOrchestrationOperateScope,
   [WS_METHODS.threadNotesSendSelection]: AuthOrchestrationOperateScope,
   [WS_METHODS.threadNotesUpdateSettings]: AuthEnvironmentMaintainScope,
-  [WS_METHODS.threadWorkspacePatch]: AuthOrchestrationOperateScope,
-  [WS_METHODS.threadWorkspaceSaveDraft]: AuthOrchestrationOperateScope,
-  [WS_METHODS.threadWorkspaceSubmit]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewsSave]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewsSubmit]: AuthOrchestrationOperateScope,

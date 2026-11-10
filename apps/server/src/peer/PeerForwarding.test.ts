@@ -50,6 +50,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
+import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ThreadReplies from "../orchestration-v2/ThreadReplies.ts";
@@ -240,7 +241,9 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
   servePeer(
     box,
     Layer.mergeAll(
-      McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
+      McpHttpServer.layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
+      ),
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit.pipe(
         Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
@@ -318,7 +321,9 @@ const makeLaptop = Effect.fn(function* (
       Ref.update(peerCalls, (calls) => [...calls, input]).pipe(Effect.andThen(peer.call(input))),
   });
   const layerHere = Layer.mergeAll(
-    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(ThreadWorkspace.layerTest)),
+    McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
+    ),
     McpHttpServer.layerProjectRegistration,
     McpHttpServer.layerThreadToolkit.pipe(
       Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
