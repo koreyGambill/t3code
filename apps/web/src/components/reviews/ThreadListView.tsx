@@ -9,7 +9,7 @@ import {
   type ThreadListUpdateInput,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowDownIcon, ArrowUpIcon, LoaderCircleIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, LoaderCircleIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -21,6 +21,8 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { Badge } from "../ui/badge";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 
 export function ThreadListView({
   threadRef,
@@ -109,7 +111,10 @@ export function ThreadListView({
           </Button>
         ) : null}
       </div>
-      <div className="max-h-96 space-y-1 overflow-y-auto" aria-label="Thread list">
+      <div
+        className="max-h-96 space-y-1 overflow-y-auto overflow-x-hidden"
+        aria-label="Thread list"
+      >
         {ordered.map((item, index) => (
           <div key={item.id} className={item.parentId ? "ml-4" : ""}>
             {index === 0 ||
@@ -131,6 +136,9 @@ export function ThreadListView({
                   artifacts.data?.map((artifact) => [artifact.id, artifact.unansweredQuestions]),
                 )
               }
+              artifactTitles={
+                new Map(artifacts.data?.map((artifact) => [artifact.id, artifact.title]))
+              }
               threadRef={threadRef}
             />
           </div>
@@ -142,7 +150,7 @@ export function ThreadListView({
       ) : null}
       {!supplied ? (
         <form
-          className="flex gap-1"
+          className="flex items-center gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             if (text.trim())
@@ -153,12 +161,19 @@ export function ThreadListView({
         >
           <Input
             aria-label="New list item"
+            placeholder="Add an item…"
             value={text}
             disabled={!canWrite || busy}
             onChange={(event) => setText(event.target.value)}
           />
-          <Button type="submit" size="xs" disabled={!canWrite || busy || !text.trim()}>
-            Add
+          <Button
+            type="submit"
+            size="icon"
+            variant="outline"
+            aria-label="Add list item"
+            disabled={!canWrite || busy || !text.trim()}
+          >
+            <PlusIcon />
           </Button>
         </form>
       ) : null}
@@ -172,6 +187,7 @@ function ListRow({
   onChange,
   onMove,
   artifactCounts,
+  artifactTitles,
   threadRef,
 }: {
   item: ListItem;
@@ -179,6 +195,7 @@ function ListRow({
   onChange: (change: ThreadListUpdateInput["changes"][number]) => void;
   onMove?: ((direction: number) => void) | undefined;
   artifactCounts: Map<string, number>;
+  artifactTitles: Map<string, string>;
   threadRef: ScopedThreadRef;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -187,8 +204,8 @@ function ListRow({
   const terminal = item.state === "done" || item.state === "dropped";
   const openLink = listItemNeedsHandoff(item);
   return (
-    <div className="rounded border border-border/60">
-      <div className="flex min-w-0 items-center gap-1 p-1">
+    <div className="rounded-lg border border-border/60 hover:bg-muted/30">
+      <div className="flex min-h-10 min-w-0 items-center gap-2 px-2 py-1.5">
         <Checkbox
           aria-label={terminal ? `Reopen ${item.text}` : `Complete ${item.text}`}
           checked={terminal}
@@ -199,7 +216,7 @@ function ListRow({
         />
         <button
           type="button"
-          className="min-w-0 flex-1 truncate text-left"
+          className="min-w-0 flex-1 truncate text-left hover:underline"
           aria-expanded={expanded}
           onClick={() => setExpanded(!expanded)}
         >
@@ -207,56 +224,75 @@ function ListRow({
           {item.text}
         </button>
         {item.state === "dropped" ? <span className="text-muted-foreground">dropped</span> : null}
-        <div className="flex max-w-[45%] gap-1 overflow-x-auto">
+        <div className="flex min-w-0 max-w-[45%] items-center gap-1 overflow-hidden">
           {item.links.map((link) => {
             const state = item.linkStates?.find(
               (live) => live.type === link.type && live.target === link.target,
             );
-            const label = state?.label ?? link.target;
+            const label =
+              (link.type === "artifact" ? artifactTitles.get(link.target) : undefined) ??
+              state?.label ??
+              link.target;
             const count = link.type === "artifact" ? artifactCounts.get(link.target) : undefined;
             const content = (
               <>
                 {link.type === "thread" && state?.state === "open" ? (
                   <LoaderCircleIcon className="size-3" aria-label="Lane running" />
                 ) : null}
-                {label}
-                {state?.state === "needs_review" ? " · needs review" : ""}
-                {count ? ` · ${count} unanswered` : ""}
+                <span className="min-w-0 truncate">{label}</span>
+                {count ? <span className="shrink-0">· {count}</span> : null}
               </>
             );
-            return link.type === "artifact" ? (
-              <button
-                key={`${link.type}:${link.target}`}
-                className="flex shrink-0 items-center gap-1 rounded bg-muted px-1"
-                onClick={() => {
-                  useRightPanelStore.getState().openReviews(threadRef, link.target);
-                  useRightPanelStore.getState().setWorkspaceSection(threadRef, "artifacts");
-                }}
-              >
-                {content}
-              </button>
-            ) : link.type === "thread" ? (
-              <Link
-                key={`${link.type}:${link.target}`}
-                to="/$environmentId/$threadId"
-                params={{
-                  environmentId: threadRef.environmentId,
-                  threadId: ThreadId.make(link.target),
-                }}
-                className="flex shrink-0 items-center gap-1 rounded bg-muted px-1 hover:underline"
-              >
-                {content}
-              </Link>
-            ) : (
-              <a
-                key={`${link.type}:${link.target}`}
-                className="flex shrink-0 items-center gap-1 rounded bg-muted px-1 hover:underline"
-                href={state?.url ?? link.target}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {content}
-              </a>
+            const description = `${label}${state?.state === "needs_review" ? " · needs review" : ""}${count ? ` · ${count} unanswered` : ""}`;
+            const chip =
+              link.type === "artifact" ? (
+                <Badge
+                  variant="secondary"
+                  size="sm"
+                  render={
+                    <button
+                      type="button"
+                      aria-label={`Open artifact: ${description}`}
+                      onClick={() =>
+                        useRightPanelStore.getState().openReviews(threadRef, link.target)
+                      }
+                    />
+                  }
+                >
+                  <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+                </Badge>
+              ) : link.type === "thread" ? (
+                <Badge
+                  variant="secondary"
+                  size="sm"
+                  render={
+                    <Link
+                      to="/$environmentId/$threadId"
+                      params={{
+                        environmentId: threadRef.environmentId,
+                        threadId: ThreadId.make(link.target),
+                      }}
+                    />
+                  }
+                >
+                  <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+                </Badge>
+              ) : (
+                <Badge
+                  variant="secondary"
+                  size="sm"
+                  render={<a href={state?.url ?? link.target} target="_blank" rel="noreferrer" />}
+                >
+                  <span className="flex min-w-0 max-w-28 items-center gap-1">{content}</span>
+                </Badge>
+              );
+            return (
+              <Tooltip key={`${link.type}:${link.target}`}>
+                <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+                  {chip}
+                </TooltipTrigger>
+                <TooltipPopup>{description}</TooltipPopup>
+              </Tooltip>
             );
           })}
         </div>

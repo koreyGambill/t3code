@@ -858,7 +858,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       add: (ref, kind) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, instanceSurface(kind)),
+            upsertSurface(
+              current,
+              kind === "reviews"
+                ? (current.surfaces.find((surface) => surface.kind === "reviews") ??
+                    singletonSurface(kind))
+                : instanceSurface(kind),
+            ),
           ),
         ),
       restoreSurface: (ref, surface) =>
@@ -882,7 +888,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface: RightPanelSurface = {
-              id: "reviews",
+              id: current.surfaces.find((entry) => entry.kind === "reviews")?.id ?? "reviews",
               kind: "reviews",
               workspaceSection: "artifacts",
               reviewId: reviewId ?? null,

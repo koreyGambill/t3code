@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
+import { CheckIcon, MessageSquarePlusIcon, SendIcon } from "lucide-react";
 import { toComposerContextId } from "@t3tools/shared/composerContextReferences";
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/models";
 import { environmentThreadDetails } from "../../state/threads";
@@ -24,6 +25,10 @@ import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { Checkbox } from "../ui/checkbox";
+import { Radio, RadioGroup } from "../ui/radio-group";
+import { Badge } from "../ui/badge";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ThreadListView, ThreadListSummary, YourQaView } from "./ThreadListView";
 
 type AnswerDraft = { chosenOptionIds: readonly string[]; notes: string };
@@ -142,65 +147,112 @@ function ArtifactsPanel({
   };
   if (!workspace) return <p role="status">{query.error ?? "Loading artifacts…"}</p>;
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
-      <div className="flex items-center gap-2">
-        <h3 className="flex-1 text-sm font-medium">Artifacts</h3>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {workspace.artifacts.map((entry) => (
-          <Button
-            key={entry.id}
-            size="sm"
-            variant={artifact?.id === entry.id ? "secondary" : "ghost"}
-            onClick={() => {
-              setSelected(entry.id);
-              setVersionNumber(null);
-            }}
-          >
-            {entry.title}
-          </Button>
-        ))}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
       {artifact && version ? (
         <>
-          <div className="flex items-center gap-2">
-            <h4 className="flex-1 text-sm font-medium">{version.title}</h4>
-            <select
-              aria-label="Artifact version"
-              value={version.version}
-              onChange={(event) => setVersionNumber(Number(event.target.value))}
-            >
-              {artifact.versions.toReversed().map((entry) => (
-                <option key={entry.version} value={entry.version}>
-                  Version {entry.version} · {new Date(entry.createdAt).toLocaleString()}
-                </option>
-              ))}
-            </select>
+          <header className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background p-3">
+            <div className="min-w-0 flex-1 basis-48">
+              <Select
+                value={artifact.id}
+                onValueChange={(value) => {
+                  setSelected(value);
+                  setVersionNumber(null);
+                }}
+              >
+                <Tooltip>
+                  <TooltipTrigger render={<SelectTrigger size="sm" aria-label="Artifact" />}>
+                    <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
+                  </TooltipTrigger>
+                  <TooltipPopup>{artifact.title}</TooltipPopup>
+                </Tooltip>
+                <SelectPopup>
+                  {workspace.artifacts.map((entry) => {
+                    const current = entry.versions.at(-1);
+                    const unanswered =
+                      current?.questions.filter(
+                        (question) => !current.answers[question.id]?.submittedAt,
+                      ).length ?? 0;
+                    return (
+                      <SelectItem key={entry.id} value={entry.id} label={entry.title}>
+                        <div className="flex max-w-96 items-center gap-3">
+                          <Tooltip>
+                            <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                              {entry.title}
+                            </TooltipTrigger>
+                            <TooltipPopup>{entry.title}</TooltipPopup>
+                          </Tooltip>
+                          {unanswered ? (
+                            <Badge variant="secondary" size="sm">
+                              {unanswered}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
+            </div>
+            <div className="w-48 shrink-0">
+              <Select value={version.version} onValueChange={setVersionNumber}>
+                <SelectTrigger size="sm" aria-label="Artifact version">
+                  <SelectValue>{`v${version.version} · ${new Date(version.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {artifact.versions.toReversed().map((entry) => (
+                    <SelectItem key={entry.version} value={entry.version}>
+                      v{entry.version} ·{" "}
+                      {new Date(entry.createdAt).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+            <Badge variant="outline">{version.format === "html" ? "HTML" : "Markdown"}</Badge>
+            {version.questions.length ? (
+              <Badge variant="secondary">
+                {
+                  version.questions.filter((question) => !version.answers[question.id]?.submittedAt)
+                    .length
+                }{" "}
+                unanswered
+              </Badge>
+            ) : null}
+          </header>
+          <div className="px-4 py-6 sm:px-6">
+            <ArtifactDocument
+              key={`${artifact.id}:${version.version}`}
+              artifact={artifact}
+              version={version}
+              workspace={workspace}
+              threadRef={threadRef}
+              composerDraftTarget={composerDraftTarget}
+              onRefresh={query.refresh}
+              onSaved={(next) => {
+                setUpdated(next);
+                query.refresh();
+              }}
+            />
           </div>
-          <ArtifactDocument
-            key={`${artifact.id}:${version.version}`}
-            artifact={artifact}
-            version={version}
-            workspace={workspace}
-            threadRef={threadRef}
-            composerDraftTarget={composerDraftTarget}
-            onRefresh={query.refresh}
-            onSaved={(next) => {
-              setUpdated(next);
-              query.refresh();
-            }}
-          />
         </>
       ) : (
-        <p className="text-sm text-muted-foreground">No artifacts yet.</p>
+        <p className="p-4 text-sm text-muted-foreground">No artifacts yet.</p>
       )}
-      <div className="flex items-center gap-2 border-t pt-3">
-        <Button size="sm" disabled={!ready.length || !canAnswer} onClick={send}>
-          Send {ready.length || ""} queued {ready.length === 1 ? "answer" : "answers"} to composer
-        </Button>
-      </div>
+      {ready.length ? (
+        <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t border-border bg-background p-3">
+          <Button size="sm" disabled={!canAnswer} onClick={send}>
+            <SendIcon />
+            Send {ready.length} queued {ready.length === 1 ? "answer" : "answers"} to composer
+          </Button>
+        </div>
+      ) : null}
       {notice ? (
-        <p role="status" className="text-xs text-muted-foreground">
+        <p role="status" className="px-3 pb-3 text-xs text-muted-foreground">
           {notice}
         </p>
       ) : null}
@@ -227,6 +279,8 @@ function ArtifactDocument({
 }) {
   const [drafts, setDrafts] = useState<Record<string, AnswerDraft>>({});
   const [comment, setComment] = useState("");
+  const [commentOpen, setCommentOpen] = useState(false);
+  const [selectedText, setSelectedText] = useState("");
   const [busy, setBusy] = useState(false);
   const save = useAtomCommand(threadArtifactAnswer);
   const canAnswer = useAtomValue(threadArtifactAnswer.permissionAtom(threadRef.environmentId));
@@ -236,135 +290,240 @@ function ArtifactDocument({
       version.answers[entry.id] ?? { chosenOptionIds: [], notes: "" };
     const edit = (change: Partial<AnswerDraft>) =>
       setDrafts({ ...drafts, [entry.id]: { ...answer, ...change } });
-    return (
-      <fieldset
-        key={entry.id}
-        className="space-y-2 rounded border border-border p-3"
-        disabled={!latest || !canAnswer || busy}
+    const disabled = !latest || !canAnswer || busy;
+    const saved = version.answers[entry.id];
+    const status = drafts[entry.id]
+      ? "Unsaved answer"
+      : saved?.submittedAt
+        ? "Sent to chat"
+        : saved && (saved.chosenOptionIds.length || saved.notes.trim())
+          ? "Answered · queued"
+          : "Unanswered";
+    const options = entry.options.map((option) => (
+      <label
+        key={option.id}
+        className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/40 has-[[data-checked]]:border-primary/60 has-[[data-checked]]:bg-primary/5 has-[[data-disabled]]:cursor-default"
       >
-        <legend className="text-sm font-medium">{entry.prompt}</legend>
+        {entry.multiSelect ? (
+          <Checkbox
+            checked={answer.chosenOptionIds.includes(option.id)}
+            disabled={disabled}
+            onCheckedChange={(checked) =>
+              edit({
+                chosenOptionIds: checked
+                  ? [...answer.chosenOptionIds, option.id]
+                  : answer.chosenOptionIds.filter((id) => id !== option.id),
+              })
+            }
+          />
+        ) : (
+          <Radio value={option.id} disabled={disabled} />
+        )}
+        <span className="min-w-0 flex-1 space-y-1">
+          <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+            {option.label}
+            {entry.recommendedOptionIds.includes(option.id) ? (
+              <Badge variant="info" size="sm">
+                Recommended
+              </Badge>
+            ) : null}
+          </span>
+          {option.description ? (
+            <span className="block text-xs leading-relaxed text-muted-foreground">
+              {option.description}
+            </span>
+          ) : null}
+        </span>
+      </label>
+    ));
+    return (
+      <section
+        key={entry.id}
+        aria-label={entry.prompt}
+        className="space-y-4 rounded-xl border border-border bg-background p-4"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Question</span>
+          <Badge
+            variant={saved?.submittedAt && !drafts[entry.id] ? "success" : "secondary"}
+            size="sm"
+          >
+            {saved?.submittedAt && !drafts[entry.id] ? <CheckIcon /> : null}
+            {status}
+          </Badge>
+        </div>
+        <h3 className="text-sm font-medium leading-relaxed">{entry.prompt}</h3>
         {entry.details ? (
           <ChatMarkdown text={entry.details} cwd={undefined} threadRef={threadRef} />
         ) : null}
-        {entry.options.map((option) => (
-          <label key={option.id} className="flex items-start gap-2 text-sm">
-            <Checkbox
-              checked={answer.chosenOptionIds.includes(option.id)}
-              onCheckedChange={(checked) =>
-                edit({
-                  chosenOptionIds: entry.multiSelect
-                    ? checked
-                      ? [...answer.chosenOptionIds, option.id]
-                      : answer.chosenOptionIds.filter((id) => id !== option.id)
-                    : checked
-                      ? [option.id]
-                      : [],
-                })
-              }
-            />
-            <span>
-              {option.label}
-              {entry.recommendedOptionIds.includes(option.id) ? " (Recommended)" : ""}
-              <span className="block text-xs text-muted-foreground">{option.description}</span>
-            </span>
-          </label>
-        ))}
-        <Textarea
-          aria-label={`Notes for ${entry.prompt}`}
-          value={answer.notes}
-          onChange={(event) => edit({ notes: event.target.value })}
-        />
-        {version.answers[entry.id]?.submittedAt && !drafts[entry.id] ? (
-          <p className="text-xs text-muted-foreground">Sent to chat</p>
-        ) : null}
-      </fieldset>
+        {entry.multiSelect ? (
+          <div role="group" aria-label={entry.prompt} className="space-y-2">
+            {options}
+          </div>
+        ) : (
+          <RadioGroup
+            aria-label={entry.prompt}
+            value={answer.chosenOptionIds[0] ?? ""}
+            onValueChange={(value) => edit({ chosenOptionIds: [value] })}
+          >
+            {options}
+          </RadioGroup>
+        )}
+        <label className="block space-y-2 text-xs font-medium text-muted-foreground">
+          Your answer or notes
+          <Textarea
+            aria-label={`Notes for ${entry.prompt}`}
+            size="sm"
+            placeholder="Add an answer, a constraint, or a reason…"
+            value={answer.notes}
+            disabled={disabled}
+            onChange={(event) => edit({ notes: event.target.value })}
+          />
+        </label>
+      </section>
     );
   };
   const parts = version.content
     .split(/^```t3-question[^\S\r\n]*\r?\n[\s\S]*?^```[^\S\r\n]*\r?$/gm)
     .map((part, index) => ({ part, entry: version.questions[index] }));
   return (
-    <div className="space-y-3">
-      {version.format === "html" ? (
-        <iframe
-          title={version.title}
-          sandbox=""
-          srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data:"><style>body{font:14px system-ui;color-scheme:light dark;margin:16px}</style>${version.content}`}
-          className="h-96 w-full rounded border border-border"
-        />
-      ) : (
-        parts.map(({ part, entry }) => (
-          <div key={entry ? `question:${entry.id}` : "tail"} className="space-y-3">
-            {part.trim() ? (
-              <ChatMarkdown text={part} cwd={undefined} threadRef={threadRef} />
-            ) : null}
-            {entry ? question(entry) : null}
-          </div>
-        ))
-      )}
-      {latest && version.questions.length ? (
+    <div className="mx-auto w-full max-w-[72ch] space-y-6">
+      <div
+        onMouseUp={(event) => {
+          const selection = window.getSelection();
+          if (
+            !selection?.isCollapsed &&
+            selection?.anchorNode &&
+            selection.focusNode &&
+            event.currentTarget.contains(selection.anchorNode) &&
+            event.currentTarget.contains(selection.focusNode)
+          ) {
+            const text = selection.toString().trim();
+            if (text) {
+              setSelectedText(text);
+              setCommentOpen(true);
+            }
+          }
+        }}
+        className="space-y-6"
+      >
+        {version.format === "html" ? (
+          <iframe
+            title={version.title}
+            sandbox=""
+            srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data:"><style>body{font:14px system-ui;color-scheme:light dark;margin:16px}</style>${version.content}`}
+            className="h-96 w-full rounded border border-border"
+          />
+        ) : (
+          parts.map(({ part, entry }) => (
+            <div key={entry ? `question:${entry.id}` : "tail"} className="space-y-3">
+              {part.trim() ? (
+                <ChatMarkdown text={part} cwd={undefined} threadRef={threadRef} />
+              ) : null}
+              {entry ? question(entry) : null}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {latest && version.questions.length ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!Object.keys(drafts).length || busy || !canAnswer}
+            onClick={async () => {
+              setBusy(true);
+              {
+                const result = await save({
+                  environmentId: threadRef.environmentId,
+                  input: {
+                    threadId: threadRef.threadId,
+                    id: artifact.id,
+                    version: version.version,
+                    expectedRevision: workspace.revision,
+                    answers: Object.fromEntries(
+                      Object.entries(drafts).map(([id, answer]) => [
+                        id,
+                        { ...answer, submittedAt: null },
+                      ]),
+                    ),
+                  },
+                });
+                if (result._tag === "Success") {
+                  onSaved(result.value);
+                  setDrafts({});
+                }
+              }
+              onRefresh();
+              setBusy(false);
+            }}
+          >
+            Queue answers
+          </Button>
+        ) : null}
         <Button
           size="sm"
-          variant="outline"
-          disabled={!Object.keys(drafts).length || busy || !canAnswer}
-          onClick={async () => {
-            setBusy(true);
-            {
-              const result = await save({
-                environmentId: threadRef.environmentId,
-                input: {
-                  threadId: threadRef.threadId,
-                  id: artifact.id,
-                  version: version.version,
-                  expectedRevision: workspace.revision,
-                  answers: Object.fromEntries(
-                    Object.entries(drafts).map(([id, answer]) => [
-                      id,
-                      { ...answer, submittedAt: null },
-                    ]),
-                  ),
-                },
-              });
-              if (result._tag === "Success") {
-                onSaved(result.value);
-                setDrafts({});
-              }
-            }
-            onRefresh();
-            setBusy(false);
-          }}
+          variant="ghost"
+          disabled={!canAnswer}
+          onClick={() => setCommentOpen(true)}
         >
-          Queue answers
+          <MessageSquarePlusIcon />
+          Comment
         </Button>
+      </div>
+      {commentOpen ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+          {selectedText ? (
+            <blockquote className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
+              {selectedText}
+            </blockquote>
+          ) : null}
+          <Textarea
+            autoFocus
+            aria-label="Artifact review comment"
+            placeholder="Add a review comment…"
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!comment.trim() || !canAnswer}
+              onClick={() => {
+                useComposerDraftStore.getState().addReviewComment(composerDraftTarget, {
+                  id: randomUUID(),
+                  sectionId: artifact.id,
+                  sectionTitle: version.title.slice(0, 200),
+                  filePath: `artifact:${artifact.id}@${version.version}`,
+                  startIndex: 0,
+                  endIndex: 0,
+                  rangeLabel: `Version ${version.version}`,
+                  text: comment,
+                  diff: (selectedText || version.content).slice(0, 16000),
+                  fenceLanguage: version.format,
+                });
+                setComment("");
+                setSelectedText("");
+                setCommentOpen(false);
+              }}
+            >
+              Add comment to composer
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setCommentOpen(false);
+                setComment("");
+                setSelectedText("");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
       ) : null}
-      <Textarea
-        aria-label="Artifact review comment"
-        placeholder="Add a review comment…"
-        value={comment}
-        onChange={(event) => setComment(event.target.value)}
-      />
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={!comment.trim() || !canAnswer}
-        onClick={() => {
-          useComposerDraftStore.getState().addReviewComment(composerDraftTarget, {
-            id: randomUUID(),
-            sectionId: artifact.id,
-            sectionTitle: version.title.slice(0, 200),
-            filePath: `artifact:${artifact.id}@${version.version}`,
-            startIndex: 0,
-            endIndex: 0,
-            rangeLabel: `Version ${version.version}`,
-            text: comment,
-            diff: version.content.slice(0, 16000),
-            fenceLanguage: version.format,
-          });
-          setComment("");
-        }}
-      >
-        Add comment to composer
-      </Button>
     </div>
   );
 }

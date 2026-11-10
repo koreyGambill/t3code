@@ -6,6 +6,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Button } from "../../components/ui/Button";
+import { NavigationRow } from "../../components/ui/NavigationRow";
+import { Chip } from "../../components/ui/Chip";
 import { AppText as Text } from "../../components/ui/AppText";
 import { threadListAtom, threadArtifactsAtom, threadArtifactAtom } from "../../state/thread-list";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -47,7 +49,16 @@ function ArtifactView(props: { environmentId: EnvironmentId; threadId: ThreadId;
     );
   }
   return (
-    <SelectableMarkdownText markdown={artifact.value.content} textStyle={styles.nativeTextStyle} />
+    <View className="w-full max-w-[720px] self-center gap-4">
+      <View className="flex-row items-center gap-2">
+        <Chip label={`v${artifact.value.version}`} />
+        <Chip label="Markdown" />
+      </View>
+      <SelectableMarkdownText
+        markdown={artifact.value.content}
+        textStyle={styles.nativeTextStyle}
+      />
+    </View>
   );
 }
 
@@ -79,7 +90,14 @@ function ListContents(props: { environmentId: EnvironmentId; threadId: ThreadId 
         list.value
           .flatMap((entry) => entry.items)
           .map((item) => (
-            <View key={item.id} className={item.parentId ? "ml-4 gap-1" : "gap-1"}>
+            <View
+              key={item.id}
+              className={
+                item.parentId
+                  ? "ml-4 gap-2 rounded-2xl border border-border-subtle bg-card p-4"
+                  : "gap-2 rounded-2xl border border-border-subtle bg-card p-4"
+              }
+            >
               <Text>{item.text}</Text>
               <Text className="text-foreground-muted">
                 {item.state.replaceAll("_", " ")} · {item.owner}
@@ -98,8 +116,14 @@ function ListContents(props: { environmentId: EnvironmentId; threadId: ThreadId 
                 .map((link) => (
                   <Button
                     key={link.target}
-                    label="Open artifact"
-                    tone="text"
+                    label={
+                      AsyncResult.isSuccess(artifacts)
+                        ? (artifacts.value.find((artifact) => artifact.id === link.target)?.title ??
+                          "Open artifact")
+                        : "Open artifact"
+                    }
+                    size="compact"
+                    tone="secondary"
                     onPress={() => setSelected(link.target)}
                   />
                 ))}
@@ -113,14 +137,16 @@ function ListContents(props: { environmentId: EnvironmentId; threadId: ThreadId 
       ) : null}
       <Text className="text-lg font-semibold">Artifacts</Text>
       {AsyncResult.isSuccess(artifacts) ? (
-        artifacts.value.map((artifact) => (
-          <Button
-            key={artifact.id}
-            label={`${artifact.title} · v${artifact.version}`}
-            tone="text"
-            onPress={() => setSelected(artifact.id)}
-          />
-        ))
+        <View className="overflow-hidden rounded-2xl border border-border-subtle">
+          {artifacts.value.map((artifact) => (
+            <NavigationRow
+              key={artifact.id}
+              title={artifact.title}
+              subtitle={`v${artifact.version}${artifact.unansweredQuestions ? ` · ${artifact.unansweredQuestions} unanswered` : ""}`}
+              onPress={() => setSelected(artifact.id)}
+            />
+          ))}
+        </View>
       ) : (
         <Text>
           {AsyncResult.isFailure(artifacts) ? "Could not load artifacts." : "Loading artifacts…"}

@@ -138,9 +138,8 @@ describe("rightPanelStore", () => {
     expect(surfaces.find((surface) => surface.id === workspaceA)).toMatchObject({
       workspaceSection: "list",
     });
-    expect(surfaces.find((surface) => surface.id === workspaceB)).not.toHaveProperty(
-      "workspaceSection",
-    );
+    expect(workspaceB).toBe(workspaceA);
+    expect(surfaces.filter((surface) => surface.kind === "reviews")).toHaveLength(1);
     expect(
       new Set(
         surfaces.filter((surface) => surface.kind === "pull-request").map((surface) => surface.id),

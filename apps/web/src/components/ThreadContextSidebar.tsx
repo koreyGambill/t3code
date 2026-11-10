@@ -30,6 +30,7 @@ import { ThreadDetailsDestination } from "./chat/ThreadDetailsDestination";
 import { ThreadContextPanel } from "./insights/ThreadContextPanel";
 import { RightPanelResizeHandle } from "./preview/RightPanelResizeHandle";
 import { Button } from "./ui/button";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { ThreadListView } from "./reviews/ThreadListView";
 import { XwingEnvironmentsPanel } from "./xwing/XwingEnvironmentsPanel";
 
@@ -108,15 +109,22 @@ export function ThreadContextSidebarHost({ children }: { children: ReactNode }) 
         ) : null}
         {owner && !show ? (
           <div className="absolute right-[var(--workspace-controls-right)] top-[var(--workspace-controls-top)] z-40 flex h-[var(--workspace-topbar-height)] items-center">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Open thread sidebar"
-              title={`Thread sidebar${shortcut ? ` (${shortcut})` : ""}`}
-              onClick={() => useThreadContextSidebarStore.getState().toggle()}
-            >
-              <PanelRightIcon />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Open thread sidebar"
+                    aria-expanded={false}
+                    onClick={() => useThreadContextSidebarStore.getState().toggle()}
+                  />
+                }
+              >
+                <PanelRightIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Open thread sidebar · {shortcut ?? "Mod+Alt+I"}</TooltipPopup>
+            </Tooltip>
           </div>
         ) : null}
       </div>
@@ -132,6 +140,8 @@ function ThreadContextSidebar({
   detailsRef: (element: HTMLDivElement | null) => void;
 }) {
   const shell = useThreadShell(threadRef);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcut = shortcutLabelForCommand(keybindings, "threadContext.toggle") ?? "Mod+Alt+I";
   const { pinned, expanded } = useThreadContextSidebarStore();
   const resize = useResizableWidth({
     storageKey: "t3code:thread-context-width",
@@ -162,30 +172,52 @@ function ThreadContextSidebar({
           }
         }}
       />
-      <header className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
+      <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 border-b border-border pl-2 pr-[max(--spacing(2),var(--workspace-native-controls-inset))] [-webkit-app-region:no-drag]">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium">{shell?.title ?? "Thread"}</p>
-          <p className="text-3xs text-muted-foreground">
+          <Tooltip>
+            <TooltipTrigger render={<p className="truncate text-xs font-medium" />}>
+              {shell?.title ?? "Thread"}
+            </TooltipTrigger>
+            <TooltipPopup>{shell?.title ?? "Thread"}</TooltipPopup>
+          </Tooltip>
+          <p className="truncate text-3xs text-muted-foreground">
             {pinned ? "Pinned thread" : "Following focused tile"}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={pinned ? "Unpin thread sidebar" : "Pin thread sidebar"}
-          aria-pressed={pinned !== null}
-          onClick={() => useThreadContextSidebarStore.getState().pin(pinned ? null : threadRef)}
-        >
-          {pinned ? <PinOffIcon /> : <PinIcon />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Close thread sidebar"
-          onClick={() => useThreadContextSidebarStore.getState().toggle()}
-        >
-          <XIcon />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={pinned ? "Unpin thread sidebar" : "Pin thread sidebar"}
+                aria-pressed={pinned !== null}
+                onClick={() =>
+                  useThreadContextSidebarStore.getState().pin(pinned ? null : threadRef)
+                }
+              />
+            }
+          >
+            {pinned ? <PinOffIcon /> : <PinIcon />}
+          </TooltipTrigger>
+          <TooltipPopup>{pinned ? "Follow focused tile" : "Pin this thread"}</TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Close thread sidebar"
+                aria-expanded
+                onClick={() => useThreadContextSidebarStore.getState().toggle()}
+              />
+            }
+          >
+            <XIcon />
+          </TooltipTrigger>
+          <TooltipPopup>Close thread sidebar · {shortcut}</TooltipPopup>
+        </Tooltip>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {sections.map(([id, title]) => (
@@ -478,17 +510,23 @@ function SidebarArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
         Needs your QA · all threads
       </Button>
       {query.data?.map((artifact) => (
-        <button
-          key={artifact.id}
-          className="flex w-full items-center justify-between gap-2 py-1 text-left hover:underline"
-          onClick={() => useRightPanelStore.getState().openReviews(threadRef, artifact.id)}
-        >
-          <span className="truncate">{artifact.title}</span>
-          <span className="shrink-0 text-muted-foreground">
-            v{artifact.version}
-            {artifact.unansweredQuestions ? ` · ${artifact.unansweredQuestions} unanswered` : ""}
-          </span>
-        </button>
+        <Tooltip key={artifact.id}>
+          <TooltipTrigger
+            render={
+              <button
+                className="flex w-full items-center justify-between gap-2 py-1 text-left hover:underline"
+                onClick={() => useRightPanelStore.getState().openReviews(threadRef, artifact.id)}
+              />
+            }
+          >
+            <span className="truncate">{artifact.title}</span>
+            <span className="shrink-0 text-muted-foreground">
+              v{artifact.version}
+              {artifact.unansweredQuestions ? ` · ${artifact.unansweredQuestions} unanswered` : ""}
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup>{artifact.title}</TooltipPopup>
+        </Tooltip>
       ))}
       {query.data?.length === 0 ? <p className="text-muted-foreground">No artifacts.</p> : null}
     </div>
