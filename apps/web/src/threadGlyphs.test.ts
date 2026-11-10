@@ -12,12 +12,17 @@ describe("threadGlyphs", () => {
       expect(resolveThreadGlyph("thread-a", 0)).toEqual(original);
       expect(resolveThreadGlyph("thread-a", rerolledSeed)).toEqual(rerolled);
     }
-    expect(original).toMatchObject({ colorName: "Blue", color: "#70dcff", lightColor: "#087da3" });
+    expect(original).toMatchObject({
+      name: "cactus",
+      colorName: "Amber",
+      color: "#ffa100",
+      lightColor: "#a06808",
+    });
   });
 
   it("changes shape and color on every reroll, including UInt32 wraparound", () => {
     for (const threadId of ["", "thread-a", "thread-b", "🧵"]) {
-      for (const seed of [0, 1, 29, 30, 65535, 4294967294, 4294967295]) {
+      for (const seed of [0, 1, 23, 24, 77, 78, 65535, 4294967294, 4294967295]) {
         const nextSeed = nextThreadGlyphSeed(threadId, seed);
         expect(Number.isInteger(nextSeed)).toBe(true);
         expect(nextSeed).toBeGreaterThanOrEqual(0);

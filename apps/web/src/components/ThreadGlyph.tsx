@@ -41,7 +41,7 @@ export function ThreadGlyph({
       strokeWidth="1.6"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={`shrink-0 ${working ? "thread-glyph-working" : ""} ${className ?? ""}`}
+      className={`shrink-0 overflow-visible ${working ? "thread-glyph-working" : ""} ${className ?? ""}`}
       style={colors}
     >
       <title>{label}</title>
