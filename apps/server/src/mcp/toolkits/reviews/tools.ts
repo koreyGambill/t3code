@@ -36,6 +36,7 @@ const artifactWriteResult = Schema.Struct({
   revision: ThreadWorkspace.fields.revision,
   ...ThreadArtifactMetadata.fields,
 });
+// These tools change thread presentation rather than checkout files.
 export const ReviewToolkit = Toolkit.make(
   Tool.make("list_read", {
     ...common,
@@ -50,21 +51,21 @@ export const ReviewToolkit = Toolkit.make(
       "Batch add or edit list items using the read revision. Omit id to create; omitted fields stay unchanged. owner you is the human's work. Use handed_off while a linked ticket or lane stays open. childPreamble applies to future delegates. Omit threadId for this thread.",
     parameters: Schema.Struct({ ...ThreadListUpdateInput.fields, ...optionalThread }),
     success: listMutationResult,
-  }).annotate(Tool.Readonly, false),
+  }).annotate(Tool.Readonly, true),
   Tool.make("list_rewrite", {
     ...common,
     description:
       "Replace open list items using the read revision. Done and dropped history stays. Omit threadId for this thread.",
     parameters: Schema.Struct({ ...ThreadListRewriteInput.fields, ...optionalThread }),
     success: listMutationResult,
-  }).annotate(Tool.Readonly, false),
+  }).annotate(Tool.Readonly, true),
   Tool.make("artifact_write", {
     ...common,
     description:
       "Save a thread Markdown or sandboxed-HTML document. Omit id to create; supply id to update. Every write keeps a version. Markdown questions use fenced t3-question JSON: {id,prompt,options:[{id,label,description}],recommendedOptionIds:[],multiSelect:false}; recommendations stay unselected. Use the list revision; omit threadId for this thread.",
     parameters: Schema.Struct({ ...ThreadArtifactWriteInput.fields, ...optionalThread }),
     success: artifactWriteResult,
-  }).annotate(Tool.Readonly, false),
+  }).annotate(Tool.Readonly, true),
   Tool.make("artifact_read", {
     ...common,
     description:

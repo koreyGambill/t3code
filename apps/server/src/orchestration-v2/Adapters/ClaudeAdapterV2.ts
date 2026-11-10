@@ -2036,6 +2036,9 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
   "mcp__t3-code__list_read",
+  "mcp__t3-code__list_update",
+  "mcp__t3-code__list_rewrite",
+  "mcp__t3-code__artifact_write",
   "mcp__t3-code__artifact_read",
   "mcp__t3-code__artifact_list",
 ];
