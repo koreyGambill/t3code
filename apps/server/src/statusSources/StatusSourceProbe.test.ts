@@ -23,11 +23,32 @@ const payload = {
   source: "Stormwing",
   state: "warn",
   summary: "One check needs attention",
-  url: "https://user:secret@checks.test/dashboard?token=secret#private",
+  url: "https://user:secret@checks.test/dashboard?token=secret#access_token=secret",
   updatedAt: "2026-11-09T10:00:00Z",
   items: [
     { name: "Backup", state: "fail", detail: "Failed", url: "javascript:alert(1)" },
     { name: "Build", state: "ok", url: "https://checks.test/build?token=secret" },
+    {
+      name: "Run",
+      state: "ok",
+      url: "https://checks.test/runs?run=example&api_key=hidden&other=private",
+    },
+    { name: "Card", state: "ok", url: "https://checks.test/#card-example" },
+    {
+      name: "Token",
+      state: "ok",
+      url: "https://checks.test/#eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+    },
+    {
+      name: "Opaque token",
+      state: "ok",
+      url: "https://checks.test/#0123456789abcdef0123456789abcdef",
+    },
+    {
+      name: "Card ID",
+      state: "ok",
+      url: "https://checks.test/#card-9bacf3fa-80c1-4fda-83b3-a0cd811925fa",
+    },
   ],
 };
 
@@ -108,6 +129,13 @@ describe("StatusSourceProbe", () => {
       });
       expect(result.items[0]?.url).toBeUndefined();
       expect(result.items[1]?.url).toBe("https://checks.test/build");
+      expect(result.items[2]?.url).toBe("https://checks.test/runs?run=example");
+      expect(result.items[3]?.url).toBe("https://checks.test/#card-example");
+      expect(result.items[4]?.url).toBe("https://checks.test/");
+      expect(result.items[5]?.url).toBe("https://checks.test/");
+      expect(result.items[6]?.url).toBe(
+        "https://checks.test/#card-9bacf3fa-80c1-4fda-83b3-a0cd811925fa",
+      );
     }).pipe(Effect.provide(fixture())),
   );
 

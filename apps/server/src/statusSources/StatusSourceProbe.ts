@@ -34,8 +34,17 @@ function sanitizeStatusUrl(value: string): string | undefined {
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
     url.username = "";
     url.password = "";
-    url.search = "";
-    url.hash = "";
+    url.search = new URLSearchParams(
+      [...url.searchParams].filter(([key]) => key === "run"),
+    ).toString();
+    const fragment = decodeURIComponent(url.hash.slice(1));
+    if (
+      /token|key|secret|auth|sig|password|session/i.test(fragment) ||
+      /[a-zA-Z0-9_=]{32,}/.test(fragment) ||
+      /^eyJ[a-zA-Z0-9_-]*\./.test(fragment)
+    ) {
+      url.hash = "";
+    }
     return url.toString();
   } catch {
     return undefined;
