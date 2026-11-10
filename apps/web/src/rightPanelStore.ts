@@ -35,17 +35,7 @@ const RIGHT_PANEL_KINDS = [
   "inspect",
   "notes",
 ] as const;
-export type ThreadWorkspaceSection =
-  | "unified"
-  | "questions"
-  | "action-items"
-  | "design-notes"
-  | "agent-work"
-  | "record"
-  | "summary"
-  | "marks"
-  | "threads"
-  | "notes";
+export type ThreadWorkspaceSection = "list" | "artifacts" | "summary" | "marks" | "threads";
 export type ThreadInspectSection = "loads" | "tokens" | "context";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -614,20 +604,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         (surface.reviewId === null || typeof surface.reviewId === "string")
                         ? [
                             surface.workspaceSection === undefined ||
-                            [
-                              "unified",
-                              "questions",
-                              "action-items",
-                              "design-notes",
-                              "agent-work",
-                              "record",
-                              "summary",
-                              "marks",
-                              "threads",
-                              "notes",
-                            ].includes(surface.workspaceSection)
+                            ["list", "artifacts", "summary", "marks", "threads"].includes(
+                              surface.workspaceSection,
+                            )
                               ? surface
-                              : { ...surface, workspaceSection: "agent-work" },
+                              : { ...surface, workspaceSection: "list" },
                           ]
                         : [];
                     }

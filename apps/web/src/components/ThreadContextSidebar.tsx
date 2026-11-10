@@ -1,11 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  AuthOrchestrationReadScope,
-  type ScopedThreadRef,
-  type TicketData,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { PanelRightIcon, PinIcon, PinOffIcon, XIcon } from "lucide-react";
 import { useState, type CSSProperties, type ReactNode } from "react";
@@ -254,39 +249,21 @@ function SidebarTickets({ threadRef }: { threadRef: ScopedThreadRef }) {
         })
       : null,
   );
-  const tickets = new Map<string, TicketData | null>();
-  for (const item of workspace.data?.agentWork ?? []) {
-    if (item.ticket && !tickets.has(item.ticket)) tickets.set(item.ticket, item.ticketData ?? null);
-  }
-  if (tickets.size === 0)
-    return <p className="px-3 pb-3 text-xs text-muted-foreground">No linked ticket.</p>;
-  return (
+  const tickets = [
+    ...new Set(
+      workspace.data?.items.flatMap((item) =>
+        item.links.filter((link) => link.type === "ticket").map((link) => link.target),
+      ) ?? [],
+    ),
+  ];
+  return tickets.length ? (
     <ul className="space-y-2 px-3 pb-3 text-xs">
-      {[...tickets].map(([key, data]) => (
-        <li key={key} className="space-y-1">
-          {data ? (
-            <a href={data.url} target="_blank" rel="noreferrer" className="block hover:underline">
-              <span className="font-medium">{data.key}</span> · {data.stage}
-              <span className="block truncate text-muted-foreground">{data.title}</span>
-            </a>
-          ) : (
-            <p>
-              <span className="font-medium">{key}</span>{" "}
-              <span className="text-muted-foreground">· unavailable</span>
-            </p>
-          )}
-          {data?.workflow?.length ? (
-            <ul className="space-y-0.5 text-muted-foreground">
-              {data.workflow.map((step) => (
-                <li key={step.stage}>
-                  {step.done ? "✓" : "○"} {step.stage}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </li>
+      {tickets.map((ticket) => (
+        <li key={ticket}>{ticket}</li>
       ))}
     </ul>
+  ) : (
+    <p className="px-3 pb-3 text-xs text-muted-foreground">No linked ticket.</p>
   );
 }
 
@@ -317,21 +294,7 @@ function SidebarMarks({ threadRef }: { threadRef: ScopedThreadRef }) {
         })
       : null,
   );
-  const workspace = useEnvironmentQuery(
-    canRead
-      ? sidebarWorkspaceGet({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
-  const annotations = workspace.data?.markAnnotations ?? [];
-  const rows = [
-    ...annotations,
-    ...(marks.data ?? []).filter(
-      (mark) => !annotations.some((annotation) => annotation.url === mark.url),
-    ),
-  ];
+  const rows = marks.data ?? [];
   return (
     <div className="space-y-2 px-3 pb-3 text-xs">
       <Button
@@ -340,7 +303,6 @@ function SidebarMarks({ threadRef }: { threadRef: ScopedThreadRef }) {
         disabled={!canRead}
         onClick={() => {
           marks.refresh();
-          workspace.refresh();
         }}
       >
         Refresh marks
@@ -348,7 +310,7 @@ function SidebarMarks({ threadRef }: { threadRef: ScopedThreadRef }) {
       {!canRead ? (
         <p className="text-muted-foreground">This connection cannot read marks.</p>
       ) : null}
-      {marks.error || workspace.error ? <p role="alert">Could not load marks.</p> : null}
+      {marks.error ? <p role="alert">Could not load marks.</p> : null}
       {!rows.length ? (
         <p className="text-muted-foreground">
           {marks.isPending ? "Loading marks…" : "No marks in this thread."}
@@ -400,15 +362,6 @@ function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
   const shell = useThreadShell(threadRef);
   const shells = useThreadRelationshipShells(threadRef);
   const projection = useThreadProjection(threadRef)?.projection;
-  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
-  const workspace = useEnvironmentQuery(
-    canRead
-      ? sidebarWorkspaceGet({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
   const parent =
     shell?.forkedFrom?.type === "run" ? shell.forkedFrom.threadId : shell?.lineage.parentThreadId;
   const parentOf = (entry: (typeof shells)[number]) =>
@@ -449,12 +402,6 @@ function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
                   : null;
       return relation ? [{ entry, relation }] : [];
     });
-  const linked =
-    workspace.data?.relatedThreads.filter(
-      (entry) =>
-        entry.threadId !== threadRef.threadId &&
-        !related.some((row) => row.entry.id === entry.threadId),
-    ) ?? [];
   return (
     <div className="space-y-2 px-3 pb-3 text-xs">
       {related.map(({ entry, relation }) => (
@@ -471,31 +418,8 @@ function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
           <span className="text-primary hover:underline">{entry.title}</span>
         </Link>
       ))}
-      {linked.map((entry) => (
-        <SidebarRelatedLink
-          key={entry.threadId}
-          threadRef={{ environmentId: threadRef.environmentId, threadId: entry.threadId }}
-          why={entry.why}
-        />
-      ))}
-      {!related.length && !linked.length ? (
-        <p className="text-muted-foreground">No related threads.</p>
-      ) : null}
+      {!related.length ? <p className="text-muted-foreground">No related threads.</p> : null}
     </div>
-  );
-}
-
-function SidebarRelatedLink({ threadRef, why }: { threadRef: ScopedThreadRef; why: string }) {
-  const shell = useThreadShell(threadRef);
-  return (
-    <Link
-      to="/$environmentId/$threadId"
-      params={buildThreadRouteParams(threadRef)}
-      className="block"
-    >
-      <span className="text-primary hover:underline">{shell?.title ?? threadRef.threadId}</span>
-      <span className="block text-3xs text-muted-foreground">{why}</span>
-    </Link>
   );
 }
 

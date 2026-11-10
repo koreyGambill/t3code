@@ -103,7 +103,7 @@ export function RightPanelSurfaceContent(props: {
           <ThreadWorkspacePanel
             surfaceId={surface.id}
             key={`${threadRef.environmentId}:${threadRef.threadId}`}
-            section={surface.workspaceSection ?? "agent-work"}
+            section={surface.workspaceSection ?? "list"}
             threadRef={threadRef}
             reviewId={surface.reviewId}
             visible={visible}

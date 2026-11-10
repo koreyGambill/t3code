@@ -107,20 +107,19 @@ function setup() {
   useRightPanelStore.setState({ byThreadKey: {} });
 }
 
-it.each(["other-thread", "action-items"])(
+it.each(["other-thread", "list"])(
   "announces due reviews while viewing %s and opens Questions only on click",
   async (view) => {
     setup();
     using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     const ref = scopeThreadRef(environmentId, review.threadId);
-    if (view === "action-items") {
+    if (view === "list") {
       state.active = { environmentId, threadId: review.threadId };
       useRightPanelStore.getState().openReviews(ref, review.id);
-      useRightPanelStore.getState().setWorkspaceSection(ref, "action-items");
+      useRightPanelStore.getState().setWorkspaceSection(ref, "list");
     }
-    const route =
-      view === "action-items" ? "/remote-environment/review-thread" : "/existing/thread";
+    const route = view === "list" ? "/remote-environment/review-thread" : "/existing/thread";
     const initialPanels = useRightPanelStore.getState().byThreadKey;
     await using screen = await render(<ReviewReminderCoordinator />, { router: route });
     await vi.waitFor(() => expect(state.add).toHaveBeenCalledTimes(1));

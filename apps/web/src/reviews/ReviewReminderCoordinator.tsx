@@ -66,7 +66,7 @@ function EnvironmentReviewReminders({
           surface.id === panel.activeSurfaceId &&
           surface.kind === "reviews" &&
           surface.reviewId === review.id &&
-          (surface.workspaceSection ?? "questions") === "questions",
+          surface.workspaceSection === undefined,
       )
     );
   })?.id;

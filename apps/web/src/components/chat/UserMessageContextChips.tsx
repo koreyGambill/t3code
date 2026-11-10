@@ -294,6 +294,19 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
   requiredKinds: COMPOSER_CONTEXT_KINDS,
   handlers: [
     {
+      kind: "artifact-answer",
+      canRender: (record) => record.kind === "artifact-answer",
+      render: (record) =>
+        record.kind === "artifact-answer" ? (
+          <Tooltip>
+            <TooltipTrigger render={<span />}>{record.label}</TooltipTrigger>
+            <TooltipPopup>
+              {[record.question, record.choice, record.note].filter(Boolean).join("\n")}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null,
+    },
+    {
       kind: "mention",
       canRender: (record) => record.kind === "mention",
       render: (record, context) =>

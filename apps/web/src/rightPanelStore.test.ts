@@ -90,7 +90,7 @@ describe("rightPanelStore", () => {
       useRightPanelStore.getState().byThreadKey,
       refA,
     ).activeSurfaceId!;
-    store.setWorkspaceSection(refA, "action-items", workspaceA);
+    store.setWorkspaceSection(refA, "list", workspaceA);
     for (const kind of ["files", "diff", "device", "pull-requests"] as const) {
       store.add(refA, kind);
       store.add(refA, kind);
@@ -136,7 +136,7 @@ describe("rightPanelStore", () => {
       inspectSection: "loads",
     });
     expect(surfaces.find((surface) => surface.id === workspaceA)).toMatchObject({
-      workspaceSection: "action-items",
+      workspaceSection: "list",
     });
     expect(surfaces.find((surface) => surface.id === workspaceB)).not.toHaveProperty(
       "workspaceSection",
@@ -325,7 +325,7 @@ describe("rightPanelStore", () => {
       "reviews",
     ]);
     store.openReviews(refA, "review-b");
-    store.setWorkspaceSection(refA, "design-notes");
+    store.setWorkspaceSection(refA, "artifacts");
     store.closeSurface(refA, "reviews");
     const closed = useClosedViewStore.getState().entries[0]!;
     await reopenClosedView(closed, {
@@ -341,7 +341,7 @@ describe("rightPanelStore", () => {
       id: "reviews",
       kind: "reviews",
       reviewId: "review-b",
-      workspaceSection: "design-notes",
+      workspaceSection: "artifacts",
     });
     await reloadRightPanelStore();
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual(

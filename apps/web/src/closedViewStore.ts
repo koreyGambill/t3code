@@ -99,16 +99,7 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
         (surface.id === "reviews" || surface.id.startsWith("reviews:")) &&
         (surface.reviewId === null || typeof surface.reviewId === "string") &&
         (surface.workspaceSection === undefined ||
-          [
-            "unified",
-            "questions",
-            "action-items",
-            "design-notes",
-            "summary",
-            "marks",
-            "threads",
-            "notes",
-          ].includes(surface.workspaceSection))
+          ["list", "artifacts", "summary", "marks", "threads"].includes(surface.workspaceSection))
       );
     case "pull-request":
       return (

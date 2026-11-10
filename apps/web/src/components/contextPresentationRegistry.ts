@@ -13,6 +13,10 @@ export interface ContextPresentationDefinition {
 
 const DEFINITIONS = [
   {
+    kind: "artifact-answer",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
     kind: "image",
     capabilities: { details: "tooltip", expanded: "modal", defaultDraftView: "compact" },
   },

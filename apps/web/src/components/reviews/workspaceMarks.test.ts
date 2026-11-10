@@ -1,6 +1,5 @@
 import { expect, it } from "vite-plus/test";
 import { collectWorkspaceMarks } from "@t3tools/shared/workspaceMarks";
-import { markTimestamp } from "./workspaceMarks";
 
 it("keeps the first URL occurrence, excludes prose punctuation, and classifies host boundaries", () => {
   const marks = collectWorkspaceMarks([
@@ -33,6 +32,4 @@ it("keeps the first URL occurrence, excludes prose punctuation, and classifies h
       { createdAt: "2026-11-06T04:15:00Z", text: "https://notion.so/spec" },
     ])[0]?.timestamp,
   ).toBe("2026-11-06T04:15:00Z");
-  expect(markTimestamp("2026-11-06T04:15:00Z", true, false)).toBe("2026-11-06 04:15 AM");
-  expect(markTimestamp("2026-11-06T16:15:00Z", true, true)).toBe("2026-11-06 16:15");
 });
