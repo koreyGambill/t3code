@@ -191,11 +191,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
-      const output = compactDynamicToolOutput(
-        rawOutput,
-        item.toolName,
-        item.status === "failed",
-      );
+      const output = compactDynamicToolOutput(rawOutput, item.toolName, item.status === "failed");
       const input = summarizeDynamicValue(item.input);
       return {
         ...projected,
