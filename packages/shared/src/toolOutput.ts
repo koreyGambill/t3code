@@ -15,7 +15,7 @@ import {
   readMcpAppReference,
   type McpAppReference,
 } from "./mcpApp.ts";
-import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
+import { resolveT3McpToolId, resolveT3McpMessageTool } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
@@ -50,6 +50,12 @@ interface CompactToolOutput {
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
   unlinkedCount?: number;
+  childThreadId?: string;
+  remoteChild?: { threadId: string; environmentId: string };
+  link?: string;
+  delivery?: "started" | "queued" | "steered" | "restarted";
+  reply?: boolean;
+  error?: string;
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -115,7 +121,79 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
-export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
+/** Bounded error text for a failed tool result, including provider content envelopes. */
+export function toolResultErrorText(value: unknown, depth = 0): string | undefined {
+  if (depth > MAX_ENVELOPE_DEPTH + 1) return undefined;
+  if (typeof value === "string") {
+    if (value.length <= MAX_PARSED_BYTES) {
+      try {
+        return toolResultErrorText(JSON.parse(value), depth + 1);
+      } catch {
+        return value.trim() ? value.slice(0, 2048) : undefined;
+      }
+    }
+    return value.trim() ? value.slice(0, 2048) : undefined;
+  }
+  if (Array.isArray(value)) {
+    return (
+      value
+        .slice(0, MAX_CONTENT_BLOCKS)
+        .map((block) => toolResultErrorText(block, depth + 1))
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2048) || undefined
+    );
+  }
+  if (!Predicate.isObject(value)) return undefined;
+  return (
+    toolResultErrorText(value.message, depth + 1) ??
+    toolResultErrorText(value.error, depth + 1) ??
+    toolResultErrorText(value.structuredContent, depth + 1) ??
+    toolResultErrorText(value.content ?? value.text, depth + 1)
+  );
+}
+
+/** Keeps a readable outgoing preview when the full tool input exceeds the timeline budget. */
+export function compactT3MessageInput(toolName: string | null, value: unknown) {
+  const tool = resolveT3McpMessageTool(toolName);
+  if (!tool) return undefined;
+  let input = value;
+  if (typeof input === "string" && input.length <= 256 * 1024) {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Predicate.isObject(input)) return undefined;
+  if (typeof input.toolName === "string") input = input.args;
+  if (!Predicate.isObject(input)) return undefined;
+  const key = tool === "delegate_task" ? "task" : "message";
+  const body = input[key];
+  if (typeof body !== "string" || !body.trim()) return undefined;
+  const target = Predicate.isObject(input.target) ? input.target : undefined;
+  const origin = Predicate.isObject(input.origin) ? input.origin : undefined;
+  return {
+    [key]:
+      body.length > 1024
+        ? `${body.slice(0, 1024)}\n… Open tool details for the full message.`
+        : body,
+    threadId: boundedId(input.threadId),
+    environmentId: boundedId(input.environmentId),
+    target: { environmentId: boundedId(target?.environmentId) },
+    reply: typeof input.reply === "boolean" ? input.reply : undefined,
+    origin: {
+      event: origin?.event === "reply" ? "reply" : undefined,
+      reply: origin?.reply === "not expected" ? "not expected" : undefined,
+    },
+  };
+}
+
+export function compactDynamicToolOutput(
+  value: unknown,
+  toolName?: string | null,
+  failed = false,
+): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
     remainingNodes: MAX_ENVELOPE_NODES,
@@ -124,6 +202,31 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   const result = readResult(value, budget);
   const output: CompactToolOutput = result.failed ? { isError: true } : {};
   const data = budget.exceeded ? undefined : result.data;
+  if (resolveT3McpMessageTool(toolName)) {
+    if (result.failed || failed) {
+      output.isError = true;
+      const error = toolResultErrorText(value);
+      if (error !== undefined) output.error = error;
+    }
+    const childThreadId = boundedId(data?.childThreadId);
+    if (childThreadId) output.childThreadId = childThreadId;
+    const remote = data?.remoteChild;
+    if (Predicate.isObject(remote)) {
+      const threadId = boundedId(remote.threadId);
+      const environmentId = boundedId(remote.environmentId);
+      if (threadId && environmentId) output.remoteChild = { threadId, environmentId };
+    }
+    if (typeof data?.link === "string" && data.link.length <= 2048) output.link = data.link;
+    if (typeof data?.reply === "boolean") output.reply = data.reply;
+    const delivery = data?.delivery;
+    if (
+      delivery === "started" ||
+      delivery === "queued" ||
+      delivery === "steered" ||
+      delivery === "restarted"
+    )
+      output.delivery = delivery;
+  }
   if (data !== undefined) {
     for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {
       const id = boundedId(data[key]);
@@ -184,6 +287,10 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     output[MCP_APP_OUTPUT_KEY] = rest;
   }
   if (oversized()) delete output[MCP_APP_OUTPUT_KEY];
+  if (oversized()) {
+    delete output.error;
+    delete output.link;
+  }
   return Object.keys(output).length === 0 ? undefined : output;
 }
 

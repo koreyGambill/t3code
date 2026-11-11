@@ -446,6 +446,17 @@ export function resolveT3McpToolId(toolName: string | null | undefined): string 
   return name !== null && Object.hasOwn(T3_MCP_TOOLS, name) ? name : null;
 }
 
+/** T3 calls that carry a message to another thread. */
+export function resolveT3McpMessageTool(toolName: string | null | undefined) {
+  const tool = resolveT3McpToolId(toolName);
+  return tool === "t3_thread_send" ||
+    tool === "t3_thread_send_attachments" ||
+    tool === "t3_thread_launch" ||
+    tool === "delegate_task"
+    ? tool
+    : null;
+}
+
 type SummaryInput = Readonly<Record<string, unknown>>;
 
 const asSummaryInput = (input: unknown): SummaryInput | undefined =>

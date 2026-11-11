@@ -2,7 +2,8 @@ import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import Svg, { Defs, LinearGradient, Rect, Stop, Path } from "react-native-svg";
-import type { TurnOrigin } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ScopedThreadRef, type TurnOrigin } from "@t3tools/contracts";
+import type { OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
 import { senderCardDetails } from "@t3tools/client-runtime/user-message";
 import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -22,9 +23,54 @@ export function SenderCard(props: {
   readonly queued?: boolean;
   readonly children?: ReactNode;
 }) {
-  const details = senderCardDetails(props.origin);
-  const sender = "threadId" in props.origin ? props.origin : null;
+  return (
+    <ThreadMessageCard
+      {...props}
+      details={senderCardDetails(props.origin)}
+      thread={"threadId" in props.origin ? props.origin : null}
+    />
+  );
+}
+
+export function OutgoingMessageCard(props: {
+  readonly message: OutgoingT3Message;
+  readonly environmentId: EnvironmentId;
+}) {
+  const { message } = props;
+  const thread = message.threadId
+    ? {
+        threadId: ThreadId.make(message.threadId),
+        environmentId: message.environmentId
+          ? EnvironmentId.make(message.environmentId)
+          : props.environmentId,
+      }
+    : null;
+  return (
+    <ThreadMessageCard
+      thread={thread}
+      details={{ ...message, title: message.threadId ?? "Thread unavailable" }}
+      text={message.body}
+      outgoing
+      error={message.error}
+    />
+  );
+}
+
+function ThreadMessageCard(props: {
+  readonly details: ReturnType<typeof senderCardDetails>;
+  readonly thread: ScopedThreadRef | null;
+  readonly text: string;
+  readonly outgoing?: boolean;
+  readonly error?: string | undefined;
+  readonly queued?: boolean;
+  readonly children?: ReactNode;
+}) {
+  const sender = props.thread;
   const shell = useQuietThreadShell(sender);
+  const details = {
+    ...props.details,
+    title: props.outgoing ? shell?.title || props.details.title : props.details.title,
+  };
   const glyph = sender ? resolveThreadGlyph(sender.threadId, shell?.glyphSeed) : null;
   const { themeAppearance } = useAppearancePreferences();
   const color = glyph ? (themeAppearance === "dark" ? glyph.color : glyph.lightColor) : undefined;
@@ -55,6 +101,9 @@ export function SenderCard(props: {
         />
       ) : null}
       <View className="mb-2 flex-row items-center gap-2">
+        {props.outgoing ? (
+          <Text className="shrink-0 font-t3-bold text-xs text-foreground-muted">To</Text>
+        ) : null}
         <View className="shrink-0">
           {glyph ? (
             <Svg
@@ -112,6 +161,9 @@ export function SenderCard(props: {
         <Text className="mb-2 text-xs text-foreground-muted">
           {props.queued ? "queued for next turn" : "no reply expected"}
         </Text>
+      ) : null}
+      {props.error ? (
+        <Text className="mb-2 text-sm text-danger-foreground">{props.error}</Text>
       ) : null}
       {/* One stable parent, so toggling never remounts attachments or media. */}
       <MaskedView

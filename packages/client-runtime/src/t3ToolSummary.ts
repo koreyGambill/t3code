@@ -1,4 +1,7 @@
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpMessageTool } from "@t3tools/shared/t3McpToolPresentation";
+import { toolResultErrorText } from "@t3tools/shared/toolOutput";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -66,6 +69,67 @@ function readInput(value: unknown): Record<string, unknown> | undefined {
 /** MCP errors can be returned as data even when the provider completed the tool call. */
 export function t3ToolResultIndicatesFailure(output: unknown): boolean {
   return readResult(output).failed;
+}
+
+export interface OutgoingT3Message {
+  readonly threadId: string | null;
+  readonly environmentId: string | undefined;
+  readonly body: string;
+  readonly relationship: "to peer thread" | "delegated task";
+  readonly event: "sent" | "queued" | "reply" | "failed";
+  readonly noReply: boolean;
+  readonly error: string | undefined;
+}
+
+/** The message a completed T3 call sent, or attempted to send, to another thread. */
+export function outgoingT3Message(
+  toolName: string | undefined,
+  call: T3ToolSummaryCall,
+): OutgoingT3Message | null {
+  const tool = resolveT3McpMessageTool(toolName);
+  if (call.outcome === "unfinished" || !tool) return null;
+  const input = readInput(call.input);
+  const body = input?.[tool === "delegate_task" ? "task" : "message"];
+  if (typeof body !== "string" || !body.trim()) return null;
+  const result = readResult(call.output);
+  const output = result.data;
+  const remote = asRecord(output?.remoteChild);
+  const link =
+    typeof output?.link === "string"
+      ? parseThreadLinkHref(output.link.replace(/^<(.+)>$/, "$1"))
+      : null;
+  const failed = result.failed || call.outcome === "failed";
+  return {
+    threadId:
+      id(remote?.threadId) ??
+      id(output?.childThreadId) ??
+      id(output?.threadId) ??
+      link?.threadId ??
+      id(input?.threadId) ??
+      null,
+    environmentId:
+      id(remote?.environmentId) ??
+      link?.environmentId ??
+      id(input?.environmentId) ??
+      id(asRecord(input?.target)?.environmentId),
+    body,
+    relationship: tool === "delegate_task" ? "delegated task" : "to peer thread",
+    event: failed
+      ? "failed"
+      : asRecord(input?.origin)?.event === "reply"
+        ? "reply"
+        : output?.delivery === "queued"
+          ? "queued"
+          : "sent",
+    noReply:
+      tool === "t3_thread_launch" ||
+      (output?.reply ??
+        input?.reply ??
+        (asRecord(input?.origin)?.reply === "not expected" ? false : undefined)) === false,
+    error: failed
+      ? (toolResultErrorText(call.output) ?? "The tool call failed or was refused.")
+      : undefined,
+  };
 }
 
 function countEntities(ids: ReadonlyArray<string | undefined>): number {

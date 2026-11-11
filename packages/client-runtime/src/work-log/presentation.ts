@@ -25,6 +25,8 @@ import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
   summarizeT3ToolCalls,
+  outgoingT3Message,
+  type OutgoingT3Message,
   t3ToolResultIndicatesFailure,
   type T3ToolSummaryCall,
 } from "@t3tools/client-runtime/t3ToolSummary";
@@ -492,6 +494,19 @@ function t3ToolSummaryCall(entry: WorkLogPresentationEntry): T3ToolSummaryCall {
           ? "completed"
           : "unfinished",
   };
+}
+
+const outgoingMessageCache = new WeakMap<WorkLogPresentationEntry, OutgoingT3Message | null>();
+
+/** Shared by timeline grouping and cards so outgoing messages stay visible when work folds. */
+export function workEntryOutgoingMessage(
+  entry: WorkLogPresentationEntry,
+): OutgoingT3Message | null {
+  const cached = outgoingMessageCache.get(entry);
+  if (cached !== undefined) return cached;
+  const message = outgoingT3Message(workEntryToolName(entry), t3ToolSummaryCall(entry));
+  outgoingMessageCache.set(entry, message);
+  return message;
 }
 
 function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction): number {
