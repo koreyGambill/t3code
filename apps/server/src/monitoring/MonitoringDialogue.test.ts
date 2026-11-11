@@ -215,6 +215,14 @@ it.effect("keeps an alert without waking idle or unsupported agents and steers a
       }
       assert.equal((yield* Ref.get(sends)).length, 0);
       yield* Ref.set(status, "running");
+      for (const kind of ["standards", "context-review"] as const) {
+        assert.equal(
+          (yield* delivery.deliver({ profile: { ...profile, kind, delivery: "alerts" }, finding }))
+            .delivery,
+          "alert_only",
+        );
+      }
+      assert.equal((yield* Ref.get(sends)).length, 0);
       assert.equal((yield* delivery.deliver({ profile, finding })).delivery, "steered");
       const [sent] = yield* Ref.get(sends);
       assert.equal(sent?.advisoryOnly, true);

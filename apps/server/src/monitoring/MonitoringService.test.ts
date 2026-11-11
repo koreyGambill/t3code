@@ -9,7 +9,19 @@ import {
   ScheduledTaskId,
   type ScheduledTask,
   type MonitoringUpsertInput,
+  type OrchestrationV2DomainEvent,
+  type MonitoringProfile,
+  type MonitoringRun,
+  ThreadId,
+  RunId,
+  MessageId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -45,6 +57,7 @@ it.effect(
           Layer.mergeAll(
             Layer.succeed(Store.MonitoringStore, store),
             Layer.mock(Runner.MonitoringRunner)({ validateModel: () => Effect.void }),
+            Layer.mock(Threads.ThreadManagementService)({ streamDomainEvents: Stream.empty }),
             Layer.mock(Tasks.ScheduledTaskService)({
               upsert: () => Effect.fail(new ScheduledTaskError({ message: "rejected" })),
             }),
@@ -66,6 +79,7 @@ it.effect(
               validateModel: () =>
                 Effect.fail(new MonitoringError({ operation: "selected model unavailable" })),
             }),
+            Layer.mock(Threads.ThreadManagementService)({ streamDomainEvents: Stream.empty }),
             Layer.mock(Tasks.ScheduledTaskService)({}),
           ),
         ),
@@ -142,6 +156,7 @@ it.effect(
           Layer.mergeAll(
             Layer.succeed(Store.MonitoringStore, store),
             Layer.mock(Runner.MonitoringRunner)({ validateModel: () => Effect.void }),
+            Layer.mock(Threads.ThreadManagementService)({ streamDomainEvents: Stream.empty }),
             Layer.mock(Tasks.ScheduledTaskService)({
               upsert: (schedule) => {
                 scheduleEnabled = schedule.enabled;
@@ -163,6 +178,127 @@ it.effect(
       assert.equal(optedIn.profile.enabled, true);
       assert.equal(scheduleEnabled, true);
     }).pipe(
+      Effect.provide(
+        Layer.merge(NodeCrypto.layer, Store.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+      ),
+    ),
+);
+
+it.effect(
+  "reviews only terminal turns, off the event fiber, with cooldown and in-flight guards",
+  () =>
+    Effect.gen(function* () {
+      const selected: MonitoringProfile = {
+        ...input,
+        id: MonitoringProfileId.make("watcher"),
+        scheduledTaskId: ScheduledTaskId.make("monitoring:watcher"),
+        createdAt: "1970-01-01T00:00:00Z",
+        updatedAt: "1970-01-01T00:00:00Z",
+        turnEnd: {},
+      };
+      const store = yield* Store.MonitoringStore;
+      yield* store.saveProfile(selected);
+      const sql = yield* SqlClient.SqlClient;
+      const at = selected.createdAt;
+      yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id,project_id,title,default_provider,runtime_mode,interaction_mode,created_at,updated_at,payload_json) VALUES ('thread',${selected.projectId},'Thread','claude','full-access','default',${at},${at},'{}')`;
+      const events = yield* Queue.unbounded<{
+        event: OrchestrationV2DomainEvent;
+        processed: Deferred.Deferred<void>;
+      }>();
+      const entered = yield* Queue.unbounded<ThreadId>();
+      const release = yield* Deferred.make<void>();
+      let calls = 0;
+      const stream = Stream.fromQueue(events).pipe(
+        Stream.flatMap(({ event, processed }) =>
+          Stream.make(event).pipe(
+            Stream.concat(
+              Stream.fromEffect(Deferred.succeed(processed, undefined)).pipe(Stream.drain),
+            ),
+          ),
+        ),
+      );
+      const serviceLayer = Service.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(Store.MonitoringStore, store),
+            Layer.mock(Threads.ThreadManagementService)({ streamDomainEvents: stream }),
+            Layer.mock(Tasks.ScheduledTaskService)({}),
+            Layer.mock(Runner.MonitoringRunner)({
+              run: (_id, threadId) =>
+                Effect.gen(function* () {
+                  calls++;
+                  yield* Queue.offer(entered, threadId!);
+                  if (calls > 1) yield* Deferred.await(release);
+                  return {} as MonitoringRun;
+                }),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        yield* Service.MonitoringService;
+        const emit = Effect.fn("test.emit")(function* (status: "running" | "completed") {
+          const processed = yield* Deferred.make<void>();
+          yield* Queue.offer(events, {
+            processed,
+            event: {
+              type: "run.updated",
+              payload: {
+                id: RunId.make("run"),
+                threadId: ThreadId.make("thread"),
+                userMessageId: MessageId.make("user"),
+                status,
+              },
+              occurredAt: DateTime.makeUnsafe(0),
+            } as OrchestrationV2DomainEvent,
+          });
+          yield* Deferred.await(processed);
+        });
+        yield* emit("running");
+        assert.equal(calls, 0);
+        yield* store.saveProfile({ ...selected, enabled: false });
+        yield* emit("completed");
+        assert.equal(calls, 0);
+        yield* store.saveProfile({ ...selected, projectId: ProjectId.make("other") });
+        yield* emit("completed");
+        assert.equal(calls, 0);
+        yield* store.saveProfile(selected);
+        yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at=${at} WHERE thread_id='thread'`;
+        yield* emit("completed");
+        assert.equal(calls, 0);
+        yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at=NULL, deleted_at=${at} WHERE thread_id='thread'`;
+        yield* emit("completed");
+        assert.equal(calls, 0);
+        yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at=NULL WHERE thread_id='thread'`;
+        for (const message of [
+          { origin: { kind: "system", event: "monitoring advisory" } },
+          { scheduledTaskId: "monitoring:watcher" },
+        ]) {
+          const payload = JSON.stringify(message);
+          yield* sql`INSERT OR REPLACE INTO orchestration_v2_projection_messages(message_id,thread_id,role,streaming,created_at,updated_at,payload_json) VALUES ('user','thread','user',0,${at},${at},${payload})`;
+          yield* emit("completed");
+          assert.equal(calls, 0);
+        }
+        yield* sql`INSERT INTO scheduled_tasks(task_id,title,prompt,enabled,schedule_json,project_id,workspace_strategy_json,model_selection_json,runtime_mode,interaction_mode,created_by,creation_source,created_at,updated_at,last_run_status,run_count) VALUES ('idle','Idle','check',1,'{"type":"interval","everyMs":60000,"idleCheckin":true}',${selected.projectId},'{}','{}','full-access','default','system','server',${at},${at},'never',0)`;
+        yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json='{"scheduledTaskId":"idle","origin":{"kind":"scheduled-task","title":"Idle"}}' WHERE message_id='user'`;
+        yield* emit("completed");
+        assert.equal(calls, 0);
+        yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE message_id='user'`;
+        yield* emit("completed");
+        assert.equal(yield* Queue.take(entered), "thread");
+        yield* emit("completed");
+        assert.equal(calls, 1);
+        yield* TestClock.adjust("11 minutes");
+        yield* emit("completed");
+        assert.equal(yield* Queue.take(entered), "thread");
+        assert.equal(calls, 2);
+        yield* TestClock.adjust("11 minutes");
+        yield* emit("completed");
+        assert.equal(calls, 2);
+        yield* Deferred.succeed(release, undefined);
+      }).pipe(Effect.provide(serviceLayer));
+    }).pipe(
+      Effect.scoped,
       Effect.provide(
         Layer.merge(NodeCrypto.layer, Store.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
       ),

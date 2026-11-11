@@ -34,6 +34,29 @@ export const MonitoringProfileInput = Schema.Struct({
         schedule.type !== "webhook" && (schedule.type !== "interval" || !schedule.idleCheckin),
     ),
   ),
+  turnEnd: Schema.optional(
+    Schema.Struct({
+      cooldownMs: Schema.optional(
+        Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(60_000)),
+      ),
+    }),
+  ),
+  delivery: Schema.optional(Schema.Literals(["thread-or-alert", "alerts"])),
+  instructionFiles: Schema.optional(
+    Schema.Array(
+      TrimmedNonEmptyString.check(
+        Schema.isMaxLength(4096),
+        Schema.makeFilter(
+          (path) =>
+            path.startsWith("/") ||
+            path.startsWith("~/") ||
+            /^[A-Za-z]:[\\/]/.test(path) ||
+            path.startsWith("\\\\"),
+        ),
+      ),
+    ).check(Schema.isMaxLength(32)),
+  ),
+  includeProjectAgents: Schema.optional(Schema.Boolean),
   targets: MonitoringTargets,
   rules: Schema.Array(MonitoringRule).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
 });

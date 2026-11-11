@@ -29,6 +29,7 @@ export class MonitoringStore extends Context.Service<
   MonitoringStore,
   {
     readonly status: () => Effect.Effect<{ readonly unreadCount: number }, MonitoringError>;
+    readonly listProfiles: () => Effect.Effect<ReadonlyArray<MonitoringProfile>, MonitoringError>;
     readonly list: () => Effect.Effect<MonitoringListResult, MonitoringError>;
     readonly getRun: (id: string) => Effect.Effect<MonitoringRun | null, MonitoringError>;
     readonly getProfile: (
@@ -46,12 +47,18 @@ export class MonitoringStore extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  const listProfiles = Effect.fn("MonitoringStore.listProfiles")(function* () {
+    return yield* sql<{
+      payload_json: string;
+    }>`SELECT payload_json FROM monitoring_profiles ORDER BY id`.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.flatMap((rows) => decodeProfiles(rows.map((row) => row.payload_json))),
+      Effect.mapError((cause) => new MonitoringError({ operation: "read profiles", cause })),
+    );
+  });
   const list = Effect.fn("MonitoringStore.list")(function* () {
     const [profiles, findings, runs] = yield* Effect.all([
-      sql<{ payload_json: string }>`SELECT payload_json FROM monitoring_profiles ORDER BY id`.pipe(
-        NodeSqliteClient.readOnly,
-        Effect.flatMap((rows) => decodeProfiles(rows.map((row) => row.payload_json))),
-      ),
+      listProfiles(),
       sql<{
         payload_json: string;
       }>`SELECT payload_json FROM monitoring_findings ORDER BY updated_at DESC LIMIT 500`.pipe(
@@ -69,6 +76,7 @@ const make = Effect.gen(function* () {
   });
   return MonitoringStore.of({
     list,
+    listProfiles,
     status: Effect.fn("MonitoringStore.status")(function* () {
       const now = DateTime.formatIso(yield* DateTime.now);
       const rows = yield* sql<{

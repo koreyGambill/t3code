@@ -42,6 +42,7 @@ export const layer = Layer.effect(
     const deliver: MonitoringDelivery["Service"]["deliver"] = Effect.fn(
       "MonitoringDelivery.deliver",
     )(function* ({ profile, finding, exchangeId }) {
+      if (profile.delivery === "alerts") return { delivery: "alert_only", messageId: null };
       if (profile.kind === "context-review") {
         const target = yield* threads
           .getProjectThreadRecords({ projectId: profile.projectId, threadId: finding.threadId }, [])

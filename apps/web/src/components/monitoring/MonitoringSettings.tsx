@@ -30,6 +30,7 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { SettingsSection } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -71,6 +72,9 @@ function ProfileEditor({
             model: haiku.models.find((model) => model.slug.includes("haiku"))?.slug ?? "haiku",
           }
         : null),
+    turnEnd: profile?.turnEnd,
+    delivery: profile?.delivery ?? ("thread-or-alert" as const),
+    includeProjectAgents: profile?.includeProjectAgents ?? false,
     schedule: profile?.schedule ?? { type: "interval" as const, everyMs: 15 * 60_000 },
     targets: profile?.targets ?? {
       state: "active" as const,
@@ -89,6 +93,9 @@ function ProfileEditor({
     ],
   }));
   const [threadIds, setThreadIds] = useState(draft.targets.threadIds.join(", "));
+  const [instructionFiles, setInstructionFiles] = useState(
+    profile?.instructionFiles?.join("\n") ?? "",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const permission = useAtomValue(monitoringUpsert.permissionAtom(environmentId));
@@ -128,10 +135,35 @@ function ProfileEditor({
       setError("Choose an interval of at least one minute.");
       return;
     }
+    if (
+      draft.turnEnd &&
+      (!Number.isSafeInteger(draft.turnEnd.cooldownMs ?? 600_000) ||
+        (draft.turnEnd.cooldownMs ?? 600_000) < 60_000)
+    ) {
+      setError("Choose a turn-end cooldown of at least one minute.");
+      return;
+    }
+    const files = instructionFiles
+      .split("\n")
+      .map((path) => path.trim())
+      .filter(Boolean);
+    if (
+      files.some(
+        (path) =>
+          !path.startsWith("/") &&
+          !path.startsWith("~/") &&
+          !/^[A-Za-z]:[\\/]/.test(path) &&
+          !path.startsWith("\\\\"),
+      )
+    ) {
+      setError("Use an absolute path or ~/ path for each instruction file.");
+      return;
+    }
     const input: MonitoringUpsertInput = {
       ...draft,
       ...(profile ? { id: profile.id } : {}),
       projectId,
+      instructionFiles: files,
       modelSelection: draft.modelSelection,
       targets: {
         ...draft.targets,
@@ -259,6 +291,84 @@ function ProfileEditor({
           </p>
         )}
       </div>
+      {draft.kind === "standards" && (
+        <div className="space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={draft.turnEnd !== undefined}
+              disabled={busy}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, turnEnd: checked ? { cooldownMs: 600_000 } : undefined })
+              }
+            />
+            Review after each completed turn
+          </label>
+          {draft.turnEnd && (
+            <div className="space-y-1">
+              <Label htmlFor="watcher-cooldown">Turn-end cooldown (minutes per thread)</Label>
+              <Input
+                id="watcher-cooldown"
+                type="number"
+                min={1}
+                value={(draft.turnEnd.cooldownMs ?? 600_000) / 60_000}
+                disabled={busy}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    turnEnd: { cooldownMs: Number(event.target.value) * 60_000 },
+                  })
+                }
+              />
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Turn-end reviews check the exact completed thread without the schedule's thread filters.
+            The schedule below continues to run independently.
+          </p>
+          <div className="space-y-1">
+            <Label htmlFor="watcher-delivery">Findings delivery</Label>
+            <Select
+              value={draft.delivery}
+              disabled={busy}
+              onValueChange={(value) => {
+                if (value === "thread-or-alert" || value === "alerts")
+                  setDraft({ ...draft, delivery: value });
+              }}
+            >
+              <SelectTrigger id="watcher-delivery">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="thread-or-alert">
+                  Thread message, or alert if unavailable
+                </SelectItem>
+                <SelectItem value="alerts">Alerts only</SelectItem>
+              </SelectPopup>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="watcher-instruction-files">Instruction files (one path per line)</Label>
+            <Textarea
+              id="watcher-instruction-files"
+              value={instructionFiles}
+              disabled={busy}
+              placeholder="~/standards.md"
+              onChange={(event) => setInstructionFiles(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Use absolute or ~/ paths on this environment's machine.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={draft.includeProjectAgents}
+              disabled={busy}
+              onCheckedChange={(checked) => setDraft({ ...draft, includeProjectAgents: checked })}
+            />
+            Include the project's root AGENTS.md
+          </label>
+        </div>
+      )}
       {draft.schedule.type === "webhook" ? (
         <p role="alert">
           This watcher has an unsupported webhook schedule. Choose a timed schedule.
@@ -490,8 +600,8 @@ export function MonitoringSettings({ environmentId }: { environmentId: Environme
   return (
     <SettingsSection title="Watchers" id="watchers">
       <p className="text-sm text-muted-foreground">
-        Scheduled advisory reviews of thread work. Findings appear in the right alert rail; they do
-        not enforce policy.
+        Advisory reviews of thread work, on a schedule or after completed turns. Findings arrive in
+        the thread or alert rail according to delivery settings.
       </p>
       {!connected ? (
         <p className="text-sm text-muted-foreground">

@@ -35,6 +35,7 @@ export interface MonitoringSnapshotData {
     }>;
   }>;
   readonly newestContextAt?: string;
+  readonly projectRoot?: string;
   readonly truncated: boolean;
   readonly coverage: string;
 }
@@ -90,6 +91,7 @@ export class MonitoringSnapshot extends Context.Service<
   {
     readonly capture: (
       profile: MonitoringProfile,
+      threadId?: ThreadId,
     ) => Effect.Effect<MonitoringSnapshotData, MonitoringError>;
   }
 >()("t3/monitoring/MonitoringSnapshot") {}
@@ -98,11 +100,33 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const contexts = yield* ContextRecords.ContextRecords;
   return MonitoringSnapshot.of({
-    capture: Effect.fn("MonitoringSnapshot.capture")(function* (profile) {
+    capture: Effect.fn("MonitoringSnapshot.capture")(function* (profile, threadId) {
+      if (threadId !== undefined)
+        profile = {
+          ...profile,
+          targets: {
+            state: "all",
+            threadIds: [threadId],
+            includeChildren: false,
+            minAgeMs: 0,
+            updatedWithinMs: null,
+          },
+        };
+      const projectRows = profile.includeProjectAgents
+        ? yield* sql<{
+            workspace_root: string;
+          }>`SELECT workspace_root FROM projection_projects WHERE project_id=${profile.projectId} AND deleted_at IS NULL`.pipe(
+            NodeSqliteClient.readOnly,
+            Effect.mapError(
+              (cause) => new MonitoringError({ operation: "read instruction root", cause }),
+            ),
+          )
+        : [];
+      const projectRoot = projectRows[0]?.workspace_root;
       const now = DateTime.toEpochMillis(yield* DateTime.now);
       const rows = yield* sql<{
         payload_json: string;
-      }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE project_id=${profile.projectId} AND deleted_at IS NULL AND ${profile.targets.threadIds.length ? sql`thread_id IN ${sql.in(profile.targets.threadIds)}` : sql`1`} ORDER BY updated_at DESC LIMIT 201`.pipe(
+      }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE project_id=${profile.projectId} AND deleted_at IS NULL AND ${threadId === undefined ? sql`1` : sql`archived_at IS NULL`} AND ${profile.targets.threadIds.length ? sql`thread_id IN ${sql.in(profile.targets.threadIds)}` : sql`1`} ORDER BY updated_at DESC LIMIT 201`.pipe(
         NodeSqliteClient.readOnly,
         Effect.mapError((cause) => new MonitoringError({ operation: "select targets", cause })),
       );
@@ -220,6 +244,7 @@ const make = Effect.gen(function* () {
           });
         }
         return {
+          ...(projectRoot === undefined ? {} : { projectRoot }),
           ...(newestContextAt === undefined ? {} : { newestContextAt }),
           threads: contextThreads.some((thread) => thread.messages.length) ? contextThreads : [],
           truncated,
@@ -290,6 +315,7 @@ const make = Effect.gen(function* () {
         }
       }
       return {
+        ...(projectRoot === undefined ? {} : { projectRoot }),
         threads: result,
         truncated,
         coverage:

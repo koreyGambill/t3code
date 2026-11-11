@@ -85,6 +85,7 @@ it.effect(
           yield* sql`INSERT INTO orchestration_v2_projection_messages(message_id,thread_id,role,streaming,created_at,updated_at,payload_json) VALUES (${mid},${id},'assistant',${streaming ? 1 : 0},${at},${at},${message})`;
         }
       }
+      yield* sql`INSERT INTO projection_projects(project_id,title,workspace_root,scripts_json,created_at,updated_at) VALUES ('project','Project','/workspace/project','[]',${at},${at})`;
       const before = yield* sql`SELECT count(*) AS count FROM orchestration_v2_projection_messages`;
       const snap = yield* (yield* Snapshot.MonitoringSnapshot).capture(profile);
       assert.deepEqual(
@@ -96,6 +97,25 @@ it.effect(
         ["Tests 3 passed"],
       );
       assert.equal(snap.truncated, false);
+      const exact = yield* (yield* Snapshot.MonitoringSnapshot).capture(
+        {
+          ...profile,
+          includeProjectAgents: true,
+          targets: { ...profile.targets, state: "closed", minAgeMs: 60_000 },
+        },
+        ThreadId.make("excluded"),
+      );
+      assert.deepEqual(
+        exact.threads.map((thread) => thread.id),
+        ["excluded"],
+      );
+      assert.equal(exact.projectRoot, "/workspace/project");
+      yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at=${at} WHERE thread_id='excluded'`;
+      assert.deepEqual(
+        (yield* (yield* Snapshot.MonitoringSnapshot).capture(profile, ThreadId.make("excluded")))
+          .threads,
+        [],
+      );
       const context = yield* (yield* Snapshot.MonitoringSnapshot).capture({
         ...profile,
         kind: "context-review",

@@ -131,7 +131,14 @@ Open **Alerts** on the right to read findings and their quoted evidence. A watch
 sees a bounded snapshot, so missing context can limit its conclusions. You can
 dismiss or snooze a finding, reopen it, or pause its watcher.
 
-A watcher can offer advice to an active agent when its provider supports steering
+Enable **Review after each completed turn** to check the thread that just finished,
+with a per-thread cooldown of at least one minute (ten minutes by default). The
+schedule continues independently. Choose **Alerts only** to keep all findings in
+the Alerts bell. Add instruction file paths on the server's machine (`~/` uses
+that server user's home), or include the project's root `AGENTS.md`. Missing files
+limit the review, and instruction sources are truncated at 64 KiB.
+
+With thread delivery, a watcher can offer advice to an active agent when its provider supports steering
 without interrupting tools. The agent can agree or explain a disagreement. The
 watcher checks fresh evidence and records a short report: corrected, accepted
 explanation, unresolved or unverified. Agreement alone does not count as a

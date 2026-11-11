@@ -448,6 +448,7 @@ export const layerProduction = Layer.mergeAll(
         MonitoringStore.layer,
         layerMonitoringRunnerProvided,
         layerScheduledTaskProvided,
+        layerThreadManagementProvided,
       ),
     ),
   ),

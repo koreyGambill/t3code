@@ -14,6 +14,8 @@ import {
   type MonitoringProfile,
   type MonitoringRun,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
@@ -466,4 +468,64 @@ it.effect(
         assert.equal(yield* Ref.get(deliveries), 1);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "injects instruction files and project AGENTS, reports missing files, and caps injected bytes",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "monitor-instructions-" });
+      const instructions = path.join(dir, "standards.md");
+      const agents = path.join(dir, "AGENTS.md");
+      const large = path.join(dir, "large.md");
+      yield* fs.writeFileString(instructions, "Run focused tests before committing.");
+      yield* fs.writeFileString(agents, "Comments explain why.");
+      yield* fs.writeFileString(large, "大".repeat(40_000));
+      let prompt = "";
+      const snapshot: Snapshot.MonitoringSnapshotData = {
+        projectRoot: dir,
+        threads: [
+          {
+            id: ThreadId.make("thread"),
+            title: "Main",
+            parentThreadId: null,
+            messages: [{ id: "message", role: "assistant", text: "Observed" }],
+          },
+        ],
+        truncated: false,
+        coverage: "Chat",
+      };
+      const selected = {
+        ...profile,
+        instructionFiles: [instructions, path.join(dir, "missing.md"), large],
+        includeProjectAgents: true,
+      };
+      const layer = runnerLayer(
+        selected,
+        {},
+        { capture: () => Effect.succeed(snapshot) },
+        (input) => {
+          prompt = input.prompt;
+          return Effect.succeed({ findings: [] });
+        },
+      );
+      yield* Effect.gen(function* () {
+        const runner = yield* Runner.MonitoringRunner;
+        yield* runner.review({
+          ...selected,
+          instructionFiles: selected.instructionFiles.slice(0, 2),
+        });
+        assert.include(prompt, "Run focused tests before committing.");
+        assert.include(prompt, "Comments explain why.");
+        assert.include(prompt, "Missing or unreadable instruction file");
+        yield* runner.review(selected);
+        const payload = JSON.parse(prompt.slice(prompt.indexOf('{"standards":'))) as {
+          instructionFiles: string;
+        };
+        assert.isAtMost(Buffer.byteLength(payload.instructionFiles), 64 * 1024);
+        assert.include(payload.instructionFiles, "Instruction sources truncated");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
