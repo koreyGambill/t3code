@@ -41,6 +41,7 @@ interface CompactToolOutput {
   isError?: true;
   threadId?: string;
   messageId?: string;
+  replyToMessageId?: string;
   taskId?: string;
   scheduledTaskId?: string;
   status?: "rolled_back";
@@ -228,7 +229,13 @@ export function compactDynamicToolOutput(
       output.delivery = delivery;
   }
   if (data !== undefined) {
-    for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {
+    for (const key of [
+      "threadId",
+      "messageId",
+      "replyToMessageId",
+      "taskId",
+      "scheduledTaskId",
+    ] as const) {
       const id = boundedId(data[key]);
       if (id !== undefined) output[key] = id;
     }

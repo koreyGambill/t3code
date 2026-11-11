@@ -3,7 +3,9 @@ import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { EnvironmentId, ThreadId, type ScopedThreadRef, type TurnOrigin } from "@t3tools/contracts";
-import type { OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
+import { outgoingT3Message, type OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { useTurnItemDetail } from "../../state/queries";
 import { senderCardDetails } from "@t3tools/client-runtime/user-message";
 import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -38,6 +40,7 @@ export function SenderCard(props: {
 
 export function OutgoingMessageCard(props: {
   readonly message: OutgoingT3Message;
+  readonly item?: Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }> | undefined;
   readonly environmentId: EnvironmentId;
   readonly createdAt?: string;
   readonly reply?: boolean;
@@ -60,7 +63,59 @@ export function OutgoingMessageCard(props: {
       createdAt={props.createdAt}
       reply={props.reply}
       error={message.error}
-    />
+    >
+      {props.item ? (
+        <OutgoingMessageBody
+          item={props.item}
+          message={message}
+          environmentId={props.environmentId}
+        />
+      ) : (
+        <Text className="text-sm text-foreground">{message.body}</Text>
+      )}
+    </ThreadMessageCard>
+  );
+}
+
+function OutgoingMessageBody(props: {
+  readonly item: Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
+  readonly message: OutgoingT3Message;
+  readonly environmentId: EnvironmentId;
+}) {
+  const item = props.item;
+  const detail = useTurnItemDetail({
+    environmentId: props.environmentId,
+    row: {
+      item,
+      position: 0,
+      visibility: "local",
+      sourceThreadId: item.threadId,
+      sourceItemId: item.id,
+    },
+  });
+  const full = detail.data?.item;
+  const message =
+    full?.type === "dynamic_tool"
+      ? outgoingT3Message(full.toolName ?? undefined, {
+          input: full.input,
+          output: full.output,
+          outcome: full.status === "failed" ? "failed" : "completed",
+        })
+      : null;
+  return (
+    <>
+      <Text className="text-sm text-foreground">{message?.body ?? props.message.body}</Text>
+      {!message ? (
+        <Text className="text-xs text-foreground-muted">
+          {detail.error ??
+            (detail.isPending
+              ? "Loading full message…"
+              : detail.data
+                ? "Full message is no longer available."
+                : "")}
+        </Text>
+      ) : null}
+    </>
   );
 }
 
@@ -244,6 +299,7 @@ export function MessageResponseRows(props: {
           <OutgoingMessageCard
             key={row.item.id}
             message={row.message}
+            item={row.item}
             environmentId={props.environmentId}
             createdAt={DateTime.formatIso(row.item.startedAt ?? row.item.updatedAt)}
             reply

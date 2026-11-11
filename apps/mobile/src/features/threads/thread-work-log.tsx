@@ -1088,6 +1088,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     return (
       <OutgoingMessageCard
         message={outgoing}
+        item={row.projectedItem.item.type === "dynamic_tool" ? row.projectedItem.item : undefined}
         environmentId={props.environmentId}
         createdAt={row.createdAt}
       />

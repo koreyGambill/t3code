@@ -760,9 +760,8 @@ it.effect(
       for (const [text, status, expected] of [
         ["[react 1:ack]", "running", false],
         ["[react 1:ack]", "completed", true],
-        ["[react 1:ack 2:replied 3:ack]", "completed", true],
-        ["[react 1:info]\nA decision is needed.", "completed", false],
-        ["A decision is needed.\n[react 1:info]", "completed", false],
+        ["[react 1:ack 2:ack 3:ack]", "completed", true],
+        ["A decision is needed.", "completed", false],
         ["[quiet]", "completed", false],
         [" \n\t\u00a0[react 1:ack]\u3000\ufeff", "completed", true],
         ["[react 1:ack] needs a decision", "completed", false],

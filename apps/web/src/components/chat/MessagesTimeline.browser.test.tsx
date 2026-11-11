@@ -781,7 +781,12 @@ describe("MessagesTimeline automation prompts", () => {
       activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
     });
     await vi.waitFor(() =>
-      expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true"),
+      expect(
+        screen.container
+          .querySelector("[data-sender-card]")!
+          .closest("[role=button]")!
+          .getAttribute("aria-expanded"),
+      ).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
     const details = screen.container.querySelector("[data-thread-find-text]")!;
@@ -828,6 +833,38 @@ describe("MessagesTimeline automation prompts", () => {
 const SENDER_THREAD_ID = ThreadId.make("thread-sender");
 const AGENT_MESSAGE = "Review finished\n\nThe migration drops the index before backfilling it.";
 
+describe("MessagesTimeline outgoing messages", () => {
+  it("loads the full sent message when its compact row expands", async () => {
+    setup();
+    const full = `${"Full sent message. ".repeat(1100)}message-tail`;
+    const fields = {
+      toolName: "t3_thread_send",
+      input: {
+        threadId: "thread-target",
+        message: `${full.slice(0, 1024)}\n… Open tool details for the full message.`,
+      },
+      output: { threadId: "thread-target" },
+      updatedAt: DateTime.makeUnsafe(CREATED_AT),
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [v2Item("dynamic_tool", fields)],
+      optimisticMessages: [],
+    });
+    environmentQuery.data = {
+      item: {
+        ...fields,
+        type: "dynamic_tool",
+        status: "completed",
+        input: { threadId: "thread-target", message: full },
+      },
+    };
+    await using screen = await renderTimeline(entries);
+    expect(screen.text()).not.toContain("message-tail");
+    await screen.getByRole("button", { name: /^To thread-target:/ }).click();
+    await expect.element(screen.getByText(full, { exact: true })).toBeVisible();
+  });
+});
+
 describe("MessagesTimeline agent messages", () => {
   it("opens the source thread from its sender card", async () => {
     setup();
@@ -848,6 +885,7 @@ describe("MessagesTimeline agent messages", () => {
       { onOpenThread },
     );
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+    await screen.getByRole("button", { name: /^Agent:/ }).click();
     await screen.getByRole("link", { name: "Agent", exact: true }).click();
     expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
   });
@@ -884,7 +922,12 @@ describe("MessagesTimeline agent messages", () => {
       },
     );
     await vi.waitFor(() =>
-      expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true"),
+      expect(
+        screen.container
+          .querySelector("[data-sender-card]")!
+          .closest("[role=button]")!
+          .getAttribute("aria-expanded"),
+      ).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
     const body = screen.container.querySelector("[data-user-message-body]")!;

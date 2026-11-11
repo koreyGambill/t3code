@@ -2,7 +2,10 @@ import { MessageReactionChip } from "./MessageReactionChip";
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef, type TurnOrigin } from "@t3tools/contracts";
-import type { OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
+import { outgoingT3Message, type OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { useTurnItemDetail, type TurnItemDetailSource } from "../../state/queries";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { senderCardDetails } from "@t3tools/client-runtime/user-message";
@@ -47,6 +50,8 @@ export function SenderCard(props: {
 
 export function OutgoingMessageCard(props: {
   readonly message: OutgoingT3Message;
+  readonly item?: Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }> | undefined;
+  readonly detailSource?: TurnItemDetailSource | undefined;
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly createdAt?: string;
@@ -72,8 +77,60 @@ export function OutgoingMessageCard(props: {
       reply={props.reply}
       error={message.error}
     >
-      <p className="whitespace-pre-wrap">{message.body}</p>
+      {(expanded) =>
+        expanded && props.item ? (
+          <OutgoingMessageBody
+            item={props.item}
+            message={message}
+            environmentId={props.environmentId}
+            source={props.detailSource}
+          />
+        ) : (
+          <p className="whitespace-pre-wrap">{message.body}</p>
+        )
+      }
     </ThreadMessageCard>
+  );
+}
+
+function OutgoingMessageBody(props: {
+  readonly item: Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
+  readonly message: OutgoingT3Message;
+  readonly environmentId: EnvironmentId;
+  readonly source: TurnItemDetailSource | undefined;
+}) {
+  const detail = useTurnItemDetail(
+    {
+      environmentId: props.environmentId,
+      threadId: props.item.threadId,
+      itemId: props.item.id,
+      revision: turnItemDetailRevision(props.item),
+    },
+    props.source,
+  );
+  const item = detail.data?.item;
+  const message =
+    item?.type === "dynamic_tool"
+      ? outgoingT3Message(item.toolName ?? undefined, {
+          input: item.input,
+          output: item.output,
+          outcome: item.status === "failed" ? "failed" : "completed",
+        })
+      : null;
+  return (
+    <>
+      <p className="whitespace-pre-wrap">{message?.body ?? props.message.body}</p>
+      {!message ? (
+        <p className="text-xs text-muted-foreground">
+          {detail.error ??
+            (detail.isPending
+              ? "Loading full message…"
+              : detail.data
+                ? "Full message is no longer available."
+                : "")}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -92,7 +149,7 @@ function ThreadMessageCard(props: {
   readonly reaction?:
     | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
     | undefined;
-  readonly children: ReactNode;
+  readonly children: ReactNode | ((expanded: boolean) => ReactNode);
 }) {
   const sender = props.thread;
   const shell = useQuietThreadShell(sender);
@@ -235,7 +292,9 @@ function ThreadMessageCard(props: {
               {props.error}
             </p>
           ) : null}
-          <div className="wrap-anywhere text-sm">{props.children}</div>
+          <div className="wrap-anywhere text-sm">
+            {typeof props.children === "function" ? props.children(expanded) : props.children}
+          </div>
         </section>
       </div>
     </WorkLogRow>
@@ -250,6 +309,7 @@ export function MessageResponseRows(props: {
     | ((messageId: import("@t3tools/contracts").MessageId) => void)
     | undefined;
   readonly timestampFormat: TimestampFormat;
+  readonly detailSource?: TurnItemDetailSource | undefined;
 }) {
   return (
     <div className="ms-7 min-w-0 opacity-80">
@@ -258,6 +318,8 @@ export function MessageResponseRows(props: {
           <OutgoingMessageCard
             key={row.item.id}
             message={row.message}
+            item={row.item}
+            detailSource={props.detailSource}
             environmentId={props.environmentId}
             onOpenThread={props.onOpenThread}
             createdAt={DateTime.formatIso(row.item.startedAt ?? row.item.updatedAt)}

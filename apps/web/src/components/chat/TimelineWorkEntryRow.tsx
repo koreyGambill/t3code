@@ -159,6 +159,12 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
       <div className="min-w-0">
         <OutgoingMessageCard
           message={outgoing}
+          item={
+            props.workEntry.projectedItem?.item.type === "dynamic_tool"
+              ? props.workEntry.projectedItem.item
+              : undefined
+          }
+          detailSource={ctx.turnItemSource?.detail}
           environmentId={ctx.activeThreadEnvironmentId}
           onOpenThread={ctx.onOpenThread}
           createdAt={props.workEntry.createdAt}

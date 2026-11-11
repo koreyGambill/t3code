@@ -174,7 +174,7 @@ describe("ThreadReplies", () => {
           {
             status: "completed",
             reply: "Decision needed.",
-            answer: "[react 1:info]\nDecision needed.",
+            answer: "Decision needed.",
           },
         ] as const
       ).map((outcome) => ({ remote, ...outcome })),

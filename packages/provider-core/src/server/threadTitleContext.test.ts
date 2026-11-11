@@ -46,7 +46,7 @@ describe("thread title context", () => {
     const result = formatThreadTitleContext([
       { role: "system", text: "System instructions" },
       { role: "user", text: `Fix Android pairing. ${"logs ".repeat(3_000)}Keep iOS behavior.` },
-      { role: "assistant", text: "[react 1:info]\nFound the cause." },
+      { role: "assistant", text: "Found the cause." },
       { role: "assistant", text: " \n[react 1:ack]\n " },
     ]);
     expect(result.message).toContain("USER:\nFix Android pairing.");

@@ -275,6 +275,7 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
       : resolvedOrigin;
   return origin ? (
     <>
+      <MessageAuthorHeading>{"title" in origin ? origin.title : "T3 Code"}</MessageAuthorHeading>
       <SenderCard
         text={resolveUserMessagePresentation(row.message).text}
         createdAt={row.message.createdAt}
@@ -284,7 +285,6 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
         environmentId={ctx.activeThreadEnvironmentId}
         onOpenThread={ctx.onOpenThread}
       >
-        <MessageAuthorHeading>{"title" in origin ? origin.title : "T3 Code"}</MessageAuthorHeading>
         <UserTimelineRow row={row} cardBody />
       </SenderCard>
       {row.message.messageRows?.length ? (
@@ -294,6 +294,7 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
           onOpenThread={ctx.onOpenThread}
           onScrollToMessage={ctx.onScrollToMessage}
           timestampFormat={ctx.timestampFormat}
+          detailSource={ctx.turnItemSource?.detail}
         />
       ) : null}
     </>

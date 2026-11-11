@@ -18,7 +18,7 @@ type InputMessage = Extract<OrchestrationV2TurnItem, { type: "user_message" }>;
 type SendItem = Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
 type MessageRun = Pick<
   OrchestrationV2Run,
-  "id" | "rootNodeId" | "inputMessageIds" | "userMessageId"
+  "id" | "rootNodeId" | "inputMessageIds" | "userMessageId" | "status" | "mergedIntoRunId"
 >;
 
 export type MessageRow =
@@ -114,10 +114,12 @@ export function buildMessageRows(
   const children = new Map<MessageId, MessageRow[]>();
   const attached = new Set<SendItem["id"]>();
   for (const run of runs) {
+    if (run.mergedIntoRunId !== undefined) continue;
     const runItems = byRun.get(run.id) ?? [];
     const final = runItems
       .filter(
         (item) =>
+          run.status === "completed" &&
           item.type === "assistant_message" &&
           !item.streaming &&
           (item.nodeId === null ||
