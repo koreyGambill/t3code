@@ -105,6 +105,7 @@ interface ThreadLifecycleInput {
   readonly isWorking: boolean;
   readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkNowItem>[0]["tasks"];
   readonly turnItems: Parameters<typeof backgroundWorkNowItem>[0]["turnItems"];
+  readonly projection: Parameters<typeof backgroundWorkNowItem>[0]["projection"];
   readonly activePendingApproval: PendingThreadRequests["activePendingApproval"];
   readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
   readonly localCheckoutBranchMismatch: {
@@ -603,6 +604,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         lineage: activeThread.lineage,
         tasks: activeBackgroundTasks,
         turnItems,
+        projection: input.projection,
         stopDisabled: !canOperateThread || isStoppingBackgroundWork,
         stopping: isStoppingBackgroundWork,
         onStop: handleStopBackgroundWorkStable,

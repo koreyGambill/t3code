@@ -159,13 +159,14 @@ export function backgroundWorkNowItem(input: {
   readonly lineage: ThreadStructure["thread"]["lineage"];
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
   readonly turnItems: ThreadStructure["turnItems"];
+  readonly projection: ThreadStructure | null;
   readonly stopDisabled: boolean;
   readonly stopping: boolean;
   readonly onStop: () => Promise<void>;
-  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
 }): ThreadNowItem | null {
   const { onOpenThread } = input;
-  const presentation = presentPendingBackgroundWork(input.tasks, input.lineage);
+  const presentation = presentPendingBackgroundWork(input.tasks, input.lineage, input.projection);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
@@ -198,11 +199,39 @@ export function backgroundWorkNowItem(input: {
   const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
+  const descriptionRows = rows.filter(
+    (row) => !presentation.groups.some((group) => group.items.includes(row.task)),
+  );
   return {
     id: `background-work:${input.threadId}`,
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
     title:
-      only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
+      presentation.groups.length > 0 ? (
+        presentation.groups.map((group, index) => (
+          <Fragment key={group.runId}>
+            {index > 0 ? " · " : null}
+            {group.done} of {group.total} done · waiting on{" "}
+            {group.items.map((task, taskIndex) => {
+              const childThreadId = task.childThreadId;
+              return (
+                <Fragment key={task.taskId}>
+                  {taskIndex > 0 ? ", " : null}
+                  {childThreadId === undefined ? (
+                    task.label
+                  ) : (
+                    <InlineButton
+                      tone="muted"
+                      onClick={() => onOpenThread(childThreadId, task.environmentId)}
+                    >
+                      {task.label}
+                    </InlineButton>
+                  )}
+                </Fragment>
+              );
+            })}
+          </Fragment>
+        ))
+      ) : only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
           {presentation.waiting ? "Waiting" : "Running"} · {only.label}
         </>
@@ -216,7 +245,7 @@ export function backgroundWorkNowItem(input: {
         {newest.label}: {newest.activity}
       </>
     ) : (
-      rows.map((row, index) => (
+      descriptionRows.map((row, index) => (
         <Fragment key={row.task.taskId}>
           {index > 0 ? ", " : null}
           {row.label}
@@ -234,8 +263,11 @@ export function backgroundWorkNowItem(input: {
             className="tabular-nums"
           />
         )}
-        {onlyThreadId === undefined ? null : (
-          <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
+        {onlyThreadId === undefined || presentation.groups.length > 0 ? null : (
+          <InlineButton
+            tone="muted"
+            onClick={() => onOpenThread(onlyThreadId, only?.task.environmentId)}
+          >
             Open
           </InlineButton>
         )}

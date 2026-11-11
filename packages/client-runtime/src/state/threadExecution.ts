@@ -20,6 +20,9 @@ import {
   orchestrationV2RunWorkStartedAt,
   type RunId,
   type ThreadId,
+  type EnvironmentId,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import {
   threadBackgroundWorkHoldsCompletion,
@@ -44,6 +47,7 @@ import {
 } from "./models.ts";
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -397,12 +401,76 @@ export interface PendingBackgroundWorkItem {
   readonly kind: BackgroundWorkKind;
   readonly label: string;
   readonly childThreadId: ThreadId | undefined;
+  readonly environmentId?: EnvironmentId | undefined;
 }
 
 export interface PendingBackgroundWorkPresentation {
   readonly title: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   readonly waiting: boolean;
+  readonly groups: ReadonlyArray<PendingDelegatedTaskGroup>;
+}
+
+interface DelegatedTaskGroupSource {
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "delegatedCompletion">>;
+  readonly subagents: ReadonlyArray<
+    Pick<
+      OrchestrationV2Subagent,
+      | "id"
+      | "runId"
+      | "origin"
+      | "title"
+      | "status"
+      | "childThreadId"
+      | "remoteChild"
+      | "originalTaskId"
+      | "completionGroupMember"
+    >
+  >;
+}
+
+export interface PendingDelegatedTaskGroup {
+  readonly runId: RunId;
+  readonly done: number;
+  readonly total: number;
+  readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
+}
+
+/** Completion counts for open parent-turn groups that still have work to finish. */
+export function derivePendingDelegatedTaskGroups(
+  projection: DelegatedTaskGroupSource,
+): ReadonlyArray<PendingDelegatedTaskGroup> {
+  const groups = new Map<RunId, Array<DelegatedTaskGroupSource["subagents"][number]>>();
+  for (const run of projection.runs) {
+    if (
+      run.status !== "rolled_back" &&
+      (run.delegatedCompletion === undefined || run.delegatedCompletion.disposition === "open")
+    )
+      groups.set(run.id, []);
+  }
+  for (const task of projection.subagents) {
+    if (
+      task.origin === "app_owned" &&
+      task.runId !== null &&
+      (task.completionGroupMember ?? task.originalTaskId === undefined)
+    )
+      groups.get(task.runId)?.push(task);
+  }
+  return Array.from(groups, ([runId, tasks]) => {
+    const pending = tasks.filter((task) => !isTerminalSubagentStatus(task.status));
+    return {
+      runId,
+      done: tasks.length - pending.length,
+      total: tasks.length,
+      items: pending.map((task): PendingBackgroundWorkItem => ({
+        taskId: task.id,
+        kind: "subagent",
+        label: formatSubagentDisplayTitle(task.title ?? "").trim() || "subagent",
+        childThreadId: task.remoteChild?.threadId ?? task.childThreadId ?? undefined,
+        environmentId: task.remoteChild?.environmentId,
+      })),
+    };
+  }).filter((group) => group.items.length > 0);
 }
 
 function joinWithAnd(parts: ReadonlyArray<string>): string {
@@ -433,7 +501,28 @@ export function isBackgroundWorkStopPending(
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   lineage?: Pick<OrchestrationV2ThreadProjection["thread"]["lineage"], "relationshipToParent">,
+  projection?: DelegatedTaskGroupSource | null,
 ): PendingBackgroundWorkPresentation | null {
+  const groups = projection == null ? [] : derivePendingDelegatedTaskGroups(projection);
+  if (groups.length > 0) {
+    const groupedItems = groups.flatMap((group) => group.items);
+    const groupedIds = new Set(groupedItems.map((item) => item.taskId));
+    const remaining = presentPendingBackgroundWork(
+      tasks.filter((task) => !groupedIds.has(task.taskId)),
+      lineage,
+    );
+    const titles = groups.map(
+      (group) =>
+        `${group.done} of ${group.total} done · waiting on ${joinWithAnd(group.items.map((item) => item.label))}`,
+    );
+    if (remaining !== null) titles.push(remaining.title);
+    return {
+      title: titles.join(" · "),
+      items: [...groupedItems, ...(remaining?.items ?? [])],
+      waiting: true,
+      groups,
+    };
+  }
   if (tasks.length === 0) return null;
   const waiting = threadBackgroundWorkHoldsCompletion({ pendingBackgroundTasks: tasks, lineage });
   const items = tasks
@@ -471,15 +560,20 @@ export function presentPendingBackgroundWork(
       : waiting
         ? `Waiting on a ${noun}`
         : `Running a ${noun}`;
-    return { title, items, waiting };
+    return { title, items, waiting, groups };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
-  const groups = Array.from(counts, ([kind, count]) => {
+  const countLabels = Array.from(counts, ([kind, count]) => {
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  return {
+    title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(countLabels)}`,
+    items,
+    waiting,
+    groups,
+  };
 }
 
 export interface ProviderGoalPresentation {

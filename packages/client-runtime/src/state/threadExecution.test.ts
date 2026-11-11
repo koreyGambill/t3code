@@ -10,6 +10,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  EnvironmentId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import {
   formatModelSelectionEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
+  derivePendingDelegatedTaskGroups,
   presentProviderGoal,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
@@ -563,6 +565,125 @@ describe("presentProviderGoal", () => {
 });
 
 describe("presentPendingBackgroundWork", () => {
+  it("tracks completion groups without counting later follow-ups", () => {
+    const parentRunId = RunId.make("parent");
+    const parent = {
+      id: parentRunId,
+      status: "completed" as const,
+      delegatedCompletion: { disposition: "open" as const, nextGeneration: 1, delivery: null },
+    };
+    const done = {
+      id: NodeId.make("done"),
+      runId: parentRunId,
+      origin: "app_owned" as const,
+      title: "Review",
+      status: "completed" as const,
+      childThreadId: ThreadId.make("review"),
+    };
+    const running = {
+      ...done,
+      id: NodeId.make("running"),
+      title: "Implementation",
+      status: "running" as const,
+      childThreadId: ThreadId.make("implementation"),
+    };
+    const later = {
+      ...running,
+      id: NodeId.make("later"),
+      originalTaskId: done.id,
+      completionGroupMember: false,
+    };
+    const projection = { runs: [parent], subagents: [done, running, later] };
+    const [group] = derivePendingDelegatedTaskGroups(projection);
+    expect(group).toMatchObject({ runId: parentRunId, done: 1, total: 2 });
+    expect(group?.items).toEqual([
+      {
+        taskId: running.id,
+        kind: "subagent",
+        label: "Implementation",
+        childThreadId: running.childThreadId,
+        environmentId: undefined,
+      },
+    ]);
+    expect(presentPendingBackgroundWork([], undefined, projection)?.title).toBe(
+      "1 of 2 done · waiting on Implementation",
+    );
+    expect(
+      presentPendingBackgroundWork(
+        [
+          { taskId: running.id, kind: "subagent", childThreadId: running.childThreadId },
+          { taskId: "command", kind: "command", description: "build" },
+        ],
+        undefined,
+        projection,
+      )?.items.map((item) => item.taskId),
+    ).toEqual([running.id, "command"]);
+    const remoteChild = {
+      environmentId: EnvironmentId.make("remote"),
+      threadId: ThreadId.make("remote-task"),
+      label: "Remote",
+    };
+    expect(
+      derivePendingDelegatedTaskGroups({
+        ...projection,
+        subagents: [done, { ...running, childThreadId: null, remoteChild }],
+      })[0]?.items[0],
+    ).toMatchObject({
+      childThreadId: remoteChild.threadId,
+      environmentId: remoteChild.environmentId,
+    });
+    expect(
+      derivePendingDelegatedTaskGroups({
+        ...projection,
+        subagents: [done, { ...running, status: "completed" }, later],
+      }),
+    ).toEqual([]);
+    expect(
+      derivePendingDelegatedTaskGroups({
+        runs: [{ id: parentRunId, status: "running" }],
+        subagents: [running],
+      })[0],
+    ).toMatchObject({ done: 0, total: 1 });
+    expect(
+      derivePendingDelegatedTaskGroups({
+        ...projection,
+        subagents: [done, { ...later, completionGroupMember: undefined }],
+      }),
+    ).toEqual([]);
+    expect(
+      derivePendingDelegatedTaskGroups({
+        ...projection,
+        subagents: [done, { ...later, completionGroupMember: true }],
+      })[0],
+    ).toMatchObject({ done: 1, total: 2 });
+    expect(
+      derivePendingDelegatedTaskGroups({
+        ...projection,
+        subagents: [done, { ...running, origin: "provider_native" }],
+      }),
+    ).toEqual([]);
+    expect(
+      derivePendingDelegatedTaskGroups({
+        runs: [{ ...parent, status: "rolled_back" }],
+        subagents: [done, running],
+      }),
+    ).toEqual([]);
+    expect(
+      derivePendingDelegatedTaskGroups({
+        runs: [
+          {
+            ...parent,
+            delegatedCompletion: { ...parent.delegatedCompletion, disposition: "disposed" },
+          },
+        ],
+        subagents: [done, running],
+      }),
+    ).toEqual([]);
+    expect(derivePendingDelegatedTaskGroups({ ...projection, subagents: [done, later] })).toEqual(
+      [],
+    );
+  });
+
   it.each([
     [null, undefined, false],
     ["subagent", undefined, true],

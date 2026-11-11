@@ -357,6 +357,7 @@ const COMPOSER_HEIGHT_SETTLE_MS = 220;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
   Atom.withLabel("mobile-thread-run-stop:empty"),
 );
+const NO_THREAD_DETAIL_ATOM = Atom.make(null);
 
 // Connection failures survive retries and app suspension.
 const RECONNECT_ERROR_DELAY_MS = 5_000;
@@ -717,6 +718,11 @@ function ThreadDetailBody(
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
     props.selectedThread.lineage,
+    useAtomValue(
+      props.selectedThreadDetailRef === null
+        ? NO_THREAD_DETAIL_ATOM
+        : environmentThreadDetails.quietThreadAtom(props.selectedThreadDetailRef),
+    )?.projection,
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
@@ -785,7 +791,11 @@ function ThreadDetailBody(
     if (props.isCompacting && contentPresentationKind === "ready") {
       return { kind: "compacting" };
     }
-    if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
+    if (
+      props.activeWorkStartedAt !== null &&
+      contentPresentationKind === "ready" &&
+      !pendingBackgroundWork?.groups.length
+    ) {
       return { kind: "working", startedAt: props.activeWorkStartedAt };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
