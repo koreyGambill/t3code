@@ -63,8 +63,10 @@ describe("Codex orchestration context", () => {
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("Every subagent, parallel or not, uses `delegate_task`"));
-    NodeAssert.ok(orchestration.includes("There are no native subagent tools"));
+    NodeAssert.ok(
+      orchestration.includes("Use `delegate_task` for every subagent, parallel or not"),
+    );
+    NodeAssert.ok(orchestration.includes("not native ones (Claude `Agent`, Codex `spawn_agent`)"));
     NodeAssert.ok(orchestration.includes("report back together once all finish"));
     NodeAssert.ok(orchestration.includes("start a parallel group in one turn, then end your turn"));
     NodeAssert.ok(orchestration.includes("Follow a running delegate's `next`"));

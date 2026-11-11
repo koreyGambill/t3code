@@ -5,35 +5,10 @@ import { describe, it } from "vite-plus/test";
 import { codexAppServerArgs, codexExecLaunchArgs } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
-  it("disables native agents after user config overrides", () => {
-    NodeAssert.deepStrictEqual(
-      codexAppServerArgs("-c features.multi_agent=true --enable multi_agent"),
-      [
-        "app-server",
-        "-c",
-        "features.multi_agent=true",
-        "--enable",
-        "multi_agent",
-        "--disable",
-        "multi_agent",
-        "--disable",
-        "multi_agent_v2",
-      ],
-    );
-  });
   it("preserves escaped TOML quotes in config values", () => {
     NodeAssert.deepStrictEqual(
       codexAppServerArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
-      [
-        "app-server",
-        "--config",
-        'model="gpt-6.1-sol"',
-        "--strict-config",
-        "--disable",
-        "multi_agent",
-        "--disable",
-        "multi_agent_v2",
-      ],
+      ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
     );
   });
 });

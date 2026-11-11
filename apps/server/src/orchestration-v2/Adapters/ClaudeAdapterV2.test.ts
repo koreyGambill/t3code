@@ -264,23 +264,6 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
-  it.each([{ disallowedTools: undefined }, { disallowedTools: ["Bash", "Agent"] }])(
-    "blocks native agents alongside $disallowedTools",
-    ({ disallowedTools }) => {
-      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
-        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        nativeThreadId: "delegate-only",
-        resume: false,
-        cwd: "/workspace",
-        ...(disallowedTools === undefined ? {} : { disallowedTools }),
-      });
-      assert.deepEqual(options.disallowedTools, [
-        ...new Set([...(disallowedTools ?? []), "Agent", "Task"]),
-      ]);
-      assert.notInclude(options.disallowedTools ?? [], "Workflow");
-    },
-  );
-
   it.each([false, true])("pins the native Claude session identity with resume=%s", (resume) => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -9339,7 +9322,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 model: "claude-sonnet-4-6",
                 tools: { type: "preset", preset: "claude_code" },
                 permissionMode: "bypassPermissions",
-                disallowedTools: ["Agent", "Task"],
                 allowDangerouslySkipPermissions: true,
                 settings: { showThinkingSummaries: true },
                 sessionId: WAKE_NATIVE_SESSION,
