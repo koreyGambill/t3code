@@ -1,3 +1,4 @@
+import { MessageReactionChip } from "./MessageReactionChip";
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef, type TurnOrigin } from "@t3tools/contracts";
@@ -21,6 +22,9 @@ export function SenderCard(props: {
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly queued?: boolean;
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly children: ReactNode;
 }) {
   return (
@@ -68,6 +72,9 @@ function ThreadMessageCard(props: {
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly queued?: boolean;
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly children: ReactNode;
 }) {
   const sender = props.thread;
@@ -158,6 +165,7 @@ function ThreadMessageCard(props: {
         <Badge variant={details.event === "failed" ? "error-outline" : "outline"}>
           {details.event}
         </Badge>
+        <MessageReactionChip reaction={props.reaction} />
         {overflowing ? (
           <Button
             className="ms-auto shrink-0"

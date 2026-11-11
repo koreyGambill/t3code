@@ -353,6 +353,21 @@ it.live("retries a failed selection restart session open before completing", () 
         if (activeRunId === undefined) {
           return yield* Effect.die("active restart test run is missing");
         }
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:selection-restart:inputs"),
+              type: "run.updated",
+              threadId,
+              runId: activeRunId,
+              occurredAt: yield* DateTime.now,
+              payload: {
+                ...activeProjection.runs[0]!,
+                inputMessageIds: [activeProjection.runs[0]!.userMessageId],
+              },
+            },
+          ],
+        });
 
         const completed = yield* eventSink
           .stream({
@@ -398,6 +413,9 @@ it.live("retries a failed selection restart session open before completing", () 
       const { projection, captured } = result;
 
       assert.lengthOf(projection.runs, 1);
+      assert.deepEqual(projection.runs[0]!.inputMessageIds, [
+        MessageId.make("message:selection-restart:second"),
+      ]);
       assert.lengthOf(projection.attempts, 2);
       assert.deepEqual(
         projection.attempts.map((attempt) => attempt.status),

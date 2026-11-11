@@ -2204,11 +2204,6 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
 
-/** Whether an assistant's whole message is the hidden quiet-turn marker. */
-export function isQuietAssistantText(text: string): boolean {
-  return text.trim() === "[quiet]";
-}
-
 export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
   id: MessageId,
   role: OrchestrationV2ConversationMessage.fields.role,
@@ -2248,8 +2243,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStopRequested: Schema.optional(Schema.Boolean),
-  /** The latest completed run ended with a quiet root reply. Absent from older servers. */
-  latestRunQuiet: Schema.optional(Schema.Boolean),
+  /** The latest completed run ended with reactions and no visible body. Absent from older servers. */
+  latestRunReactionOnly: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   activityRunStatus: Schema.optional(

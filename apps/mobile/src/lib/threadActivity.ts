@@ -1,9 +1,14 @@
+import {
+  inputMessageReactions,
+  reactionInputsUnchanged,
+} from "@t3tools/client-runtime/state/message-reactions";
+import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
-  turnItemIsQuietAssistantMessage,
+  turnItemIsReactionOnlyAssistantMessage,
   turnItemIsWorkspacePreparation,
 } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -56,13 +61,7 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import {
-  idleCompactionOf,
-  isCompactionCommandMessage,
-  isQuietAssistantText,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -134,6 +133,9 @@ export interface ThreadFeedActivity {
 }
 
 export interface ThreadFeedMessage {
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
   readonly id: MessageId;
   readonly role: "user" | "assistant";
@@ -696,9 +698,9 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "link_request":
       return item.reason || null;
     case "subagent":
-      return item.result && isQuietAssistantText(item.result)
-        ? null
-        : (item.result ?? item.progress ?? item.prompt);
+      return (
+        parseAssistantReactions(item.result ?? item.progress ?? item.prompt ?? "").body || null
+      );
     case "dynamic_tool":
       return null;
     case "notification":
@@ -1918,6 +1920,12 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
 }
 
 interface ThreadFeedBuild {
+  readonly runs: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2Run> | undefined;
+  readonly environmentId: import("@t3tools/contracts").EnvironmentId | undefined;
+  readonly reactions: ReadonlyMap<
+    MessageId,
+    import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+  >;
   readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
   readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
@@ -1995,6 +2003,8 @@ function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
+    readonly environmentId?: import("@t3tools/contracts").EnvironmentId;
+    readonly runs?: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2Run>;
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
@@ -2080,7 +2090,7 @@ export function buildThreadFeed(
     if (
       item.type === "todo_list" ||
       item.type === "checkpoint" ||
-      turnItemIsQuietAssistantMessage(item)
+      turnItemIsReactionOnlyAssistantMessage(item)
     )
       continue;
     if (
@@ -2150,7 +2160,8 @@ export function buildThreadFeed(
         message: {
           id: item.messageId,
           role: item.type === "user_message" ? "user" : "assistant",
-          text: item.text,
+          text:
+            item.type === "assistant_message" ? parseAssistantReactions(item.text).body : item.text,
           ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
           attachments: item.attachments ?? [],
           runId: item.runId,
@@ -2253,13 +2264,34 @@ export function buildThreadFeed(
             feedLength: prefix.length + groupedLength,
           }),
   );
-  const feed = prefix.length === 0 ? grouped : prefix.concat(grouped);
+  const reactions =
+    previous !== null &&
+    previous.runs === options?.runs &&
+    previous.nodes === options?.nodes &&
+    previous.environmentId === options?.environmentId &&
+    reactionInputsUnchanged(previous.rows, visibleTurnItems)
+      ? previous.reactions
+      : inputMessageReactions(
+          options?.runs ?? [],
+          visibleTurnItems.map(({ item }) => item),
+          options?.nodes,
+          options?.environmentId,
+        );
+  const feed = (prefix.length === 0 ? grouped : prefix.concat(grouped)).map((entry) => {
+    if (entry.type !== "message" || entry.message.role !== "user") return entry;
+    const reaction = reactions.get(entry.message.id);
+    if (entry.message.reaction?.tooltip === reaction?.tooltip) return entry;
+    return { ...entry, message: { ...entry.message, reaction } };
+  });
   if (cache) {
     cache.feedBuild =
       anchoredMessages.length > 0
         ? null
         : {
             rows: visibleTurnItems,
+            runs: options?.runs,
+            environmentId: options?.environmentId,
+            reactions,
             attempts: options?.attempts,
             nodes: options?.nodes,
             checkpointSummaries: options?.checkpointSummaries,

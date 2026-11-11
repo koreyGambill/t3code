@@ -1,5 +1,6 @@
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { renderTurnOriginText } from "@t3tools/provider-core/server/turnOriginText";
+import { numberedTurnOrigins } from "@t3tools/shared/messageReactions";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -379,6 +380,9 @@ export const layer: Layer.Layer<
         const input = messagesById.get(id);
         return input === undefined ? [] : [input];
       });
+      const originIndexes = new Map(
+        numberedTurnOrigins(inputMessages).map(({ message, index }) => [message.id, index]),
+      );
       const checkpointScope = projection.checkpointScopes.find(
         (candidate) => candidate.id === rootNode?.checkpointScopeId,
       );
@@ -921,6 +925,7 @@ export const layer: Layer.Layer<
                   input.origin ?? { kind: "user" },
                   projectInput(input),
                   receivingEnvironmentId,
+                  originIndexes.get(input.id),
                 ),
               )
               .join("\n\n---\n\n")

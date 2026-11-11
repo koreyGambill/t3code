@@ -1662,10 +1662,54 @@ effectIt.effect(
       });
       yield* harness.start;
       expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe(
-        '<t3_origin from="thread" title="Peer" thread="thread:peer" environment="environment:peer">An agent, not the user.</t3_origin>\n\n' +
+        '<t3_origin n="1" from="thread" title="Peer" thread="thread:peer" environment="environment:peer">An agent, not the user.</t3_origin>\n\n' +
           withInlineContext("SIDE_CHAT_CONTEXT", '<t3_origin kind="user">Approved.</t3_origin>'),
       );
     }),
+);
+
+effectIt.effect("numbers merged origins in input delivery order, excluding user messages", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Proceed.",
+      sideChat: { contextRun: "current" },
+    });
+    const projection = harness.projection();
+    const user = projection.messages[0]!;
+    const peers = ["First", "Second", "Third"].map((title) => ({
+      ...user,
+      id: MessageId.make(`message:${title}`),
+      text: `${title} update.`,
+      origin: {
+        kind: "thread" as const,
+        event: "message" as const,
+        title,
+        threadId: ThreadId.make(`thread:${title}`),
+        environmentId: EnvironmentId.make("environment:peer"),
+      },
+    }));
+    harness.setProjection({
+      ...projection,
+      runs: projection.runs.map((run) => ({
+        ...run,
+        inputMessageIds: [user.id, ...peers.map((message) => message.id)],
+      })),
+      messages: [...peers.toReversed(), user],
+      contextHandoffs: [],
+      contextTransfers: [],
+    });
+    yield* harness.start;
+    const text = harness.startTurn.mock.calls[0]?.[0].message.text;
+    expect(text).toBe(
+      "Proceed.\n\n---\n\n" +
+        peers
+          .map(
+            (peer, index) =>
+              `<t3_origin n="${index + 1}" from="thread" title="${peer.origin.title}" thread="${peer.origin.threadId}" environment="environment:peer">An agent, not the user.</t3_origin>\n\n${peer.text}`,
+          )
+          .join("\n\n---\n\n"),
+    );
+  }),
 );
 
 effectIt.effect("starts another provider in the same checkout while a turn is pending", () =>

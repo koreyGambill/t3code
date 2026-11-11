@@ -1,3 +1,4 @@
+import { MessageReactionChip } from "./MessageReactionChip";
 import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { MaskedView } from "@expo/ui/community/masked-view";
@@ -21,6 +22,9 @@ export function SenderCard(props: {
   readonly origin: Exclude<TurnOrigin, { kind: "user" }>;
   readonly text: string;
   readonly queued?: boolean;
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly children?: ReactNode;
 }) {
   return (
@@ -63,6 +67,9 @@ function ThreadMessageCard(props: {
   readonly outgoing?: boolean;
   readonly error?: string | undefined;
   readonly queued?: boolean;
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly children?: ReactNode;
 }) {
   const sender = props.thread;
@@ -149,6 +156,7 @@ function ThreadMessageCard(props: {
           </Text>
         )}
         <Text className="shrink-0 text-xs text-foreground-muted">{details.relationship}</Text>
+        <MessageReactionChip reaction={props.reaction} />
         <View className="shrink-0">
           <Chip
             label={details.event}

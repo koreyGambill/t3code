@@ -1,3 +1,8 @@
+import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
+import {
+  inputMessageReactions,
+  reactionInputsUnchanged,
+} from "@t3tools/client-runtime/state/message-reactions";
 import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
@@ -39,7 +44,7 @@ import type {
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import {
-  turnItemIsQuietAssistantMessage,
+  turnItemIsReactionOnlyAssistantMessage,
   turnItemIsWorkspacePreparation,
 } from "@t3tools/client-runtime/state/turn-item-presentation";
 
@@ -553,6 +558,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
 
 /** Preserve visibleTurnItems' committed order; interleave client messages by timestamp. */
 export interface TimelineEntriesInput {
+  readonly environmentId?: import("@t3tools/contracts").EnvironmentId;
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;
   readonly anchoredMessages?: ReadonlyArray<ChatMessage>;
@@ -560,6 +566,7 @@ export interface TimelineEntriesInput {
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
+  readonly runs?: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2Run>;
 }
 
 export interface TimelineEntriesProjection {
@@ -605,7 +612,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
-    if (item.type === "checkpoint" || turnItemIsQuietAssistantMessage(item)) continue;
+    if (item.type === "checkpoint" || turnItemIsReactionOnlyAssistantMessage(item)) continue;
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&
@@ -639,7 +646,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       const message: ChatMessage = {
         id: item.messageId,
         role: item.type === "user_message" ? "user" : "assistant",
-        text: item.text,
+        text:
+          item.type === "assistant_message" ? parseAssistantReactions(item.text).body : item.text,
         ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
         ...((item.attachments?.length ?? 0) > 0
           ? {
@@ -786,7 +794,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     }
   }
 
-  return entries;
+  return withInputMessageReactions(entries, input);
 }
 
 type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
@@ -896,7 +904,8 @@ export function isStreamingTurnItemTextUpdate(
     nextItem.type !== "assistant_message" ||
     !previousItem.streaming ||
     !nextItem.streaming ||
-    turnItemIsQuietAssistantMessage(previousItem) !== turnItemIsQuietAssistantMessage(nextItem) ||
+    turnItemIsReactionOnlyAssistantMessage(previousItem) !==
+      turnItemIsReactionOnlyAssistantMessage(nextItem) ||
     !shallow(previousSource, nextSource) ||
     projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
   ) {
@@ -1018,7 +1027,7 @@ function reuseTimelineEntries(
       projectedItem: row,
       message: {
         ...entry.message,
-        text: row.item.text,
+        text: parseAssistantReactions(row.item.text).body,
         updatedAt: DateTime.formatIso(row.item.updatedAt),
       },
     };
@@ -1035,12 +1044,39 @@ function reuseTimelineEntries(
   return entries;
 }
 
+function withInputMessageReactions(
+  entries: TimelineEntry[],
+  input: TimelineEntriesInput,
+): TimelineEntry[] {
+  if (!input.runs?.length) return entries;
+  const reactions = inputMessageReactions(
+    input.runs,
+    input.visibleTurnItems.map(({ item }) => item),
+    input.nodes,
+    input.environmentId,
+  );
+  return entries.map((entry) => {
+    if (entry.kind !== "message" || entry.message.role !== "user") return entry;
+    const reaction = reactions.get(entry.message.id);
+    if (shallow(entry.message.reaction, reaction)) return entry;
+    return { ...entry, message: { ...entry.message, reaction } };
+  });
+}
+
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   input: TimelineEntriesInput,
   previous: TimelineEntriesProjection | null = null,
 ): TimelineEntriesProjection {
   const reused = previous === null ? null : reuseTimelineEntries(input, previous);
-  if (reused !== null) return { input, entries: reused };
+  if (reused !== null) {
+    const unchanged =
+      previous !== null &&
+      input.runs === previous.input.runs &&
+      input.nodes === previous.input.nodes &&
+      input.environmentId === previous.input.environmentId &&
+      reactionInputsUnchanged(previous.input.visibleTurnItems, input.visibleTurnItems);
+    return { input, entries: unchanged ? reused : withInputMessageReactions(reused, input) };
+  }
   const entries = deriveTimelineEntriesFromVisibleTurnItems(input);
   if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
     return { input, entries };
@@ -1055,7 +1091,11 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
     entries: entries.map((entry) => {
       if (entry.kind !== "message" || entry.projectedItem === undefined) return entry;
       const before = previousMessages.get(entry.id);
-      if (before?.projectedItem !== entry.projectedItem) return entry;
+      if (
+        before?.projectedItem !== entry.projectedItem ||
+        !shallow(before?.message.reaction, entry.message.reaction)
+      )
+        return entry;
       return before.attempt === entry.attempt ? before : { ...entry, message: before.message };
     }),
   };

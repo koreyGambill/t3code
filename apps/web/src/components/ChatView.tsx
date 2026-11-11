@@ -1527,6 +1527,7 @@ export default function ChatView(props: ChatViewProps) {
         ],
   );
   const timelineEntriesInput = {
+    environmentId,
     optimisticMessages: optimisticUserMessages,
     anchoredMessages: anchoredTimelineMessages,
     attachmentUrlById: timelineAttachmentUrlById,
@@ -1536,6 +1537,7 @@ export default function ChatView(props: ChatViewProps) {
           attempts: serverProjection.attempts,
           nodes: serverProjection.nodes,
           plans: serverProjection.plans,
+          runs: serverProjection.runs,
         }),
   };
   // The structure has no assistant or reasoning text, so those rows stay out of
@@ -3432,8 +3434,8 @@ export default function ChatView(props: ChatViewProps) {
                 runs={serverProjection?.runs ?? []}
                 latestRun={activeActivityRun}
                 announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
-                announcedRunQuiet={
-                  activeThreadShell?.latestRunQuiet === true &&
+                announcedRunReactionOnly={
+                  activeThreadShell?.latestRunReactionOnly === true &&
                   activeActivityRun?.runId === activeThreadShell.latestRun?.runId
                 }
                 detailBehindShell={isDetailBehindShell(

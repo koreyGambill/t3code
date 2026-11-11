@@ -15,7 +15,7 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
   requestId,
   runId,
   runStatus,
-  quiet,
+  reactionOnly,
   detailBehind,
 }: ThreadActivitySnapshot & {
   /** Null while the timeline shows another thread during a switch. */
@@ -40,12 +40,12 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
       requestId,
       runId,
       runStatus,
-      quiet: quiet === true,
+      reactionOnly: reactionOnly === true,
     });
     memoryRef.current = { threadKey, memory };
     if (previous === null) clear();
     else if (announcement !== null) announce(announcement);
-  }, [threadKey, status, requestId, runId, runStatus, quiet, detailBehind, announce, clear]);
+  }, [threadKey, status, requestId, runId, runStatus, reactionOnly, detailBehind, announce, clear]);
 
   // No role="status": Orca 50 maps it to a status bar in Chromium and drops its updates.
   return <div ref={regionRef} aria-live="polite" className="sr-only" />;

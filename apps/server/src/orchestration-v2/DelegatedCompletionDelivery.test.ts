@@ -913,8 +913,8 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       inlineSecond: false,
     },
     {
-      name: "quiet result",
-      first: " \n[quiet]\n ",
+      name: "reaction-only result",
+      first: " \n[react 1:ack]\n ",
       second: "b".repeat(17_000),
       inlineFirst: false,
       inlineSecond: false,
@@ -977,9 +977,9 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const message = projection.messages.find((candidate) => candidate.id === messageId)!;
       assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
       assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
-      if (testCase.name === "quiet result") {
-        assert.include(message.text, "(quiet)");
-        assert.notInclude(message.text, "[quiet]");
+      if (testCase.name === "reaction-only result") {
+        assert.include(message.text, "(handled)");
+        assert.notInclude(message.text, "[react 1:ack]");
         assert.equal(
           projection.subagents.find((candidate) => candidate.id === firstTaskId)?.result,
           testCase.first,

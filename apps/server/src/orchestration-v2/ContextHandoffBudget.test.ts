@@ -677,7 +677,9 @@ it("keeps historical agent provenance first and labels synthetic handoff context
   const text = renderTurnOriginText(origin, "Report", origin.environmentId);
   const items = historyResponseItems([{ ...messages[0]!, role: "user", origin, text }], "Coverage");
   assert.isTrue(
-    items[0]!.content[0]!.text.startsWith('<t3_origin from="system" title="context handoff">'),
+    items[0]!.content[0]!.text.startsWith(
+      '<t3_origin n="1" from="system" title="context handoff">',
+    ),
   );
   assert.isTrue(
     items[1]!.content[0]!.text.startsWith(

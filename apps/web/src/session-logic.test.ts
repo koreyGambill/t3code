@@ -1071,7 +1071,7 @@ describe("native provider presentation in the v2 timeline", () => {
     item,
   });
 
-  it("hides whole quiet assistant messages through streaming updates while retaining other text", () => {
+  it("hides reaction-only assistant messages through streaming updates while retaining other text", () => {
     const assistant = (text: string): OrchestrationV2TurnItem => ({
       ...base,
       type: "assistant_message",
@@ -1082,21 +1082,25 @@ describe("native provider presentation in the v2 timeline", () => {
     let previous: ReturnType<typeof deriveTimelineEntriesFromVisibleTurnItemsWithState> | undefined;
     for (const [text, count] of [
       ["Starting", 1],
-      [" \n[quiet]\t", 0],
-      ["[quiet] is a literal marker", 1],
-      ["[quiet]", 0],
+      [" \n[react 1:ack]\t", 0],
+      ["[react 1:ack] is a literal marker", 1],
+      ["[react 1:ack]", 0],
+      ["[quiet]", 1],
+      ["[react 1:info]\nDecision needed", 1],
     ] as const) {
       const input = { visibleTurnItems: [visible(assistant(text))], optimisticMessages: [] };
       const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
       expect(next.entries).toHaveLength(count);
       expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+      if (text.includes("Decision needed"))
+        expect(next.entries[0]).toMatchObject({ message: { text: "Decision needed" } });
       previous = next;
     }
     const user: OrchestrationV2TurnItem = {
       ...base,
       type: "user_message",
       messageId: MessageId.make("literal-user"),
-      text: "[quiet]",
+      text: "[react 1:ack]",
       inputIntent: "turn_start",
       createdBy: "user",
       creationSource: "server",

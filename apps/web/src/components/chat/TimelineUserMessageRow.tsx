@@ -1,3 +1,4 @@
+import { MessageReactionChip } from "./MessageReactionChip";
 import { SenderCard } from "./SenderCard";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -275,6 +276,7 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
   return origin ? (
     <SenderCard
       origin={origin}
+      reaction={row.message.reaction}
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={ctx.onOpenThread}
     >
@@ -306,6 +308,9 @@ export function FoldedMessageHeader(props: {
   icon: LucideIcon;
   label: string;
   summary: string;
+  reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -321,6 +326,7 @@ export function FoldedMessageHeader(props: {
       <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
       <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
       <span className="min-w-0 flex-1 truncate">{props.summary}</span>
+      <MessageReactionChip reaction={props.reaction} />
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -850,6 +856,7 @@ function UserTimelineRow({
             icon={MessagesSquareIcon}
             label={senderLabel}
             summary={foldSummary}
+            reaction={row.message.reaction}
             expanded={expanded}
             onToggle={() => setExpanded((value) => !value)}
           />

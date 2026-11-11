@@ -46,14 +46,14 @@ describe("thread title context", () => {
     const result = formatThreadTitleContext([
       { role: "system", text: "System instructions" },
       { role: "user", text: `Fix Android pairing. ${"logs ".repeat(3_000)}Keep iOS behavior.` },
-      { role: "assistant", text: "Found the cause." },
-      { role: "assistant", text: " \n[quiet]\n " },
+      { role: "assistant", text: "[react 1:info]\nFound the cause." },
+      { role: "assistant", text: " \n[react 1:ack]\n " },
     ]);
     expect(result.message).toContain("USER:\nFix Android pairing.");
     expect(result.message).toContain("Keep iOS behavior.");
     expect(result.message).toContain("ASSISTANT:\nFound the cause.");
     expect(result.message).not.toContain("System instructions");
-    expect(result.message).not.toContain("[quiet]");
+    expect(result.message).not.toContain("[react 1:ack]");
     expect(result.message.match(/USER:/g)).toHaveLength(1);
   });
 

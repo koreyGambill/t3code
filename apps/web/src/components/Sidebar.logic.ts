@@ -713,7 +713,7 @@ type ThreadStatusInput = Pick<
   | "latestRun"
   | "runtime"
 > & {
-  latestRunQuiet?: boolean | undefined;
+  latestRunReactionOnly?: boolean | undefined;
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   lineage?: SidebarThreadSummary["lineage"] | undefined;
@@ -746,7 +746,7 @@ export function resolveThreadLastVisitedAt(
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (thread.latestRunQuiet || !thread.latestRun?.completedAt) return false;
+  if (thread.latestRunReactionOnly || !thread.latestRun?.completedAt) return false;
   const completedAt = Date.parse(thread.latestRun.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return false;

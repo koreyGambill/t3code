@@ -71,14 +71,18 @@ describe("nextBackgroundThreadAnnouncement", () => {
     ]);
   });
 
-  it("silences quiet completions while preserving requests and failures", () => {
+  it("silences reaction-only completions while preserving requests and failures", () => {
     expect(
       speak([
         { threads: [login()] },
-        { threads: [login({ runStatus: "completed", latestRunQuiet: true })] },
+        { threads: [login({ runStatus: "completed", latestRunReactionOnly: true })] },
         { threads: [login({ runStatus: "completed" })] },
-        { threads: [login({ runId: secondRun, request: "approval", latestRunQuiet: true })] },
-        { threads: [login({ runId: secondRun, runStatus: "failed", latestRunQuiet: true })] },
+        {
+          threads: [login({ runId: secondRun, request: "approval", latestRunReactionOnly: true })],
+        },
+        {
+          threads: [login({ runId: secondRun, runStatus: "failed", latestRunReactionOnly: true })],
+        },
       ]),
     ).toEqual(["Needs approval: Fix login redirect", "Failed: Fix login redirect"]);
   });

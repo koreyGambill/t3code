@@ -1,3 +1,7 @@
+import {
+  isReactionOnlyAssistantText,
+  parseAssistantReactions,
+} from "@t3tools/shared/messageReactions";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -24,7 +28,6 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
-  isQuietAssistantText,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -865,7 +868,7 @@ function delegatedCompletionWakeDetail(
       const status = task === undefined ? " reached a terminal state" : ` [${task.status}]`;
       const label = `${threadLabel} (${taskId})${status}`;
       if (task?.result != null) {
-        const detail = `${label}:\n${isQuietAssistantText(task.result) ? "(quiet)" : task.result}`;
+        const detail = `${label}:\n${isReactionOnlyAssistantText(task.result) ? "(handled)" : parseAssistantReactions(task.result).body}`;
         const bytes = Buffer.byteLength(detail);
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
@@ -5786,6 +5789,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: providerThread.id,
         providerInstanceId: targetRun.providerInstanceId,
       });
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: input.command.threadId,
+        runId: targetRun.id,
+        providerInstanceId: targetRun.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...targetRun,
+          inputMessageIds: [
+            ...(targetRun.inputMessageIds ?? [targetRun.userMessageId]),
+            input.messageId,
+          ],
+        },
+      });
       yield* Ref.update(input.effects, (existing) => [
         ...existing,
         {
@@ -6042,6 +6059,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       rootNodeId: nextRootNodeId,
       activeAttemptId: nextAttemptId,
       userMessageId: input.messageId,
+      inputMessageIds: [input.messageId],
       status: "starting",
       contextHandoffId: restartHandoff?.id ?? targetRun.contextHandoffId,
     };

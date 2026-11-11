@@ -15,35 +15,35 @@ describe("renderTurnOriginText", () => {
     [{ kind: "user" }, "body"],
     [
       { kind: "thread", event: "message", ...thread },
-      `<t3_origin from="thread" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
+      `<t3_origin n="1" from="thread" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
     ],
     [
       { kind: "subagent", event: "completed", ...thread },
-      `<t3_origin from="subagent" event="completed" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
+      `<t3_origin n="1" from="subagent" event="completed" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
     ],
     [
       { kind: "subagent", event: "failed", ...thread },
-      `<t3_origin from="subagent" event="failed" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
+      `<t3_origin n="1" from="subagent" event="failed" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
     ],
     [
       { kind: "thread", event: "reply", ...thread },
-      `<t3_origin from="thread" event="reply" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
+      `<t3_origin n="1" from="thread" event="reply" ${senderAttributes}>An agent, not the user.</t3_origin>\n\nbody`,
     ],
     [
       { kind: "scheduled-task", title: "Idle check-in" },
-      '<t3_origin from="scheduled-task" event="fired" title="Idle check-in">T3 Code, not the user.</t3_origin>\n\nbody',
+      '<t3_origin n="1" from="scheduled-task" event="fired" title="Idle check-in">T3 Code, not the user.</t3_origin>\n\nbody',
     ],
     [
       { kind: "wake", detail: "checks passed" },
-      '<t3_origin from="wake" event="fired" title="checks passed">T3 Code, not the user.</t3_origin>\n\nbody',
+      '<t3_origin n="1" from="wake" event="fired" title="checks passed">T3 Code, not the user.</t3_origin>\n\nbody',
     ],
     [
       { kind: "system", event: "restart continuation" },
-      '<t3_origin from="system" title="restart continuation">T3 Code, not the user.</t3_origin>\n\nbody',
+      '<t3_origin n="1" from="system" title="restart continuation">T3 Code, not the user.</t3_origin>\n\nbody',
     ],
     [
       { kind: "system", event: "usage-limit recovery" },
-      '<t3_origin from="system" title="usage-limit recovery">T3 Code, not the user.</t3_origin>\n\nbody',
+      '<t3_origin n="1" from="system" title="usage-limit recovery">T3 Code, not the user.</t3_origin>\n\nbody',
     ],
   ])("renders %j", (origin, expected) => {
     expect(renderTurnOriginText(origin, "body", receiver)).toBe(expected);
@@ -60,7 +60,7 @@ describe("renderTurnOriginText", () => {
     expect(
       renderTurnOriginText({ kind: "thread", event: "message", ...thread }, body, receiver),
     ).toBe(
-      `<t3_origin from="thread" ${senderAttributes}>An agent, not the user.</t3_origin>\n\n${body}`,
+      `<t3_origin n="1" from="thread" ${senderAttributes}>An agent, not the user.</t3_origin>\n\n${body}`,
     );
   });
 
@@ -90,7 +90,7 @@ describe("renderTurnOriginText", () => {
           receiver,
         ),
       ).toBe(
-        `<t3_origin from="thread" ${senderAttributes} environment="environment:remote" reply="${reply}">An agent, not the user.</t3_origin>\n\nbody`,
+        `<t3_origin n="1" from="thread" ${senderAttributes} environment="environment:remote" reply="${reply}">An agent, not the user.</t3_origin>\n\nbody`,
       );
     },
   );

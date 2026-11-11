@@ -25,7 +25,7 @@ describe("projectThreadAwarenessV2", () => {
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
         | "latestRunStopRequested"
-        | "latestRunQuiet"
+        | "latestRunReactionOnly"
         | "status"
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
@@ -49,7 +49,7 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
-  it.each(["latestRunStopRequested", "latestRunQuiet"] as const)(
+  it.each(["latestRunStopRequested", "latestRunReactionOnly"] as const)(
     "does not announce completion for %s",
     (field) => {
       const input = {
