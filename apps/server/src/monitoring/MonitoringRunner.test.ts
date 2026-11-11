@@ -529,3 +529,56 @@ it.effect(
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("records the thread message a finding was sent as", () =>
+  Effect.gen(function* () {
+    const findings = yield* Ref.make<ReadonlyArray<MonitoringFinding>>([]);
+    const layer = runnerLayer(
+      profile,
+      {
+        list: () => Effect.succeed({ profiles: [profile], findings: [], runs: [] }),
+        getFinding: () => Effect.succeed(null),
+        saveFinding: (finding) => Ref.update(findings, (all) => [...all, finding]),
+      },
+      {
+        capture: () =>
+          Effect.succeed({
+            threads: [
+              {
+                id: ThreadId.make("thread"),
+                title: "Main",
+                parentThreadId: null,
+                messages: [{ id: "msg", role: "assistant", text: "Pushed straight to main" }],
+              },
+            ],
+            truncated: false,
+            coverage: "Recent turns",
+          }),
+      },
+      () =>
+        Effect.succeed({
+          findings: [
+            {
+              threadId: ThreadId.make("thread"),
+              ruleId: "verify",
+              summary: "Landed without review",
+              detail: "The lead pushed without a review.",
+              confidence: 0.9,
+              evidence: [
+                {
+                  threadId: ThreadId.make("thread"),
+                  messageId: MessageId.make("msg"),
+                  excerpt: "Pushed straight to main",
+                },
+              ],
+            },
+          ],
+        }),
+      () => Effect.succeed({ delivery: "steered", messageId: MessageId.make("monitoring:sent") }),
+    );
+    yield* Effect.flatMap(Runner.MonitoringRunner, (runner) => runner.run(profile.id)).pipe(
+      Effect.provide(layer),
+    );
+    assert.equal((yield* Ref.get(findings)).at(-1)?.sentToThread?.messageId, "monitoring:sent");
+  }).pipe(Effect.scoped),
+);

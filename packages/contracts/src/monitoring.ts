@@ -114,6 +114,7 @@ export const MonitoringFinding = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   exchanges: Schema.Array(MonitoringExchange),
   outcome: Schema.NullOr(Schema.String),
+  sentToThread: Schema.optional(Schema.Struct({ messageId: MessageId, at: IsoDateTime })),
 });
 export type MonitoringFinding = typeof MonitoringFinding.Type;
 export const MonitoringRun = Schema.Struct({

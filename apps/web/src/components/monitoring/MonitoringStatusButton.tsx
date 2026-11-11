@@ -153,7 +153,23 @@ function FindingReport({
       </section>
       <section className="space-y-2">
         <h4 className="font-medium">Discussion</h4>
-        {finding.exchanges.length === 0 ? (
+        {finding.sentToThread && (
+          <div className="space-y-1 border-l border-primary pl-3">
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span>Watcher → thread</span>
+              <ObservationTime at={finding.sentToThread.at} />
+            </div>
+            <p className="whitespace-pre-wrap break-words">{finding.summary}</p>
+            <button
+              type="button"
+              className="break-all text-left text-xs text-primary hover:underline"
+              onClick={() => onOpenThread(finding.threadId)}
+            >
+              Open sent message
+            </button>
+          </div>
+        )}
+        {finding.exchanges.length === 0 && !finding.sentToThread ? (
           <p className="text-muted-foreground">No lead response yet.</p>
         ) : (
           finding.exchanges.map((exchange) => (

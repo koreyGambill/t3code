@@ -354,13 +354,21 @@ const make = Effect.gen(function* () {
             outcome: null,
           };
           yield* store.saveFinding(finding);
-          yield* delivery.deliver({ profile, finding }).pipe(
+          const delivered = yield* delivery.deliver({ profile, finding }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Monitoring advisory delivery failed", {
                 operation: cause.operation,
-              }),
+              }).pipe(Effect.as(null)),
             ),
           );
+          if (delivered?.messageId)
+            yield* store.saveFinding({
+              ...finding,
+              sentToThread: {
+                messageId: delivered.messageId,
+                at: DateTime.formatIso(yield* DateTime.now),
+              },
+            });
         }
         const completed: MonitoringRun = {
           ...initial,
