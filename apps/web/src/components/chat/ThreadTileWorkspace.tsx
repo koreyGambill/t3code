@@ -153,6 +153,8 @@ export function ThreadTileWorkspace(props: {
     : geometry.groups.map((entry) =>
         floatingOverride?.groupId === entry.id ? { ...entry, rect: floatingOverride.rect } : entry,
       );
+  // A lone tile has nothing to be distinguished from.
+  const focusedGroupId = visibleGroups.length > 1 ? layout.focusedGroupId : null;
   const visibleTabIds = displayGroups
     .filter((group) => visibleGroups.some((entry) => entry.id === group.id))
     .map((group) => group.activeTabId);
@@ -727,7 +729,7 @@ export function ThreadTileWorkspace(props: {
                 } as CSSProperties
               }
               className="workspace-tile-frame @container/tile absolute overflow-hidden bg-background"
-              data-focused={layout.focusedGroupId === id}
+              data-focused={focusedGroupId === id}
               aria-label={`Tile: ${title(group.activeTabId)}`}
             >
               <div
@@ -1174,7 +1176,7 @@ export function ThreadTileWorkspace(props: {
             <div
               key={tabId}
               data-tile-content={tabId}
-              data-focused={layout.focusedGroupId === group?.id}
+              data-focused={focusedGroupId === group?.id}
               tabIndex={-1}
               inert={!visible}
               className="workspace-tile-content absolute z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background outline-none"
