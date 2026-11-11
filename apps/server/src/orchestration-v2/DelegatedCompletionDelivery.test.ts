@@ -1429,7 +1429,7 @@ const seedRestartCancelledChild = (input: {
   readonly name: string;
   readonly completionWake: "always" | "settled_only";
   readonly continuationPending: boolean;
-  readonly runStatus?: "cancelled" | "completed";
+  readonly runStatus?: "cancelled" | "completed" | "running";
   readonly lostWork?: OrchestrationV2Run["restartCancelledBackgroundWork"];
   readonly title?: string;
   readonly now: DateTime.Utc;
@@ -1539,6 +1539,103 @@ const seedRestartCancelledChild = (input: {
     });
     return { taskId, childThreadId, childRunId };
   });
+
+it.layer(layerContinuationWorkerTest)("delegate groups", (it) => {
+  it.effect("starts one parent wake with both local results after the group finishes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:local-group");
+      const projectId = ProjectId.make("project:local-group");
+      const runId = RunId.make("run:local-group");
+      const rootNodeId = NodeId.make("node:local-group");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:local-group-seed"),
+        deliveryState: "acknowledged",
+        parentRunStatus: "completed",
+        now,
+      });
+      const children = yield* Effect.forEach(["first", "second"], (name) =>
+        seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: `local-group-${name}`,
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "running",
+          now,
+        }),
+      );
+      const afterSequence = yield* sink.latestSequence({ threadId });
+      for (const child of children) {
+        const projection = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const run = projection.runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:local-result:${child.taskId}`),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make(`message:local-result:${child.taskId}`),
+                threadId: child.childThreadId,
+                runId: run.id,
+                nodeId: null,
+                role: "assistant",
+                text: `Result ${child.taskId}`,
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "provider",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make(`event:local-finished:${child.taskId}`),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+      }
+      yield* sink.stream({ afterSequence, eventType: "message.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "message.updated" &&
+            stored.event.threadId === threadId &&
+            stored.event.payload.delegatedCompletion !== undefined,
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const wakes = projection.messages.filter(
+        (message) => message.delegatedCompletion !== undefined,
+      );
+      assert.equal(wakes.length, 1);
+      assert.sameMembers(
+        [...wakes[0]!.delegatedCompletion!.taskIds],
+        children.map((child) => child.taskId),
+      );
+      for (const child of children) assert.include(wakes[0]!.text, `Result ${child.taskId}`);
+      assert.equal(projection.runs.filter((run) => run.userMessageId === wakes[0]!.id).length, 1);
+    }),
+  );
+});
 
 it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
   it.effect.each([
@@ -2348,7 +2445,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       "backgroundHeld",
     ] as const;
     it.effect.each(outcomes)(
-      "delivers a %s follow-up independently of the original task",
+      "records a %s follow-up independently of the original task",
       (outcome) =>
         Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2672,7 +2769,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             followup.completionDelivery?.state,
             outcome === "stopped" ? "disposed" : "claimed",
           );
-          if (outcome !== "stopped") {
+          // The overlapping follow-up keeps this parent run's group open.
+          if (outcome !== "stopped" && outcome !== "overlapping") {
             let wake = yield* requests.take;
             while (
               wake.threadId !== parentThreadId ||

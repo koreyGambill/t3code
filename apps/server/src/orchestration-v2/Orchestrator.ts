@@ -1652,6 +1652,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         controls.thread.deletedAt !== null
       )
         return;
+      const { subagents } = yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
+        subagentRunIds: [parentRunId],
+      });
+      if (
+        subagents.some(
+          (task) => task.origin === "app_owned" && !isTerminalDelegatedTaskStatus(task.status),
+        )
+      )
+        return;
       const messages = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
         messageIds: [delivery.messageId],
       });

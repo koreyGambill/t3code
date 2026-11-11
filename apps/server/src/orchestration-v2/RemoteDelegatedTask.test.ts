@@ -194,6 +194,180 @@ const remoteChild = {
 };
 
 it.layer(layerTest)("a delegated task in a linked environment", (it) => {
+  it.effect.each(["completed", "failed", "cancelled", "interrupted"] as const)(
+    "delivers a parent run's group once after both tasks finish (%s)",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const offers = yield* Offers;
+        const parent = yield* seedLiveParent(`group-${status}`);
+        for (const name of ["first", "second"]) {
+          yield* orchestrator.dispatch({
+            type: "delegated_task.remote.request",
+            commandId: CommandId.make(`command:group-${status}:${name}`),
+            parentThreadId: parent.threadId,
+            parentRunId: parent.runId,
+            parentNodeId: parent.rootNodeId,
+            task: name,
+            driver: ProviderDriverKind.make("remote"),
+            modelSelection,
+            remoteChild: { ...remoteChild, threadId: ThreadId.make(`thread:remote-${name}`) },
+            completionWake: "always",
+          });
+        }
+        const projection = yield* orchestrator.getThreadProjection(parent.threadId);
+        const tasks = projection.subagents;
+        const parentRun = projection.runs[0]!;
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:group-parent-ended:${status}`),
+              type: "run.updated",
+              threadId: parent.threadId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        for (const [index, task] of tasks.entries()) {
+          yield* Ref.set(offers, []);
+          yield* orchestrator.dispatch({
+            type: "delegated_task.remote.complete",
+            commandId: CommandId.make(`command:group-result-${status}:${task.id}`),
+            parentThreadId: parent.threadId,
+            taskId: task.id,
+            status: index === 0 ? "completed" : status,
+            result: `Result ${index}`,
+          });
+          const seen = yield* Ref.get(offers);
+          assert.equal(seen.length, index === 0 ? 0 : 1);
+        }
+        const finished = yield* orchestrator.getThreadProjection(parent.threadId);
+        const delivery = finished.runs.find((run) => run.id === parent.runId)!.delegatedCompletion!
+          .delivery!;
+        assert.sameMembers(
+          [...delivery.taskIds],
+          tasks.map((task) => task.id),
+        );
+        const messageId = delivery.messageId;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          origin: { kind: "system", event: "group complete" },
+          commandId: CommandId.make(`command:deliver-group:${status}`),
+          threadId: parent.threadId,
+          messageId,
+          text: "Group finished",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: parent.runId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+        });
+        const delivered = yield* orchestrator.getThreadProjection(parent.threadId);
+        const wakes = delivered.messages.filter(
+          (message) => message.delegatedCompletion !== undefined,
+        );
+        assert.equal(wakes.length, 1);
+        assert.include(wakes[0]!.text, "Result 0");
+        assert.include(wakes[0]!.text, "Result 1");
+        assert.equal(delivered.runs.filter((run) => run.userMessageId === messageId).length, 1);
+      }),
+  );
+
+  it.effect("keeps tasks from different parent runs in separate groups", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const offers = yield* Offers;
+      const parent = yield* seedLiveParent("separate-groups");
+      const first = yield* orchestrator.getThreadProjection(parent.threadId);
+      const firstRun = first.runs[0]!;
+      const root = first.nodes[0]!;
+      const runIds = [parent.runId, RunId.make("run:separate-groups:2")];
+      const now = yield* DateTime.now;
+      for (const [index, runId] of runIds.entries()) {
+        const rootNodeId = NodeId.make(`node:separate-groups:${index}`);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:separate-root:${index}`),
+              type: "node.updated",
+              threadId: parent.threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...root, id: rootNodeId, runId, rootNodeId },
+            },
+            {
+              id: EventId.make(`event:separate-run:${index}`),
+              type: "run.updated",
+              threadId: parent.threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...firstRun, id: runId, ordinal: index + 1, rootNodeId },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "delegated_task.remote.request",
+          commandId: CommandId.make(`command:separate-group:${index}`),
+          parentThreadId: parent.threadId,
+          parentRunId: runId,
+          parentNodeId: rootNodeId,
+          task: `Task ${index}`,
+          driver: ProviderDriverKind.make("remote"),
+          modelSelection,
+          remoteChild: {
+            ...remoteChild,
+            threadId: ThreadId.make(`thread:separate-group:${index}`),
+          },
+          completionWake: "always",
+        });
+        const projection = yield* orchestrator.getThreadProjection(parent.threadId);
+        const run = projection.runs.find((run) => run.id === runId)!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:separate-ended:${index}`),
+              type: "run.updated",
+              threadId: parent.threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+      }
+      const tasks = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents;
+      const second = tasks.find((task) => task.runId === runIds[1])!;
+      yield* Ref.set(offers, []);
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.complete",
+        commandId: CommandId.make("command:separate-result"),
+        parentThreadId: parent.threadId,
+        taskId: second.id,
+        status: "completed",
+        result: "Second group done",
+      });
+      const seen = yield* Ref.get(offers);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0]?.delegatedCompletion?.parentRunId, runIds[1]);
+      const projection = yield* orchestrator.getThreadProjection(parent.threadId);
+      assert.isUndefined(
+        projection.runs.find((run) => run.id === runIds[0])?.delegatedCompletion?.delivery,
+      );
+      assert.deepEqual(
+        projection.runs.find((run) => run.id === runIds[1])?.delegatedCompletion?.delivery?.taskIds,
+        [second.id],
+      );
+    }),
+  );
+
   it.effect("is recorded on its parent without a child thread here, once", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

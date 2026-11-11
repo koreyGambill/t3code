@@ -1059,7 +1059,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("wakes the parent once when its delegated task asks a question", () =>
+it.effect("wakes the parent once for a question while group completions are held", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -1143,7 +1143,28 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     const approval = requestEvent("event:approval", "request:approval", "message", "command");
     const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
-      events: [question, asyncQuestion, answered, approval],
+      events: [
+        question,
+        asyncQuestion,
+        answered,
+        approval,
+        {
+          id: EventId.make("event:question-group-sibling"),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          runId: parentRun.id,
+          occurredAt: now,
+          payload: {
+            ...task,
+            id: NodeId.make("node:question-group-sibling"),
+            childThreadId: null,
+            status: "completed",
+            result: "Sibling finished",
+            completedAt: now,
+            completionDelivery: { state: "pending", observedByRunId: null },
+          },
+        },
+      ],
     });
 
     yield* reactor.handle(question);
