@@ -205,7 +205,8 @@ export function compactDynamicToolOutput(
   if (resolveT3McpMessageTool(toolName)) {
     if (result.failed || failed) {
       output.isError = true;
-      output.error = toolResultErrorText(value);
+      const error = toolResultErrorText(value);
+      if (error !== undefined) output.error = error;
     }
     const childThreadId = boundedId(data?.childThreadId);
     if (childThreadId) output.childThreadId = childThreadId;

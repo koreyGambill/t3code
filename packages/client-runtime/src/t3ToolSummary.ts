@@ -94,7 +94,10 @@ export function outgoingT3Message(
   const result = readResult(call.output);
   const output = result.data;
   const remote = asRecord(output?.remoteChild);
-  const link = typeof output?.link === "string" ? parseThreadLinkHref(output.link) : null;
+  const link =
+    typeof output?.link === "string"
+      ? parseThreadLinkHref(output.link.replace(/^<(.+)>$/, "$1"))
+      : null;
   const failed = result.failed || call.outcome === "failed";
   return {
     threadId:

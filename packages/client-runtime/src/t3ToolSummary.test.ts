@@ -87,12 +87,14 @@ describe("summarizeT3ToolCalls", () => {
         ),
       ),
     ).toMatchObject({ threadId: "child", environmentId: "remote" });
-    expect(
-      outgoingT3Message(
-        "t3_thread_launch",
-        completed({ message: "Launch" }, { link: "t3-thread://v2/linked/new", threadId: "new" }),
-      ),
-    ).toMatchObject({ threadId: "new", environmentId: "linked" });
+    for (const link of ["t3-thread://v2/linked/new", "<t3-thread://v2/linked/new>"]) {
+      expect(
+        outgoingT3Message(
+          "t3_thread_launch",
+          completed({ message: "Launch" }, { link, threadId: "new" }),
+        ),
+      ).toMatchObject({ threadId: "new", environmentId: "linked" });
+    }
     expect(
       outgoingT3Message("t3_thread_launch", completed({ title: "Idle" }, { threadId: "idle" })),
     ).toBeNull();
@@ -204,7 +206,7 @@ describe("summarizeT3ToolCalls", () => {
     [
       "t3_thread_launch",
       { message: "Hello" },
-      { threadId: "target", link: "t3-thread://v2/remote/target" },
+      { threadId: "target", link: "<t3-thread://v2/remote/target>" },
       { threadId: "target", environmentId: "remote" },
     ],
     [
