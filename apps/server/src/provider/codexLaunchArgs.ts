@@ -12,6 +12,10 @@ const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenize
 export const codexAppServerArgs = (launchArgs?: string) => [
   "app-server",
   ...codexLaunchArgv(launchArgs),
+  "--disable",
+  "multi_agent",
+  "--disable",
+  "multi_agent_v2",
 ];
 
 export const codexExecLaunchArgs = (launchArgs?: string) => {

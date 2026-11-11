@@ -27,7 +27,9 @@ describe("T3 delegation instructions", () => {
       t3AcpPromptWithInstructions({ prompt: "Research and fan out.", state }),
     ];
     for (const text of instructions) {
-      assert.include(text, "run_in_background:true");
+      assert.include(text, "Every subagent, parallel or not, uses `delegate_task`");
+      assert.include(text, "report back together once all finish");
+      assert.include(text, "Follow a running delegate's `next`");
       assert.include(text, "context.runId");
       assert.include(text, "context.mark");
       assert.include(text, "childPreamble");

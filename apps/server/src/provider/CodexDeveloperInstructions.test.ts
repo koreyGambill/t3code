@@ -57,13 +57,20 @@ describe("Codex runtime context", () => {
 });
 
 describe("Codex orchestration context", () => {
-  it("allows background native agents and leaves delegation volume to the user", () => {
+  it("routes every subagent through delegates and ends the turn for group delivery", () => {
     const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
       .filter(([key]) => key.startsWith("t3_code_orchestration_"))
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("`run_in_background:true`"));
+    NodeAssert.ok(orchestration.includes("Every subagent, parallel or not, uses `delegate_task`"));
+    NodeAssert.ok(orchestration.includes("There are no native subagent tools"));
+    NodeAssert.ok(orchestration.includes("report back together once all finish"));
+    NodeAssert.ok(orchestration.includes("start a parallel group in one turn, then end your turn"));
+    NodeAssert.ok(orchestration.includes("Follow a running delegate's `next`"));
+    for (const tool of ["task_status", "sleep", "watchers", "Monitor", "ScheduleWakeup"]) {
+      NodeAssert.ok(orchestration.includes(tool));
+    }
     NodeAssert.ok(!orchestration.includes("run_in_background:false"));
     NodeAssert.ok(!orchestration.includes("never a background"));
     NodeAssert.doesNotMatch(

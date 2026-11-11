@@ -7,7 +7,8 @@ export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
 
 T3 agent tool reference.
 
-- Native subagents (Claude \`Agent\`, foreground or \`run_in_background:true\`; Codex \`spawn_agent\`) show nested under this thread.
+- Every subagent, parallel or not, uses \`delegate_task\`. There are no native subagent tools. Tasks started in the same turn report back together once all finish; start a parallel group in one turn, then end your turn. Questions arrive immediately.
+- Follow a running delegate's \`next\`. Do not wait or poll (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup).
 - \`delegate_task\` starts a child T3 thread. \`orchestrator_capabilities\` lists providers, models and \`target.options\`. \`isolation:"worktree"\` prepares a child checkout; shell checkouts do not bind it. Unavailable targets fail.
 - Omitted \`context\` starts fresh. \`context.threadId\` selects its latest finished turn; \`context.runId\`, \`context.checkpointId\` or \`context.mark\` selects a point. Reuse the returned \`context.runId\` to fan out from a scout. Forking context does not rewind files. Thread marks name points; \`childPreamble\` adds a shared child brief.
 - \`t3_thread_launch\` and \`create_threads\` make top-level threads in the sidebar. \`workspaceStrategy\` selects their checkout; without it they use the project root.`,
