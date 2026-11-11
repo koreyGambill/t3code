@@ -6,8 +6,7 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { numberedTurnOrigins, parseAssistantReactions } from "@t3tools/shared/messageReactions";
-import { resolveT3McpMessageTool } from "@t3tools/shared/t3McpToolPresentation";
-import { outgoingT3Message } from "../t3ToolSummary.ts";
+import { outgoingT3Message, type OutgoingT3Message } from "../t3ToolSummary.ts";
 
 export interface InputMessageReaction {
   readonly emoji: string;
@@ -15,29 +14,105 @@ export interface InputMessageReaction {
   readonly tooltip: string;
 }
 
-/** Map a run's numbered reactions back to its delivered messages, preserving origin numbering. */
-export function inputMessageReactions(
-  runs: ReadonlyArray<
-    Pick<OrchestrationV2Run, "id" | "rootNodeId" | "inputMessageIds" | "userMessageId">
-  >,
+type InputMessage = Extract<OrchestrationV2TurnItem, { type: "user_message" }>;
+type SendItem = Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
+type MessageRun = Pick<
+  OrchestrationV2Run,
+  "id" | "rootNodeId" | "inputMessageIds" | "userMessageId"
+>;
+
+export type MessageRow =
+  | {
+      readonly kind: "incoming";
+      readonly message: InputMessage;
+      readonly reaction: InputMessageReaction | undefined;
+    }
+  | {
+      readonly kind: "reply-line";
+      readonly parentMessageId: MessageId;
+      readonly item: SendItem;
+      readonly message: OutgoingT3Message;
+    }
+  | {
+      readonly kind: "to-you";
+      readonly parentMessageId: MessageId;
+      readonly messageId: MessageId;
+      readonly body: string;
+    }
+  | { readonly kind: "outgoing"; readonly item: SendItem; readonly message: OutgoingT3Message };
+
+export type MessageResponseRow = Extract<MessageRow, { kind: "reply-line" | "to-you" }>;
+
+/** Retains settled response rows while unrelated turn items stream. */
+export function messageResponseRowsEqual(
+  left: ReadonlyArray<MessageResponseRow>,
+  right: ReadonlyArray<MessageResponseRow>,
+): boolean {
+  return (
+    left.length === right.length &&
+    right.every((row, index) => {
+      const before = left[index]!;
+      return (
+        row === before ||
+        (row.parentMessageId === before.parentMessageId &&
+          (row.kind === "reply-line" && before.kind === "reply-line"
+            ? row.item === before.item && row.message.environmentId === before.message.environmentId
+            : row.kind === "to-you" &&
+              before.kind === "to-you" &&
+              row.messageId === before.messageId &&
+              row.body === before.body))
+      );
+    })
+  );
+}
+
+/** The first nonempty line used in compact message rows. */
+export function messageFirstLine(text: string): string {
+  return text.trim().split(/\r?\n/, 1)[0] ?? "";
+}
+
+/** Keeps unlinked sends chronological and groups explicit same-turn replies with their input. */
+export function buildMessageRows(
+  runs: ReadonlyArray<MessageRun>,
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   nodes: ReadonlyArray<OrchestrationV2ExecutionNode> = [],
   environmentId?: EnvironmentId,
-): ReadonlyMap<MessageId, InputMessageReaction> {
+): MessageRow[] {
   const messages = new Map(
     items.flatMap((item) =>
       item.type === "user_message" ? [[item.messageId, item] as const] : [],
     ),
   );
   const byRun = new Map<OrchestrationV2Run["id"], OrchestrationV2TurnItem[]>();
+  const outgoing = new Map<SendItem["id"], Extract<MessageRow, { kind: "outgoing" }>>();
   for (const item of items) {
-    if (item.runId === null) continue;
-    const entries = byRun.get(item.runId) ?? [];
-    entries.push(item);
-    byRun.set(item.runId, entries);
+    if (item.runId !== null) {
+      const entries = byRun.get(item.runId) ?? [];
+      entries.push(item);
+      byRun.set(item.runId, entries);
+    }
+    if (item.type !== "dynamic_tool") continue;
+    const message = outgoingT3Message(item.toolName ?? undefined, {
+      input: item.input,
+      output: item.output,
+      outcome:
+        item.status === "completed"
+          ? "completed"
+          : item.status === "failed"
+            ? "failed"
+            : "unfinished",
+    });
+    if (message)
+      outgoing.set(item.id, {
+        kind: "outgoing",
+        item,
+        message: { ...message, environmentId: message.environmentId ?? environmentId },
+      });
   }
   const roots = new Map(nodes.map((node) => [node.id, node.rootNodeId]));
-  const result = new Map<MessageId, InputMessageReaction>();
+  const reactions = new Map<MessageId, InputMessageReaction>();
+  const children = new Map<MessageId, MessageRow[]>();
+  const attached = new Set<SendItem["id"]>();
   for (const run of runs) {
     const runItems = byRun.get(run.id) ?? [];
     const final = runItems
@@ -50,63 +125,69 @@ export function inputMessageReactions(
             roots.get(item.nodeId) === run.rootNodeId),
       )
       .sort((a, b) => b.ordinal - a.ordinal)[0];
-    if (final?.type !== "assistant_message") continue;
     const inputIds = run.inputMessageIds?.length
       ? run.inputMessageIds
       : run.userMessageId
         ? [run.userMessageId]
         : [];
     if (inputIds.some((id) => !messages.has(id))) continue;
-    const inputs = inputIds.flatMap((id) => {
-      const message = messages.get(id);
-      return message ? [message] : [];
-    });
-    const numbered = numberedTurnOrigins(inputs);
-    const { reactions } = parseAssistantReactions(
-      final.text,
+    const numbered = numberedTurnOrigins(
+      inputIds.flatMap((id) => {
+        const message = messages.get(id);
+        return message ? [message] : [];
+      }),
+    );
+    const parsed = parseAssistantReactions(
+      final?.type === "assistant_message" ? final.text : "",
       new Set(numbered.map(({ index }) => index)),
     );
-    if (reactions.size === 0) continue;
-    const replies = runItems.flatMap((item) => {
-      if (
-        item.type !== "dynamic_tool" ||
-        resolveT3McpMessageTool(item.toolName ?? undefined) !== "t3_thread_send"
-      )
-        return [];
-      const message = outgoingT3Message(item.toolName ?? undefined, {
-        input: item.input,
-        output: item.output,
-        outcome:
-          item.status === "completed"
-            ? "completed"
-            : item.status === "failed"
-              ? "failed"
-              : "unfinished",
-      });
-      return message && message.event !== "failed" ? [message] : [];
-    });
     for (const { message, index } of numbered) {
-      const reaction = reactions.get(index);
-      const origin = message.origin;
-      if (!reaction || !origin || !("threadId" in origin)) continue;
+      const replies: MessageRow[] = [];
+      for (const item of runItems) {
+        const send = outgoing.get(item.id);
+        if (
+          !send ||
+          send.item.status !== "completed" ||
+          send.message.event === "failed" ||
+          send.message.replyToMessageId !== message.messageId
+        )
+          continue;
+        replies.push({ ...send, kind: "reply-line", parentMessageId: message.messageId });
+        attached.add(item.id);
+      }
       const label =
-        reaction === "ack" ? "Handled" : reaction === "replied" ? "Replied" : "Telling you";
-      const verified = replies.some(
-        (reply) =>
-          reply.threadId === origin.threadId &&
-          (reply.environmentId ?? environmentId) === origin.environmentId,
-      );
-      result.set(message.messageId, {
-        emoji: reaction === "ack" ? "👍" : reaction === "replied" ? "↩" : "ℹ",
-        label,
-        tooltip:
-          reaction === "replied" && !verified
-            ? "Replied (unverified: no matching t3_thread_send in this run)"
-            : label,
-      });
+        replies.length > 0
+          ? "Replied"
+          : parsed.reactions.has(index)
+            ? "Handled"
+            : parsed.body.trim()
+              ? "Told you"
+              : null;
+      if (label)
+        reactions.set(message.messageId, {
+          emoji: label === "Replied" ? "↩" : label === "Handled" ? "👍" : "ℹ",
+          label,
+          tooltip: label,
+        });
+      if (label === "Told you" && final?.type === "assistant_message")
+        replies.push({
+          kind: "to-you",
+          parentMessageId: message.messageId,
+          messageId: final.messageId,
+          body: parsed.body,
+        });
+      children.set(message.messageId, replies);
     }
   }
-  return result;
+  return items.flatMap((item): MessageRow[] => {
+    if (item.type === "user_message" && item.origin && item.origin.kind !== "user")
+      return [
+        { kind: "incoming", message: item, reaction: reactions.get(item.messageId) },
+        ...(children.get(item.messageId) ?? []),
+      ];
+    const send = outgoing.get(item.id);
+    return send && !attached.has(item.id) ? [send] : [];
+  });
 }
 
 /** Streaming assistant deltas cannot change a run's final reactions. */

@@ -7,15 +7,14 @@ import {
 
 describe("parseAssistantReactions", () => {
   it.each([
-    ["[react 1:ack 2:replied 3:info]\nA decision is needed.", "A decision is needed."],
-    ["A decision is needed.\n[react 1:ack 2:replied 3:info]", "A decision is needed."],
-    [" \n\t[react 1:ack 2:replied 3:info]\n \t", ""],
+    ["[react 1:ack 3:ack]\nA decision is needed.", "A decision is needed."],
+    ["A decision is needed.\n[react 1:ack 3:ack]", "A decision is needed."],
+    [" \n\t[react 1:ack 3:ack]\n \t", ""],
   ])("strips a boundary line from %j", (text, body) => {
     expect(parseAssistantReactions(text)).toEqual({
       reactions: new Map([
         [1, "ack"],
-        [2, "replied"],
-        [3, "info"],
+        [3, "ack"],
       ]),
       body,
     });
@@ -27,7 +26,10 @@ describe("parseAssistantReactions", () => {
     "",
     "[react]",
     "[react 1:done]",
-    "[react 1:ack 1:info]",
+    "[react 1:info]\nA decision is needed.",
+    "[react 1:replied]",
+    "[react 1:ack 2:info]\nA decision is needed.",
+    "[react 1:ack 1:ack]",
     "[react 1:ack] body",
     "Before\n[react 1:ack]\nAfter",
     "`[react 1:ack]`",
@@ -40,12 +42,10 @@ describe("parseAssistantReactions", () => {
   });
 
   it("ignores indexes outside the delivered origins without losing the body", () => {
-    expect(parseAssistantReactions("[react 0:ack 1:ack 99:info]\nDecision.", new Set([1]))).toEqual(
-      {
-        reactions: new Map([[1, "ack"]]),
-        body: "Decision.",
-      },
-    );
+    expect(parseAssistantReactions("[react 0:ack 1:ack 99:ack]\nDecision.", new Set([1]))).toEqual({
+      reactions: new Map([[1, "ack"]]),
+      body: "Decision.",
+    });
   });
 });
 

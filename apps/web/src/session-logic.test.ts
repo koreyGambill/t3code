@@ -1086,7 +1086,7 @@ describe("native provider presentation in the v2 timeline", () => {
       ["[react 1:ack] is a literal marker", 1],
       ["[react 1:ack]", 0],
       ["[quiet]", 1],
-      ["[react 1:info]\nDecision needed", 1],
+      ["Decision needed", 1],
     ] as const) {
       const input = { visibleTurnItems: [visible(assistant(text))], optimisticMessages: [] };
       const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);

@@ -11,7 +11,21 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { inputMessageReactions } from "./messageReactions.ts";
+import {
+  buildMessageRows,
+  messageResponseRowsEqual,
+  type MessageResponseRow,
+} from "./messageReactions.ts";
+
+function inputMessageReactions(...args: Parameters<typeof buildMessageRows>) {
+  return new Map(
+    buildMessageRows(...args).flatMap((row) =>
+      row.kind === "incoming" && row.reaction
+        ? [[row.message.messageId, row.reaction] as const]
+        : [],
+    ),
+  );
+}
 
 const now = DateTime.makeUnsafe("2026-11-11T00:00:00.000Z");
 const run = {
@@ -79,7 +93,7 @@ describe("inputMessageReactions", () => {
       second,
       wake,
       user,
-      final("[react 1:ack 2:ack 3:info 99:ack]\nCheck the decision."),
+      final("[react 1:ack 2:ack 99:ack]\nCheck the decision."),
     ];
     const reactions = inputMessageReactions(
       [
@@ -92,11 +106,11 @@ describe("inputMessageReactions", () => {
     );
     expect(reactions.get(first.messageId)).toEqual({
       emoji: "ℹ",
-      label: "Telling you",
-      tooltip: "Telling you",
+      label: "Told you",
+      tooltip: "Told you",
     });
     expect(reactions.get(second.messageId)?.label).toBe("Handled");
-    expect([...reactions.keys()]).toEqual([second.messageId, first.messageId]);
+    expect([...reactions.keys()]).toEqual([first.messageId, second.messageId, wake.messageId]);
     expect(
       inputMessageReactions([run], [first, final("[react 1:ack]")]).get(first.messageId)?.label,
     ).toBe("Handled");
@@ -108,39 +122,76 @@ describe("inputMessageReactions", () => {
     ).toBe(0);
   });
 
-  it("keeps unverified reply claims and verifies matching sends in this run", () => {
+  it("derives replies only from successful explicit sends in the same run", () => {
     const message = incoming("first");
-    const reply = final("[react 1:replied]");
+    const reply = final("");
     const send: OrchestrationV2TurnItem = {
       ...base("send", 2),
       type: "dynamic_tool",
       toolName: "mcp__t3-code__t3_thread_send",
-      input: { threadId: "sender", message: "Answered" },
-      output: {},
+      input: { threadId: "sender", message: "Answered", replyTo: 1 },
+      output: { replyToMessageId: message.messageId },
     };
-    const unverified = inputMessageReactions([run], [message, reply]).get(message.messageId);
-    expect(unverified).toMatchObject({ emoji: "↩", label: "Replied" });
-    expect(unverified?.tooltip).toContain("unverified");
+    expect(inputMessageReactions([run], [message, reply]).size).toBe(0);
     expect(
       inputMessageReactions([run], [message, send, reply], [], EnvironmentId.make("local")).get(
         message.messageId,
       )?.tooltip,
     ).toBe("Replied");
+    expect(inputMessageReactions([run], [message, send]).get(message.messageId)?.emoji).toBe("↩");
     expect(
-      inputMessageReactions([run], [message, send, reply], [], EnvironmentId.make("other")).get(
-        message.messageId,
-      )?.tooltip,
-    ).toContain("unverified");
+      inputMessageReactions([run], [message, send, final("[react 1:ack]")]).get(message.messageId)
+        ?.emoji,
+    ).toBe("↩");
     expect(
       inputMessageReactions([run], [message, { ...send, status: "failed" }, reply]).get(
         message.messageId,
       )?.tooltip,
-    ).toContain("unverified");
+    ).toBeUndefined();
     expect(
       inputMessageReactions([run], [message, { ...send, runId: RunId.make("other") }, reply]).get(
         message.messageId,
       )?.tooltip,
-    ).toContain("unverified");
+    ).toBeUndefined();
+    expect(
+      inputMessageReactions(
+        [run],
+        [
+          message,
+          { ...send, input: { threadId: "sender", message: "Unlinked" }, output: {} },
+          reply,
+        ],
+      ).size,
+    ).toBe(0);
+    expect(
+      inputMessageReactions(
+        [run],
+        [
+          message,
+          { ...send, output: { isError: true, replyToMessageId: message.messageId } },
+          reply,
+        ],
+      ).size,
+    ).toBe(0);
+    expect(
+      inputMessageReactions([run], [message, { ...send, status: "running" }, reply]).size,
+    ).toBe(0);
+  });
+
+  it("derives told-you from a final body without requiring a reaction line", () => {
+    const message = incoming("first");
+    expect(
+      inputMessageReactions([run], [message, final("Please approve the deletion.")]).get(
+        message.messageId,
+      )?.label,
+    ).toBe("Told you");
+    expect(inputMessageReactions([run], [message, final(" \n ")]).size).toBe(0);
+    expect(
+      inputMessageReactions(
+        [run],
+        [message, final("[react 1:ack]\nPlease approve the deletion.")],
+      ).get(message.messageId)?.label,
+    ).toBe("Handled");
   });
 
   it("uses the root final assistant text and ignores malformed or streaming reactions", () => {
@@ -155,12 +206,96 @@ describe("inputMessageReactions", () => {
       inputMessageReactions([run], [message, final("[react 1:ack]"), child]).get(message.messageId)
         ?.label,
     ).toBe("Handled");
-    expect(inputMessageReactions([run], [message, final("[react 1:nope]")]).size).toBe(0);
+    expect(
+      inputMessageReactions([run], [message, final("[react 1:nope]")]).get(message.messageId)
+        ?.label,
+    ).toBe("Told you");
     const streaming = {
       ...final("[react 1:ack]"),
       type: "assistant_message" as const,
       streaming: true,
     };
     expect(inputMessageReactions([run], [message, streaming]).size).toBe(0);
+  });
+});
+
+describe("buildMessageRows", () => {
+  it("places only linked same-turn replies and told-you lines under incoming rows", () => {
+    const first = incoming("first");
+    const second = incoming("second");
+    const laterRun = {
+      ...run,
+      id: RunId.make("later"),
+      userMessageId: MessageId.make("later-input"),
+    };
+    const send = (
+      id: string,
+      ordinal: number,
+      replyToMessageId?: string,
+    ): OrchestrationV2TurnItem => ({
+      ...base(id, ordinal),
+      type: "dynamic_tool",
+      toolName: "t3_thread_send",
+      input: {
+        threadId: "sender",
+        message: `${id}\nMore detail`,
+        ...(replyToMessageId ? { replyTo: 1 } : {}),
+      },
+      output: replyToMessageId ? { replyToMessageId } : {},
+    });
+    const linked = send("linked", 4, first.messageId);
+    const unlinked = send("unlinked", 3);
+    const later = { ...send("later", 12, first.messageId), runId: laterRun.id };
+    const rows = buildMessageRows(
+      [{ ...run, inputMessageIds: [first.messageId, second.messageId] }, laterRun],
+      [first, second, unlinked, linked, final("Decision needed.\n\nFull paragraph."), later],
+    );
+    expect(rows.map((row) => row.kind)).toEqual([
+      "incoming",
+      "reply-line",
+      "incoming",
+      "to-you",
+      "outgoing",
+      "outgoing",
+    ]);
+    expect(rows[1]).toMatchObject({
+      parentMessageId: first.messageId,
+      item: { id: linked.id },
+      message: { body: "linked\nMore detail" },
+    });
+    expect(rows[3]).toMatchObject({
+      parentMessageId: second.messageId,
+      messageId: MessageId.make("reply"),
+      body: "Decision needed.\n\nFull paragraph.",
+    });
+    expect(rows.filter((row) => row.kind === "outgoing").map((row) => row.item.id)).toEqual([
+      unlinked.id,
+      later.id,
+    ]);
+    expect(rows[0]).toMatchObject({ reaction: { emoji: "↩" } });
+    expect(rows[2]).toMatchObject({ reaction: { emoji: "ℹ" } });
+    const responses = rows.filter(
+      (row): row is MessageResponseRow => row.kind === "reply-line" || row.kind === "to-you",
+    );
+    const rebuilt = buildMessageRows(
+      [{ ...run, inputMessageIds: [first.messageId, second.messageId] }, laterRun],
+      [first, second, unlinked, linked, final("Decision needed.\n\nFull paragraph."), later],
+    );
+    expect(
+      messageResponseRowsEqual(
+        responses,
+        rebuilt.filter(
+          (row): row is MessageResponseRow => row.kind === "reply-line" || row.kind === "to-you",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      messageResponseRowsEqual(
+        responses,
+        responses.map((row) =>
+          row.kind === "to-you" ? { ...row, body: "Changed decision" } : row,
+        ),
+      ),
+    ).toBe(false);
   });
 });

@@ -109,6 +109,7 @@ export const ThreadTurnOrigin = Schema.Struct({
   title: Schema.String,
   threadId: ThreadId,
   environmentId: EnvironmentId,
+  replyToMessageId: Schema.optional(MessageId),
 });
 
 export const TurnOrigin = Schema.Union([

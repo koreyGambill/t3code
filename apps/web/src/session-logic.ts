@@ -1,6 +1,8 @@
 import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import {
-  inputMessageReactions,
+  buildMessageRows,
+  messageResponseRowsEqual,
+  type MessageResponseRow,
   reactionInputsUnchanged,
 } from "@t3tools/client-runtime/state/message-reactions";
 import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
@@ -14,6 +16,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   type PlanId,
+  type MessageId,
   type RunId,
   type ToolActivitySurface,
   type ToolActivityIcon,
@@ -1049,18 +1052,38 @@ function withInputMessageReactions(
   input: TimelineEntriesInput,
 ): TimelineEntry[] {
   if (!input.runs?.length) return entries;
-  const reactions = inputMessageReactions(
+  const rows = buildMessageRows(
     input.runs,
     input.visibleTurnItems.map(({ item }) => item),
     input.nodes,
     input.environmentId,
   );
-  return entries.map((entry) => {
-    if (entry.kind !== "message" || entry.message.role !== "user") return entry;
-    const reaction = reactions.get(entry.message.id);
-    if (shallow(entry.message.reaction, reaction)) return entry;
-    return { ...entry, message: { ...entry.message, reaction } };
-  });
+  const responsesByParent = new Map<MessageId, MessageResponseRow[]>();
+  for (const row of rows) {
+    if (row.kind !== "reply-line" && row.kind !== "to-you") continue;
+    const responses = responsesByParent.get(row.parentMessageId) ?? [];
+    responses.push(row);
+    responsesByParent.set(row.parentMessageId, responses);
+  }
+  const incoming = new Map(
+    rows.filter((row) => row.kind === "incoming").map((row) => [row.message.messageId, row]),
+  );
+  const replies = new Set<string>(
+    rows.filter((row) => row.kind === "reply-line").map((row) => row.item.id),
+  );
+  return entries
+    .filter((entry) => entry.kind !== "work" || !replies.has(entry.id))
+    .map((entry) => {
+      if (entry.kind !== "message" || entry.message.role !== "user") return entry;
+      const reaction = incoming.get(entry.message.id)?.reaction;
+      const messageRows = responsesByParent.get(entry.message.id) ?? [];
+      if (
+        shallow(entry.message.reaction, reaction) &&
+        messageResponseRowsEqual(entry.message.messageRows ?? [], messageRows)
+      )
+        return entry;
+      return { ...entry, message: { ...entry.message, reaction, messageRows } };
+    });
 }
 
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
@@ -1093,7 +1116,11 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
       const before = previousMessages.get(entry.id);
       if (
         before?.projectedItem !== entry.projectedItem ||
-        !shallow(before?.message.reaction, entry.message.reaction)
+        !shallow(before?.message.reaction, entry.message.reaction) ||
+        !messageResponseRowsEqual(
+          before?.message.messageRows ?? [],
+          entry.message.messageRows ?? [],
+        )
       )
         return entry;
       return before.attempt === entry.attempt ? before : { ...entry, message: before.message };

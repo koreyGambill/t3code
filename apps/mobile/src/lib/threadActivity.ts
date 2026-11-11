@@ -1,5 +1,7 @@
 import {
-  inputMessageReactions,
+  buildMessageRows,
+  messageResponseRowsEqual,
+  type MessageResponseRow,
   reactionInputsUnchanged,
 } from "@t3tools/client-runtime/state/message-reactions";
 import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
@@ -133,6 +135,9 @@ export interface ThreadFeedActivity {
 }
 
 export interface ThreadFeedMessage {
+  readonly messageRows?: ReadonlyArray<
+    import("@t3tools/client-runtime/state/message-reactions").MessageResponseRow
+  >;
   readonly reaction?:
     | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
     | undefined;
@@ -898,6 +903,7 @@ function groupAdjacentActivities(
   entries: ReadonlyArray<RawThreadFeedEntry>,
   childrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>,
   onRestart?: (entryIndex: number, groupedLength: number) => void,
+  attachedReplies: ReadonlySet<string> = new Set(),
 ): ThreadFeedEntry[] {
   const grouped: ThreadFeedEntry[] = [];
   let firstActivityEntry: Extract<RawThreadFeedEntry, { readonly type: "activity" }> | null = null;
@@ -928,6 +934,8 @@ function groupAdjacentActivities(
 
   for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
     const entry = entries[entryIndex]!;
+    if (entry.type === "activity" && attachedReplies.has(entry.activity.projectedItem.item.id))
+      continue;
     if (entry.type === "activity") {
       const item = entry.activity.projectedItem.item;
       if (
@@ -1922,9 +1930,8 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
 interface ThreadFeedBuild {
   readonly runs: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2Run> | undefined;
   readonly environmentId: import("@t3tools/contracts").EnvironmentId | undefined;
-  readonly reactions: ReadonlyMap<
-    MessageId,
-    import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+  readonly messageRows: ReadonlyArray<
+    import("@t3tools/client-runtime/state/message-reactions").MessageRow
   >;
   readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
@@ -2247,6 +2254,32 @@ export function buildThreadFeed(
       .filter((checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0)
       .map((checkpoint) => [checkpoint.assistantMessageId, checkpoint]),
   );
+  const messageRows =
+    previous !== null &&
+    previous.runs === options?.runs &&
+    previous.nodes === options?.nodes &&
+    previous.environmentId === options?.environmentId &&
+    reactionInputsUnchanged(previous.rows, visibleTurnItems)
+      ? previous.messageRows
+      : buildMessageRows(
+          options?.runs ?? [],
+          visibleTurnItems.map(({ item }) => item),
+          options?.nodes,
+          options?.environmentId,
+        );
+  const responsesByParent = new Map<MessageId, MessageResponseRow[]>();
+  for (const row of messageRows) {
+    if (row.kind !== "reply-line" && row.kind !== "to-you") continue;
+    const responses = responsesByParent.get(row.parentMessageId) ?? [];
+    responses.push(row);
+    responsesByParent.set(row.parentMessageId, responses);
+  }
+  const incoming = new Map(
+    messageRows.filter((row) => row.kind === "incoming").map((row) => [row.message.messageId, row]),
+  );
+  const attachedReplies = new Set(
+    messageRows.filter((row) => row.kind === "reply-line").map((row) => row.item.id),
+  );
   const grouped = groupAdjacentActivities(
     entries.map((entry) => {
       if (entry.type !== "message" || entry.message.role !== "assistant") return entry;
@@ -2263,25 +2296,18 @@ export function buildThreadFeed(
             row: entryRows[entryIndex]! + 1,
             feedLength: prefix.length + groupedLength,
           }),
+    attachedReplies,
   );
-  const reactions =
-    previous !== null &&
-    previous.runs === options?.runs &&
-    previous.nodes === options?.nodes &&
-    previous.environmentId === options?.environmentId &&
-    reactionInputsUnchanged(previous.rows, visibleTurnItems)
-      ? previous.reactions
-      : inputMessageReactions(
-          options?.runs ?? [],
-          visibleTurnItems.map(({ item }) => item),
-          options?.nodes,
-          options?.environmentId,
-        );
   const feed = (prefix.length === 0 ? grouped : prefix.concat(grouped)).map((entry) => {
     if (entry.type !== "message" || entry.message.role !== "user") return entry;
-    const reaction = reactions.get(entry.message.id);
-    if (entry.message.reaction?.tooltip === reaction?.tooltip) return entry;
-    return { ...entry, message: { ...entry.message, reaction } };
+    const reaction = incoming.get(entry.message.id)?.reaction;
+    const children = responsesByParent.get(entry.message.id) ?? [];
+    if (
+      entry.message.reaction?.tooltip === reaction?.tooltip &&
+      messageResponseRowsEqual(entry.message.messageRows ?? [], children)
+    )
+      return entry;
+    return { ...entry, message: { ...entry.message, reaction, messageRows: children } };
   });
   if (cache) {
     cache.feedBuild =
@@ -2291,7 +2317,7 @@ export function buildThreadFeed(
             rows: visibleTurnItems,
             runs: options?.runs,
             environmentId: options?.environmentId,
-            reactions,
+            messageRows,
             attempts: options?.attempts,
             nodes: options?.nodes,
             checkpointSummaries: options?.checkpointSummaries,

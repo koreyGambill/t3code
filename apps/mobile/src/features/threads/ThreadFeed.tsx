@@ -1,5 +1,5 @@
 import { MessageReactionChip } from "./MessageReactionChip";
-import { SenderCard } from "./SenderCard";
+import { MessageResponseRows, SenderCard } from "./SenderCard";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -1569,6 +1569,7 @@ function renderFeedEntry(
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
+    readonly onScrollToMessage: (messageId: MessageId) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -1811,8 +1812,13 @@ function renderFeedEntry(
     const origin = isUser ? nonUserMessageOrigin(message) : null;
     if (origin) {
       return (
-        <View className="mb-5 w-full">
-          <SenderCard origin={origin} text={presentation.text} reaction={message.reaction}>
+        <View className="mb-2 w-full">
+          <SenderCard
+            origin={origin}
+            text={presentation.text}
+            createdAt={message.createdAt}
+            reaction={message.reaction}
+          >
             <MessageAttachmentList
               attachments={attachments}
               environmentId={props.environmentId}
@@ -1832,6 +1838,13 @@ function renderFeedEntry(
               />
             </MarkdownImageAvailableWidthContext>
           </SenderCard>
+          {message.messageRows?.length ? (
+            <MessageResponseRows
+              rows={message.messageRows}
+              environmentId={props.environmentId}
+              onScrollToMessage={props.onScrollToMessage}
+            />
+          ) : null}
         </View>
       );
     }
@@ -3206,7 +3219,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   // the jump unfolds a run hiding the message and stops following the end, so
   // the committed list holds the target row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
-  const { jumpToMessageId } = props;
+  const [localMessageJump, setLocalMessageJump] = useState<MessageId | null>(null);
+  const jumpToMessageId = localMessageJump ?? props.jumpToMessageId;
   const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
   const presentedFeed = appendGuestPendingMessages(
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups),
@@ -3252,13 +3266,17 @@ export const ThreadFeed = memo(function ThreadFeed({
       setEndFollow(false);
       void listRef.current?.scrollToIndex({ index, viewPosition: 0.2, animated: false });
     }
-    props.onJumpedToMessage?.();
+    if (localMessageJump === null) props.onJumpedToMessage?.();
+    else if (index !== -1) {
+      setLocalMessageJump(null);
+    }
   });
   // Z: a native list scroll after the commit that rendered its target row. The
   // row is often already measured, so no LegendList callback fires for that
   // commit, and setEndFollow notifies the parent, so it can't run during render.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native list to the jump target after the commit that rendered its row
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- finishes the pending jump after the rendered list has scrolled to its target
     if (jumpIndex !== null) landJump(jumpIndex);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
@@ -3663,6 +3681,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onScrollToMessage: setLocalMessageJump,
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,

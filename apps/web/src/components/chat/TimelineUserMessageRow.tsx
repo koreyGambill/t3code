@@ -1,5 +1,5 @@
 import { MessageReactionChip } from "./MessageReactionChip";
-import { SenderCard } from "./SenderCard";
+import { MessageResponseRows, SenderCard } from "./SenderCard";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
@@ -274,15 +274,29 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
       ? { ...resolvedOrigin, title: taskTitle }
       : resolvedOrigin;
   return origin ? (
-    <SenderCard
-      origin={origin}
-      reaction={row.message.reaction}
-      environmentId={ctx.activeThreadEnvironmentId}
-      onOpenThread={ctx.onOpenThread}
-    >
-      <MessageAuthorHeading>{"title" in origin ? origin.title : "T3 Code"}</MessageAuthorHeading>
-      <UserTimelineRow row={row} cardBody />
-    </SenderCard>
+    <>
+      <SenderCard
+        text={resolveUserMessagePresentation(row.message).text}
+        createdAt={row.message.createdAt}
+        timestampFormat={ctx.timestampFormat}
+        origin={origin}
+        reaction={row.message.reaction}
+        environmentId={ctx.activeThreadEnvironmentId}
+        onOpenThread={ctx.onOpenThread}
+      >
+        <MessageAuthorHeading>{"title" in origin ? origin.title : "T3 Code"}</MessageAuthorHeading>
+        <UserTimelineRow row={row} cardBody />
+      </SenderCard>
+      {row.message.messageRows?.length ? (
+        <MessageResponseRows
+          rows={row.message.messageRows}
+          environmentId={ctx.activeThreadEnvironmentId}
+          onOpenThread={ctx.onOpenThread}
+          onScrollToMessage={ctx.onScrollToMessage}
+          timestampFormat={ctx.timestampFormat}
+        />
+      ) : null}
+    </>
   ) : ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}

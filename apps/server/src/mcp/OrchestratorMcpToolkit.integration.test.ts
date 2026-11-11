@@ -104,7 +104,14 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
   function* (followupResult: string) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
-    let updatedText = text.replaceAll(queuedFollowupResult, followupResult);
+    let updatedText = text
+      .replaceAll(queuedFollowupResult, followupResult)
+      .replaceAll(
+        JSON.stringify(parentPrompt),
+        JSON.stringify(
+          renderTurnOriginText({ kind: "system", event: "notice" }, parentPrompt, null, 1),
+        ),
+      );
     const environmentId = EnvironmentId.make("environment:replay");
     for (const prompt of [delegatedPrompt, cancellationPrompt, queuedFollowupPrompt]) {
       updatedText = updatedText.replaceAll(
@@ -302,7 +309,7 @@ describe("orchestrator MCP toolkit", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
-            origin: { kind: "user" as const },
+            origin: { kind: "system", event: "notice" },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("command:mcp-replay-parent:start"),
@@ -415,14 +422,37 @@ describe("orchestrator MCP toolkit", () => {
           const followupStartSequence = yield* orchestrator.getThreadEventSequence(
             localChild(delegated.childThreadId),
           );
+          const invalidReply = yield* invoke("t3_thread_send", {
+            threadId: localChild(delegated.childThreadId),
+            message: cancellationPrompt,
+            replyTo: 99,
+          });
+          expect(invalidReply.isError).toBe(true);
+          expect(invalidReply.content).toEqual([
+            expect.objectContaining({ text: expect.stringContaining("replyTo 99") }),
+          ]);
           const runningFollowupCall = yield* invoke("t3_thread_send", {
             threadId: localChild(delegated.childThreadId),
             message: cancellationPrompt,
+            replyTo: 1,
             clientRequestId: "delegated-child-replay-running-1",
           });
           const runningFollowup = yield* decodeThreadSendResult(
             runningFollowupCall.structuredContent,
           ).pipe(Effect.orDie);
+          expect(runningFollowup).toHaveProperty(
+            "replyToMessageId",
+            "message:mcp-replay-parent:start",
+          );
+          const sentMessages = yield* orchestrator.getThreadRecords(
+            localChild(delegated.childThreadId),
+            ["messages"],
+            { messageIds: [runningFollowup.messageId] },
+          );
+          expect(sentMessages.messages[0]?.origin).toMatchObject({
+            kind: "thread",
+            replyToMessageId: "message:mcp-replay-parent:start",
+          });
           yield* orchestrator
             .streamStoredEventsFrom({
               threadId: localChild(delegated.childThreadId),

@@ -377,7 +377,7 @@ describe("buildThreadFeed", () => {
       ["Starting", 2],
       ["[react 1:ack]", 1],
       ["[quiet]", 2],
-      ["[react 1:info]\nDecision needed", 2],
+      ["Decision needed", 2],
       ["A [react 1:ack] marker", 2],
     ] as const) {
       const rows = [user, projected({ ...assistantMessage(), text }, 1)];

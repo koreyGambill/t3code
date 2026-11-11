@@ -156,13 +156,14 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
   const outgoing = workEntryOutgoingMessage(props.workEntry);
   if (outgoing)
     return (
-      <div className="min-w-0 py-2">
+      <div className="min-w-0">
         <OutgoingMessageCard
           message={outgoing}
           environmentId={ctx.activeThreadEnvironmentId}
           onOpenThread={ctx.onOpenThread}
+          createdAt={props.workEntry.createdAt}
+          timestampFormat={ctx.timestampFormat}
         />
-        <WorkEntryLogRow {...props} />
       </div>
     );
   const item = props.workEntry.projectedItem?.item;

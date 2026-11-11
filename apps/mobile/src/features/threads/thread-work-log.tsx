@@ -1084,6 +1084,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
   const outgoing = workEntryOutgoingMessage(row.workEntry);
+  if (outgoing)
+    return (
+      <OutgoingMessageCard
+        message={outgoing}
+        environmentId={props.environmentId}
+        createdAt={row.createdAt}
+      />
+    );
 
   return (
     <Animated.View
@@ -1091,9 +1099,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       className="overflow-hidden"
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
-      {outgoing ? (
-        <OutgoingMessageCard message={outgoing} environmentId={props.environmentId} />
-      ) : null}
       <WorkLogPressable
         accessibilityRole={
           notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined

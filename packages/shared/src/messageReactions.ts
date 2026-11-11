@@ -1,6 +1,6 @@
 import type { TurnOrigin } from "@t3tools/contracts";
 
-export type MessageReaction = "ack" | "replied" | "info";
+export type MessageReaction = "ack";
 
 /** Reads one boundary reaction line, preserving the original text on malformed input. */
 export function parseAssistantReactions(text: string, knownIndexes?: ReadonlySet<number>) {
@@ -22,15 +22,13 @@ export function parseAssistantReactions(text: string, knownIndexes?: ReadonlySet
   const reactions = new Map<number, MessageReaction>();
   const seen = new Set<number>();
   for (const token of match[1]!.trim().split(/[ \t]+/)) {
-    const entry = /^(\d+):(ack|replied|info)$/.exec(token);
+    const entry = /^(\d+):ack$/.exec(token);
     if (!entry) return unchanged();
     const index = Number(entry[1]);
     if (!Number.isSafeInteger(index) || seen.has(index)) return unchanged();
     seen.add(index);
     if (index > 0 && (knownIndexes === undefined || knownIndexes.has(index))) {
-      const reaction = entry[2];
-      if (reaction === "ack" || reaction === "replied" || reaction === "info")
-        reactions.set(index, reaction);
+      reactions.set(index, "ack");
     }
   }
   return {

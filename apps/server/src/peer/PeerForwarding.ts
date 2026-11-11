@@ -23,6 +23,7 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { resolveThreadReplyTo } from "../mcp/threadReplyTo.ts";
 import * as ThreadReplies from "../orchestration-v2/ThreadReplies.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -153,6 +154,12 @@ const make = Effect.gen(function* () {
       args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
     }
     if (toolName === "t3_thread_send" && scope.thread !== undefined) {
+      const replyToMessageId = yield* resolveThreadReplyTo(
+        threads,
+        scope.thread.threadId,
+        typeof args.replyTo === "number" ? args.replyTo : undefined,
+      );
+      delete args.replyTo;
       const sender = yield* threads
         .getThreadShell(scope.thread.threadId)
         .pipe(Effect.mapError(unavailable));
@@ -168,6 +175,7 @@ const make = Effect.gen(function* () {
         threadId: scope.thread.threadId,
         environmentId: scope.environmentId,
         reply: args.reply === false ? "not expected" : "expected",
+        ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
       };
     }
     if (toolName === "t3_thread_send" && scope.thread !== undefined && args.reply !== false) {

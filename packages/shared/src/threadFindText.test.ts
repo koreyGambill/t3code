@@ -55,7 +55,7 @@ it("excludes reaction-only assistant replies while preserving user text and lite
   expect(
     searchableMessageSegments({
       role: "assistant",
-      text: "[react 1:info]\nA decision.",
+      text: "[react 1:ack]\nA decision.",
       streaming: false,
     }),
   ).toEqual(["A decision."]);
