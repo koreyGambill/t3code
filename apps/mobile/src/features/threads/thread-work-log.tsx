@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { OutgoingMessageCard } from "./SenderCard";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
@@ -85,6 +86,7 @@ import {
   toolGroupAction,
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
+  workEntryOutgoingMessage,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
@@ -1081,6 +1083,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
+  const outgoing = workEntryOutgoingMessage(row.workEntry);
 
   return (
     <Animated.View
@@ -1088,6 +1091,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       className="overflow-hidden"
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
+      {outgoing ? (
+        <OutgoingMessageCard message={outgoing} environmentId={props.environmentId} />
+      ) : null}
       <WorkLogPressable
         accessibilityRole={
           notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined

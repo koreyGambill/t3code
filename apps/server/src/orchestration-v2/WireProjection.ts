@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import {
   compactDynamicToolOutput,
+  compactT3MessageInput,
   omitToolOutputImageData,
   toolOutputImages,
   toolOutputIndicatesFailure,
@@ -190,10 +191,18 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
-      const output = compactDynamicToolOutput(rawOutput);
+      const output = compactDynamicToolOutput(
+        rawOutput,
+        item.toolName,
+        item.status === "failed" || item.status === "declined",
+      );
+      const input = summarizeDynamicValue(item.input);
       return {
         ...projected,
-        input: summarizeDynamicValue(item.input),
+        input:
+          input === item.input
+            ? input
+            : (compactT3MessageInput(item.toolName, item.input) ?? input),
         ...(output === undefined ? {} : { output }),
         ...(hasDynamicValue(rawOutput) ? { outputOmitted: true } : {}),
       };

@@ -1,4 +1,5 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
+import { OutgoingMessageCard } from "./SenderCard";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
@@ -18,6 +19,7 @@ import {
   resolveViewedImageAsset,
   toolGroupAction,
   workEntryViewedImagePath,
+  workEntryOutgoingMessage,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   turnItemHasDetail,
@@ -151,6 +153,18 @@ type WorkEntryRowProps = {
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
+  const outgoing = workEntryOutgoingMessage(props.workEntry);
+  if (outgoing)
+    return (
+      <div className="min-w-0 py-2">
+        <OutgoingMessageCard
+          message={outgoing}
+          environmentId={ctx.activeThreadEnvironmentId}
+          onOpenThread={ctx.onOpenThread}
+        />
+        <WorkEntryLogRow {...props} />
+      </div>
+    );
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
