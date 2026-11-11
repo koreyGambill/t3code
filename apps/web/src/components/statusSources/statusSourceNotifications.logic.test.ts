@@ -53,5 +53,7 @@ describe("status source notifications", () => {
     const failed = source("ok", "fail", "2026-01-01T00:04:00Z");
     expect(gate.observe([failed], 0)).toEqual([failed]);
     expect(gate.observe([source("fail", "unknown", "2026-01-01T00:05:00Z")], 0)).toEqual([]);
+    const expired = source("ok", "fail", "2026-01-01T01:00:00Z", "2026-01-01T01:00:00Z");
+    expect(gate.observe([expired], Date.parse("2026-01-01T01:00:00Z"))).toEqual([expired]);
   });
 });

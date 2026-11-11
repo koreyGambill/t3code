@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import { AuthOrchestrationReadScope } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import type {
   EnvironmentId,
   MonitoringFinding,
@@ -7,7 +9,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { BellIcon, ChevronLeftIcon, Settings2Icon, XIcon } from "lucide-react";
+import { ActivityIcon, ChevronLeftIcon, Settings2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AsyncResult } from "effect/reactivity";
 
@@ -28,7 +30,11 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { StatusSourcesStrip } from "../statusSources/StatusSourcesStrip";
+import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
+import { StatusSourceDot } from "../statusSources/StatusSourceIcon";
+import { StatusSourcesList, useStatusSourceGroups } from "../statusSources/StatusSources";
+import { summarizeStatusSources } from "../statusSources/statusSourceSummary.logic";
+import { useEnvironmentsWithScope } from "../../state/session";
 
 import { visibleMonitoringFindings } from "./monitoring.logic";
 
@@ -190,12 +196,10 @@ function EnvironmentAlerts({
   environmentId,
   onOpenThread,
   onConfigure,
-  onClose,
 }: {
   environmentId: EnvironmentId;
   onOpenThread: (environmentId: EnvironmentId, threadId: ThreadId) => void;
   onConfigure: (environmentId: EnvironmentId) => void;
-  onClose: () => void;
 }) {
   const environment = useEnvironment(environmentId);
   const connected = environment?.connection.phase === "connected";
@@ -265,15 +269,6 @@ function EnvironmentAlerts({
           onClick={() => onConfigure(environmentId)}
         >
           <Settings2Icon />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Close watcher alerts"
-          title="Close watcher alerts"
-          onClick={onClose}
-        >
-          <XIcon />
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -461,17 +456,11 @@ function EnvironmentAlerts({
   );
 }
 
-export function MonitoringRail({
-  onOpenThread,
-  onConfigure,
-  onConfigureSources,
-}: {
-  onOpenThread: (environmentId: EnvironmentId, threadId: ThreadId) => void;
-  onConfigure: (environmentId: EnvironmentId) => void;
-  onConfigureSources: (environmentId: EnvironmentId) => void;
-}) {
+export function MonitoringStatusButton() {
+  const navigate = useNavigate();
   const environmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
+  const readable = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const selected =
     environments.find((entry) => entry.environmentId === selectedEnvironmentId) ??
@@ -480,7 +469,8 @@ export function MonitoringRail({
   const connected = environments.filter(
     (entry) =>
       entry.connection.phase === "connected" &&
-      entry.serverConfig?.environment.capabilities.monitoring === true,
+      entry.serverConfig?.environment.capabilities.monitoring === true &&
+      readable.has(entry.environmentId),
   );
   const queries = useAtomValue(
     monitoringStatusesAtom(environmentIdsKey(connected.map((entry) => entry.environmentId))),
@@ -489,75 +479,111 @@ export function MonitoringRail({
     (count, query) => count + (AsyncResult.getOrElse(query, () => null)?.unreadCount ?? 0),
     0,
   );
+  const groups = useStatusSourceGroups();
+  const state = summarizeStatusSources(groups.flatMap((group) => group.sources ?? []));
   const [open, setOpen] = useState(false);
-  if (!selected) return null;
+  const label = `Status and alerts: ${state ?? "no sources"}${unread > 0 ? `, ${unread} unread` : ""}`;
+  const configureSources = (machine: EnvironmentId) => {
+    setOpen(false);
+    void navigate({ to: "/settings/status-sources", search: { machine } });
+  };
   return (
-    <div
-      className="pointer-events-none fixed inset-y-12 right-0 z-40 flex items-start"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") setOpen(false);
-      }}
-    >
-      {open && (
-        <aside
-          aria-label="Watcher alerts"
-          className="pointer-events-auto flex h-full w-[min(24rem,calc(100vw-3rem))] flex-col border border-border bg-background shadow-lg"
-        >
-          {environments.length > 1 && (
-            <Menu>
-              <MenuTrigger render={<Button variant="ghost" size="sm" />}>
-                {selected.label}
-              </MenuTrigger>
-              <MenuPopup>
-                {environments.map((entry) => (
-                  <MenuItem
-                    key={entry.environmentId}
-                    onClick={() => setSelectedEnvironmentId(entry.environmentId)}
-                  >
-                    {entry.label}
-                    {entry.connection.phase !== "connected" ? " · disconnected" : ""}
-                  </MenuItem>
-                ))}
-              </MenuPopup>
-            </Menu>
-          )}
-          <EnvironmentAlerts
-            key={selected.environmentId}
-            environmentId={selected.environmentId}
-            onOpenThread={onOpenThread}
-            onConfigure={onConfigure}
-            onClose={() => setOpen(false)}
-          />
-        </aside>
-      )}
-      <div className="pointer-events-auto flex items-center border-y border-l border-border bg-background p-1">
-        <StatusSourcesStrip onConfigureSources={onConfigureSources} />
-        <div className="relative">
-          <Tooltip>
-            <TooltipTrigger
+    <Popover open={open} onOpenChange={setOpen}>
+      <div className="relative">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <PopoverTrigger
+                render={<Button variant="ghost" size="icon-sm" aria-label={label} />}
+              />
+            }
+          >
+            <span className="relative inline-flex">
+              <ActivityIcon />
+              {state && (
+                <span className="absolute -bottom-1 -right-1 rounded-full bg-background p-0.5">
+                  <StatusSourceDot state={state} />
+                </span>
+              )}
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup side="left">{label}</TooltipPopup>
+        </Tooltip>
+        {unread > 0 && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-1 -top-1 min-w-3 rounded-full bg-primary px-0.5 text-center text-3xs text-primary-foreground"
+          >
+            {unread > 99 ? "99+" : unread}
+          </span>
+        )}
+      </div>
+      <PopoverPopup width="lg" padding="none" side="left" align="start">
+        <div className="flex max-h-[min(44rem,var(--available-height))] flex-col">
+          <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border p-3">
+            <PopoverTitle>Status and alerts</PopoverTitle>
+            <PopoverClose
               render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Watcher alerts${unread > 0 ? `, ${unread} unread` : ""}`}
-                  aria-expanded={open}
-                  onClick={() => setOpen(!open)}
-                />
+                <Button variant="ghost" size="icon-xs" aria-label="Close status and alerts" />
               }
             >
-              <BellIcon />
-            </TooltipTrigger>
-            <TooltipPopup side="left">
-              Watcher alerts{unread > 0 ? ` · ${unread} unread` : ""}
-            </TooltipPopup>
-          </Tooltip>
-          {unread > 0 && (
-            <span className="pointer-events-none absolute right-0 top-0 min-w-3 rounded-full bg-primary px-0.5 text-center text-3xs text-primary-foreground">
-              {unread}
-            </span>
-          )}
+              <XIcon />
+            </PopoverClose>
+          </header>
+          <div className="min-h-0 overflow-y-auto">
+            <StatusSourcesList groups={groups} onConfigureSources={configureSources} />
+            {groups.length === 0 && (
+              <p className="p-3 text-sm text-muted-foreground">No connected status sources.</p>
+            )}
+            {selected && (
+              <section className="border-t border-border" aria-label="Watcher alerts">
+                {environments.length > 1 && (
+                  <div className="p-3 pb-0">
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button variant="ghost" size="sm" aria-label="Alerts environment" />
+                        }
+                      >
+                        {selected.label}
+                      </MenuTrigger>
+                      <MenuPopup>
+                        {environments.map((entry) => (
+                          <MenuItem
+                            key={entry.environmentId}
+                            onClick={() => setSelectedEnvironmentId(entry.environmentId)}
+                          >
+                            {entry.label}
+                            {entry.connection.phase !== "connected" ? " · disconnected" : ""}
+                          </MenuItem>
+                        ))}
+                      </MenuPopup>
+                    </Menu>
+                  </div>
+                )}
+                <EnvironmentAlerts
+                  key={selected.environmentId}
+                  environmentId={selected.environmentId}
+                  onOpenThread={(destinationEnvironmentId, threadId) => {
+                    setOpen(false);
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: { environmentId: destinationEnvironmentId, threadId },
+                    });
+                  }}
+                  onConfigure={(destinationEnvironmentId) => {
+                    setOpen(false);
+                    void navigate({
+                      to: "/settings/scheduled-tasks",
+                      search: { environmentId: destinationEnvironmentId },
+                    });
+                  }}
+                />
+              </section>
+            )}
+          </div>
         </div>
-      </div>
-    </div>
+      </PopoverPopup>
+    </Popover>
   );
 }

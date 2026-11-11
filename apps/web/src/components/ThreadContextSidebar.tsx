@@ -51,6 +51,7 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { ThreadListView } from "./reviews/ThreadListView";
 import { ArtifactsPanel } from "./reviews/ThreadWorkspacePanel";
 import { Badge } from "./ui/badge";
+import { MonitoringStatusButton } from "./monitoring/MonitoringStatusButton";
 import { XwingEnvironmentsPanel } from "./xwing/XwingEnvironmentsPanel";
 
 const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -138,7 +139,15 @@ export function ThreadContextSidebarHost({ children }: { children: ReactNode }) 
             threadRef={selected}
             detailsRef={setDetailsElement}
           />
-        ) : null}
+        ) : (
+          <nav
+            aria-label="Status"
+            className="flex w-11 shrink-0 flex-col items-center gap-2 border-l border-border bg-muted/20 pb-2 [-webkit-app-region:no-drag]"
+          >
+            <div className="h-[var(--workspace-topbar-height)] shrink-0" />
+            <MonitoringStatusButton />
+          </nav>
+        )}
       </div>
     </ThreadDetailsDestination>
   );
@@ -300,6 +309,7 @@ function ThreadContextSidebar({
         className="flex w-11 shrink-0 flex-col items-center gap-2 border-l border-border bg-muted/20 pb-2 [-webkit-app-region:no-drag]"
       >
         <div className="h-[var(--workspace-topbar-height)] shrink-0" />
+        <MonitoringStatusButton />
         <Tooltip>
           <TooltipTrigger
             render={
