@@ -1645,6 +1645,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const delivery = cohort?.delivery;
       if (
         parentRun === undefined ||
+        delegatedTaskTerminalStatus(parentRun.status) === null ||
         cohort?.disposition !== "open" ||
         delivery == null ||
         delivery.taskIds.length === 0 ||
@@ -13370,19 +13371,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         offer: false,
       };
     }
-    // settled_only relies on a blocking wait that ends with the spawning turn; later results need another delivery path.
-    if (
-      (input.task.completionWake ?? "settled_only") === "settled_only" &&
-      hasLiveRun({ runs: [input.parentRun] })
-    ) {
-      return {
-        task: input.updatedTask,
-        parentRun: undefined,
-        message: undefined,
-        offer: false,
-      };
-    }
-
     const delivery = cohort?.delivery ?? null;
     const deliveryRun = completionDeliveryRun(input.parentProjection, delivery);
     if (delivery !== null) {
@@ -15112,7 +15100,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         yield* threadDispatch.withLock(
           threadId,
-          finalizeDelegatedCompletionDelivery(threadId, run.id),
+          finalizeDelegatedCompletionDelivery(threadId, run.id).pipe(
+            Effect.andThen(offerDelegatedCompletionDelivery(threadId, run.id)),
+          ),
         );
         yield* threadDispatch
           .withLock(

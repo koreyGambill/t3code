@@ -16,10 +16,11 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -46,11 +47,11 @@ const adapter = {
 /** Every parent wake the orchestrator offers, for the tests to read. */
 class Offers extends Context.Service<
   Offers,
-  Ref.Ref<ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>>
+  Queue.Queue<ProviderContinuationRequests.ProviderContinuationRequest>
 >()("t3/orchestration-v2/RemoteDelegatedTask.test/Offers") {}
 const layerOffers = Layer.effect(
   Offers,
-  Ref.make<ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>>([]),
+  Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>(),
 );
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
@@ -68,7 +69,7 @@ const layerTest = Layer.mergeAll(
       Offers.pipe(
         Effect.map((offers) => ({
           offer: (request: ProviderContinuationRequests.ProviderContinuationRequest) =>
-            Ref.update(offers, (seen) => [...seen, request]),
+            Queue.offer(offers, request).pipe(Effect.asVoid),
           take: Effect.never,
         })),
       ),
@@ -194,18 +195,135 @@ const remoteChild = {
 };
 
 it.layer(layerTest)("a delegated task in a linked environment", (it) => {
-  it.effect.each(["completed", "failed", "cancelled", "interrupted"] as const)(
-    "delivers a parent run's group once after both tasks finish (%s)",
+  const sealedGroupCases = (["completed", "interrupted", "failed", "cancelled"] as const).flatMap(
     (status) =>
+      (
+        [
+          ["always", "always"],
+          ["settled_only", "settled_only"],
+          ["always", "settled_only"],
+          ["settled_only", "always"],
+        ] as const
+      ).map((policies) => ({ name: `${status}, ${policies.join("/")}`, status, policies })),
+  );
+  it.effect.each(sealedGroupCases)(
+    "holds remote results until the spawning run ends ($name)",
+    ({ name, status, policies }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const offers = yield* Offers;
-        const parent = yield* seedLiveParent(`group-${status}`);
-        for (const name of ["first", "second"]) {
+        yield* Queue.clear(offers);
+        const parent = yield* seedLiveParent(`sealed-group-${name}`);
+        const taskIds: NodeId[] = [];
+        for (const [index, completionWake] of policies.entries()) {
           yield* orchestrator.dispatch({
             type: "delegated_task.remote.request",
-            commandId: CommandId.make(`command:group-${status}:${name}`),
+            commandId: CommandId.make(`command:sealed-group-${name}:${index}`),
+            parentThreadId: parent.threadId,
+            parentRunId: parent.runId,
+            parentNodeId: parent.rootNodeId,
+            task: `Task ${index}`,
+            driver: ProviderDriverKind.make("remote"),
+            modelSelection,
+            remoteChild: {
+              ...remoteChild,
+              threadId: ThreadId.make(`thread:sealed-${name}:${index}`),
+            },
+            completionWake,
+          });
+          const task = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents.find(
+            (task) => !taskIds.includes(task.id),
+          )!;
+          taskIds.push(task.id);
+          yield* orchestrator.dispatch({
+            type: "delegated_task.remote.complete",
+            commandId: CommandId.make(`command:sealed-result-${name}:${index}`),
+            parentThreadId: parent.threadId,
+            taskId: task.id,
+            status: "completed",
+            result: `Result ${index}`,
+          });
+          yield* worker.drain();
+          assert.isEmpty(yield* Queue.clear(offers));
+          const held = yield* orchestrator.getThreadProjection(parent.threadId);
+          assert.sameMembers([...held.runs[0]!.delegatedCompletion!.delivery!.taskIds], taskIds);
+        }
+        const now = yield* DateTime.now;
+        const run = (yield* orchestrator.getThreadProjection(parent.threadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:sealed-parent-ended:${name}`),
+              type: "run.updated",
+              threadId: parent.threadId,
+              runId: parent.runId,
+              occurredAt: now,
+              payload: { ...run, status, completedAt: now },
+            },
+          ],
+        });
+        const offered = yield* Queue.take(offers);
+        assert.equal(offered.delegatedCompletion?.parentRunId, parent.runId);
+        const delivery = run.delegatedCompletion!.delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          origin: { kind: "system", event: "group complete" },
+          commandId: CommandId.make(`command:deliver-sealed:${name}`),
+          threadId: parent.threadId,
+          messageId: delivery.messageId,
+          text: "Group finished",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: parent.runId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+        });
+        yield* worker.drain();
+        const delivered = yield* orchestrator.getThreadProjection(parent.threadId);
+        const wakes = delivered.messages.filter(
+          (message) => message.delegatedCompletion !== undefined,
+        );
+        assert.lengthOf(wakes, 1);
+        assert.sameMembers([...wakes[0]!.delegatedCompletion!.taskIds], taskIds);
+        assert.include(wakes[0]!.text, "Result 0");
+        assert.include(wakes[0]!.text, "Result 1");
+        assert.lengthOf(
+          delivered.runs.filter((run) => run.userMessageId === delivery.messageId),
+          1,
+        );
+      }),
+  );
+
+  it.effect.each(
+    (["completed", "failed", "cancelled", "interrupted"] as const).flatMap((status) =>
+      (
+        [
+          ["always", "always"],
+          ["settled_only", "settled_only"],
+          ["always", "settled_only"],
+          ["settled_only", "always"],
+        ] as const
+      ).map((policies) => ({ key: `${status}-${policies.join("-")}`, status, policies })),
+    ),
+  )(
+    "delivers a parent run's group once after both tasks finish ($key)",
+    ({ key, status, policies }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const offers = yield* Offers;
+        const parent = yield* seedLiveParent(`group-${key}`);
+        for (const [index, name] of ["first", "second"].entries()) {
+          yield* orchestrator.dispatch({
+            type: "delegated_task.remote.request",
+            commandId: CommandId.make(`command:group-${key}:${name}`),
             parentThreadId: parent.threadId,
             parentRunId: parent.runId,
             parentNodeId: parent.rootNodeId,
@@ -213,7 +331,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
             driver: ProviderDriverKind.make("remote"),
             modelSelection,
             remoteChild: { ...remoteChild, threadId: ThreadId.make(`thread:remote-${name}`) },
-            completionWake: "always",
+            completionWake: policies[index]!,
           });
         }
         const projection = yield* orchestrator.getThreadProjection(parent.threadId);
@@ -223,7 +341,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
         yield* sink.write({
           events: [
             {
-              id: EventId.make(`event:group-parent-ended:${status}`),
+              id: EventId.make(`event:group-parent-ended:${key}`),
               type: "run.updated",
               threadId: parent.threadId,
               occurredAt: now,
@@ -232,16 +350,17 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
           ],
         });
         for (const [index, task] of tasks.entries()) {
-          yield* Ref.set(offers, []);
+          yield* Queue.clear(offers);
           yield* orchestrator.dispatch({
             type: "delegated_task.remote.complete",
-            commandId: CommandId.make(`command:group-result-${status}:${task.id}`),
+            commandId: CommandId.make(`command:group-result-${key}:${task.id}`),
             parentThreadId: parent.threadId,
             taskId: task.id,
             status: index === 0 ? "completed" : status,
             result: `Result ${index}`,
           });
-          const seen = yield* Ref.get(offers);
+          yield* worker.drain();
+          const seen = index === 0 ? yield* Queue.clear(offers) : [yield* Queue.take(offers)];
           assert.equal(seen.length, index === 0 ? 0 : 1);
         }
         const finished = yield* orchestrator.getThreadProjection(parent.threadId);
@@ -255,7 +374,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           origin: { kind: "system", event: "group complete" },
-          commandId: CommandId.make(`command:deliver-group:${status}`),
+          commandId: CommandId.make(`command:deliver-group:${key}`),
           threadId: parent.threadId,
           messageId,
           text: "Group finished",
@@ -269,6 +388,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
             taskIds: delivery.taskIds,
           },
         });
+        yield* worker.drain();
         const delivered = yield* orchestrator.getThreadProjection(parent.threadId);
         const wakes = delivered.messages.filter(
           (message) => message.delegatedCompletion !== undefined,
@@ -345,7 +465,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       }
       const tasks = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents;
       const second = tasks.find((task) => task.runId === runIds[1])!;
-      yield* Ref.set(offers, []);
+      yield* Queue.clear(offers);
       yield* orchestrator.dispatch({
         type: "delegated_task.remote.complete",
         commandId: CommandId.make("command:separate-result"),
@@ -354,7 +474,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
         status: "completed",
         result: "Second group done",
       });
-      const seen = yield* Ref.get(offers);
+      const seen = [yield* Queue.take(offers)];
       assert.equal(seen.length, 1);
       assert.equal(seen[0]?.delegatedCompletion?.parentRunId, runIds[1]);
       const projection = yield* orchestrator.getThreadProjection(parent.threadId);
@@ -519,6 +639,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
   it.effect("wakes its parent with the result when it completes there", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const parent = yield* seedLiveParent("completes");
       const recorded = yield* orchestrator.dispatch({
         type: "delegated_task.remote.request",
@@ -545,7 +666,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       );
       assert.deepEqual(yield* openFor, [{ parentThreadId: parent.threadId, taskId: taskId! }]);
       const offers = yield* Offers;
-      yield* Ref.set(offers, []);
+      yield* Queue.clear(offers);
       const complete = (result: string) =>
         orchestrator.dispatch({
           type: "delegated_task.remote.complete",
@@ -557,6 +678,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
           stoppedThere: "ran-out",
         });
       yield* complete("All 412 tests pass on the box.");
+      yield* worker.drain();
       // A second report is refused, so the first result stands.
       const late = yield* complete("A late, different answer.").pipe(Effect.flip);
       assert.equal(late._tag, "OrchestratorDispatchError");
@@ -565,7 +687,6 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const task = projection.subagents.find((candidate) => candidate.id === taskId);
       assert.equal(task?.status, "completed");
       assert.equal(task?.result, "All 412 tests pass on the box.");
-      // The live parent run claimed it, so task_status acknowledges it as for a local child.
       assert.equal(task?.completionDelivery?.state, "claimed");
       // Nothing is left for the follower to pick up after a restart.
       assert.deepEqual(yield* openFor, []);
@@ -573,13 +694,29 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
         (candidate) => candidate.type === "subagent" && candidate.subagentId === taskId,
       );
       assert.equal(item?.status, "completed");
-      // The parent's live run is offered the delivery, as for a local child.
+      // The spawning run must end before its single result can be delivered.
       const delivery = projection.runs.find((run) => run.id === parent.runId)?.delegatedCompletion
         ?.delivery;
       assert.deepEqual(delivery?.taskIds, [taskId]);
-      const offered = yield* Ref.get(offers);
-      assert.equal(offered.length, 1);
-      assert.equal(offered[0]?.threadId, parent.threadId);
+      assert.isEmpty(yield* Queue.clear(offers));
+      const sink = yield* EventSink.EventSinkV2;
+      const run = projection.runs.find((run) => run.id === parent.runId)!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:single-parent-ended"),
+            type: "run.updated",
+            threadId: parent.threadId,
+            runId: parent.runId,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const offered = yield* Queue.take(offers);
+      yield* worker.drain();
+      assert.equal(offered.threadId, parent.threadId);
     }),
   );
 });
