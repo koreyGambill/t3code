@@ -351,7 +351,11 @@ function ProfileEditor({
               }}
             >
               <SelectTrigger id="watcher-delivery">
-                <SelectValue />
+                <SelectValue>
+                  {draft.delivery === "alerts"
+                    ? "Alerts only"
+                    : "Thread message, or alert if unavailable"}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup>
                 <SelectItem value="thread-or-alert">
