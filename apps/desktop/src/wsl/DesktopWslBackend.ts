@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,6 +19,8 @@ import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
 export const WSL_INSTANCE_ID_PREFIX = "wsl:";
 const WSL_DEFAULT_DISTRO_ID = `${WSL_INSTANCE_ID_PREFIX}default`;
 const MAX_TCP_PORT = 65_535;
+const PREFERRED_PORT_ATTEMPTS = 20;
+const PREFERRED_PORT_RETRY = Duration.millis(500);
 
 export class DesktopWslBackend extends Context.Service<
   DesktopWslBackend,
@@ -42,11 +45,16 @@ const buildLabel = (distro: string | null): string =>
   distro === null ? "WSL (default distro)" : `WSL (${distro})`;
 
 // WSL auto-forwards loopback ports, so only IPv4 loopback availability matters.
-const scanForWslPort = Effect.fn("desktop.wslBackend.scanForWslPort")(function* (
+export const scanForWslPort = Effect.fn("desktop.wslBackend.scanForWslPort")(function* (
   startPort: number,
 ): Effect.fn.Return<number, NetService.NetError, NetService.NetService> {
   const net = yield* NetService.NetService;
-  for (let port = startPort; port <= MAX_TCP_PORT; port += 1) {
+  // Linked environments store this URL, and a restarting predecessor can hold the port briefly.
+  for (let attempt = 0; attempt < PREFERRED_PORT_ATTEMPTS; attempt += 1) {
+    if (yield* net.canListenOnHost(startPort, "127.0.0.1")) return startPort;
+    yield* Effect.sleep(PREFERRED_PORT_RETRY);
+  }
+  for (let port = startPort + 1; port <= MAX_TCP_PORT; port += 1) {
     if (yield* net.canListenOnHost(port, "127.0.0.1")) {
       return port;
     }

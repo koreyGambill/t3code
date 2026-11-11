@@ -1,8 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as NetService from "@t3tools/shared/Net";
 
@@ -84,6 +86,22 @@ const layerNet = Layer.succeed(NetService.NetService, {
 } satisfies NetService.NetService["Service"]);
 
 describe("DesktopWslBackend", () => {
+  it.effect("waits for the preferred port so peer links keep a stable URL across restarts", () => {
+    let preferredChecks = 0;
+    const layerBusyPreferred = Layer.succeed(NetService.NetService, {
+      canListenOnHost: (port) => Effect.sync(() => (port === 3774 ? ++preferredChecks > 3 : true)),
+      isPortAvailableOnLoopback: () => Effect.succeed(true),
+      hasListenerOnHost: () => Effect.succeed(false),
+      reserveLoopbackPort: () => Effect.succeed(41773),
+      findAvailablePort: (preferred) => Effect.succeed(preferred),
+    } satisfies NetService.NetService["Service"]);
+    return Effect.gen(function* () {
+      const fiber = yield* DesktopWslBackend.scanForWslPort(3774).pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(yield* Fiber.join(fiber), 3774);
+    }).pipe(Effect.provide(layerBusyPreferred));
+  });
+
   it.effect("clears the stored preflight error when a registered WSL backend becomes ready", () => {
     let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
     let registeredWsl: DesktopBackendPool.DesktopBackendInstance | undefined;
