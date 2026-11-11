@@ -19,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -45,6 +46,7 @@ interface World {
   readonly waits: Array<{ readonly ends: OrchestrationV2Run }>;
   messageRunId: RunId;
   targetDeleted: boolean;
+  answerText?: string;
   crashAfterReplyCommit?: boolean;
   peerCall?: PeerMcpClient.PeerMcpClient["Service"]["call"];
 }
@@ -82,7 +84,7 @@ const threadsFor = (
                   id: MessageId.make("message:replies:answer"),
                   runId: RunId.make("run:replies:steered"),
                   role: "assistant",
-                  text: "Done: shipped it.",
+                  text: world.answerText ?? "Done: shipped it.",
                   updatedAt: 0,
                 },
               ]
@@ -162,6 +164,91 @@ const admit = Effect.gen(function* () {
 });
 
 describe("ThreadReplies", () => {
+  it.effect.each(
+    [false, true].flatMap((remote) =>
+      (
+        [
+          { status: "completed", reply: null },
+          { status: "failed", reply: "failed." },
+          { status: "cancelled", reply: "was stopped." },
+        ] as const
+      ).map((outcome) => ({ remote, ...outcome })),
+    ),
+  )(
+    "closes a quiet reply request and preserves unsuccessful outcomes (remote=$remote, status=$status)",
+    ({ remote, status, reply }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const finished = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+        const observeDelivery: Statement.Transformer = (statement, _sql, fiber) =>
+          statement.compile()[0].includes("UPDATE thread_reply_requests SET delivered_at")
+            ? Deferred.succeed(finished, fiber).pipe(Effect.as(statement))
+            : Effect.succeed(statement);
+        const world: World = {
+          waits: [{ ends: run("run:replies:steered", status) }],
+          messageRunId: RunId.make("run:replies:steered"),
+          targetDeleted: false,
+          answerText: " \n[quiet]\n ",
+          peerCall: ((call) =>
+            Effect.succeed(
+              call.tool === "t3_thread_send"
+                ? {
+                    threadId: target,
+                    messageId: request.messageId,
+                    runId: world.messageRunId,
+                    status: "running",
+                    delivery: "started",
+                  }
+                : call.tool === "t3_thread_wait"
+                  ? {
+                      threadId: target,
+                      runId: world.messageRunId,
+                      status,
+                      timedOut: false,
+                    }
+                  : {
+                      thread: { title: "Remote builder" },
+                      items: [
+                        {
+                          type: "assistant_message",
+                          runId: world.messageRunId,
+                          text: world.answerText,
+                        },
+                      ],
+                      hasMore: false,
+                      nextPosition: null,
+                    },
+            )) as PeerMcpClient.PeerMcpClient["Service"]["call"],
+        };
+        yield* serve(world, (replies, delivered) =>
+          Effect.gen(function* () {
+            if (remote) {
+              yield* replies.sendRemote({
+                senderThreadId: sender,
+                environmentId: EnvironmentId.make("environment:remote"),
+                limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+                input: { threadId: target, message: "do it", clientRequestId: "fwd:quiet" },
+              });
+            } else {
+              yield* admit;
+              yield* replies.followCommitted(request.messageId);
+            }
+            expect(Exit.isSuccess(yield* Fiber.await(yield* Deferred.await(finished)))).toBe(true);
+            expect(yield* Deferred.isDone(delivered)).toBe(reply !== null);
+            if (reply !== null) {
+              const dispatched = yield* Deferred.await(delivered);
+              expect(dispatched.text).toBe(reply);
+              expect(dispatched.notification?.outcome).toBe(status);
+            }
+            expect(
+              yield* sql`SELECT message_id FROM thread_reply_requests WHERE delivered_at IS NULL`,
+            ).toHaveLength(0);
+            expect(yield* replies.owes({ threadId: target, to: sender })).toBe(false);
+          }),
+        ).pipe(Effect.provideService(Statement.CurrentTransformer, observeDelivery));
+      }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
+
   it.effect("recovers a remote send accepted before its receipt and deduplicates its reply", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

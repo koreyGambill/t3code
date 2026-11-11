@@ -114,6 +114,7 @@ const thread = {
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
+  latestRunQuiet: false,
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
@@ -156,6 +157,7 @@ function toV2ThreadShell(input: typeof thread) {
       : input.hasPendingApprovals
         ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
         : null,
+    latestRunQuiet: input.latestRunQuiet,
     latestVisibleMessage: null,
     latestUserMessageAt: null,
     hasActionableProposedPlan: false,
@@ -262,6 +264,26 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it("silences quiet completions across notifications, sound, glyphs, and badges", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  state.glyphAlerts = true;
+  app.start();
+  state.shells.set(
+    "one",
+    shell({
+      latestRunQuiet: true,
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  expect(TestNotification.sent).toEqual([]);
+  expect(state.sound).not.toHaveBeenCalled();
+  expect(state.glyph).not.toHaveBeenCalled();
+  expect(state.badge).not.toHaveBeenCalledWith(1);
+  state.shells.set("one", shell({ latestRunQuiet: true, hasPendingApprovals: true }));
+  expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Approval needed"]);
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(

@@ -321,6 +321,8 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         message(both, "both-user-new", "user", "newer needle question", { minute: 2 }),
         thread(assistantOnly, project),
         message(assistantOnly, "assistant-only", "assistant", "needle in an answer"),
+        message(assistantOnly, "quiet-assistant", "assistant", " \n[quiet]\n"),
+        message(both, "quiet-user", "user", "[quiet]"),
         message(assistantOnly, "assistant-streaming", "user", "needle still typing", {
           streaming: true,
         }),
@@ -346,6 +348,10 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       );
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "quiet" })).matches.map((match) => match.messageId),
+        [MessageId.make("quiet-user")],
+      );
     }),
   );
 

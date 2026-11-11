@@ -1071,6 +1071,45 @@ describe("native provider presentation in the v2 timeline", () => {
     item,
   });
 
+  it("hides whole quiet assistant messages through streaming updates while retaining other text", () => {
+    const assistant = (text: string): OrchestrationV2TurnItem => ({
+      ...base,
+      type: "assistant_message",
+      messageId: MessageId.make("quiet-reply"),
+      text,
+      streaming: true,
+    });
+    let previous: ReturnType<typeof deriveTimelineEntriesFromVisibleTurnItemsWithState> | undefined;
+    for (const [text, count] of [
+      ["Starting", 1],
+      [" \n[quiet]\t", 0],
+      ["[quiet] is a literal marker", 1],
+      ["[quiet]", 0],
+    ] as const) {
+      const input = { visibleTurnItems: [visible(assistant(text))], optimisticMessages: [] };
+      const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+      expect(next.entries).toHaveLength(count);
+      expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+      previous = next;
+    }
+    const user: OrchestrationV2TurnItem = {
+      ...base,
+      type: "user_message",
+      messageId: MessageId.make("literal-user"),
+      text: "[quiet]",
+      inputIntent: "turn_start",
+      createdBy: "user",
+      creationSource: "server",
+      attachments: [],
+    };
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [visible(user)],
+        optimisticMessages: [],
+      }),
+    ).toHaveLength(1);
+  });
+
   it("keeps async answers in the question row, including incrementally appended replies", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

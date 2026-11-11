@@ -3432,6 +3432,10 @@ export default function ChatView(props: ChatViewProps) {
                 runs={serverProjection?.runs ?? []}
                 latestRun={activeActivityRun}
                 announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
+                announcedRunQuiet={
+                  activeThreadShell?.latestRunQuiet === true &&
+                  activeActivityRun?.runId === activeThreadShell.latestRun?.runId
+                }
                 detailBehindShell={isDetailBehindShell(
                   activeLatestRun,
                   activeThreadShell?.latestRun ?? null,

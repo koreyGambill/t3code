@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
+  isQuietAssistantText,
   latestProviderTurnForAttempt,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
@@ -35,6 +36,19 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it.each([
+    ["[quiet]", true],
+    [" \n\t\u00a0[quiet]\u3000\ufeff", true],
+    ["", false],
+    ["[Quiet]", false],
+    ["[quiet] Done", false],
+    ["[quiet]\0Done", false],
+    ["Use [quiet] for informational turns.", false],
+    ["`[quiet]`", false],
+  ])("recognizes only the whole quiet assistant token %j", (text, quiet) => {
+    expect(isQuietAssistantText(text)).toBe(quiet);
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

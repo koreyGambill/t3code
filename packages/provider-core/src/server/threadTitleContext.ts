@@ -1,4 +1,5 @@
 import type { ChatAttachment } from "@t3tools/contracts";
+import { isQuietAssistantText } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 
@@ -34,6 +35,7 @@ export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMess
     if (
       message.role === "system" ||
       message.role === "reasoning" ||
+      (message.role === "assistant" && isQuietAssistantText(message.text)) ||
       (!message.text.trim() && !message.attachments?.length)
     )
       return [];

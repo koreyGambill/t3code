@@ -11,6 +11,9 @@ describe("subagentDetailPreview", () => {
       subagentDetailPreview({ status: "failed", progress: "Last progress", result: " " }),
     ).toBe("Last progress");
     expect(subagentDetailPreview({ status: "pending" })).toBeNull();
+    expect(
+      subagentDetailPreview({ ...details, status: "completed", result: " [quiet] " }),
+    ).toBeNull();
   });
 });
 

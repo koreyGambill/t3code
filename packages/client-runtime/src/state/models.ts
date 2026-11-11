@@ -161,6 +161,7 @@ export interface EnvironmentThreadShell {
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
+  readonly latestRunQuiet?: boolean;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly blockedOnThreadWait?: boolean;
   readonly latestUserMessageAt: string | null;
@@ -318,6 +319,7 @@ export function presentThreadShell(
     delegatedFrom: thread.delegatedFrom ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
+    ...(thread.latestRunQuiet === undefined ? {} : { latestRunQuiet: thread.latestRunQuiet }),
     runtime,
     blockedOnThreadWait: thread.blockedOnThreadWait ?? false,
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),

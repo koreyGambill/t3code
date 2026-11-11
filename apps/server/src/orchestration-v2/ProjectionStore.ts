@@ -48,6 +48,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
+  isQuietAssistantText,
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
@@ -1060,6 +1061,7 @@ type ShellThreadRow = {
   readonly latest_run_requested_at: string | null;
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
+  readonly latest_run_reply_prefix: string | null;
   readonly latest_run_stop_requested: number;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
@@ -1644,6 +1646,14 @@ export function threadShellFromProjection(
     runs,
     pullRequests: projection.thread.pullRequests,
   });
+  const rootReplyNodes =
+    latestRun?.status === "completed"
+      ? new Set(
+          projection.nodes
+            .filter((node) => node.rootNodeId === latestRun.rootNodeId)
+            .map((node) => node.id),
+        )
+      : undefined;
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -1686,6 +1696,21 @@ export function threadShellFromProjection(
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
+    latestRunQuiet:
+      latestRun?.status === "completed" &&
+      isQuietAssistantText(
+        projection.turnItems
+          .filter(
+            (item) =>
+              item.runId === latestRun.id &&
+              item.type === "assistant_message" &&
+              (item.nodeId === latestRun.rootNodeId ||
+                item.nodeId === null ||
+                rootReplyNodes?.has(item.nodeId)),
+          )
+          .toSorted((left, right) => right.ordinal - left.ordinal)
+          .map((item) => (item.type === "assistant_message" ? item.text : ""))[0] ?? "",
+      ),
     latestRunStopRequested:
       latestRun != null &&
       projection.turnItems.some(
@@ -1807,6 +1832,7 @@ type ShellThreadState = {
   readonly latestRunRequestedAt: DateTime.Utc | null;
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
+  readonly latestRunQuiet: boolean;
   readonly latestRunStopRequested: boolean;
   readonly activeRunId: RunId | null;
   readonly blockedOnThreadWait: boolean;
@@ -1971,6 +1997,7 @@ function shellFromState(input: {
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
+    latestRunQuiet: input.state.latestRunQuiet,
     latestRunStopRequested: input.state.latestRunStopRequested,
     activeRunId: input.state.activeRunId,
     blockedOnThreadWait: input.state.blockedOnThreadWait,
@@ -6372,6 +6399,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
+              CASE WHEN presented.status = 'completed' THEN (
+                -- Match JavaScript trim, and return one extra character to reject longer replies.
+                SELECT CASE WHEN instr(json_extract(reply.payload_json, '$.text'), char(0)) > 0 THEN ''
+                -- SQLite text results stop at NUL, which must not shorten a longer reply into the marker.
+                ELSE substr(trim(json_extract(reply.payload_json, '$.text'),
+                  char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
+                    8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
+                ), 1, 8) END
+                FROM orchestration_v2_projection_turn_items reply
+                WHERE reply.run_id = presented.run_id AND reply.type = 'assistant_message'
+                  AND (reply.node_id = json_extract(presented.payload_json, '$.rootNodeId') OR reply.node_id IS NULL
+                    OR EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_nodes node
+                      WHERE node.node_id = reply.node_id
+                        AND node.root_node_id = json_extract(presented.payload_json, '$.rootNodeId')
+                    ))
+                ORDER BY reply.ordinal DESC, reply.turn_item_id DESC
+                LIMIT 1
+              ) END AS latest_run_reply_prefix,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
@@ -7074,6 +7120,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunRequestedAt,
           latestRunStartedAt,
           latestRunCompletedAt,
+          latestRunQuiet:
+            latestRunStatus === "completed" &&
+            latestRunId === row.latest_run_id &&
+            (row.latest_run_reply_prefix?.length ?? 0) < 8 &&
+            isQuietAssistantText(row.latest_run_reply_prefix ?? ""),
           latestRunStopRequested,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
           blockedOnThreadWait: deriveBlockedOnThreadWait({
@@ -7344,6 +7395,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               activityRunStatus: state.activityRunStatus,
               latestRunCompletedAt: state.latestRunCompletedAt,
               latestRunStopRequested: state.latestRunStopRequested,
+              latestRunQuiet: state.latestRunQuiet,
               pendingRuntimeRequest: state.pendingRuntimeRequest,
               pendingBackgroundTasks: state.pendingBackgroundTasks,
             })),

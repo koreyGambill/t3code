@@ -24,6 +24,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isQuietAssistantText,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -864,7 +865,7 @@ function delegatedCompletionWakeDetail(
       const status = task === undefined ? " reached a terminal state" : ` [${task.status}]`;
       const label = `${threadLabel} (${taskId})${status}`;
       if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
+        const detail = `${label}:\n${isQuietAssistantText(task.result) ? "(quiet)" : task.result}`;
         const bytes = Buffer.byteLength(detail);
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
