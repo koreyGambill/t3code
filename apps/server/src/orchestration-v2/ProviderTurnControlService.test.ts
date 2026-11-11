@@ -271,7 +271,7 @@ it.effect(
           getCheckpointCaptureContext: () => Effect.die("not used"),
           getRootCheckpointScopeContext: () => Effect.die("not used"),
           listDevelopmentEnvironmentUsage: () => Effect.die("not used"),
-          getRunMessage: () => Effect.die("not used"),
+          getRunInputMessages: () => Effect.die("not used"),
           isNodeStored: () => Effect.die("not used"),
           canStartQueuedRun: () => Effect.die("not used"),
           getHeldQueuedRuns: () => Effect.die("not used"),

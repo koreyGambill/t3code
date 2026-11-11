@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
+  EnvironmentId,
   CommandId,
   MessageId,
   EventId,
@@ -653,6 +654,274 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   });
   return { cwd, events, started, steered, interrupted, layer, startFirstTurn };
 });
+
+it.effect.each(["agents", "user first", "cancelled"] as const)(
+  "merges waiting messages into one provider turn: %s",
+  (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `queued-batch-${scenario}`,
+          false,
+          false,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const threadId = yield* startFirstTurn;
+          const texts = ["lane one", "lane two", "lane three"];
+          if (scenario === "user first") texts.splice(1, 0, "user direction");
+          for (const [index, text] of texts.entries()) {
+            const user = text === "user direction";
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`queue:${index}`),
+              threadId,
+              messageId: MessageId.make(`message:queue:${index}`),
+              text,
+              origin: user
+                ? { kind: "user" }
+                : {
+                    kind: "thread",
+                    threadId: ThreadId.make(`thread:lane:${index}`),
+                    environmentId: EnvironmentId.make("environment:lanes"),
+                    title: `Lane ${index}`,
+                    event: "message",
+                    reply: index === 0 ? "expected" : "not expected",
+                  },
+              attachments: [],
+              modelSelection: runSelection,
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: user ? "user" : "agent",
+              creationSource: user ? "web" : "mcp",
+            });
+          }
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const queued = before.runs.filter((run) => run.status === "queued");
+          assert.lengthOf(queued, texts.length);
+          if (scenario === "cancelled") {
+            yield* orchestrator.dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make("cancel"),
+              threadId,
+              runId: queued[1]!.id,
+            });
+          }
+          const promoted = yield* orchestrator
+            .streamStoredEventsFrom({ threadId, afterSequence: yield* sink.latestSequence() })
+            .pipe(
+              Stream.filter(
+                ({ event }) => event.type === "run.updated" && event.payload.status === "starting",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("event:first-completed"),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...before.runs[0]!, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* Fiber.join(promoted);
+          yield* worker.drain();
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          const delivered = after.runs.find((run) => run.status === "running")!;
+          const expected = texts.filter((_, index) => scenario !== "cancelled" || index !== 1);
+          if (scenario === "user first") expected.unshift(expected.splice(1, 1)[0]!);
+          const input = started[1]!.message.text;
+          assert.lengthOf(started, 2);
+          assert.isFalse(after.runs.some((run) => run.status === "queued"));
+          let previous = -1;
+          for (const text of expected) {
+            const position = input.indexOf(text);
+            assert.isAbove(position, previous, `input includes ${text} in delivery order`);
+            previous = position;
+            const message = after.messages.find((message) => message.text === text)!;
+            assert.equal(message.runId, delivered.id);
+            const original = queued.find((run) => run.userMessageId === message.id)!;
+            if (original.id !== delivered.id) {
+              const retired = after.runs.find((run) => run.id === original.id)!;
+              assert.equal(retired.status, "cancelled");
+              assert.equal(retired.mergedIntoRunId, delivered.id);
+              assert.isNull(retired.startedAt);
+              assert.equal(
+                after.nodes.find((node) => node.id === retired.rootNodeId)?.status,
+                "cancelled",
+              );
+              assert.equal(
+                after.attempts.find((attempt) => attempt.id === retired.activeAttemptId)?.status,
+                "cancelled",
+              );
+            }
+          }
+          assert.include(input, 'reply="expected"');
+          assert.include(input, 'reply="not expected"');
+          assert.equal(input.match(/<t3_origin /g)?.length, scenario === "cancelled" ? 2 : 3);
+          if (scenario === "user first") assert.isTrue(input.startsWith("user direction"));
+          if (scenario === "cancelled") assert.notInclude(input, "lane two");
+          assert.equal(
+            after.turnItems.filter(
+              (item) => item.runId === delivered.id && item.type === "user_message",
+            ).length,
+            expected.length,
+          );
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
+
+it.effect("starts queue-after-active input immediately in an idle thread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cwd, layer, started } = yield* nextTurnSelectionHarness("idle-queue-input");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:idle-queue-input");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make("project:idle-queue-input"),
+          title: "Idle queue input",
+          modelSelection: runSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          worktreePath: cwd,
+          branch: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("idle-message"),
+          threadId,
+          messageId: MessageId.make("message:idle"),
+          origin: { kind: "system", event: "background completed" },
+          text: "Idle message",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.runs[0]?.status, "starting");
+        assert.isUndefined(projection.runs[0]?.inputMessageIds);
+        yield* worker.drain();
+        assert.lengthOf(started, 1);
+        assert.include(started[0]!.message.text, "Idle message");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect.each([
+  "held",
+  "model",
+  "restart",
+  "attachments",
+  "fresh",
+  "command",
+  "worktree",
+  "native continuation",
+] as const)("keeps queued messages separate across a %s boundary", (boundary) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        `queue-boundary-${boundary}`,
+        false,
+        false,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = yield* startFirstTurn;
+        for (const [index, text] of ["one", "boundary", "three"].entries()) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            origin: { kind: "user" },
+            commandId: CommandId.make(`boundary:${index}`),
+            threadId,
+            messageId: MessageId.make(`message:boundary:${index}`),
+            text: index === 1 && boundary === "command" ? "/compact" : text,
+            modelSelection: index === 1 && boundary === "model" ? composerSelection : runSelection,
+            attachments:
+              index === 1 && boundary === "attachments"
+                ? [
+                    {
+                      type: "image",
+                      id: ChatAttachmentId.make("attachment-boundary"),
+                      name: "image.png",
+                      mimeType: "image/png",
+                      sizeBytes: 1,
+                    },
+                  ]
+                : [],
+            ...(index === 1 && boundary === "fresh" ? { freshContext: true } : {}),
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: index === 1 && boundary === "native continuation" ? "agent" : "user",
+            creationSource: index === 1 && boundary === "native continuation" ? "provider" : "web",
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const queued = before.runs.filter((run) => run.status === "queued");
+        if (boundary === "held" || boundary === "restart" || boundary === "worktree") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("event:boundary"),
+                type: "run.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...queued[1]!,
+                  ...(boundary === "held" ? { queueHeld: true } : {}),
+                  ...(boundary === "restart"
+                    ? { restartContinuationOfRunId: before.runs[0]!.id }
+                    : {}),
+                  ...(boundary === "worktree"
+                    ? { workspacePreparation: { type: "worktree" as const, baseRef: "main" } }
+                    : {}),
+                },
+              },
+            ],
+          });
+        }
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:boundary-active-completed"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...before.runs[0]!, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          started.map((turn) => turn.message.text),
+          ["first", "one"],
+        );
+        assert.equal(after.runs.find((run) => run.id === queued[1]!.id)?.status, "queued");
+        assert.equal(after.runs.find((run) => run.id === queued[2]!.id)?.status, "queued");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
 
 it.effect("steers a delegated task question notice into the running parent turn", () =>
   Effect.scoped(

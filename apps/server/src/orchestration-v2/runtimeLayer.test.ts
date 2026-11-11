@@ -5468,7 +5468,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect.each([false, true])(
-    "promotes only one queued run after each terminal run (notification: %s)",
+    "promotes compatible queued messages into one run (notification: %s)",
     (automatic) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -5506,7 +5506,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "message.dispatch",
           origin: { kind: "user" as const },
           createdBy: automatic ? "agent" : "user",
-          creationSource: automatic ? "provider" : "web",
+          creationSource: automatic ? "server" : "web",
           ...(automatic
             ? {
                 notification: {
@@ -5569,7 +5569,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ),
           Effect.forkScoped,
         );
-        yield* Effect.yieldNow;
 
         const activeCompletedAt = yield* DateTime.now;
         yield* eventSink.write({
@@ -5599,12 +5598,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         assert.equal(
           afterFirstPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
-          "queued",
+          "cancelled",
+        );
+        assert.equal(
+          afterFirstPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.mergedIntoRunId,
+          firstQueuedRun.id,
+        );
+        assert.equal(
+          afterFirstPromotion.messages.find(
+            (message) => message.id === secondQueuedRun.userMessageId,
+          )?.runId,
+          firstQueuedRun.id,
         );
         const promotedMessageItem = afterFirstPromotion.turnItems.find(
           (item) =>
             item.runId === firstQueuedRun.id &&
-            (item.type === "user_message" || item.type === "notification"),
+            (item.type === "notification" ||
+              (item.type === "user_message" && item.messageId === firstQueuedRun.userMessageId)),
         );
         assert.isDefined(promotedMessageItem);
         if (automatic) {
@@ -5634,39 +5644,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           promotedMessageItem.startedAt !== null &&
             DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
               DateTime.toEpochMillis(activeCompletedAt),
-        );
-
-        const promotedFirst = afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id);
-        assert.isDefined(promotedFirst);
-        const firstCompletedAt = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`runtime-layer-serialized-queue-first-completed-${automatic}`),
-              type: "run.updated",
-              threadId,
-              runId: promotedFirst.id,
-              ...(promotedFirst.rootNodeId === null ? {} : { nodeId: promotedFirst.rootNodeId }),
-              providerInstanceId: promotedFirst.providerInstanceId,
-              occurredAt: firstCompletedAt,
-              payload: {
-                ...promotedFirst,
-                status: "completed",
-                completedAt: firstCompletedAt,
-              },
-            },
-          ],
-        });
-
-        assert.equal(yield* Queue.take(promotedRunIds), secondQueuedRun.id);
-        const afterSecondPromotion = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(
-          afterSecondPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
-          "completed",
-        );
-        assert.equal(
-          afterSecondPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
-          "starting",
         );
       }),
   );
@@ -6703,7 +6680,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ),
         Effect.forkScoped,
       );
-      yield* Effect.yieldNow;
       const complete = (key: string) =>
         Effect.gen(function* () {
           const run = yield* runFor(key);
@@ -6726,11 +6702,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       yield* complete("continue");
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("first-queued")).id);
-      yield* complete("first-queued");
-      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("second-queued")).id);
-
+      const delivered = yield* runFor("first-queued");
+      const merged = yield* runFor("second-queued");
+      assert.equal(merged.status, "cancelled");
+      assert.equal(merged.mergedIntoRunId, delivered.id);
       const keys = ["active", "continue", "first-queued", "second-queued"];
-      const runs = yield* Effect.forEach(keys, runFor);
+      const runs = yield* Effect.forEach(keys.slice(0, 3), runFor);
       const ordinals = runs.map((run) => run.ordinal);
       assert.deepEqual(
         ordinals,
@@ -7039,7 +7016,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.dispatch(resume);
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "starting");
-        assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "queued");
+        assert.equal(
+          resumed.runs.find((run) => run.id === first.id)?.status,
+          started ? "cancelled" : "queued",
+        );
+        if (started) {
+          assert.equal(resumed.runs.find((run) => run.id === first.id)?.mergedIntoRunId, second.id);
+          assert.deepEqual(resumed.runs.find((run) => run.id === second.id)?.inputMessageIds, [
+            second.userMessageId,
+            first.userMessageId,
+          ]);
+        }
         assert.isFalse(resumed.runs.some((run) => run.status === "queued" && run.queueHeld));
         assert.equal(
           resumed.messages.find((row) => row.id === second.userMessageId)?.text,

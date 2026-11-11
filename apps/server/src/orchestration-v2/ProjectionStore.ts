@@ -708,10 +708,10 @@ export interface ProjectionStoreV2Shape {
       readonly scopeId: CheckpointScopeId;
     },
   ) => Effect.Effect<ProjectionCheckpointRollbackContext, ProjectionStoreV2Error>;
-  readonly getRunMessage: (
+  readonly getRunInputMessages: (
     threadId: ThreadId,
     runId: RunId,
-  ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2ConversationMessage>, ProjectionStoreV2Error>;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -4579,6 +4579,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId} AND (
                 message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
                   WHERE thread_id = ${threadId} AND run_id = ${runId})
+                OR message_id IN (SELECT input.value FROM orchestration_v2_projection_runs AS run,
+                  json_each(run.payload_json, '$.inputMessageIds') AS input
+                  WHERE run.thread_id = ${threadId} AND run.run_id = ${runId})
                 OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
                 -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
                 OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
@@ -5628,7 +5631,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
-    const getRunMessage: ProjectionStoreV2Shape["getRunMessage"] = (threadId, runId) =>
+    const getRunInputMessages: ProjectionStoreV2Shape["getRunInputMessages"] = (threadId, runId) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -5636,12 +5639,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const rows = yield* sql<PayloadRow>`
           SELECT message.payload_json FROM orchestration_v2_projection_messages AS message
           JOIN orchestration_v2_projection_runs AS run
-            ON message.message_id = json_extract(run.payload_json, '$.userMessageId')
+            ON (message.message_id = json_extract(run.payload_json, '$.userMessageId')
+              OR message.message_id IN (SELECT value FROM json_each(run.payload_json, '$.inputMessageIds')))
           WHERE run.thread_id = ${threadId} AND run.run_id = ${runId}
-            AND message.thread_id = ${threadId}`;
-            return rows[0] === undefined
-              ? undefined
-              : yield* decodeMessagePayload(rows[0].payload_json);
+            AND message.thread_id = ${threadId}
+          ORDER BY message.message_id <> json_extract(run.payload_json, '$.userMessageId'),
+            (SELECT CAST(key AS INTEGER) FROM json_each(run.payload_json, '$.inputMessageIds')
+              WHERE value = message.message_id)`;
+            return yield* decodeRows(decodeMessagePayload, threadId)(rows);
           }),
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
@@ -7657,7 +7662,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRootCheckpointScopeContext: readOnReader(getRootCheckpointScopeContext),
       listDevelopmentEnvironmentUsage: readOnReader(listDevelopmentEnvironmentUsage),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
-      getRunMessage: readOnReader(getRunMessage),
+      getRunInputMessages: readOnReader(getRunInputMessages),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),

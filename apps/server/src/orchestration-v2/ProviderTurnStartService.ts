@@ -6,7 +6,6 @@ import {
   CommandId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
-  type TurnOrigin,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -314,7 +313,7 @@ export const layer: Layer.Layer<
 
     const makeDeliverySession = (
       session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
-      origin: TurnOrigin,
+      renderInput: (text: string) => string,
       startWithHandoffs: (
         input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0],
         compact?: boolean,
@@ -331,7 +330,7 @@ export const layer: Layer.Layer<
             ...input,
             message: {
               ...input.message,
-              text: renderTurnOriginText(origin, input.message.text, receivingEnvironmentId),
+              text: renderInput(input.message.text),
             },
           };
           return compact && session.compactThread !== undefined
@@ -375,6 +374,11 @@ export const layer: Layer.Layer<
         (candidate) => candidate.id === run.providerThreadId,
       );
       const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      const messagesById = new Map(projection.messages.map((message) => [message.id, message]));
+      const inputMessages = (run.inputMessageIds ?? [run.userMessageId]).flatMap((id) => {
+        const input = messagesById.get(id);
+        return input === undefined ? [] : [input];
+      });
       const checkpointScope = projection.checkpointScopes.find(
         (candidate) => candidate.id === rootNode?.checkpointScopeId,
       );
@@ -900,10 +904,27 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const projectInput = (input: typeof message) =>
+        projectComposerContextForProvider({
+          text: input.text,
+          records: input.context?.records ?? [],
+        });
+      const renderInput = (text: string) =>
+        inputMessages.length > 1
+          ? text
+          : renderTurnOriginText(message.origin ?? { kind: "user" }, text, receivingEnvironmentId);
+      const userText =
+        inputMessages.length > 1
+          ? inputMessages
+              .map((input) =>
+                renderTurnOriginText(
+                  input.origin ?? { kind: "user" },
+                  projectInput(input),
+                  receivingEnvironmentId,
+                ),
+              )
+              .join("\n\n---\n\n")
+          : projectInput(message);
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
@@ -1671,11 +1692,7 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: renderTurnOriginText(
-                message.origin ?? { kind: "user" },
-                goalCommand ? userText : withInlineContext(context, userText),
-                receivingEnvironmentId,
-              ),
+              text: renderInput(goalCommand ? userText : withInlineContext(context, userText)),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
@@ -1730,11 +1747,7 @@ export const layer: Layer.Layer<
               }),
         ),
       );
-      const deliverySession = makeDeliverySession(
-        session,
-        message.origin ?? { kind: "user" },
-        startWithHandoffs,
-      );
+      const deliverySession = makeDeliverySession(session, renderInput, startWithHandoffs);
       const scratchSession = isScratch
         ? {
             ...deliverySession,

@@ -300,10 +300,13 @@ describe("ThreadReplies", () => {
       };
       world.waits.push(
         {
-          // The queued message is promoted into the running turn while the wait is open.
+          // A merged queue placeholder retires while its message moves to the delivering run.
           get ends() {
             world.messageRunId = RunId.make("run:replies:steered");
-            return run("run:replies:queued", "cancelled");
+            return {
+              ...run("run:replies:queued", "cancelled"),
+              mergedIntoRunId: world.messageRunId,
+            };
           },
         },
         { ends: run("run:replies:steered", "completed") },

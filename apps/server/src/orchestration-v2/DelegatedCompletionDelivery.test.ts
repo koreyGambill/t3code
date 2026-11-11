@@ -47,6 +47,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -340,6 +341,126 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+  it.effect.each(["completed", "interrupted"] as const)(
+    "settles a completion delivered with a queued user message when the run is %s",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`batch-completion:${status}`);
+        const parentRunId = RunId.make(`batch-parent:${status}`);
+        const taskId = NodeId.make(`batch-task:${status}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId: parentRunId,
+          projectId: ProjectId.make(`batch-project:${status}`),
+          rootNodeId: NodeId.make(`batch-root:${status}`),
+          taskId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [taskId],
+          completionWake: "always",
+          now,
+        });
+        const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const delivery = parent.delegatedCompletion!.delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`batch-completion-message:${status}`),
+          threadId,
+          messageId: delivery.messageId,
+          origin: { kind: "system", event: "delegated completion" },
+          text: "Task finished",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+        });
+        const userMessageId = MessageId.make(`batch-user-message:${status}`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`batch-user:${status}`),
+          threadId,
+          messageId: userMessageId,
+          origin: { kind: "user" },
+          text: "Next direction",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`batch-parent-completed:${status}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...parent, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const promoted = yield* orchestrator.getThreadProjection(threadId);
+        const run = promoted.runs.find((run) => run.status === "starting")!;
+        assert.deepEqual(run.inputMessageIds, [userMessageId, delivery.messageId]);
+        assert.equal(
+          promoted.messages.find((message) => message.id === delivery.messageId)?.runId,
+          run.id,
+        );
+        assert.equal(
+          promoted.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+          "claimed",
+        );
+        const sequence = yield* sink.latestSequence();
+        if (status === "interrupted") {
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make(`batch-stop:${status}`),
+            threadId,
+            runId: run.id,
+          });
+        } else {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`batch-delivery-completed:${status}`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...run, status, completedAt: now },
+              },
+            ],
+          });
+        }
+        yield* sink
+          .stream({ threadId, afterSequence: sequence, eventType: "subagent.updated" })
+          .pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "subagent.updated" &&
+                event.payload.id === taskId &&
+                event.payload.completionDelivery?.state ===
+                  (status === "completed" ? "delivered" : "disposed"),
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(
+          after.runs.find((run) => run.id === parentRunId)?.delegatedCompletion?.delivery,
+        );
+        assert.isFalse(isUndeliveredMailboxSteer(after, delivery.messageId));
+      }),
+  );
+
   it.effect(
     "interrupting a completion wake disposes both cohorts without reviving them on late results",
     () =>

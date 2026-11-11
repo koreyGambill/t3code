@@ -120,7 +120,23 @@ it.effect.each(["sqlite"] as const)(
         VALUES ('obsolete-history', ${threadId}, NULL, NULL, 'assistant', 0, ${DateTime.formatIso(now)}, ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
         assert.equal((yield* Effect.exit(store.getThreadProjection(threadId)))._tag, "Failure");
       }
-      assert.deepEqual(yield* store.getRunMessage(threadId, runId), message);
+      assert.deepEqual(yield* store.getRunInputMessages(threadId, runId), [message]);
+      const secondary = {
+        ...message,
+        id: MessageId.make("a-secondary-input"),
+        text: "Also do this",
+      };
+      yield* store.apply({
+        id: EventId.make("event:secondary-input"),
+        type: "message.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: secondary,
+      });
+      yield* putRun({ ...run, inputMessageIds: [messageId, secondary.id] });
+      assert.deepEqual(yield* store.getRunInputMessages(threadId, runId), [message, secondary]);
+      yield* putRun(run);
       assert.isTrue(yield* store.canStartQueuedRun(threadId));
       yield* putRun({ ...run, queueHeld: true });
       assert.isFalse(yield* store.canStartQueuedRun(threadId));
@@ -141,15 +157,15 @@ it.effect.each(["sqlite"] as const)(
       assert.isFalse(yield* store.canStartQueuedRun(threadId));
       const otherId = ThreadId.make("thread:other");
       yield* putThread({ ...thread, id: otherId });
-      assert.isUndefined(yield* store.getRunMessage(otherId, runId));
-      assert.isUndefined(yield* store.getRunMessage(threadId, RunId.make("missing-run")));
+      assert.deepEqual(yield* store.getRunInputMessages(otherId, runId), []);
+      assert.deepEqual(yield* store.getRunInputMessages(threadId, RunId.make("missing-run")), []);
       const missing = ThreadId.make("missing-thread");
       assert.instanceOf(
         yield* store.canStartQueuedRun(missing).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
       assert.instanceOf(
-        yield* store.getRunMessage(missing, runId).pipe(Effect.flip),
+        yield* store.getRunInputMessages(missing, runId).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
     }).pipe(Effect.provide(layerDatabase)),

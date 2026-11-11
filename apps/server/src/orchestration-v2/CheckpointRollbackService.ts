@@ -205,7 +205,7 @@ export const layer: Layer.Layer<
               const message =
                 attempt === undefined
                   ? undefined
-                  : yield* projections.getRunMessage(input.threadId, attempt.runId);
+                  : (yield* projections.getRunInputMessages(input.threadId, attempt.runId))[0];
               return {
                 type: "provider_turn" as const,
                 checkpointId: checkpoint.id,

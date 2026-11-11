@@ -232,6 +232,12 @@ not been sent yet. On mobile they appear above the composer. Each shows its text
 images. **Send now** sends a message right away, into the running turn if there is one. You can
 also edit or remove it.
 
+When the current turn ends, waiting text messages for the same provider and model are sent
+together in the next turn, with your messages first. Each message keeps its sender and reply
+expectation. Attachments, provider commands, fresh sessions, and restart continuations take
+separate turns. Native background continuations that collect buffered provider output also run
+separately. Messages sent to an idle thread still start immediately.
+
 If you stop the agent or the server restarts, queued messages keep their order and are held.
 Press **Resume** in an empty composer to continue. **Resume** also continues a stopped
 run or one that hit a usage limit, even with nothing queued. Sending a new message also resumes the queue, unless it steers a turn that is already

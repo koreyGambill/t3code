@@ -785,6 +785,9 @@ export const OrchestrationV2Run = Schema.Struct({
   modelSelection: ModelSelection,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
+  inputMessageIds: Schema.optional(Schema.Array(MessageId)),
+  /** A cancelled queue placeholder whose input moved to this run without starting a provider. */
+  mergedIntoRunId: Schema.optional(RunId),
   rootNodeId: Schema.NullOr(NodeId),
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
