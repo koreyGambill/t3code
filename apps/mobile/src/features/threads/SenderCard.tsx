@@ -13,6 +13,9 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useQuietThreadShell } from "../../state/entities";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
+// Two lines of text-sm body copy.
+const COLLAPSED_HEIGHT = 40;
+
 export function SenderCard(props: {
   readonly origin: Exclude<TurnOrigin, { kind: "user" }>;
   readonly text: string;
@@ -27,7 +30,13 @@ export function SenderCard(props: {
   const color = glyph ? (themeAppearance === "dark" ? glyph.color : glyph.lightColor) : undefined;
   const openThread = useOpenLinkedThread();
   const [expanded, setExpanded] = useState(false);
-  const long = props.text.length > 600 || props.text.split("\n").length > 6;
+  const [contentHeight, setContentHeight] = useState(0);
+  const overflowing = contentHeight > COLLAPSED_HEIGHT + 1;
+  const body = (
+    <View onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}>
+      {props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>}
+    </View>
+  );
   return (
     <View
       className="w-full overflow-hidden rounded-lg border border-border border-l-foreground-muted bg-subtle px-3 py-2"
@@ -103,14 +112,16 @@ export function SenderCard(props: {
           {props.queued ? "queued for next turn" : "no reply expected"}
         </Text>
       ) : null}
-      {long && !expanded ? (
+      {expanded ? (
+        body
+      ) : overflowing ? (
         <MaskedView
-          style={{ maxHeight: 176, overflow: "hidden" }}
+          style={{ maxHeight: COLLAPSED_HEIGHT, overflow: "hidden" }}
           maskElement={
             <Svg width="100%" height="100%">
               <Defs>
                 <LinearGradient id="sender-fade" x1="0%" x2="0%" y1="0%" y2="100%">
-                  <Stop offset="0.85" stopColor="white" />
+                  <Stop offset="0.7" stopColor="white" />
                   <Stop offset="1" stopColor="white" stopOpacity={0} />
                 </LinearGradient>
               </Defs>
@@ -118,16 +129,14 @@ export function SenderCard(props: {
             </Svg>
           }
         >
-          <View>
-            {props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>}
-          </View>
+          {body}
         </MaskedView>
       ) : (
-        (props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>)
+        <View style={{ maxHeight: COLLAPSED_HEIGHT, overflow: "hidden" }}>{body}</View>
       )}
-      {long ? (
+      {overflowing ? (
         <Button
-          label={expanded ? "Show less" : "Show full message"}
+          label={expanded ? "Show less" : "Show more"}
           tone="text"
           size="compact"
           onPress={() => setExpanded(!expanded)}

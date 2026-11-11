@@ -463,7 +463,6 @@ function QueuedMessage(props: {
           origin={origin}
           environmentId={props.environmentId}
           onOpenThread={props.onOpenThread}
-          text={props.previewText}
           queued
         >
           <ChatMarkdown text={props.previewText} cwd={undefined} lineBreaks parseRawHtml={false} />

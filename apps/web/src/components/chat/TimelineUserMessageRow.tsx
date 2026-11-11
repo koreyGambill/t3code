@@ -277,7 +277,6 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
       origin={origin}
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={ctx.onOpenThread}
-      text={row.message.text}
     >
       <MessageAuthorHeading>{"title" in origin ? origin.title : "T3 Code"}</MessageAuthorHeading>
       <UserTimelineRow row={row} cardBody />

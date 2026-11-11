@@ -12,13 +12,13 @@ import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
+import { observeResize } from "../../lib/observeResize";
 import { findRevealRef } from "./markdownFindContext";
 
 export function SenderCard(props: {
   readonly origin: Exclude<TurnOrigin, { kind: "user" }>;
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: ThreadId) => void;
-  readonly text: string;
   readonly queued?: boolean;
   readonly children: ReactNode;
 }) {
@@ -27,9 +27,20 @@ export function SenderCard(props: {
   const shell = useQuietThreadShell(sender);
   const glyph = sender ? resolveThreadGlyph(sender.threadId, shell?.glyphSeed) : null;
   const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
-  const long = props.text.length > 600 || props.text.split("\n").length > 6;
-  const collapsed = long && !expanded;
+  const bodyRef = (element: HTMLDivElement | null) => {
+    const unsubscribeReveal = revealRef(element);
+    if (!element || expanded) return unsubscribeReveal;
+    const measure = () => setOverflowing(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    const stopObserving = observeResize(element, measure);
+    return () => {
+      stopObserving();
+      unsubscribeReveal?.();
+    };
+  };
+  const collapsed = !expanded;
   const color = glyph
     ? `light-dark(${glyph.lightColor}, ${glyph.color})`
     : "var(--muted-foreground)";
@@ -95,6 +106,17 @@ export function SenderCard(props: {
         <Badge variant={details.event === "failed" ? "error-outline" : "outline"}>
           {details.event}
         </Badge>
+        {overflowing ? (
+          <Button
+            className="ms-auto shrink-0"
+            size="xs"
+            variant="ghost-muted"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Show less" : "Show more"}
+          </Button>
+        ) : null}
       </div>
       {details.noReply || props.queued ? (
         <p className="mb-2 text-xs text-muted-foreground">
@@ -102,29 +124,17 @@ export function SenderCard(props: {
         </p>
       ) : null}
       <div
-        ref={revealRef}
+        ref={bodyRef}
         data-thread-find-text="true"
         data-thread-find-fold={collapsed ? "" : undefined}
         className={cn(
           "wrap-anywhere text-sm",
           collapsed &&
-            "max-h-44 overflow-hidden [mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
+            "max-h-10 overflow-hidden [mask-image:linear-gradient(to_bottom,black_calc(100%-0.75rem),transparent)]",
         )}
       >
         {props.children}
       </div>
-      {long ? (
-        <div className="mt-1 flex justify-end">
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? "Show less" : "Show full message"}
-          </Button>
-        </div>
-      ) : null}
     </section>
   );
 }
