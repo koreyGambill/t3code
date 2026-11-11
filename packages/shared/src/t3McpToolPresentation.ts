@@ -457,6 +457,30 @@ export function resolveT3McpMessageTool(toolName: string | null | undefined) {
     : null;
 }
 
+/** Collapsed work rows keep the tool's message action beside a resolved target. */
+export function t3McpMessageSummaryPrefix(
+  toolName: string | undefined,
+  reply: boolean,
+  failed: boolean,
+): string | null {
+  switch (resolveT3McpMessageTool(toolName)) {
+    case "t3_thread_send":
+      return reply
+        ? failed
+          ? "Failed to reply to"
+          : "Replied to"
+        : failed
+          ? "Failed to send to"
+          : "Sent to";
+    case "t3_thread_launch":
+      return failed ? "Failed to start" : "Started";
+    case "delegate_task":
+      return failed ? "Failed to delegate to" : "Delegated to";
+    default:
+      return null;
+  }
+}
+
 type SummaryInput = Readonly<Record<string, unknown>>;
 
 const asSummaryInput = (input: unknown): SummaryInput | undefined =>

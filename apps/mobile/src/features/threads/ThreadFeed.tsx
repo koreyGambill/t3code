@@ -1,5 +1,5 @@
 import { MessageReactionChip } from "./MessageReactionChip";
-import { MessageResponseRows, SenderCard } from "./SenderCard";
+import { SenderCard } from "./SenderCard";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -1838,13 +1838,6 @@ function renderFeedEntry(
               />
             </MarkdownImageAvailableWidthContext>
           </SenderCard>
-          {message.messageRows?.length ? (
-            <MessageResponseRows
-              rows={message.messageRows}
-              environmentId={props.environmentId}
-              onScrollToMessage={props.onScrollToMessage}
-            />
-          ) : null}
         </View>
       );
     }

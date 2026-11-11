@@ -1,5 +1,4 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
-import { OutgoingMessageCard } from "./SenderCard";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
@@ -9,7 +8,7 @@ import {
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
-  type EnvironmentId,
+  EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -20,6 +19,7 @@ import {
   toolGroupAction,
   workEntryViewedImagePath,
   workEntryOutgoingMessage,
+  workEntryMessageSummary,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   turnItemHasDetail,
@@ -37,7 +37,8 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
-import { useThreadShell } from "../../state/entities";
+import { useThreadShell, useQuietThreadShell } from "../../state/entities";
+import { ThreadGlyph } from "../ThreadGlyph";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -153,25 +154,6 @@ type WorkEntryRowProps = {
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
-  const outgoing = workEntryOutgoingMessage(props.workEntry);
-  if (outgoing)
-    return (
-      <div className="min-w-0">
-        <OutgoingMessageCard
-          message={outgoing}
-          item={
-            props.workEntry.projectedItem?.item.type === "dynamic_tool"
-              ? props.workEntry.projectedItem.item
-              : undefined
-          }
-          detailSource={ctx.turnItemSource?.detail}
-          environmentId={ctx.activeThreadEnvironmentId}
-          onOpenThread={ctx.onOpenThread}
-          createdAt={props.workEntry.createdAt}
-          timestampFormat={ctx.timestampFormat}
-        />
-      </div>
-    );
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
@@ -207,6 +189,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
+  const outgoing = workEntryOutgoingMessage(workEntry);
+  const targetRef = outgoing?.threadId
+    ? scopeThreadRef(
+        outgoing.environmentId
+          ? EnvironmentId.make(outgoing.environmentId)
+          : ctx.activeThreadEnvironmentId,
+        ThreadId.make(outgoing.threadId),
+      )
+    : null;
+  const targetShell = useQuietThreadShell(targetRef);
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -219,6 +211,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const messageSummary = expanded ? null : workEntryMessageSummary(workEntry, targetShell?.title);
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {
@@ -404,7 +397,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? "text-secondary-label"
         : "text-foreground/80";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
-  const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
+  const accessiblePreview = [
+    messageSummary
+      ? `${messageSummary.prefix} ${messageSummary.detail}`
+      : (threadLabel?.text ?? previewText),
+    answerPreview,
+  ]
     .filter(Boolean)
     .join(": ");
   const accessibleDisplayText = showFailedIndicator
@@ -463,6 +461,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                       : THOUGHT_PREVIEW_PLUGINS
                   }
                 />
+              ) : messageSummary && targetRef ? (
+                <span className="inline-flex max-w-full items-center gap-1">
+                  <span className="shrink-0">{messageSummary.prefix}</span>
+                  <ThreadGlyph
+                    threadId={targetRef.threadId}
+                    seed={targetShell?.glyphSeed}
+                    className="size-4 shrink-0"
+                  />
+                  <span className="truncate">{messageSummary.detail}</span>
+                </span>
               ) : threadLabel ? (
                 <ThreadReadLabel
                   label={threadLabel}

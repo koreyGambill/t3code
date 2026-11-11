@@ -2,11 +2,8 @@ import { MessageReactionChip } from "./MessageReactionChip";
 import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
-import { EnvironmentId, ThreadId, type ScopedThreadRef, type TurnOrigin } from "@t3tools/contracts";
-import { outgoingT3Message, type OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { useTurnItemDetail } from "../../state/queries";
-import { senderCardDetails } from "@t3tools/client-runtime/user-message";
+import type { TurnOrigin } from "@t3tools/contracts";
+import { messageFirstLine, senderCardDetails } from "@t3tools/client-runtime/user-message";
 import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Chip } from "../../components/ui/Chip";
@@ -14,10 +11,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useQuietThreadShell } from "../../state/entities";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
-
-import * as DateTime from "effect/DateTime";
-import type { MessageResponseRow } from "@t3tools/client-runtime/state/message-reactions";
-import { messageFirstLine } from "@t3tools/client-runtime/state/message-reactions";
 
 export function SenderCard(props: {
   readonly origin: Exclude<TurnOrigin, { kind: "user" }>;
@@ -29,116 +22,9 @@ export function SenderCard(props: {
     | undefined;
   readonly children?: ReactNode;
 }) {
-  return (
-    <ThreadMessageCard
-      {...props}
-      details={senderCardDetails(props.origin)}
-      thread={"threadId" in props.origin ? props.origin : null}
-    />
-  );
-}
-
-export function OutgoingMessageCard(props: {
-  readonly message: OutgoingT3Message;
-  readonly item?: Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }> | undefined;
-  readonly environmentId: EnvironmentId;
-  readonly createdAt?: string;
-  readonly reply?: boolean;
-}) {
-  const { message } = props;
-  const thread = message.threadId
-    ? {
-        threadId: ThreadId.make(message.threadId),
-        environmentId: message.environmentId
-          ? EnvironmentId.make(message.environmentId)
-          : props.environmentId,
-      }
-    : null;
-  return (
-    <ThreadMessageCard
-      thread={thread}
-      details={{ ...message, title: message.threadId ?? "Thread unavailable" }}
-      text={message.body}
-      outgoing
-      createdAt={props.createdAt}
-      reply={props.reply}
-      error={message.error}
-    >
-      {props.item ? (
-        <OutgoingMessageBody
-          item={props.item}
-          message={message}
-          environmentId={props.environmentId}
-        />
-      ) : (
-        <Text className="text-sm text-foreground">{message.body}</Text>
-      )}
-    </ThreadMessageCard>
-  );
-}
-
-function OutgoingMessageBody(props: {
-  readonly item: Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
-  readonly message: OutgoingT3Message;
-  readonly environmentId: EnvironmentId;
-}) {
-  const item = props.item;
-  const detail = useTurnItemDetail({
-    environmentId: props.environmentId,
-    row: {
-      item,
-      position: 0,
-      visibility: "local",
-      sourceThreadId: item.threadId,
-      sourceItemId: item.id,
-    },
-  });
-  const full = detail.data?.item;
-  const message =
-    full?.type === "dynamic_tool"
-      ? outgoingT3Message(full.toolName ?? undefined, {
-          input: full.input,
-          output: full.output,
-          outcome: full.status === "failed" ? "failed" : "completed",
-        })
-      : null;
-  return (
-    <>
-      <Text className="text-sm text-foreground">{message?.body ?? props.message.body}</Text>
-      {!message ? (
-        <Text className="text-xs text-foreground-muted">
-          {detail.error ??
-            (detail.isPending
-              ? "Loading full message…"
-              : detail.data
-                ? "Full message is no longer available."
-                : "")}
-        </Text>
-      ) : null}
-    </>
-  );
-}
-
-function ThreadMessageCard(props: {
-  readonly details: ReturnType<typeof senderCardDetails>;
-  readonly thread: ScopedThreadRef | null;
-  readonly text: string;
-  readonly outgoing?: boolean;
-  readonly reply?: boolean;
-  readonly error?: string | undefined;
-  readonly createdAt?: string;
-  readonly queued?: boolean;
-  readonly reaction?:
-    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
-    | undefined;
-  readonly children?: ReactNode;
-}) {
-  const sender = props.thread;
+  const sender = "threadId" in props.origin ? props.origin : null;
   const shell = useQuietThreadShell(sender);
-  const details = {
-    ...props.details,
-    title: props.outgoing ? shell?.title || props.details.title : props.details.title,
-  };
+  const details = senderCardDetails(props.origin, props.text);
   const glyph = sender ? resolveThreadGlyph(sender.threadId, shell?.glyphSeed) : null;
   const { themeAppearance } = useAppearancePreferences();
   const color = glyph ? (themeAppearance === "dark" ? glyph.color : glyph.lightColor) : undefined;
@@ -148,15 +34,13 @@ function ThreadMessageCard(props: {
     <View className="min-w-0">
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${props.outgoing ? "To " : ""}${details.title}: ${messageFirstLine(props.text)}`}
+        accessibilityLabel={`${details.title}: ${messageFirstLine(props.text)}`}
         accessibilityState={{ expanded }}
         onPress={() => setExpanded(!expanded)}
         className="min-h-8 min-w-0 flex-row items-center gap-1.5 py-0.5"
       >
         <View className="w-6 shrink-0 items-center">
-          {props.outgoing ? (
-            <Text className="text-sm text-foreground-muted">{props.reply ? "↳" : "→"}</Text>
-          ) : glyph ? (
+          {glyph ? (
             <Svg
               width={16}
               height={16}
@@ -176,8 +60,7 @@ function ThreadMessageCard(props: {
           )}
         </View>
         <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
-          {props.outgoing ? "To " : ""}
-          {details.title} · {messageFirstLine(props.text)}
+          {details.title} · {details.summary}
         </Text>
         {props.createdAt ? (
           <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
@@ -211,9 +94,6 @@ function ThreadMessageCard(props: {
             />
           ) : null}
           <View className="mb-2 flex-row items-center gap-2">
-            {props.outgoing ? (
-              <Text className="shrink-0 font-t3-bold text-xs text-foreground-muted">To</Text>
-            ) : null}
             <View className="shrink-0">
               {glyph ? (
                 <Svg
@@ -277,48 +157,9 @@ function ThreadMessageCard(props: {
               {props.queued ? "queued for next turn" : "no reply expected"}
             </Text>
           ) : null}
-          {props.error ? (
-            <Text className="mb-2 text-sm text-danger-foreground">{props.error}</Text>
-          ) : null}
           {props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>}
         </View>
       ) : null}
-    </View>
-  );
-}
-
-export function MessageResponseRows(props: {
-  readonly rows: ReadonlyArray<MessageResponseRow>;
-  readonly environmentId: EnvironmentId;
-  readonly onScrollToMessage: (messageId: import("@t3tools/contracts").MessageId) => void;
-}) {
-  return (
-    <View className="ml-7 min-w-0 opacity-80">
-      {props.rows.map((row) =>
-        row.kind === "reply-line" ? (
-          <OutgoingMessageCard
-            key={row.item.id}
-            message={row.message}
-            item={row.item}
-            environmentId={props.environmentId}
-            createdAt={DateTime.formatIso(row.item.startedAt ?? row.item.updatedAt)}
-            reply
-          />
-        ) : (
-          <Pressable
-            key={row.messageId}
-            accessibilityRole="button"
-            accessibilityLabel={`To you: ${messageFirstLine(row.body)}`}
-            onPress={() => props.onScrollToMessage(row.messageId)}
-            className="min-h-8 min-w-0 flex-row items-center gap-1.5 py-0.5"
-          >
-            <Text className="w-6 text-center text-sm text-foreground-muted">↳</Text>
-            <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
-              To you · {messageFirstLine(row.body)}
-            </Text>
-          </Pressable>
-        ),
-      )}
     </View>
   );
 }

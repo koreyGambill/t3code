@@ -183,6 +183,13 @@ export function compactT3MessageInput(toolName: string | null, value: unknown) {
     environmentId: boundedId(input.environmentId),
     target: { environmentId: boundedId(target?.environmentId) },
     reply: typeof input.reply === "boolean" ? input.reply : undefined,
+    replyTo:
+      tool === "t3_thread_send" &&
+      typeof input.replyTo === "number" &&
+      Number.isSafeInteger(input.replyTo) &&
+      input.replyTo > 0
+        ? input.replyTo
+        : undefined,
     origin: {
       event: origin?.event === "reply" ? "reply" : undefined,
       reply: origin?.reply === "not expected" ? "not expected" : undefined,

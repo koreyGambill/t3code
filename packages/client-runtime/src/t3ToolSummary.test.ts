@@ -4,6 +4,7 @@ import { compactDynamicToolOutput, compactT3MessageInput } from "@t3tools/shared
 import {
   outgoingT3Message,
   summarizeT3ToolCalls,
+  summarizeT3MessageCall,
   type T3ToolSummaryCall,
 } from "./t3ToolSummary.ts";
 
@@ -49,8 +50,6 @@ describe("summarizeT3ToolCalls", () => {
         threadId: "target",
         body: "Hello",
         event: "sent",
-        relationship: "to peer thread",
-        noReply: false,
       });
     }
   });
@@ -65,7 +64,6 @@ describe("summarizeT3ToolCalls", () => {
       threadId: "new",
       environmentId: "remote",
       body: "Start here",
-      noReply: true,
     });
     expect(
       outgoingT3Message(
@@ -75,7 +73,6 @@ describe("summarizeT3ToolCalls", () => {
     ).toMatchObject({
       threadId: "child",
       body: "Review this",
-      relationship: "delegated task",
       event: "sent",
     });
     expect(
@@ -103,7 +100,7 @@ describe("summarizeT3ToolCalls", () => {
     ).toBeNull();
   });
 
-  it("preserves replies, queued delivery and no-reply sends without reading message JSON as metadata", () => {
+  it("preserves delivery metadata without reading message JSON as metadata", () => {
     expect(
       outgoingT3Message(
         "t3_thread_send",
@@ -115,7 +112,6 @@ describe("summarizeT3ToolCalls", () => {
     ).toMatchObject({
       threadId: "target",
       body: '{"threadId":"fake"}',
-      noReply: true,
       event: "queued",
     });
     expect(
@@ -124,21 +120,6 @@ describe("summarizeT3ToolCalls", () => {
         completed({ threadId: "target", message: "Answer", origin: { event: "reply" } }),
       ),
     ).toMatchObject({ event: "reply" });
-    expect(
-      outgoingT3Message(
-        "t3_thread_send",
-        completed({ threadId: "target", message: "FYI", origin: { reply: "not expected" } }),
-      ),
-    ).toMatchObject({ noReply: true });
-    expect(
-      outgoingT3Message(
-        "t3_thread_send",
-        completed(
-          { threadId: "target", message: "Question", origin: { reply: "not expected" } },
-          { reply: true },
-        ),
-      ),
-    ).toMatchObject({ noReply: false });
   });
 
   it.each([
@@ -167,7 +148,7 @@ describe("summarizeT3ToolCalls", () => {
     }
   });
 
-  it("keeps unfinished calls as tool rows and failed launches without a target as failed cards", () => {
+  it("keeps unfinished calls unresolved and retains errors from launches without a target", () => {
     expect(
       outgoingT3Message("t3_thread_send", {
         input: { threadId: "target", message: "Hello" },
@@ -185,12 +166,7 @@ describe("summarizeT3ToolCalls", () => {
   });
 
   it.each([
-    [
-      "delegate_task",
-      { task: "Review" },
-      { childThreadId: "child" },
-      { threadId: "child", relationship: "delegated task" },
-    ],
+    ["delegate_task", { task: "Review" }, { childThreadId: "child" }, { threadId: "child" }],
     [
       "delegate_task",
       { task: "Review" },
@@ -201,7 +177,7 @@ describe("summarizeT3ToolCalls", () => {
       "t3_thread_send",
       { message: "Hello", threadId: "target" },
       { delivery: "queued", reply: false },
-      { event: "queued", noReply: true },
+      { event: "queued" },
     ],
     [
       "t3_thread_launch",
@@ -239,7 +215,6 @@ describe("summarizeT3ToolCalls", () => {
           threadId: "target",
           environmentId: "remote",
           event: "reply",
-          noReply: true,
         });
         expect(message?.body).toContain("A long message.");
         expect(message?.body).toContain("Open tool details for the full message.");
@@ -337,5 +312,65 @@ describe("summarizeT3ToolCalls", () => {
       label: "Waited on 1 thread",
       failedCount: 0,
     });
+  });
+});
+
+describe("summarizeT3MessageCall", () => {
+  it.each([
+    [
+      "mcp__t3-code__t3_thread_send",
+      { threadId: "target", message: "First line\nMore" },
+      "Sent to",
+    ],
+    [
+      "t3_thread_send",
+      { threadId: "target", message: "First line\nMore", replyTo: 1 },
+      "Replied to",
+    ],
+    ["t3_thread_launch", { message: "First line\nMore" }, "Started"],
+    ["delegate_task", { task: "First line\nMore" }, "Delegated to"],
+  ])("extends %s with the resolved target and first line", (tool, input, prefix) => {
+    expect(
+      summarizeT3MessageCall(tool, completed(input, { threadId: "target" }), "Matrix L2"),
+    ).toEqual({
+      prefix,
+      detail: 'Matrix L2 · "First line"',
+    });
+  });
+
+  it("leaves unknown targets, unfinished calls and launches without a first message upstream", () => {
+    const send = completed({ threadId: "target", message: "Hello" });
+    for (const title of [undefined, null, "", " "]) {
+      expect(summarizeT3MessageCall("t3_thread_send", send, title)).toBeNull();
+    }
+    expect(
+      summarizeT3MessageCall("t3_thread_send", { ...send, outcome: "unfinished" }, "Target"),
+    ).toBeNull();
+    expect(
+      summarizeT3MessageCall("t3_thread_launch", completed({ title: "Empty" }), "Target"),
+    ).toBeNull();
+  });
+
+  it("retains failed wording and the error beside the attempted message", () => {
+    const failed = completed(
+      { threadId: "target", message: "Hello", replyTo: 1 },
+      {
+        isError: true,
+        content: [{ type: "text", text: "Permission denied" }],
+      },
+    );
+    const expected = {
+      prefix: "Failed to reply to",
+      detail: 'Matrix L2 · "Hello" · Permission denied',
+    };
+    expect(summarizeT3MessageCall("t3_thread_send", failed, "Matrix L2")).toEqual(expected);
+    const compact = compactT3MessageInput("t3_thread_send", {
+      threadId: "target",
+      message: `Hello\n${"More detail. ".repeat(2000)}`,
+      replyTo: 1,
+    });
+    expect(
+      summarizeT3MessageCall("t3_thread_send", { ...failed, input: compact }, "Matrix L2"),
+    ).toEqual(expected);
   });
 });

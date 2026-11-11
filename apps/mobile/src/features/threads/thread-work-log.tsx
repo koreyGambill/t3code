@@ -1,5 +1,4 @@
 import { Button } from "../../components/ui/Button";
-import { OutgoingMessageCard } from "./SenderCard";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
@@ -42,17 +41,19 @@ import {
   useAnimatedValue,
   View,
 } from "react-native";
-import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
-  type EnvironmentId,
+  EnvironmentId,
   type RunId,
-  type ThreadId,
+  ThreadId,
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import { useQuietThreadShell } from "../../state/entities";
+import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
@@ -87,6 +88,7 @@ import {
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
   workEntryOutgoingMessage,
+  workEntryMessageSummary,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
@@ -928,6 +930,22 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const outgoing = workEntryOutgoingMessage(row.workEntry);
+  const target = outgoing?.threadId
+    ? scopeThreadRef(
+        outgoing.environmentId ? EnvironmentId.make(outgoing.environmentId) : props.environmentId,
+        ThreadId.make(outgoing.threadId),
+      )
+    : null;
+  const targetShell = useQuietThreadShell(target);
+  const messageSummary = expanded
+    ? null
+    : workEntryMessageSummary(row.workEntry, targetShell?.title);
+  const targetGlyph =
+    messageSummary && target ? resolveThreadGlyph(target.threadId, targetShell?.glyphSeed) : null;
+  const targetColor =
+    props.themeAppearance === "dark" ? targetGlyph?.color : targetGlyph?.lightColor;
+  const messageLabel = messageSummary ? `${messageSummary.prefix} ${messageSummary.detail}` : null;
   const openLinkedThread = useOpenLinkedThread();
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
@@ -1067,12 +1085,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       </Text>
     );
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
-  const previewText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
+  const previewText = messageLabel ?? row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
+  const displayText =
+    messageLabel ?? row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&
@@ -1083,16 +1102,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
-  const outgoing = workEntryOutgoingMessage(row.workEntry);
-  if (outgoing)
-    return (
-      <OutgoingMessageCard
-        message={outgoing}
-        item={row.projectedItem.item.type === "dynamic_tool" ? row.projectedItem.item : undefined}
-        environmentId={props.environmentId}
-        createdAt={row.createdAt}
-      />
-    );
 
   return (
     <Animated.View
@@ -1169,10 +1178,31 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 />
               )}
             </WorkLogIconSlot>
+            {messageSummary && targetGlyph ? (
+              <>
+                <Text className="shrink-0 text-sm text-foreground-muted">
+                  {messageSummary.prefix}
+                </Text>
+                <Svg
+                  width={16}
+                  height={16}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke={targetColor}
+                  strokeWidth={1.6}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  {targetGlyph.paths.map((path) => (
+                    <Path key={path} d={path} />
+                  ))}
+                </Svg>
+              </>
+            ) : null}
             <WorkLogLabel
               tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
             >
-              {displayText}
+              {messageSummary?.detail ?? displayText}
               {answerPreview ? (
                 <Text
                   className={

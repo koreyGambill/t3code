@@ -271,7 +271,6 @@ export function useThreadComposerState() {
       anchoredMessages: pendingCreation,
       attempts: selectedThreadAttempts,
       runs: selectedThreadProjection?.projection.runs,
-      environmentId: selectedThreadShell?.environmentId,
       nodes: selectedThreadNodes,
       checkpointSummaries,
       cache: feedCache,

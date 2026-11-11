@@ -414,7 +414,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ...timelineListStateFor(listIdentityKey),
     findOpenAtOpening: findOpen,
   }));
-  const [scrollToMessageId, setScrollToMessageId] = useState<MessageId | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
   );
@@ -444,7 +443,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ? timelineListStateFor(listIdentityKey)
     : listState;
   if (identityChanged) {
-    setScrollToMessageId(null);
     setPlayingAudioRows(new Map());
     setListState({
       identity: listIdentityKey,
@@ -723,17 +721,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const listOpenedOn = nextOpening.mounted ? nextOpening.identity : null;
   const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list after an internal message jump has unfolded its target
-  useLayoutEffect(() => {
-    if (scrollToMessageId === null) return;
-    const index = rows.findIndex(
-      (row) => row.kind === "message" && row.message.id === scrollToMessageId,
-    );
-    if (index < 0) return;
-    void listRef.current?.scrollToIndex({ index, viewPosition: 0.2, animated: false });
-    // oxlint-disable-next-line react/set-state-in-effect -- clears the pending target after the rendered list has scrolled to it
-    setScrollToMessageId(null);
-  }, [rows, scrollToMessageId, listRef]);
   const restoreReady = restoringThreadPosition && rows.length > 0;
   // Z: syncs LegendList's scroll position with which thread it shows. The list
   // is not keyed per thread and reports no "new data" event, and the restore
@@ -1028,31 +1015,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRespondToApproval,
     citationRequest: readyCitationRequest,
     listRef,
-    onScrollToMessage: (messageId) => {
-      navigateTimeline();
-      const entry = timelineEntries.find(
-        (entry) => entry.kind === "message" && entry.message.id === messageId,
-      );
-      if (!entry) return;
-      const runId = timelineTurnFoldRunIdsByEntryId({
-        timelineEntries,
-        latestRun,
-        runningRunId,
-        isWorking,
-        runlessWorkActive,
-      }).get(entry.id);
-      if (runId)
-        setExpandedRunIds((previous) =>
-          previous.has(runId) ? previous : new Set(previous).add(runId),
-        );
-      if (entry.attempt?.status === "superseded") {
-        const attemptId = entry.attempt.id;
-        setExpandedAttemptIds((previous) =>
-          previous.has(attemptId) ? previous : new Set(previous).add(attemptId),
-        );
-      }
-      setScrollToMessageId(messageId);
-    },
     timestampFormat,
     routeThreadKey,
     threadRef: citationThreadRef,

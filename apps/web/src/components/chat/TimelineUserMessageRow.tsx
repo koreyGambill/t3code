@@ -1,5 +1,5 @@
 import { MessageReactionChip } from "./MessageReactionChip";
-import { MessageResponseRows, SenderCard } from "./SenderCard";
+import { SenderCard } from "./SenderCard";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
@@ -287,16 +287,6 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
       >
         <UserTimelineRow row={row} cardBody />
       </SenderCard>
-      {row.message.messageRows?.length ? (
-        <MessageResponseRows
-          rows={row.message.messageRows}
-          environmentId={ctx.activeThreadEnvironmentId}
-          onOpenThread={ctx.onOpenThread}
-          onScrollToMessage={ctx.onScrollToMessage}
-          timestampFormat={ctx.timestampFormat}
-          detailSource={ctx.turnItemSource?.detail}
-        />
-      ) : null}
     </>
   ) : ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock

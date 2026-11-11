@@ -11,12 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
-import {
-  buildMessageRows,
-  messageResponseRowsEqual,
-  type MessageResponseRow,
-} from "./messageReactions.ts";
+import { buildMessageRows } from "./messageReactions.ts";
 
 function inputMessageReactions(...args: Parameters<typeof buildMessageRows>) {
   return new Map(
@@ -141,9 +136,7 @@ describe("inputMessageReactions", () => {
     };
     expect(inputMessageReactions([run], [message, reply]).size).toBe(0);
     expect(
-      inputMessageReactions([run], [message, send, reply], [], EnvironmentId.make("local")).get(
-        message.messageId,
-      )?.tooltip,
+      inputMessageReactions([run], [message, send, reply], []).get(message.messageId)?.tooltip,
     ).toBe("Replied");
     expect(inputMessageReactions([run], [message, send]).get(message.messageId)?.emoji).toBe("↩");
     expect(
@@ -231,60 +224,31 @@ describe("inputMessageReactions", () => {
 });
 
 describe("buildMessageRows", () => {
-  it("places only linked same-turn replies and told-you lines under incoming rows", () => {
+  it("keeps incoming reaction chips without duplicating sends or the assistant body", () => {
     const first = incoming("first");
     const second = incoming("second");
-    const laterRun = {
-      ...run,
-      id: RunId.make("later"),
-      userMessageId: MessageId.make("later-input"),
-    };
-    const send = (
-      id: string,
-      ordinal: number,
-      replyToMessageId?: string,
-    ): OrchestrationV2TurnItem => ({
-      ...base(id, ordinal),
+    const send: OrchestrationV2TurnItem = {
+      ...base("send", 2),
       type: "dynamic_tool",
       toolName: "t3_thread_send",
-      input: {
-        threadId: "sender",
-        message: `${id}\nMore detail`,
-        ...(replyToMessageId ? { replyTo: 1 } : {}),
+      input: { threadId: "sender", message: "Answered", replyTo: 1 },
+      output: { replyToMessageId: first.messageId },
+    };
+    const runs = [{ ...run, inputMessageIds: [first.messageId, second.messageId] }];
+    const items = [first, second, send, final("Decision needed.")];
+    const rows = buildMessageRows(runs, items);
+    expect(rows).toEqual([
+      {
+        kind: "incoming",
+        message: first,
+        reaction: { emoji: "↩", label: "Replied", tooltip: "Replied" },
       },
-      output: compactDynamicToolOutput(replyToMessageId ? { replyToMessageId } : {}),
-    });
-    const linked = send("linked", 4, first.messageId);
-    const unlinked = send("unlinked", 3);
-    const later = { ...send("later", 12, first.messageId), runId: laterRun.id };
-    const rows = buildMessageRows(
-      [{ ...run, inputMessageIds: [first.messageId, second.messageId] }, laterRun],
-      [first, second, unlinked, linked, final("Decision needed.\n\nFull paragraph."), later],
-    );
-    expect(rows.map((row) => row.kind)).toEqual([
-      "incoming",
-      "reply-line",
-      "incoming",
-      "to-you",
-      "outgoing",
-      "outgoing",
+      {
+        kind: "incoming",
+        message: second,
+        reaction: { emoji: "ℹ", label: "Told you", tooltip: "Told you" },
+      },
     ]);
-    expect(rows[1]).toMatchObject({
-      parentMessageId: first.messageId,
-      item: { id: linked.id },
-      message: { body: "linked\nMore detail" },
-    });
-    expect(rows[3]).toMatchObject({
-      parentMessageId: second.messageId,
-      messageId: MessageId.make("reply"),
-      body: "Decision needed.\n\nFull paragraph.",
-    });
-    expect(rows.filter((row) => row.kind === "outgoing").map((row) => row.item.id)).toEqual([
-      unlinked.id,
-      later.id,
-    ]);
-    expect(rows[0]).toMatchObject({ reaction: { emoji: "↩" } });
-    expect(rows[2]).toMatchObject({ reaction: { emoji: "ℹ" } });
     const merged = [first, second].map((message) => ({
       ...run,
       id: RunId.make(`merged:${message.messageId}`),
@@ -293,34 +257,6 @@ describe("buildMessageRows", () => {
       status: "cancelled" as const,
       mergedIntoRunId: run.id,
     }));
-    expect(
-      buildMessageRows(
-        [{ ...run, inputMessageIds: [first.messageId, second.messageId] }, laterRun, ...merged],
-        [first, second, unlinked, linked, final("Decision needed.\n\nFull paragraph."), later],
-      ),
-    ).toEqual(rows);
-    const responses = rows.filter(
-      (row): row is MessageResponseRow => row.kind === "reply-line" || row.kind === "to-you",
-    );
-    const rebuilt = buildMessageRows(
-      [{ ...run, inputMessageIds: [first.messageId, second.messageId] }, laterRun],
-      [first, second, unlinked, linked, final("Decision needed.\n\nFull paragraph."), later],
-    );
-    expect(
-      messageResponseRowsEqual(
-        responses,
-        rebuilt.filter(
-          (row): row is MessageResponseRow => row.kind === "reply-line" || row.kind === "to-you",
-        ),
-      ),
-    ).toBe(true);
-    expect(
-      messageResponseRowsEqual(
-        responses,
-        responses.map((row) =>
-          row.kind === "to-you" ? { ...row, body: "Changed decision" } : row,
-        ),
-      ),
-    ).toBe(false);
+    expect(buildMessageRows([...runs, ...merged], items)).toEqual(rows);
   });
 });

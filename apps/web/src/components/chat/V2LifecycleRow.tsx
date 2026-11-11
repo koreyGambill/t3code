@@ -2,8 +2,7 @@ import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
-import { useState, type ReactNode } from "react";
-import { messageFirstLine } from "@t3tools/client-runtime/state/message-reactions";
+import type { ReactNode } from "react";
 import { useThreadShell, useQuietThreadShell, useProject } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -148,7 +147,7 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "subagent") {
-    const card = (
+    return (
       <SubagentTimelineLink
         parentRef={scopeThreadRef(props.environmentId, item.threadId)}
         subagentId={item.subagentId}
@@ -166,59 +165,8 @@ export function V2LifecycleRow(props: {
         onOpenThread={props.onOpenThread}
       />
     );
-    return item.origin === "provider_native" ? (
-      <NativeSubagentPromptRow item={item}>{card}</NativeSubagentPromptRow>
-    ) : (
-      card
-    );
   }
   return null;
-}
-
-function NativeSubagentPromptRow({
-  item,
-  children,
-}: {
-  readonly item: Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
-  readonly children: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <WorkLogRow
-      role="button"
-      tabIndex={0}
-      aria-expanded={expanded}
-      onClick={() => setExpanded(!expanded)}
-      onKeyDown={(event) => {
-        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-          event.preventDefault();
-          setExpanded(!expanded);
-        }
-      }}
-      icon={<span>→</span>}
-      label={`To ${formatSubagentDisplayTitle(item.title ?? "Subagent")} · ${messageFirstLine(item.prompt)}`}
-      trailing={
-        <>
-          {item.startedAt ? (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {formatShortTimestamp(DateTime.formatIso(item.startedAt), "locale")}
-            </span>
-          ) : null}
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("size-3 shrink-0 text-icon-muted", expanded && "rotate-90")}
-          />
-        </>
-      }
-    >
-      {expanded ? (
-        <div className="ms-7" onClick={(event) => event.stopPropagation()}>
-          {children}
-          <p className="whitespace-pre-wrap text-sm text-muted-foreground">{item.prompt}</p>
-        </div>
-      ) : null}
-    </WorkLogRow>
-  );
 }
 
 const SETTLED_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([

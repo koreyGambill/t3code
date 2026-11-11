@@ -72,9 +72,6 @@ export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
 }
 
 export interface ChatMessage {
-  readonly messageRows?: ReadonlyArray<
-    import("@t3tools/client-runtime/state/message-reactions").MessageResponseRow
-  >;
   readonly reaction?:
     | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
     | undefined;

@@ -13,8 +13,6 @@ import type {
   OrchestrationV2TurnItem,
   ServerConfig,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import { messageFirstLine } from "@t3tools/client-runtime/state/message-reactions";
 import { Pressable, View, type ColorValue } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -133,8 +131,7 @@ export function ThreadSubagentGroup(props: {
       modelSelection: live?.modelSelection,
     };
   });
-  const native = agents.every((agent) => agent.item.origin === "provider_native");
-  const grouped = agents.length > 1 && !native;
+  const grouped = agents.length > 1;
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
@@ -190,17 +187,13 @@ export function ThreadSubagentGroup(props: {
         </Pressable>
       ) : null}
       {!grouped || expanded ? (
-        <View
-          className={
-            native ? "min-w-0" : "mb-1 gap-px rounded-xl border border-border bg-card/30 p-1"
-          }
-        >
+        <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
             // A task in a linked environment opens there, if this app is connected to it.
             const target = subagentThreadTarget(agent, props.environmentId, (id) =>
               presentationById.has(id),
             );
-            const card = (
+            return (
               <Pressable
                 key={agent.item.id}
                 accessible
@@ -242,39 +235,6 @@ export function ThreadSubagentGroup(props: {
                   elapsed={<SubagentElapsed agents={[agent]} />}
                 />
               </Pressable>
-            );
-            if (agent.item.origin !== "provider_native") return card;
-            const promptExpanded = props.expandedRows[agent.item.id] ?? false;
-            return (
-              <View key={agent.item.id} className="min-w-0">
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: promptExpanded }}
-                  onPress={() => props.onToggleRow(agent.item.id, props.anchorKey)}
-                  className="min-h-8 min-w-0 flex-row items-center gap-1.5 py-0.5"
-                >
-                  <Text className="w-6 text-center text-sm text-foreground-muted">→</Text>
-                  <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
-                    To {agent.item.title ?? "Subagent"} · {messageFirstLine(agent.item.prompt)}
-                  </Text>
-                  <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
-                    {new Date(
-                      DateTime.formatIso(agent.item.startedAt ?? agent.item.updatedAt),
-                    ).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                  </Text>
-                  <SymbolView
-                    name={promptExpanded ? "chevron.down" : "chevron.right"}
-                    size={12}
-                    tintColor={props.iconSubtleColor}
-                  />
-                </Pressable>
-                {promptExpanded ? (
-                  <View className="ml-7">
-                    {card}
-                    <Text className="text-sm text-foreground-muted">{agent.item.prompt}</Text>
-                  </View>
-                ) : null}
-              </View>
             );
           })}
         </View>

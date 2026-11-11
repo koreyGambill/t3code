@@ -13,6 +13,7 @@ import {
   resolveUserMessageFileCards,
   resolveUserMessageGrouping,
   resolveUserMessagePresentation,
+  senderCardDetails,
 } from "./userMessage.ts";
 
 describe("resolveUserMessageGrouping", () => {
@@ -269,5 +270,32 @@ describe("resolveUserMessagePresentation", () => {
         scheduledTaskId: undefined,
       });
     }
+  });
+});
+
+describe("senderCardDetails", () => {
+  it("keeps the incoming summary on one line with a terse relationship and event", () => {
+    expect(
+      senderCardDetails(
+        {
+          kind: "thread",
+          title: "Matrix L2",
+          threadId: ThreadId.make("sender"),
+          environmentId: EnvironmentId.make("local"),
+          event: "message",
+        },
+        "  First line\r\nFull message",
+      ),
+    ).toMatchObject({
+      title: "Matrix L2",
+      relationship: "peer thread",
+      event: "message",
+      summary: "peer · First line",
+    });
+    expect(
+      senderCardDetails({ kind: "scheduled-task", title: "Daily audit" }, "Check it.\nDetails")
+        .summary,
+    ).toBe("schedule · fired · Check it.");
+    expect(senderCardDetails({ kind: "system", event: "message" }, " ").summary).toBe("T3 Code");
   });
 });

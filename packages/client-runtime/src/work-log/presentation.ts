@@ -25,6 +25,7 @@ import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
   summarizeT3ToolCalls,
+  summarizeT3MessageCall,
   outgoingT3Message,
   type OutgoingT3Message,
   t3ToolResultIndicatesFailure,
@@ -498,7 +499,7 @@ function t3ToolSummaryCall(entry: WorkLogPresentationEntry): T3ToolSummaryCall {
 
 const outgoingMessageCache = new WeakMap<WorkLogPresentationEntry, OutgoingT3Message | null>();
 
-/** Shared by timeline grouping and cards so outgoing messages stay visible when work folds. */
+/** Resolves a message destination without fetching the full tool details. */
 export function workEntryOutgoingMessage(
   entry: WorkLogPresentationEntry,
 ): OutgoingT3Message | null {
@@ -507,6 +508,13 @@ export function workEntryOutgoingMessage(
   const message = outgoingT3Message(workEntryToolName(entry), t3ToolSummaryCall(entry));
   outgoingMessageCache.set(entry, message);
   return message;
+}
+
+export function workEntryMessageSummary(
+  entry: WorkLogPresentationEntry,
+  targetTitle?: string | null,
+) {
+  return summarizeT3MessageCall(workEntryToolName(entry), t3ToolSummaryCall(entry), targetTitle);
 }
 
 function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction): number {

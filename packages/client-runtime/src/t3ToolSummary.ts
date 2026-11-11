@@ -1,7 +1,11 @@
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
-import { resolveT3McpMessageTool } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  resolveT3McpMessageTool,
+  t3McpMessageSummaryPrefix,
+} from "@t3tools/shared/t3McpToolPresentation";
 import { toolResultErrorText } from "@t3tools/shared/toolOutput";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { messageFirstLine } from "./userMessage.ts";
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -76,9 +80,7 @@ export interface OutgoingT3Message {
   readonly threadId: string | null;
   readonly environmentId: string | undefined;
   readonly body: string;
-  readonly relationship: "to peer thread" | "delegated task";
   readonly event: "sent" | "queued" | "reply" | "failed";
-  readonly noReply: boolean;
   readonly error: string | undefined;
 }
 
@@ -117,7 +119,6 @@ export function outgoingT3Message(
       id(input?.environmentId) ??
       id(asRecord(input?.target)?.environmentId),
     body,
-    relationship: tool === "delegate_task" ? "delegated task" : "to peer thread",
     event: failed
       ? "failed"
       : asRecord(input?.origin)?.event === "reply"
@@ -125,14 +126,32 @@ export function outgoingT3Message(
         : output?.delivery === "queued"
           ? "queued"
           : "sent",
-    noReply:
-      tool === "t3_thread_launch" ||
-      (output?.reply ??
-        input?.reply ??
-        (asRecord(input?.origin)?.reply === "not expected" ? false : undefined)) === false,
     error: failed
       ? (toolResultErrorText(call.output) ?? "The tool call failed or was refused.")
       : undefined,
+  };
+}
+
+/** Extends a work row only when the destination thread can be named. */
+export function summarizeT3MessageCall(
+  toolName: string | undefined,
+  call: T3ToolSummaryCall,
+  targetTitle?: string | null,
+): { prefix: string; detail: string } | null {
+  if (!targetTitle?.trim()) return null;
+  const message = outgoingT3Message(toolName, call);
+  if (!message) return null;
+  const prefix = t3McpMessageSummaryPrefix(
+    toolName,
+    readInput(call.input)?.replyTo !== undefined || message.replyToMessageId !== undefined,
+    message.event === "failed",
+  );
+  if (!prefix) return null;
+  const line = messageFirstLine(message.body);
+  const preview = line.length > 100 ? `${line.slice(0, 99)}…` : line;
+  return {
+    prefix,
+    detail: `${targetTitle} · "${preview}"${message.error ? ` · ${message.error}` : ""}`,
   };
 }
 
