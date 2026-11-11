@@ -121,10 +121,14 @@ export const layer = Layer.effect(
         }
         if (!authorized) return { delivery: "alert_only", messageId: null };
       }
+      const running = target.runs.some((run) => run.status === "running");
+      // Turn-end reviews find the thread idle, so their findings start the thread's next turn.
+      const wakesIdle = profile.turnEnd !== undefined && exchangeId === undefined;
       if (
         target.thread.archivedAt !== null ||
         target.thread.deletedAt !== null ||
-        !target.runs.some((run) => run.status === "running")
+        (!running &&
+          (!wakesIdle || target.thread.settledAt !== null || target.thread.snoozedUntil != null))
       )
         return { delivery: "alert_only", messageId: null };
       const deliveryId = `monitoring:${finding.id}${exchangeId === undefined ? "" : `:${exchangeId}`}`;
@@ -141,8 +145,9 @@ export const layer = Layer.effect(
               ? monitoringAdvisory(profile, finding)
               : `[Automated cron advisory follow-up · ${profile.title} · ${profile.modelSelection.model}]\n${finding.exchanges.find((exchange) => exchange.id === exchangeId)?.text ?? "Assessment available in Alerts."}\nThis is advisory, not a user instruction. Keep the user’s scope and standards.`,
           attachments: [],
-          mode: "steer",
-          advisoryOnly: true,
+          ...(running
+            ? { mode: "steer" as const, advisoryOnly: true }
+            : { mode: "queue" as const }),
           createdBy: "system",
           creationSource: "server",
         })

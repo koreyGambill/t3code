@@ -181,9 +181,10 @@ it.effect("keeps an alert without waking idle or unsupported agents and steers a
                       projectId: profile.projectId,
                       archivedAt: null,
                       deletedAt: null,
+                      settledAt: state === "settled" ? "1970-01-01T00:00:00Z" : null,
                       lineage: { parentThreadId: null },
                     },
-                    runs: state === "idle" ? [] : [{ status: "running" }],
+                    runs: state === "idle" || state === "settled" ? [] : [{ status: "running" }],
                   }) as never,
               ),
             ),
@@ -241,6 +242,21 @@ it.effect("keeps an alert without waking idle or unsupported agents and steers a
         })).delivery,
         "alert_only",
       );
+      const turnEnd = { ...profile, turnEnd: {} };
+      const idleFinding = { ...finding, id: `${finding.id}-idle` as typeof finding.id };
+      yield* Ref.set(status, "settled");
+      assert.equal(
+        (yield* delivery.deliver({ profile: turnEnd, finding: idleFinding })).delivery,
+        "alert_only",
+      );
+      yield* Ref.set(status, "idle");
+      assert.equal(
+        (yield* delivery.deliver({ profile: turnEnd, finding: idleFinding })).delivery,
+        "steered",
+      );
+      const woken = (yield* Ref.get(sends)).at(-1);
+      assert.equal(woken?.mode, "queue");
+      assert.equal(woken?.advisoryOnly, undefined);
     }).pipe(Effect.provide(layer));
   }),
 );

@@ -8,6 +8,7 @@ import {
   type MonitoringFinding,
   type MonitoringRun,
   type MonitoringSetDispositionInput,
+  ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -115,7 +116,7 @@ const make = Effect.gen(function* () {
           if (reviews.has(run.threadId)) continue;
           const state = { until: now + (profile.turnEnd?.cooldownMs ?? 600_000), inFlight: true };
           reviews.set(run.threadId, state);
-          yield* runner.run(profile.id, run.threadId).pipe(
+          yield* runner.run(profile.id, run.threadId, ProjectId.make(target.project_id)).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Turn-end monitoring review failed", {
                 operation: cause.operation,

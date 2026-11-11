@@ -13,6 +13,7 @@ import {
   type ScheduledTaskId,
   type MonitoringProfileId,
   type ThreadId,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -69,6 +70,7 @@ export class MonitoringRunner extends Context.Service<
     readonly run: (
       id: MonitoringProfileId,
       threadId?: ThreadId,
+      threadProjectId?: ProjectId,
     ) => Effect.Effect<MonitoringRun, MonitoringError>;
     readonly review: (
       profile: MonitoringProfile,
@@ -234,6 +236,7 @@ const make = Effect.gen(function* () {
   const run = Effect.fn("MonitoringRunner.run")(function* (
     id: MonitoringProfileId,
     threadId?: ThreadId,
+    threadProjectId?: ProjectId,
   ) {
     const active = running.get(id) ?? new Set<ThreadId | null>();
     const key = threadId ?? null;
@@ -242,8 +245,17 @@ const make = Effect.gen(function* () {
     active.add(key);
     running.set(id, active);
     return yield* Effect.gen(function* () {
-      const profile = yield* store.getProfile(id);
-      if (!profile) return yield* new MonitoringError({ operation: "profile not found" });
+      const stored = yield* store.getProfile(id);
+      if (!stored) return yield* new MonitoringError({ operation: "profile not found" });
+      // An every-project turn-end review runs as if the watcher belonged to the reviewed thread's project.
+      const profile =
+        threadId !== undefined && threadProjectId !== undefined && stored.turnEnd?.allProjects
+          ? {
+              ...stored,
+              projectId: threadProjectId,
+              targets: { ...stored.targets, threadIds: [threadId] },
+            }
+          : stored;
       if (threadId !== undefined && !profile.enabled)
         return yield* new MonitoringError({ operation: "profile disabled" });
       const startedAt = DateTime.formatIso(yield* DateTime.now);
