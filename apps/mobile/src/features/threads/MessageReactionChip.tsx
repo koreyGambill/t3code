@@ -9,7 +9,14 @@ export function MessageReactionChip({
 }) {
   return reaction ? (
     <Chip
-      label={reaction.emoji}
+      label={reaction.label}
+      icon={
+        reaction.kind === "ack"
+          ? "hand.thumbsup"
+          : reaction.kind === "replied"
+            ? "arrow.uturn.backward"
+            : "info.circle"
+      }
       size="small"
       accessibilityLabel={reaction.tooltip}
       onPress={() => Dialog.alert(reaction.label, reaction.tooltip)}

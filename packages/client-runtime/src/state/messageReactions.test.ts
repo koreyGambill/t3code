@@ -102,7 +102,7 @@ describe("inputMessageReactions", () => {
       items,
     );
     expect(reactions.get(first.messageId)).toEqual({
-      emoji: "ℹ",
+      kind: "info",
       label: "Told you",
       tooltip: "Told you",
     });
@@ -138,15 +138,17 @@ describe("inputMessageReactions", () => {
     expect(
       inputMessageReactions([run], [message, send, reply], []).get(message.messageId)?.tooltip,
     ).toBe("Replied");
-    expect(inputMessageReactions([run], [message, send]).get(message.messageId)?.emoji).toBe("↩");
+    expect(inputMessageReactions([run], [message, send]).get(message.messageId)?.kind).toBe(
+      "replied",
+    );
     expect(
       inputMessageReactions([{ ...run, status: "running" }], [message, send]).get(message.messageId)
-        ?.emoji,
-    ).toBe("↩");
+        ?.kind,
+    ).toBe("replied");
     expect(
       inputMessageReactions([run], [message, send, final("[react 1:ack]")]).get(message.messageId)
-        ?.emoji,
-    ).toBe("↩");
+        ?.kind,
+    ).toBe("replied");
     expect(
       inputMessageReactions([run], [message, { ...send, status: "failed" }, reply]).get(
         message.messageId,
@@ -190,11 +192,32 @@ describe("inputMessageReactions", () => {
       )?.label,
     ).toBe("Told you");
     expect(inputMessageReactions([run], [message, final(" \n ")]).size).toBe(0);
+    // Haiku acked a decision request and still warned the user (2026-11-11); the body wins.
     expect(
       inputMessageReactions(
         [run],
         [message, final("[react 1:ack]\nPlease approve the deletion.")],
       ).get(message.messageId)?.label,
+    ).toBe("Told you");
+    const second = { ...incoming("second"), ordinal: 1 };
+    const merged = { ...run, inputMessageIds: [message.messageId, second.messageId] };
+    const rows = inputMessageReactions(
+      [merged],
+      [message, second, final("[react 1:ack]\nPlease approve the deletion.")],
+    );
+    expect(rows.get(message.messageId)?.label).toBe("Handled");
+    expect(rows.get(second.messageId)?.label).toBe("Told you");
+  });
+
+  it("treats a reply-expected message answered in the body as replied", () => {
+    const question = incoming("first", { ...origin, reply: "expected" });
+    expect(
+      inputMessageReactions([run], [question, final("Use staging.")]).get(question.messageId)
+        ?.label,
+    ).toBe("Replied");
+    expect(
+      inputMessageReactions([run], [question, final("[react 1:ack]")]).get(question.messageId)
+        ?.label,
     ).toBe("Handled");
   });
 
@@ -241,12 +264,12 @@ describe("buildMessageRows", () => {
       {
         kind: "incoming",
         message: first,
-        reaction: { emoji: "↩", label: "Replied", tooltip: "Replied" },
+        reaction: { kind: "replied", label: "Replied", tooltip: "Replied" },
       },
       {
         kind: "incoming",
         message: second,
-        reaction: { emoji: "ℹ", label: "Told you", tooltip: "Told you" },
+        reaction: { kind: "info", label: "Told you", tooltip: "Told you" },
       },
     ]);
     const merged = [first, second].map((message) => ({

@@ -10,6 +10,7 @@ import IconCalendarClock from "@tabler/icons-react-native/IconCalendarClock";
 import IconArrowBackUp from "@tabler/icons-react-native/IconArrowBackUp";
 import IconArrowDown from "@tabler/icons-react-native/IconArrowDown";
 import IconArrowForwardUp from "@tabler/icons-react-native/IconArrowForwardUp";
+import IconThumbUp from "@tabler/icons-react-native/IconThumbUp";
 import IconArrowLeft from "@tabler/icons-react-native/IconArrowLeft";
 import IconArrowRight from "@tabler/icons-react-native/IconArrowRight";
 import IconArrowDownCircle from "@tabler/icons-react-native/IconArrowDownCircle";
@@ -214,6 +215,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   hammer: IconHammer,
   headphones: IconHeadphones,
   house: IconHome,
+  "hand.thumbsup": IconThumbUp,
   "info.circle": IconInfoCircle,
   internaldrive: IconDatabase,
   iphone: IconDeviceMobile,

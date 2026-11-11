@@ -8,7 +8,7 @@ import { numberedTurnOrigins, parseAssistantReactions } from "@t3tools/shared/me
 import { outgoingT3Message } from "../t3ToolSummary.ts";
 
 export interface InputMessageReaction {
-  readonly emoji: string;
+  readonly kind: "ack" | "replied" | "info";
   readonly label: string;
   readonly tooltip: string;
 }
@@ -87,17 +87,24 @@ export function buildMessageRows(
         return send?.event !== "failed" && send?.replyToMessageId ? [send.replyToMessageId] : [];
       }),
     );
+    const hasBody = parsed.body.trim() !== "";
+    // Acking every message while still writing to the user contradicts itself; the body wins.
+    const acksTrusted = !hasBody || numbered.some(({ index }) => !parsed.reactions.has(index));
     for (const { message, index } of numbered) {
-      const label = repliedTo.has(message.messageId)
-        ? "Replied"
-        : parsed.reactions.has(index)
-          ? "Handled"
-          : parsed.body.trim()
-            ? "Told you"
-            : null;
+      // A reply-expected sender receives the turn's body as its reply.
+      const forwardedReply =
+        hasBody && message.origin?.kind === "thread" && message.origin.reply === "expected";
+      const label =
+        repliedTo.has(message.messageId) || forwardedReply
+          ? "Replied"
+          : acksTrusted && parsed.reactions.has(index)
+            ? "Handled"
+            : hasBody
+              ? "Told you"
+              : null;
       if (label)
         reactions.set(message.messageId, {
-          emoji: label === "Replied" ? "↩" : label === "Handled" ? "👍" : "ℹ",
+          kind: label === "Replied" ? "replied" : label === "Handled" ? "ack" : "info",
           label,
           tooltip: label,
         });
