@@ -831,6 +831,15 @@ export const make = Effect.gen(function* () {
     const stoppedThisPass = new Map<string, RecoverySession>();
     for (const threadId of threadIds) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
+        Effect.catchTags({
+          ProjectionStoreReadError: (error) =>
+            Schema.isSchemaError(error.cause)
+              ? Effect.logWarning("Skipping malformed provider runtime recovery projection", {
+                  threadId,
+                  trigger,
+                }).pipe(Effect.as(null))
+              : Effect.fail(error),
+        }),
         Effect.mapError(
           (cause) =>
             new ProviderRuntimeRecoveryError({
@@ -840,6 +849,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      if (projection === null) continue;
       const enabled =
         continueAfterRestart !== null &&
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings

@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -24,6 +25,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));
 
 it.effect("expires orphaned runtime requests before command readiness", () => {
   const threadId = ThreadId.make("thread_recovery_requests");
@@ -1528,3 +1531,115 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
     assert.deepEqual(noted, [`subagent ${nativeSubagentId}`]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "skips malformed recovery projections and reconciles healthy threads and the outbox",
+  () =>
+    Effect.gen(function* () {
+      const malformedThreadId = ThreadId.make("thread_recovery_malformed");
+      const healthyThreadId = ThreadId.make("thread_recovery_healthy");
+      const schemaError = yield* decodeJson("").pipe(Effect.flip);
+      const projection = {
+        thread: { id: healthyThreadId },
+        runtimeRequests: [
+          {
+            id: RuntimeRequestId.make("request_recovery_healthy"),
+            nodeId: NodeId.make("node_recovery_healthy"),
+            status: "pending",
+            responseCapability: { type: "not_resumable", reason: "old process" },
+          },
+        ],
+        providerSessions: [],
+        providerThreads: [],
+        runs: [],
+        nodes: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      for (const trigger of ["startup", "shutdown"] as const) {
+        const committed: Array<Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0]> =
+          [];
+        let outboxReconciled = false;
+        const layer = ProviderRuntimeRecovery.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getRecoveryThreadIds: () => Effect.succeed([malformedThreadId, healthyThreadId]),
+                getRuntimeRecoveryProjection: (threadId) =>
+                  threadId === malformedThreadId
+                    ? Effect.fail(
+                        new ProjectionStore.ProjectionStoreReadError({
+                          threadId,
+                          cause: schemaError,
+                        }),
+                      )
+                    : Effect.succeed(projection),
+              }),
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) => {
+                  committed.push(input);
+                  return Effect.succeed({ committed: true, cancelledEffectCount: 1 } as never);
+                },
+              }),
+              IdAllocator.layer,
+              Layer.mock(EffectOutbox.EffectOutboxV2)({
+                reconcileAfterProcessLoss: Effect.sync(() => {
+                  outboxReconciled = true;
+                  return { requeued: 2, cancelled: 3 };
+                }),
+              }),
+            ),
+          ),
+        );
+        const summary = yield* Effect.gen(function* () {
+          return yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(
+            trigger,
+          );
+        }).pipe(Effect.provide(layer));
+        assert.deepEqual(summary, {
+          terminalizedRuns: 0,
+          stoppedSessions: 0,
+          closedRequests: 1,
+          retiredEffects: 4,
+          requeuedEffects: 2,
+        });
+        assert.isTrue(outboxReconciled);
+        assert.deepEqual(
+          committed.map((input) => input.threadId),
+          [healthyThreadId],
+        );
+        assert.equal(committed[0]?.events[0]?.type, "runtime-request.updated");
+      }
+    }),
+);
+
+it.effect("preserves fatal recovery database read failures", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread_recovery_database_failure");
+    const cause = new Error("database unavailable");
+    for (const stage of ["list", "projection"] as const) {
+      const readError = new ProjectionStore.ProjectionStoreReadError({ threadId, cause });
+      const layer = ProviderRuntimeRecovery.layer.pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () =>
+                stage === "list" ? Effect.fail(readError) : Effect.succeed([threadId]),
+              getRuntimeRecoveryProjection: () => Effect.fail(readError),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(EffectOutbox.EffectOutboxV2)({
+              reconcileAfterProcessLoss: Effect.die("database failure must stop recovery"),
+            }),
+          ),
+        ),
+      );
+      const error = yield* Effect.gen(function* () {
+        return yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.equal(error.operation, "read-projections");
+      assert.strictEqual(error.cause, readError);
+    }
+  }),
+);
