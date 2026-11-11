@@ -480,7 +480,10 @@ export function MonitoringStatusButton() {
     0,
   );
   const groups = useStatusSourceGroups();
-  const state = summarizeStatusSources(groups.flatMap((group) => group.sources ?? []));
+  const state = summarizeStatusSources(
+    groups.flatMap((group) => group.sources ?? []),
+    groups.some((group) => group.failed || group.sources === null),
+  );
   const [open, setOpen] = useState(false);
   const label = `Status and alerts: ${state ?? "no sources"}${unread > 0 ? `, ${unread} unread` : ""}`;
   const configureSources = (machine: EnvironmentId) => {
