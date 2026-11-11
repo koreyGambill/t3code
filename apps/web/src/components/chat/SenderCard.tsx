@@ -29,18 +29,17 @@ export function SenderCard(props: {
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
-  const bodyRef = (element: HTMLDivElement | null) => {
-    const unsubscribeReveal = revealRef(element);
-    if (!element || expanded) return unsubscribeReveal;
-    const measure = () => setOverflowing(element.scrollHeight > element.clientHeight + 1);
-    measure();
-    const stopObserving = observeResize(element, measure);
-    return () => {
-      stopObserving();
-      unsubscribeReveal?.();
+  const contentRef = (content: HTMLDivElement | null) => {
+    const clip = content?.parentElement;
+    if (!content || !clip) return;
+    // The clip is height-capped, so only the unclipped content reports growth.
+    const measure = () => {
+      if (!expanded) setOverflowing(content.offsetHeight > clip.clientHeight + 1);
     };
+    measure();
+    return observeResize(content, measure);
   };
-  const collapsed = !expanded;
+  const folded = !expanded && overflowing;
   const color = glyph
     ? `light-dark(${glyph.lightColor}, ${glyph.color})`
     : "var(--muted-foreground)";
@@ -124,16 +123,16 @@ export function SenderCard(props: {
         </p>
       ) : null}
       <div
-        ref={bodyRef}
+        ref={revealRef}
         data-thread-find-text="true"
-        data-thread-find-fold={collapsed ? "" : undefined}
+        data-thread-find-fold={folded ? "" : undefined}
         className={cn(
           "wrap-anywhere text-sm",
-          collapsed &&
-            "max-h-10 overflow-hidden [mask-image:linear-gradient(to_bottom,black_calc(100%-0.75rem),transparent)]",
+          !expanded && "max-h-10 overflow-hidden",
+          folded && "[mask-image:linear-gradient(to_bottom,black_calc(100%-0.75rem),transparent)]",
         )}
       >
-        {props.children}
+        <div ref={contentRef}>{props.children}</div>
       </div>
     </section>
   );

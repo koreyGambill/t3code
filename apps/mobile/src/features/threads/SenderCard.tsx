@@ -32,6 +32,7 @@ export function SenderCard(props: {
   const [expanded, setExpanded] = useState(false);
   const [contentHeight, setContentHeight] = useState(0);
   const overflowing = contentHeight > COLLAPSED_HEIGHT + 1;
+  const folded = overflowing && !expanded;
   const body = (
     <View onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}>
       {props.children ?? <Text className="text-sm text-foreground">{props.text}</Text>}
@@ -112,28 +113,23 @@ export function SenderCard(props: {
           {props.queued ? "queued for next turn" : "no reply expected"}
         </Text>
       ) : null}
-      {expanded ? (
-        body
-      ) : overflowing ? (
-        <MaskedView
-          style={{ maxHeight: COLLAPSED_HEIGHT, overflow: "hidden" }}
-          maskElement={
-            <Svg width="100%" height="100%">
-              <Defs>
-                <LinearGradient id="sender-fade" x1="0%" x2="0%" y1="0%" y2="100%">
-                  <Stop offset="0.7" stopColor="white" />
-                  <Stop offset="1" stopColor="white" stopOpacity={0} />
-                </LinearGradient>
-              </Defs>
-              <Rect width="100%" height="100%" fill="url(#sender-fade)" />
-            </Svg>
-          }
-        >
-          {body}
-        </MaskedView>
-      ) : (
-        <View style={{ maxHeight: COLLAPSED_HEIGHT, overflow: "hidden" }}>{body}</View>
-      )}
+      {/* One stable parent, so toggling never remounts attachments or media. */}
+      <MaskedView
+        style={expanded ? undefined : { maxHeight: COLLAPSED_HEIGHT, overflow: "hidden" }}
+        maskElement={
+          <Svg width="100%" height="100%">
+            <Defs>
+              <LinearGradient id="sender-fade" x1="0%" x2="0%" y1="0%" y2="100%">
+                <Stop offset={folded ? 0.7 : 1} stopColor="white" />
+                <Stop offset="1" stopColor="white" stopOpacity={folded ? 0 : 1} />
+              </LinearGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#sender-fade)" />
+          </Svg>
+        }
+      >
+        {body}
+      </MaskedView>
       {overflowing ? (
         <Button
           label={expanded ? "Show less" : "Show more"}
