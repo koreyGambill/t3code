@@ -19,7 +19,7 @@ import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
 export const WSL_INSTANCE_ID_PREFIX = "wsl:";
 const WSL_DEFAULT_DISTRO_ID = `${WSL_INSTANCE_ID_PREFIX}default`;
 const MAX_TCP_PORT = 65_535;
-const PREFERRED_PORT_ATTEMPTS = 20;
+const PREFERRED_PORT_ATTEMPTS = 120;
 const PREFERRED_PORT_RETRY = Duration.millis(500);
 
 export class DesktopWslBackend extends Context.Service<
@@ -49,7 +49,7 @@ export const scanForWslPort = Effect.fn("desktop.wslBackend.scanForWslPort")(fun
   startPort: number,
 ): Effect.fn.Return<number, NetService.NetError, NetService.NetService> {
   const net = yield* NetService.NetService;
-  // Linked environments store this URL, and a restarting predecessor can hold the port briefly.
+  // Linked environments store this URL, and a draining predecessor can hold the port for over 10s.
   for (let attempt = 0; attempt < PREFERRED_PORT_ATTEMPTS; attempt += 1) {
     if (yield* net.canListenOnHost(startPort, "127.0.0.1")) return startPort;
     yield* Effect.sleep(PREFERRED_PORT_RETRY);

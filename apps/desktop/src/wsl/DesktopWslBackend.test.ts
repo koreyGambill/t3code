@@ -89,7 +89,7 @@ describe("DesktopWslBackend", () => {
   it.effect("waits for the preferred port so peer links keep a stable URL across restarts", () => {
     let preferredChecks = 0;
     const layerBusyPreferred = Layer.succeed(NetService.NetService, {
-      canListenOnHost: (port) => Effect.sync(() => (port === 3774 ? ++preferredChecks > 3 : true)),
+      canListenOnHost: (port) => Effect.sync(() => (port === 3774 ? ++preferredChecks > 40 : true)),
       isPortAvailableOnLoopback: () => Effect.succeed(true),
       hasListenerOnHost: () => Effect.succeed(false),
       reserveLoopbackPort: () => Effect.succeed(41773),
@@ -97,7 +97,7 @@ describe("DesktopWslBackend", () => {
     } satisfies NetService.NetService["Service"]);
     return Effect.gen(function* () {
       const fiber = yield* DesktopWslBackend.scanForWslPort(3774).pipe(Effect.forkChild);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("30 seconds");
       assert.equal(yield* Fiber.join(fiber), 3774);
     }).pipe(Effect.provide(layerBusyPreferred));
   });
