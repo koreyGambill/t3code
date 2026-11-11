@@ -208,6 +208,7 @@ it.effect(
       const entered = yield* Queue.unbounded<ThreadId>();
       const release = yield* Deferred.make<void>();
       let calls = 0;
+      const ranProfiles: Array<MonitoringProfileId> = [];
       const stream = Stream.fromQueue(events).pipe(
         Stream.flatMap(({ event, processed }) =>
           Stream.make(event).pipe(
@@ -224,9 +225,10 @@ it.effect(
             Layer.mock(Threads.ThreadManagementService)({ streamDomainEvents: stream }),
             Layer.mock(Tasks.ScheduledTaskService)({}),
             Layer.mock(Runner.MonitoringRunner)({
-              run: (_id, threadId) =>
+              run: (id, threadId) =>
                 Effect.gen(function* () {
                   calls++;
+                  ranProfiles.push(id);
                   yield* Queue.offer(entered, threadId!);
                   if (calls > 1) yield* Deferred.await(release);
                   return {} as MonitoringRun;
@@ -296,6 +298,17 @@ it.effect(
         yield* emit("completed");
         assert.equal(calls, 2);
         yield* Deferred.succeed(release, undefined);
+        yield* store.saveProfile({ ...selected, enabled: false });
+        yield* store.saveProfile({
+          ...selected,
+          id: MonitoringProfileId.make("everywhere"),
+          scheduledTaskId: ScheduledTaskId.make("monitoring:everywhere"),
+          projectId: ProjectId.make("other"),
+          turnEnd: { allProjects: true },
+        });
+        yield* emit("completed");
+        assert.equal(yield* Queue.take(entered), "thread");
+        assert.equal(ranProfiles.at(-1), "everywhere");
       }).pipe(Effect.provide(serviceLayer));
     }).pipe(
       Effect.scoped,

@@ -39,6 +39,7 @@ export const MonitoringProfileInput = Schema.Struct({
       cooldownMs: Schema.optional(
         Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(60_000)),
       ),
+      allProjects: Schema.optional(Schema.Boolean),
     }),
   ),
   delivery: Schema.optional(Schema.Literals(["thread-or-alert", "alerts"])),

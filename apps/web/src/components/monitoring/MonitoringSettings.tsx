@@ -315,11 +315,26 @@ function ProfileEditor({
                 onChange={(event) =>
                   setDraft({
                     ...draft,
-                    turnEnd: { cooldownMs: Number(event.target.value) * 60_000 },
+                    turnEnd: { ...draft.turnEnd, cooldownMs: Number(event.target.value) * 60_000 },
                   })
                 }
               />
             </div>
+          )}
+          {draft.turnEnd && (
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={draft.turnEnd.allProjects === true}
+                disabled={busy}
+                onCheckedChange={(checked) =>
+                  setDraft({
+                    ...draft,
+                    turnEnd: { ...draft.turnEnd, allProjects: checked === true },
+                  })
+                }
+              />
+              Watch threads in every project
+            </label>
           )}
           <p className="text-xs text-muted-foreground">
             Turn-end reviews check the exact completed thread without the schedule's thread filters.

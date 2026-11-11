@@ -106,7 +106,7 @@ const make = Effect.gen(function* () {
           if (!reviews.size) turnEndReviews.delete(profileId);
         }
         for (const profile of profiles) {
-          if (profile.projectId !== target.project_id) continue;
+          if (!profile.turnEnd?.allProjects && profile.projectId !== target.project_id) continue;
           let reviews = turnEndReviews.get(profile.id);
           if (!reviews) {
             reviews = new Map();
