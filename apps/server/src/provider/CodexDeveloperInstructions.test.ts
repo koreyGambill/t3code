@@ -70,9 +70,8 @@ describe("Codex orchestration context", () => {
     NodeAssert.ok(orchestration.includes("report back together once all finish"));
     NodeAssert.ok(orchestration.includes("start a parallel group in one turn, then end your turn"));
     NodeAssert.ok(orchestration.includes("Follow a running delegate's `next`"));
-    for (const tool of ["task_status", "sleep", "watchers", "Monitor", "ScheduleWakeup"]) {
-      NodeAssert.ok(orchestration.includes(tool));
-    }
+    NodeAssert.ok(orchestration.includes("end your turn instead of waiting or polling"));
+    NodeAssert.ok(orchestration.includes("On completion, use `task_status` to read results"));
     NodeAssert.ok(!orchestration.includes("run_in_background:false"));
     NodeAssert.ok(!orchestration.includes("never a background"));
     NodeAssert.doesNotMatch(

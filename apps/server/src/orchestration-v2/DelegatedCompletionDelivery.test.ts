@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -178,7 +179,7 @@ const layerContinuationWorkerTest = ProviderContinuationService.layer.pipe(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:delegated")),
     }),
   ),
-  Layer.provide(Layer.merge(ProviderContinuationRequests.layer, IdAllocator.layer)),
+  Layer.provideMerge(Layer.merge(ProviderContinuationRequests.layer, IdAllocator.layer)),
   Layer.provideMerge(layerTest),
 );
 
@@ -1566,6 +1567,7 @@ it.layer(layerContinuationWorkerTest)("delegate groups", (it) => {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         const now = yield* DateTime.now;
         const key = `local-group-${status}-${policies.join("-")}-${parentEndsLast}`;
         const threadId = ThreadId.make(`thread:${key}`);
@@ -1661,6 +1663,17 @@ it.layer(layerContinuationWorkerTest)("delegate groups", (it) => {
           );
           yield* worker.drain();
           if (parentEndsLast || index < policies.length - 1) {
+            yield* orchestrator.recoverDelegatedTasks;
+            const consumed = yield* Deferred.make<void>();
+            yield* requests.offer({
+              threadId,
+              providerThreadId: parentProviderThreadId(threadId),
+              driver,
+              detail: null,
+              dispatchIfCurrent: () =>
+                Deferred.succeed(consumed, undefined).pipe(Effect.as(Option.none())),
+            });
+            yield* Deferred.await(consumed);
             const held = yield* orchestrator.getThreadProjection(threadId);
             assert.isEmpty(
               held.messages.filter((message) => message.delegatedCompletion !== undefined),
@@ -2516,24 +2529,31 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       "overlapping",
       "backgroundHeld",
     ] as const;
-    it.effect.each(outcomes)(
-      "records a %s follow-up independently of the original task",
-      (outcome) =>
+    it.effect.each(
+      outcomes.flatMap((outcome) =>
+        (outcome === "overlapping"
+          ? (["ended parent", "active parent", "user"] as const)
+          : (["ended parent"] as const)
+        ).map((sender) => ({ outcome, sender })),
+      ),
+    )(
+      "records a $outcome follow-up independently of the original task ($sender)",
+      ({ outcome, sender }) =>
         Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const eventSink = yield* EventSink.EventSinkV2;
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           const now = yield* DateTime.now;
-          const parentThreadId = ThreadId.make(`thread:followup-${outcome}`);
-          const projectId = ProjectId.make(`project:followup-${outcome}`);
-          const parentRunId = RunId.make(`run:followup-${outcome}`);
-          const rootNodeId = NodeId.make(`node:followup-${outcome}`);
+          const parentThreadId = ThreadId.make(`thread:followup-${outcome}-${sender}`);
+          const projectId = ProjectId.make(`project:followup-${outcome}-${sender}`);
+          const parentRunId = RunId.make(`run:followup-${outcome}-${sender}`);
+          const rootNodeId = NodeId.make(`node:followup-${outcome}-${sender}`);
           yield* seedParentWithTerminalTask({
             threadId: parentThreadId,
             projectId,
             runId: parentRunId,
             rootNodeId,
-            taskId: NodeId.make(`node:seed-${outcome}`),
+            taskId: NodeId.make(`node:seed-${outcome}-${sender}`),
             parentRunStatus: "completed",
             deliveryState: "acknowledged",
             now,
@@ -2543,7 +2563,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             projectId,
             parentRunId,
             rootNodeId,
-            name: `followup-child-${outcome}`,
+            name: `followup-child-${outcome}-${sender}`,
             completionWake: "always",
             continuationPending: false,
             runStatus: "completed",
@@ -2555,7 +2575,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           assert.equal(firstWake.delegatedCompletion?.parentRunId, parentRunId);
           yield* orchestrator.dispatch({
             type: "delegated_task.completion-delivery.acknowledge",
-            commandId: CommandId.make(`command:followup-ack-${outcome}`),
+            commandId: CommandId.make(`command:followup-ack-${outcome}-${sender}`),
             parentThreadId,
             taskId: child.taskId,
             observedByRunId: parentRunId,
@@ -2567,25 +2587,29 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             (run) => run.id === parentRunId,
           )!;
           yield* eventSink.write({
-            commandId: reconcileCommandId(`followup-parent-finished-${outcome}`),
+            commandId: reconcileCommandId(`followup-parent-finished-${outcome}-${sender}`),
             events: [
               {
-                id: EventId.make(`event:followup-parent-finished-${outcome}`),
+                id: EventId.make(`event:followup-parent-finished-${outcome}-${sender}`),
                 type: "run.updated",
                 threadId: parentThreadId,
                 runId: parentRunId,
                 occurredAt: now,
-                payload: { ...parentRun, status: "completed", completedAt: now },
+                payload: {
+                  ...parentRun,
+                  status: sender === "ended parent" ? "completed" : "running",
+                  completedAt: sender === "ended parent" ? now : null,
+                },
               },
             ],
           });
-          const messageId = MessageId.make(`message:followup-${outcome}`);
+          const messageId = MessageId.make(`message:followup-${outcome}-${sender}`);
           yield* orchestrator.dispatch({
             type: "message.dispatch",
             origin: { kind: "user" as const },
-            createdBy: outcome === "failed" ? "user" : "agent",
+            createdBy: outcome === "failed" || sender === "user" ? "user" : "agent",
             creationSource: outcome === "failed" ? "web" : "mcp",
-            commandId: CommandId.make(`command:followup-send-${outcome}`),
+            commandId: CommandId.make(`command:followup-send-${outcome}-${sender}`),
             threadId: child.childThreadId,
             senderThreadId: parentThreadId,
             messageId,
@@ -2600,17 +2624,19 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           const backgroundTask = workingParent.threads
             .find((thread) => thread.id === parentThreadId)
             ?.pendingBackgroundTasks?.find((task) => task.kind === "subagent");
-          assert.equal(backgroundTask?.childThreadId, child.childThreadId);
+          if (sender === "ended parent") {
+            assert.equal(backgroundTask?.childThreadId, child.childThreadId);
+          }
           if (outcome === "overlapping") {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               origin: { kind: "user" as const },
-              createdBy: "agent",
+              createdBy: sender === "user" ? "user" : "agent",
               creationSource: "mcp",
-              commandId: CommandId.make("command:overlapping-followup"),
+              commandId: CommandId.make(`command:overlapping-followup-${sender}`),
               threadId: child.childThreadId,
               senderThreadId: parentThreadId,
-              messageId: MessageId.make("message:overlapping-followup"),
+              messageId: MessageId.make(`message:overlapping-followup-${sender}`),
               text: "Keep working on another follow-up.",
               attachments: [],
               dispatchMode: { type: "queue_after_active" },
@@ -2669,7 +2695,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             yield* orchestrator.dispatch({
               type: "thread.stop",
               threadId: parentThreadId,
-              commandId: CommandId.make(`command:followup-stop-${outcome}`),
+              commandId: CommandId.make(`command:followup-stop-${outcome}-${sender}`),
             });
           }
           const parentProviderThread = (yield* orchestrator.getThreadProjection(parentThreadId))
@@ -2703,10 +2729,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             ]);
           }
           yield* eventSink.write({
-            commandId: reconcileCommandId(`followup-finish-${outcome}`),
+            commandId: reconcileCommandId(`followup-finish-${outcome}-${sender}`),
             events: [
               {
-                id: EventId.make(`event:followup-finish-${outcome}`),
+                id: EventId.make(`event:followup-finish-${outcome}-${sender}`),
                 type: "run.updated",
                 threadId: child.childThreadId,
                 runId: run.id,
@@ -2727,6 +2753,23 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               },
             ],
           });
+          if (sender !== "ended parent") {
+            const owner = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+              (row) => row.id === parentRunId,
+            )!;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make(`event:followup-owner-ended-${sender}`),
+                  type: "run.updated",
+                  threadId: parentThreadId,
+                  runId: parentRunId,
+                  occurredAt: now,
+                  payload: { ...owner, status: "completed", completedAt: now },
+                },
+              ],
+            });
+          }
           yield* orchestrator.recoverDelegatedTasks;
           if (outcome === "backgroundHeld") {
             const held = yield* orchestrator.getThreadProjection(parentThreadId);
@@ -2842,8 +2885,29 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             followup.completionDelivery?.state,
             outcome === "stopped" ? "disposed" : "claimed",
           );
-          // The overlapping follow-up keeps this parent run's group open.
-          if (outcome !== "stopped" && outcome !== "overlapping") {
+          if (outcome === "overlapping") {
+            const barrierId = MessageId.make("message:followup-queue-barrier");
+            yield* requests.offer({
+              threadId: parentThreadId,
+              providerThreadId: parentProviderThreadId(parentThreadId),
+              driver,
+              detail: null,
+              messageId: barrierId,
+            });
+            const wakes = yield* Stream.fromEffectRepeat(requests.take).pipe(
+              Stream.takeWhile((request) => request.messageId !== barrierId),
+              Stream.runCollect,
+            );
+            assert.equal(
+              wakes.some(
+                (wake) =>
+                  wake.threadId === parentThreadId &&
+                  wake.delegatedCompletion?.parentRunId === parentRunId &&
+                  wake.delegatedCompletion.messageId !== firstWake.delegatedCompletion?.messageId,
+              ),
+              sender !== "active parent",
+            );
+          } else if (outcome !== "stopped") {
             let wake = yield* requests.take;
             while (
               wake.threadId !== parentThreadId ||

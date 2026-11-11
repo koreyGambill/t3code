@@ -1658,7 +1658,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       if (
         subagents.some(
-          (task) => task.origin === "app_owned" && !isTerminalDelegatedTaskStatus(task.status),
+          (task) =>
+            task.origin === "app_owned" &&
+            (task.completionGroupMember ?? task.originalTaskId === undefined) &&
+            !isTerminalDelegatedTaskStatus(task.status),
         )
       )
         return;
@@ -9046,6 +9049,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       driver: adapter.driver,
       id: taskId,
       originalTaskId: original.id,
+      completionGroupMember:
+        command.createdBy === "agent" &&
+        command.senderThreadId === parentThreadId &&
+        isActiveRun(owner),
       runId: owner.id,
       parentNodeId: owner.rootNodeId,
       providerInstanceId: run.providerInstanceId,

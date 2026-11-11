@@ -1005,6 +1005,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   nativeTaskRef: Schema.NullOr(OrchestrationV2ProviderRef),
   /** A follow-up's original delegated task: the one its child thread was created for. */
   originalTaskId: Schema.optional(NodeId),
+  /** Follow-ups join the completion group only when the active parent starts them. */
+  completionGroupMember: Schema.optional(Schema.Boolean),
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
