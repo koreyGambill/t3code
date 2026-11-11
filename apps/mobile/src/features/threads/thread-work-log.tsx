@@ -83,6 +83,9 @@ import {
 } from "./thread-feed-live-follow";
 import {
   resolveWorkEntryToolPresentation,
+  workEntryIconPresentation,
+  toolGroupIconPresentation,
+  workLogIcons,
   toolGroupAction,
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
@@ -210,6 +213,7 @@ function ShimmerWorkContent(props: {
   readonly environmentId?: EnvironmentId;
   readonly highlighted: boolean;
   readonly icon: WorkContentIcon;
+  readonly iconLabel?: string | undefined;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly onTextLayout?: ComponentProps<typeof Text>["onTextLayout"];
@@ -220,7 +224,10 @@ function ShimmerWorkContent(props: {
   return (
     <View className="flex-row items-center gap-1.5">
       {props.showIcon ? (
-        <View className="h-6 w-6 shrink-0 items-center justify-center">
+        <View
+          accessibilityLabel={props.iconLabel}
+          className="h-6 w-6 shrink-0 items-center justify-center"
+        >
           {props.toolIcon && props.environmentId ? (
             <ToolActivityIconView
               environmentId={props.environmentId}
@@ -260,6 +267,7 @@ export function ShimmeringWorkContent(props: {
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly icon: WorkContentIcon;
+  readonly iconLabel?: string | undefined;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly showIcon: boolean;
@@ -322,6 +330,7 @@ export function ShimmeringWorkContent(props: {
         environmentId={props.environmentId}
         highlighted={false}
         icon={props.icon}
+        iconLabel={props.iconLabel}
         iconSubtleColor={props.iconSubtleColor}
         label={props.label}
         showIcon={props.showIcon}
@@ -373,6 +382,7 @@ export function ShimmeringWorkContent(props: {
                 environmentId={props.environmentId}
                 highlighted
                 icon={props.icon}
+                iconLabel={props.iconLabel}
                 iconSubtleColor={props.iconSubtleColor}
                 label={props.label}
                 showIcon={props.showIcon}
@@ -962,7 +972,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       >
         <View className="flex-1 py-1">
           <View className="flex-row items-center gap-1.5">
-            <WorkLogIconSlot>
+            <WorkLogIconSlot accessibilityLabel={warning ? "Usage limit" : "Error"}>
               <WorkLogIcon
                 icon="exclamationmark.circle"
                 color={props.iconSubtleColor}
@@ -1083,6 +1093,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
+  const iconLabel = workEntryIconPresentation(row.workEntry).label;
   const outgoing = workEntryOutgoingMessage(row.workEntry);
 
   return (
@@ -1098,7 +1109,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         accessibilityRole={
           notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
         }
-        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
+        accessibilityLabel={`${iconLabel}: ${failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}`}
         accessibilityHint={
           notifiedSubagentThreadId !== undefined
             ? "Opens this agent's thread. Long press to copy."
@@ -1130,6 +1141,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           <ShimmeringWorkContent
             environmentId={props.environmentId}
             icon={icon}
+            iconLabel={iconLabel}
             iconSubtleColor={props.iconSubtleColor}
             label={displayText}
             showIcon
@@ -1138,7 +1150,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           />
         ) : (
           <>
-            <WorkLogIconSlot>
+            <WorkLogIconSlot accessibilityLabel={iconLabel}>
               {toolIcon ? (
                 <ToolActivityIconView
                   environmentId={props.environmentId}
@@ -1384,7 +1396,14 @@ export function ThreadWorkGroupToggle(props: {
   readonly onToggle: () => void;
 }) {
   const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
-  const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
+  const iconLabel = (
+    props.summaryToolIcon
+      ? workLogIcons[props.summaryToolIcon]
+      : props.toolSurface
+        ? workLogIcons[props.toolSurface]
+        : toolGroupIconPresentation(props.summaryKind)
+  ).label;
+  const accessibilityLabel = `${iconLabel}: ${props.thought ? `${props.thought} ${statusLabel}` : statusLabel}`;
   const icon =
     props.summaryToolIcon ??
     (props.toolSurface
@@ -1399,7 +1418,7 @@ export function ThreadWorkGroupToggle(props: {
           onPress={props.onToggle}
           className="flex-row items-start gap-1.5 rounded-md px-0.5 active:bg-subtle"
         >
-          <WorkLogIconSlot>
+          <WorkLogIconSlot accessibilityLabel={workLogIcons.brain.label}>
             <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
           </WorkLogIconSlot>
           <Text
@@ -1431,6 +1450,7 @@ export function ThreadWorkGroupToggle(props: {
                 key={props.rowSizing.textSizeKey}
                 environmentId={props.environmentId}
                 icon={icon}
+                iconLabel={iconLabel}
                 iconSubtleColor={props.iconSubtleColor}
                 label={props.summary}
                 showIcon
@@ -1439,7 +1459,7 @@ export function ThreadWorkGroupToggle(props: {
               />
             ) : (
               <>
-                <WorkLogIconSlot>
+                <WorkLogIconSlot accessibilityLabel={iconLabel}>
                   <ToolActivityIconView
                     environmentId={props.environmentId}
                     icon={props.toolIcon}
@@ -1479,6 +1499,7 @@ export function ThreadThinkingRow(props: {
       <ShimmeringWorkContent
         key={props.rowSizing.textSizeKey}
         icon="brain"
+        iconLabel={workLogIcons.brain.label}
         iconSubtleColor={props.iconSubtleColor}
         label="Thinking"
         showIcon

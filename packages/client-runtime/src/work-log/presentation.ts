@@ -20,7 +20,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { isJavaScriptReplTool, classifyToolActivity } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -128,6 +128,143 @@ export type ToolGroupSummaryKind =
   | "agent-tool"
   | "tone-tool"
   | "mixed";
+
+export const workLogIcons = {
+  bot: { iconName: "bot", label: "Subagent" },
+  brain: { iconName: "brain", label: "Thinking" },
+  browser: { iconName: "browser", label: "Browser" },
+  check: { iconName: "check", label: "Update" },
+  "list-todo": { iconName: "list-todo", label: "Plan" },
+  "circle-alert": { iconName: "circle-alert", label: "Error" },
+  computer: { iconName: "computer", label: "Computer use" },
+  code: { iconName: "code", label: "JavaScript" },
+  device: { iconName: "device", label: "Device" },
+  eye: { iconName: "eye", label: "Read file" },
+  globe: { iconName: "globe", label: "Searched web" },
+  hammer: { iconName: "hammer", label: "Work" },
+  "message-circle": { iconName: "message-circle", label: "Message" },
+  search: { iconName: "search", label: "Searched" },
+  "square-pen": { iconName: "square-pen", label: "Edited file" },
+  terminal: { iconName: "terminal", label: "Ran command" },
+  "pull-request": { iconName: "pull-request", label: "Pull request" },
+  "t3-code": { iconName: "t3-code", label: "Weavewing" },
+  wrench: { iconName: "wrench", label: "Tool" },
+  x: { iconName: "x", label: "Failed" },
+  zap: { iconName: "zap", label: "Tool" },
+} as const;
+
+export type WorkLogIconName = keyof typeof workLogIcons;
+
+export interface WorkLogIconPresentation {
+  readonly iconName: WorkLogIconName;
+  readonly label: string;
+}
+
+export function toolGroupIconPresentation(kind: ToolGroupSummaryKind): WorkLogIconPresentation {
+  switch (kind) {
+    case "pull-request":
+    case "link-pr":
+    case "unlink-pr":
+    case "list-prs":
+    case "watch-pr":
+    case "unwatch-pr":
+      return workLogIcons["pull-request"];
+    case "read":
+      return workLogIcons["eye"];
+    case "edit":
+      return workLogIcons["square-pen"];
+    case "command":
+      return workLogIcons["terminal"];
+    case "thread-create":
+      return workLogIcons["t3-code"];
+    case "browser":
+      return workLogIcons["browser"];
+    case "device":
+      return workLogIcons["device"];
+    case "search":
+      return workLogIcons["globe"];
+    case "code-search":
+      return workLogIcons["search"];
+    case "other":
+      return workLogIcons["wrench"];
+    case "dynamic-tool":
+      return workLogIcons["hammer"];
+    case "reasoning":
+      return workLogIcons["brain"];
+    case "agent-tool":
+      return workLogIcons["bot"];
+    case "tone-tool":
+      return workLogIcons["zap"];
+    case "update":
+    case "mixed":
+      return workLogIcons["hammer"];
+  }
+}
+
+export function workEntryIconPresentation(
+  workEntry: WorkLogPresentationEntry,
+): WorkLogIconPresentation {
+  if (workEntry.structuredPayload?.type === "notification") {
+    if (workEntry.structuredPayload.outcome === "failed") return workLogIcons["circle-alert"];
+    const source = workEntry.structuredPayload.source;
+    switch (source.kind) {
+      case "subagent":
+      case "delegated_task":
+        return workLogIcons["bot"];
+      case "command":
+        return workLogIcons["terminal"];
+      case "monitor":
+        return { iconName: "eye", label: "Monitor" };
+      case "thread_reply":
+        return { iconName: "message-circle", label: "Thread reply" };
+      case "background_task":
+        return { iconName: "zap", label: "Background task" };
+      case "system":
+        return workLogIcons["t3-code"];
+      default:
+        source satisfies never;
+        return workLogIcons["zap"];
+    }
+  }
+  if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
+    return {
+      iconName: "message-circle",
+      label: workEntry.itemType === "user_input_request" ? "Question" : "Approval request",
+    };
+  }
+  if (workEntry.itemType === "todo_list") return workLogIcons["list-todo"];
+  if (workEntry.toolSurface) return workLogIcons[workEntry.toolSurface];
+  if (
+    workEntry.structuredPayload?.type === "dynamic_tool" &&
+    isJavaScriptReplTool(workEntry.structuredPayload.toolName)
+  )
+    return workLogIcons["code"];
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  if (toolPresentation) return workLogIcons[toolPresentation.icon];
+  const action = toolGroupAction(workEntry);
+  if (action !== "other") return toolGroupIconPresentation(action);
+
+  switch (workEntry.itemType) {
+    case "dynamic_tool": {
+      const toolName = workEntryToolName(workEntry)?.split(/[./]/u).at(-1);
+      return /^(?:web[_-]?)?fetch$/iu.test(toolName ?? "")
+        ? { iconName: "wrench", label: "Web fetch" }
+        : workLogIcons.wrench;
+    }
+    case "subagent":
+      return workLogIcons["bot"];
+  }
+
+  return workLogIcons[
+    workEntry.tone === "error"
+      ? "circle-alert"
+      : workEntry.tone === "thinking"
+        ? "brain"
+        : workEntry.tone === "info"
+          ? "check"
+          : "zap"
+  ];
+}
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();

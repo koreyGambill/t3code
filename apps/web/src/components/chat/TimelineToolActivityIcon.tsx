@@ -1,8 +1,10 @@
+import type { WorkLogIconName as WorkEntryIconName } from "@t3tools/client-runtime/work-log/presentation";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
-import { use, useState } from "react";
+import { use, useState, type ReactNode } from "react";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { WeavewingMark } from "../WeavewingMark";
 import {
   BotIcon,
@@ -33,28 +35,20 @@ export function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boo
   return toolIcon === undefined;
 }
 
-export type WorkEntryIconName =
-  | "bot"
-  | "brain"
-  | "browser"
-  | "check"
-  | "list-todo"
-  | "circle-alert"
-  | "computer"
-  | "code"
-  | "device"
-  | "eye"
-  | "globe"
-  | "hammer"
-  | "message-circle"
-  | "search"
-  | "square-pen"
-  | "terminal"
-  | "pull-request"
-  | "t3-code"
-  | "wrench"
-  | "x"
-  | "zap";
+export type { WorkLogIconName as WorkEntryIconName } from "@t3tools/client-runtime/work-log/presentation";
+
+export function WorkEntryIconTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="inline-flex shrink-0" role="img" aria-label={label} />}
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 function BrowserAppIcon({ className }: { className: string }) {
   return (

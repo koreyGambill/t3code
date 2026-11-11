@@ -5,6 +5,8 @@ import * as DateTime from "effect/DateTime";
 
 import {
   resolveWorkEntryToolPresentation,
+  workEntryIconPresentation,
+  toolGroupIconPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -13,7 +15,7 @@ import {
 
 function commandItem(
   fields: Partial<Extract<OrchestrationV2TurnItem, { type: "command_execution" }>> = {},
-): OrchestrationV2TurnItem {
+): Extract<OrchestrationV2TurnItem, { type: "command_execution" }> {
   return {
     id: TurnItemId.make("command"),
     threadId: ThreadId.make("thread"),
@@ -202,5 +204,61 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("work row icon presentation", () => {
+  const base: WorkLogPresentationEntry = {
+    id: "work",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "Work",
+    tone: "tool",
+  };
+
+  it.each([
+    [{ itemType: "command_execution", command: "ls" }, "terminal", "Ran command"],
+    [{ requestKind: "file-read" }, "eye", "Read file"],
+    [{ itemType: "file_search" }, "search", "Searched"],
+    [{ itemType: "web_search" }, "globe", "Searched web"],
+    [{ itemType: "subagent" }, "bot", "Subagent"],
+    [{ itemType: "dynamic_tool", toolData: { toolName: "WebFetch" } }, "wrench", "Web fetch"],
+    [{ itemType: "dynamic_tool", toolData: { toolName: "unknown_tool" } }, "wrench", "Tool"],
+    [{ toolSurface: "computer" }, "computer", "Computer use"],
+    [{ tone: "thinking" }, "brain", "Thinking"],
+    [{ tone: "error" }, "circle-alert", "Error"],
+    [{ tone: "info" }, "hammer", "Work"],
+    [{}, "zap", "Tool"],
+  ] satisfies ReadonlyArray<readonly [Partial<WorkLogPresentationEntry>, string, string]>)(
+    "names the activity for %j",
+    (entry, iconName, label) => {
+      expect(workEntryIconPresentation({ ...base, ...entry })).toEqual({ iconName, label });
+    },
+  );
+
+  it("distinguishes monitor notifications from file reads sharing the eye icon", () => {
+    const structuredPayload: OrchestrationV2TurnItem = {
+      ...commandItem(),
+      type: "notification",
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: "Monitor finished",
+    };
+    expect(workEntryIconPresentation({ ...base, structuredPayload })).toEqual({
+      iconName: "eye",
+      label: "Monitor",
+    });
+    expect(workEntryIconPresentation({ ...base, requestKind: "file-read" })).toEqual({
+      iconName: "eye",
+      label: "Read file",
+    });
+  });
+
+  it.each([
+    ["read", "eye", "Read file"],
+    ["command", "terminal", "Ran command"],
+    ["agent-tool", "bot", "Subagent"],
+    ["mixed", "hammer", "Work"],
+  ] as const)("names grouped %s activity", (kind, iconName, label) => {
+    expect(toolGroupIconPresentation(kind)).toEqual({ iconName, label });
   });
 });

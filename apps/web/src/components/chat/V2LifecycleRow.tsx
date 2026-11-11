@@ -1,3 +1,5 @@
+import { workLogIcons } from "@t3tools/client-runtime/work-log/presentation";
+import { WorkEntryIconTooltip } from "./TimelineToolActivityIcon";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -133,7 +135,11 @@ export function V2LifecycleRow(props: {
     return (
       <WorkLogRow
         data-v2-item-type={item.type}
-        icon={<WeavewingMark className="size-4 text-icon-muted" aria-hidden />}
+        icon={
+          <WorkEntryIconTooltip label="Created thread">
+            <WeavewingMark className="size-4 text-icon-muted" aria-hidden />
+          </WorkEntryIconTooltip>
+        }
         label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
         trailing={
           <InlineButton
@@ -213,37 +219,39 @@ function SubagentAvatar({
   className?: string;
 }) {
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
-        className,
-      )}
-    >
-      {driver ? (
-        <ProviderInstanceIcon
-          driverKind={driver}
-          displayName={displayName ?? driver}
-          accentColor={accentColor}
-          acpRegistryIconUrl={iconUrl}
-          showBadge={showBadge}
-          size="compact"
-          className="z-auto"
-          iconClassName="size-3.5"
-        />
-      ) : (
-        <BotIcon className="size-3.5 text-muted-foreground" />
-      )}
-      {status ? (
-        <span
-          className={cn(
-            "absolute size-2 rounded-full ring-2 ring-background",
-            showBadge ? "-left-px -top-px" : "-right-px -bottom-px",
-            subagentStatusVisual(status).dotClass,
-          )}
-        />
-      ) : null}
-    </span>
+    <WorkEntryIconTooltip label={workLogIcons.bot.label}>
+      <span
+        aria-hidden
+        className={cn(
+          "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
+          className,
+        )}
+      >
+        {driver ? (
+          <ProviderInstanceIcon
+            driverKind={driver}
+            displayName={displayName ?? driver}
+            accentColor={accentColor}
+            acpRegistryIconUrl={iconUrl}
+            showBadge={showBadge}
+            size="compact"
+            className="z-auto"
+            iconClassName="size-3.5"
+          />
+        ) : (
+          <BotIcon className="size-3.5 text-muted-foreground" />
+        )}
+        {status ? (
+          <span
+            className={cn(
+              "absolute size-2 rounded-full ring-2 ring-background",
+              showBadge ? "-left-px -top-px" : "-right-px -bottom-px",
+              subagentStatusVisual(status).dotClass,
+            )}
+          />
+        ) : null}
+      </span>
+    </WorkEntryIconTooltip>
   );
 }
 

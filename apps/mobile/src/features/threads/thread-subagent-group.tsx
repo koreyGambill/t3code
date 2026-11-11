@@ -1,3 +1,4 @@
+import { workLogIcons } from "@t3tools/client-runtime/work-log/presentation";
 import { useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -77,7 +78,7 @@ function SubagentAvatar(props: {
     shouldShowInstanceBadge(badgeEntry, badgeEntries);
   return (
     <View
-      accessible={false}
+      accessibilityLabel={workLogIcons.bot.label}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
       {showBadge ? (
