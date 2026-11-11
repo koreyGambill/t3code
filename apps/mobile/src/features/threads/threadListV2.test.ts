@@ -206,6 +206,7 @@ describe("resolveThreadListV2Status", () => {
 
       expect(resolveThreadListV2Status(thread)).toBe(status);
       expect(threadHasUnseenCompletion(thread)).toBe(true);
+      expect(threadHasUnseenCompletion({ ...thread, latestRunQuiet: true })).toBe(false);
     },
   );
 });

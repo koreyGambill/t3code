@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  isQuietAssistantText,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -7,6 +8,11 @@ import {
 import type { ThreadStructureTurnItem } from "./models.ts";
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+
+/** Whether an assistant message consists entirely of the silent completion marker. */
+export function turnItemIsQuietAssistantMessage(item: OrchestrationV2TurnItem): boolean {
+  return item.type === "assistant_message" && isQuietAssistantText(item.text);
+}
 
 export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): boolean {
   return (

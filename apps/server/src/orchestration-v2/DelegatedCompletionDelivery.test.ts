@@ -791,6 +791,13 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       inlineFirst: true,
       inlineSecond: false,
     },
+    {
+      name: "quiet result",
+      first: " \n[quiet]\n ",
+      second: "b".repeat(17_000),
+      inlineFirst: false,
+      inlineSecond: false,
+    },
   ])("uses task_status for $name beyond the inline budget", (testCase) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -849,16 +856,24 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const message = projection.messages.find((candidate) => candidate.id === messageId)!;
       assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
       assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
-      const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
+      if (testCase.name === "quiet result") {
+        assert.include(message.text, "(quiet)");
+        assert.notInclude(message.text, "[quiet]");
+        assert.equal(
+          projection.subagents.find((candidate) => candidate.id === firstTaskId)?.result,
+          testCase.first,
+        );
+      }
+      const deferredTaskId = testCase.inlineSecond ? firstTaskId : secondTaskId;
       assert.include(
         message.text,
-        `Inspect regression (${deferredTaskId}) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
+        `Inspect regression (${deferredTaskId}) [${testCase.inlineSecond ? "failed" : "cancelled"}]`,
       );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.equal(
         projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
-        testCase.inlineFirst ? testCase.second : testCase.first,
+        testCase.inlineSecond ? testCase.first : testCase.second,
       );
     }),
   );

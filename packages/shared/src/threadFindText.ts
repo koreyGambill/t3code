@@ -1,3 +1,4 @@
+import { isQuietAssistantText } from "@t3tools/contracts";
 import {
   matchInlineSkills,
   formatProviderSkillDisplayName,
@@ -225,6 +226,7 @@ export function searchableMessageSegments(
     return markdownThreadFindText(text, true, cwd, skills);
   }
   if (message.role !== "assistant") return null;
+  if (isQuietAssistantText(message.text)) return [];
   return markdownThreadFindText(
     message.text || (message.streaming ? "" : "(empty response)"),
     false,

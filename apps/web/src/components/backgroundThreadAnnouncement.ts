@@ -11,6 +11,7 @@ export interface BackgroundThreadSnapshot {
   readonly requestId: string | null;
   readonly runId: RunId | null;
   readonly runStatus: OrchestrationV2RunStatus | null;
+  readonly latestRunQuiet?: boolean;
   /** The run doing work now, which can be older than a queued run cancelled while it ran. */
   readonly activeRunId: RunId | null;
   /** A snoozed thread stays hidden until its timer, so it stays quiet too. */
@@ -74,7 +75,12 @@ export function nextBackgroundThreadAnnouncement(
     // cancelled before it started) isn't the thread finishing. The shell then
     // only reports the latest run, so the working run's own ending stays quiet.
     const anotherRunWorking = thread.activeRunId !== null && thread.activeRunId !== thread.runId;
-    if (outcome !== null && thread.runId !== before.settledRunId && !anotherRunWorking) {
+    if (
+      outcome !== null &&
+      thread.runId !== before.settledRunId &&
+      !anotherRunWorking &&
+      !(thread.latestRunQuiet && thread.runStatus === "completed")
+    ) {
       announcements.push(`${outcome}: ${thread.title}`);
     }
   }

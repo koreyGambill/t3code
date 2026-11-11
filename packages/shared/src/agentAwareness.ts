@@ -47,6 +47,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "id"
     | "lineage"
     | "latestRunStopRequested"
+    | "latestRunQuiet"
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
@@ -66,7 +67,11 @@ export function projectThreadAwarenessV2(
   if (phase === null) {
     return null;
   }
-  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  if (
+    phase === "completed" &&
+    (thread.latestRunStopRequested === true || thread.latestRunQuiet === true)
+  )
+    return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
   if (
     thread.settledOverride === "settled" &&

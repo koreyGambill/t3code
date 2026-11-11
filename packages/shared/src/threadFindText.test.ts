@@ -42,6 +42,18 @@ it("excludes the hidden prompt of an attachment-only message", () => {
   ).toEqual([]);
 });
 
+it("excludes quiet assistant replies while preserving user text and literal mentions", () => {
+  expect(
+    searchableMessageSegments({ role: "assistant", text: " \n[quiet]\n", streaming: false }),
+  ).toEqual([]);
+  expect(searchableMessageSegments({ role: "user", text: "[quiet]", streaming: false })).toEqual([
+    "[quiet]",
+  ]);
+  expect(
+    searchableMessageSegments({ role: "assistant", text: "Use [quiet]", streaming: false }),
+  ).toEqual(["Use [quiet]"]);
+});
+
 it("does not upgrade literal legacy tags in messages with structured context", () => {
   const text =
     "<terminal_context>\n- Terminal 1 line 12:\n  12 | visible output\n</terminal_context>";

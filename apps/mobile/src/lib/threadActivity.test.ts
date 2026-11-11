@@ -370,6 +370,25 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("hides quiet assistant text when a cached feed changes", () => {
+    const cache = createThreadFeedCache();
+    const user = projected({ ...userMessage(), text: "[quiet]" }, 0);
+    for (const [text, count] of [
+      ["Starting", 2],
+      ["[quiet]", 1],
+      ["A [quiet] marker", 2],
+    ] as const) {
+      const rows = [user, projected({ ...assistantMessage(), text }, 1)];
+      const feed = buildThreadFeed(rows, { cache });
+      expect(feed).toHaveLength(count);
+      expect(feed).toEqual(buildThreadFeed(rows));
+      expect(feed[0]).toMatchObject({
+        type: "message",
+        message: { role: "user", text: "[quiet]" },
+      });
+    }
+  });
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

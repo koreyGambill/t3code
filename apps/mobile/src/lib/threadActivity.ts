@@ -2,7 +2,10 @@ import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  turnItemIsQuietAssistantMessage,
+  turnItemIsWorkspacePreparation,
+} from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -53,7 +56,13 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  idleCompactionOf,
+  isCompactionCommandMessage,
+  isQuietAssistantText,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -687,7 +696,9 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "link_request":
       return item.reason || null;
     case "subagent":
-      return item.result ?? item.progress ?? item.prompt;
+      return item.result && isQuietAssistantText(item.result)
+        ? null
+        : (item.result ?? item.progress ?? item.prompt);
     case "dynamic_tool":
       return null;
     case "notification":
@@ -2066,7 +2077,12 @@ export function buildThreadFeed(
     const row = visibleTurnItems[index]!;
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
-    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (
+      item.type === "todo_list" ||
+      item.type === "checkpoint" ||
+      turnItemIsQuietAssistantMessage(item)
+    )
+      continue;
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&

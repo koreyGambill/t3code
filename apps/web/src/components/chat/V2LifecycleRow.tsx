@@ -23,6 +23,7 @@ import {
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  isQuietAssistantText,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
   type OrchestrationV2Notification,
@@ -433,7 +434,9 @@ function SubagentTimelineLink(props: {
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
   const rawDetail = settled ? result || progress : progress || result;
   const detail =
-    rawDetail && !GENERIC_CHILD_END.test(rawDetail) ? plainDetail(rawDetail) || null : null;
+    rawDetail && !isQuietAssistantText(rawDetail) && !GENERIC_CHILD_END.test(rawDetail)
+      ? plainDetail(rawDetail) || null
+      : null;
   const failed = status === "failed";
   const timing = {
     status: liveStatus,

@@ -25,6 +25,7 @@ describe("projectThreadAwarenessV2", () => {
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
         | "latestRunStopRequested"
+        | "latestRunQuiet"
         | "status"
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
@@ -48,20 +49,37 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
-  it("does not announce completion after a manual stop", () => {
-    const input = {
-      environmentId: "env-1" as EnvironmentId,
-      project,
-      thread: v2Thread({ status: "completed" }),
-    };
-    expect(projectThreadAwarenessV2(input)?.phase).toBe("completed");
-    expect(
-      projectThreadAwarenessV2({
-        ...input,
-        thread: { ...input.thread, latestRunStopRequested: true },
-      }),
-    ).toBeNull();
-  });
+  it.each(["latestRunStopRequested", "latestRunQuiet"] as const)(
+    "does not announce completion for %s",
+    (field) => {
+      const input = {
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ status: "completed" }),
+      };
+      expect(projectThreadAwarenessV2(input)?.phase).toBe("completed");
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: { ...input.thread, [field]: true },
+        }),
+      ).toBeNull();
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: {
+            ...input.thread,
+            [field]: true,
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("approval"),
+              kind: "command",
+              createdAt: updatedAt,
+            },
+          },
+        })?.phase,
+      ).toBe("waiting_for_approval");
+    },
+  );
 
   it.each([
     ["running", "subagent"],

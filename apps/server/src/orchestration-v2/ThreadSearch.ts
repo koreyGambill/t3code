@@ -1,5 +1,6 @@
 import {
   IsoDateTime,
+  isQuietAssistantText,
   MessageId,
   OrchestrationThreadSearchSource,
   OrchestrationV2AppThreadJson,
@@ -458,6 +459,7 @@ export const make = Effect.gen(function* () {
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
     for (const row of rows) {
+      if (row.source === "assistant" && isQuietAssistantText(row.text)) continue;
       const text = row.text.replace(MARKDOWN_LINK, "$1");
       const match = matchMessage(text);
       if (match === null) continue;

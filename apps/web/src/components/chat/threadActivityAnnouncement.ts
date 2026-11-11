@@ -18,6 +18,7 @@ export interface ThreadActivitySnapshot {
   readonly requestId: string | null;
   readonly runId: RunId | null;
   readonly runStatus: OrchestrationV2RunStatus | null;
+  readonly quiet?: boolean;
 }
 
 export interface ThreadAnnouncementMemory {
@@ -170,6 +171,6 @@ export function nextThreadAnnouncement(
   }
   return {
     memory: { ...memory, turnRunId: null, settledRunId: next.runId },
-    announcement: outcome,
+    announcement: next.quiet && next.runStatus === "completed" ? null : outcome,
   };
 }

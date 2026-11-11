@@ -38,7 +38,10 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  turnItemIsQuietAssistantMessage,
+  turnItemIsWorkspacePreparation,
+} from "@t3tools/client-runtime/state/turn-item-presentation";
 
 import {
   isImageAttachment,
@@ -602,7 +605,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
-    if (item.type === "checkpoint") continue;
+    if (item.type === "checkpoint" || turnItemIsQuietAssistantMessage(item)) continue;
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&
@@ -893,6 +896,7 @@ export function isStreamingTurnItemTextUpdate(
     nextItem.type !== "assistant_message" ||
     !previousItem.streaming ||
     !nextItem.streaming ||
+    turnItemIsQuietAssistantMessage(previousItem) !== turnItemIsQuietAssistantMessage(nextItem) ||
     !shallow(previousSource, nextSource) ||
     projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
   ) {

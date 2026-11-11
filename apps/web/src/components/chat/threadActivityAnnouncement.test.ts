@@ -47,6 +47,20 @@ describe("nextThreadAnnouncement", () => {
     ).toEqual(["Working", "Done"]);
   });
 
+  it("silences quiet completion without replaying it or suppressing later attention", () => {
+    const thirdRun = RunId.make("run-3");
+    expect(
+      speak([
+        idle(firstRun, "completed"),
+        busy(),
+        { ...idle(secondRun, "completed"), quiet: true },
+        idle(secondRun, "completed"),
+        { ...busy("approval", thirdRun), quiet: true },
+        { ...idle(thirdRun, "failed"), quiet: true },
+      ]),
+    ).toEqual(["Working", "Needs approval", "Failed"]);
+  });
+
   it("says Working once when a send looks idle before its run appears", () => {
     expect(
       speak([idle(null, null), busy(), idle(null, null), busy(), idle(secondRun, "completed")]),
