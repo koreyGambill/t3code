@@ -1,3 +1,4 @@
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -5,6 +6,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
@@ -98,8 +100,19 @@ describe("CommandPalette open intents", () => {
       updatedAt: "2026-03-01T00:00:00.000Z",
       scripts: [],
     });
+    const acme = project("acme", "Acme");
+    using storage = new DisposableStack();
+    const previousProject = localStorage.getItem(LAST_USED_PROJECT_STORAGE_KEY);
+    storage.defer(() => {
+      if (previousProject === null) localStorage.removeItem(LAST_USED_PROJECT_STORAGE_KEY);
+      else localStorage.setItem(LAST_USED_PROJECT_STORAGE_KEY, previousProject);
+    });
+    localStorage.setItem(
+      LAST_USED_PROJECT_STORAGE_KEY,
+      JSON.stringify(scopedProjectKey({ environmentId, projectId: acme.id })),
+    );
     setup({
-      projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
+      projects: [acme, project("beta", "Beta"), project("gamma", "Gamma")],
     });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
@@ -107,6 +120,9 @@ describe("CommandPalette open intents", () => {
     await expect
       .element(page.getByPlaceholder("Search commands, projects, and threads..."))
       .toHaveFocus();
+    await expect
+      .element(page.getByRole("option", { name: /^New thread in Acme/ }))
+      .toHaveAttribute("data-highlighted");
     await userEvent.keyboard("{ArrowDown}");
     await expect
       .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
