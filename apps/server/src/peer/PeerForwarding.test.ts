@@ -119,6 +119,7 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
           ({
             thread,
             runs: [run("completed")],
+            providerTurns: [],
             runtimeRequests: [],
             messages: [],
             turnItems: [],

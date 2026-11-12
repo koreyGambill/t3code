@@ -290,6 +290,7 @@ it("waits for nested work and retains the report across monitor acknowledgements
     );
   }
   for (const [awaited, state] of [
+    [undefined, "waiting_for_children"],
     [true, "waiting_for_children"],
     [false, "result_available"],
   ] as const) {
@@ -299,8 +300,16 @@ it("waits for nested work and retains the report across monitor acknowledgements
         providerThreads: [
           {
             pendingBackgroundTasks: [
-              { taskId: "background-audit", kind: "command", ...(awaited ? { awaited } : {}) },
-              { taskId: "log-watcher", kind: "monitor" },
+              {
+                taskId: "background-audit",
+                kind: "command",
+                ...(awaited === undefined ? {} : { awaited }),
+              },
+              {
+                taskId: "log-watcher",
+                kind: "monitor",
+                ...(awaited === undefined ? {} : { awaited }),
+              },
             ],
           },
         ],

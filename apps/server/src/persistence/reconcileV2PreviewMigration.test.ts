@@ -60,8 +60,13 @@ describe("V2 preview upgrade", () => {
         [78, "DropOrchestrationEventCorrelationIndex"],
         [79, "DelegatedRecoveryIndexes"],
         [80, "ScheduledTaskThreadMode"],
-        [81, "ProjectionMessageSearchText"],
-        [82, "TurnItemConversationIndex"],
+        [81, "DevelopmentEnvironmentUsage"],
+        [82, "ThreadReplyRequests"],
+        [83, "Monitoring"],
+        [84, "RemoteThreadReplies"],
+        [85, "ScheduledTaskFingerprint"],
+        [86, "ProjectionMessageSearchText"],
+        [87, "TurnItemConversationIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -165,8 +170,13 @@ describe("V2 preview upgrade", () => {
         [78, "DropOrchestrationEventCorrelationIndex"],
         [79, "DelegatedRecoveryIndexes"],
         [80, "ScheduledTaskThreadMode"],
-        [81, "ProjectionMessageSearchText"],
-        [82, "TurnItemConversationIndex"],
+        [81, "DevelopmentEnvironmentUsage"],
+        [82, "ThreadReplyRequests"],
+        [83, "Monitoring"],
+        [84, "RemoteThreadReplies"],
+        [85, "ScheduledTaskFingerprint"],
+        [86, "ProjectionMessageSearchText"],
+        [87, "TurnItemConversationIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

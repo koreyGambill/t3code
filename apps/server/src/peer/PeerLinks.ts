@@ -28,6 +28,7 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -200,6 +201,8 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const isOwnLoopback = yield* LoopbackHost;
+  // Relinking revokes the earlier peer credential, so exchange and local persistence must stay ordered.
+  const linking = yield* Semaphore.make(1);
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -570,13 +573,11 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.catch(failStorage));
       return previous;
     }).pipe(Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)));
-    // Linking again replaces the old token. A racing link may leave its own
-    // behind; it is unused either way.
     if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
       yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
     }
     return linked;
-  });
+  }, linking.withPermits(1));
 
   /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
   const withLabel = (link: PeerLink, label: string) =>

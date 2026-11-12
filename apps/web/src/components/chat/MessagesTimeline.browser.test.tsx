@@ -1111,6 +1111,7 @@ const CITATION_REQUEST = {
 
 describe("MessagesTimeline citations", () => {
   it("lands a citation present at mount under StrictMode", async () => {
+    setup();
     await using _screen = await renderElement(
       <StrictMode>
         <MessagesTimeline
@@ -1135,6 +1136,7 @@ describe("MessagesTimeline citations", () => {
   });
 
   it("opens the superseded attempt that folds the cited response", async () => {
+    setup();
     const runId = RunId.make("run-steered");
     const attempt = (id: string, ordinal: number, status: "superseded" | "running") => ({
       id: RunAttemptId.make(id),
@@ -1171,6 +1173,7 @@ describe("MessagesTimeline citations", () => {
   });
 
   it("waits for cited history to load before giving up on a response outside the window", async () => {
+    setup();
     using toast = vi.spyOn(toastManager, "add");
     const props = baseProps();
     const citationRequest = CITATION_REQUEST;

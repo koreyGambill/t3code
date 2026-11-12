@@ -65,6 +65,13 @@ const fixture = Effect.gen(function* () {
     Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       streamDomainEvents: Stream.fromQueue(events),
+      getThreadShell: () =>
+        Effect.succeed({
+          projectId: "project:test",
+          archivedAt: null,
+          deletedAt: null,
+        } as never),
+      getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
       sendToThread: (message) =>
         Ref.update(sends, (all) => [...all, message]).pipe(Effect.as({} as never)),
     }),

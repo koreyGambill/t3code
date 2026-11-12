@@ -97,7 +97,7 @@ it("sends a Codex follow-up on a cold Claude thread without compacting first", a
   });
   await expect.element(page.getByText(`Answer 2 for ${thread.id}.`)).toBeVisible();
   const compactAndSend = page.getByRole("button", { name: "Compact and send" });
-  await expect.element(compactAndSend).toBeVisible();
+  await expect.element(compactAndSend).not.toBeInTheDocument();
 
   await page.getByRole("button", { name: "Claude Opus 4.6", exact: true }).click();
   // The picker lists only the active provider's models until you search.

@@ -307,7 +307,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("readThread marks automatic /compact prompts across pages and leaves a typed one alone", async () => {
+it("readThread marks legacy automatic /compact prompts across pages and leaves a typed one alone", async () => {
   const compactRows = (
     [
       ["turn-item-compact-on-return", "message-compact-on-return", "onReturn"],
@@ -352,6 +352,7 @@ it("readThread marks automatic /compact prompts across pages and leaves a typed 
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: compactRows.map(({ message }) => message),
     contextTransfers: [],

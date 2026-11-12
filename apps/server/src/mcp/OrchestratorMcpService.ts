@@ -1349,41 +1349,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Task waits read on every wake of a parent that may hold thousands of
-  // tasks, so they read only the task they watch and what its status needs.
-  const loadTaskParent = (threadId: ThreadId) =>
-    threadManagement
-      .getThreadRecords(threadId, ["runs", "contextTransfers"])
-      .pipe(
-        Effect.mapError((error) =>
-          failure(
-            "orchestration_error",
-            `Unable to read thread ${threadId}: ${errorMessage(error)}`,
-          ),
-        ),
-      );
-
-  const loadProjectThread = (
-    projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
-    threadId: ThreadId,
-  ) =>
-    threadManagement
-      .getProjectThreadRecords(
-        { projectId, threadId },
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "contextTransfers",
-          "turnItems",
-        ],
-        { turnItemTypes: [], messageRoles: ["user"] },
-      )
-      .pipe(Effect.mapError(threadManagementFailure));
-
   const loadCaller = Effect.fn("OrchestratorMcpService.loadCaller")(function* <K extends "runs">(
     scope: McpInvocationScope,
     fields: ReadonlyArray<K>,

@@ -265,11 +265,11 @@ it.effect.each(["list_update", "list_rewrite", "artifact_write"])(
     Effect.gen(function* () {
       const result = yield* call(name, {
         expectedRevision: 3,
-        changes: [],
-        items: [],
-        title: "Design",
-        format: "markdown",
-        content: "Saved",
+        ...(name === "list_update"
+          ? { changes: [] }
+          : name === "list_rewrite"
+            ? { items: [] }
+            : { title: "Design", format: "markdown", content: "Saved" }),
       });
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).not.toHaveProperty("artifacts");
@@ -296,7 +296,10 @@ it.effect.each(["list_update", "list_rewrite"])(
   (name) =>
     Effect.gen(function* () {
       const changes = [{ id: "item-39", text: "Task 39" }];
-      const result = yield* call(name, { expectedRevision: 3, changes, items: changes });
+      const result = yield* call(name, {
+        expectedRevision: 3,
+        ...(name === "list_update" ? { changes } : { items: changes }),
+      });
       expect(result.structuredContent).toEqual({
         revision: 4,
         items: [
@@ -316,13 +319,15 @@ it.effect.each(["list_update", "list_rewrite"])(
         id: `item-${index + 29}`,
         text: `Task ${index + 29}`,
       }));
-      const updated = yield* call(name, { expectedRevision: 3, changes: batch, items: batch });
+      const updated = yield* call(name, {
+        expectedRevision: 3,
+        ...(name === "list_update" ? { changes: batch } : { items: batch }),
+      });
       expect(JSON.stringify(updated.structuredContent).length).toBe(1190);
       const additions = [{ text: "New item" }];
       const created = yield* call(name, {
         expectedRevision: 3,
-        changes: additions,
-        items: additions,
+        ...(name === "list_update" ? { changes: additions } : { items: additions }),
       });
       expect(created.structuredContent).toMatchObject({
         revision: 4,

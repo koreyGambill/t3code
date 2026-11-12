@@ -1015,6 +1015,7 @@ function queuedRunBatch(projection: OrchestrationV2ThreadProjection, first: Orch
       run.freshContext !== true &&
       !transfers.has(run.id) &&
       message !== undefined &&
+      !isStalePullRequestWatchWake(projection, run) &&
       // Native wakes drain adapter-owned output without submitting a prompt.
       !(message.createdBy === "agent" && message.creationSource === "provider") &&
       message.attachments.length === 0 &&
@@ -2390,8 +2391,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.runs.some(isActiveRun) ||
-        worktreeSetupPending(projection)
+        projection.runs.some(isActiveRun)
       ) {
         return;
       }
@@ -2463,9 +2463,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
       const worktreeMissing =
-        failedRun?.id === options?.endedRunId &&
-        failedRun?.workspacePreparation?.type === "worktree" &&
-        projection.thread.worktreePath === null;
+        worktreeSetupPending(projection) ||
+        (failedRun?.id === options?.endedRunId &&
+          failedRun?.workspacePreparation?.type === "worktree" &&
+          projection.thread.worktreePath === null);
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
       const projectOverride =
         settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
@@ -16146,9 +16147,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             { messageRoles: ["user"] },
           )
           .pipe(mapDispatchError(command));
-        const followUpRun = child.runs
-          .filter((run) => run.delegatedTaskId === input.taskId)
-          .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        const followUpRun = delegatedTaskResultRun(child.runs, input.taskId);
         const unsettled =
           followUpRun === undefined
             ? child.thread.forkedFrom?.type === "node" &&
@@ -16171,9 +16170,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 { messageRoles: ["user"] },
               )
               .pipe(mapDispatchError(command));
-            const followUpRun = child.runs
-              .filter((run) => run.delegatedTaskId === input.taskId)
-              .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+            const followUpRun = delegatedTaskResultRun(child.runs, input.taskId);
             const monitorRunIds = new Set(
               child.messages
                 .filter((message) => message.notification?.source.kind === "monitor")

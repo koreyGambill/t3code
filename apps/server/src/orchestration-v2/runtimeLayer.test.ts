@@ -5486,6 +5486,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     "comments then newer head",
     "comment limit",
     "still watching",
+    "valid then stale",
     "closed notice",
     "closed notice unlinked and relinked",
     "reopened",
@@ -5501,6 +5502,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         mode === "closed notice" || mode === "closed notice unlinked and relinked";
       const deliverable =
         mode === "still watching" ||
+        mode === "valid then stale" ||
         mode === "closed notice" ||
         mode === "reopened" ||
         mode === "comments then newer head" ||
@@ -5540,6 +5542,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             : {}),
         },
       });
+      const staleWakeMessageId = MessageId.make(`${threadId}-stale-wake`);
+      if (mode === "valid then stale") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-stale-wake`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: { ...recordedWatch, headSha: "def456" },
+          wake: {
+            messageId: staleWakeMessageId,
+            text: "Stale checks failed",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary: "#7: stale checks failed",
+            },
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-restore-head`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: recordedWatch,
+        });
+      }
       const userMessageId = MessageId.make(`${threadId}-user`);
       yield* orchestrator.dispatch({
         type: "message.dispatch",
@@ -5694,10 +5724,55 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         after.runs.find((run) => run.id === wakeRun.id)?.status,
         deliverable ? "starting" : "cancelled",
       );
+      const deliveredWake = after.runs.find((run) => run.id === wakeRun.id)!;
+      const deliveredUser = after.runs.find((run) => run.id === userRun.id)!;
+      if (mode === "valid then stale") {
+        assert.isFalse(deliveredWake.inputMessageIds?.includes(staleWakeMessageId) ?? false);
+      }
       assert.equal(
-        after.runs.find((run) => run.id === userRun.id)?.status,
-        deliverable ? "queued" : "starting",
+        deliveredUser.status,
+        mode === "valid then stale" ? "queued" : deliverable ? "cancelled" : "starting",
       );
+      if (deliverable && mode !== "valid then stale") {
+        assert.equal(deliveredUser.mergedIntoRunId, deliveredWake.id);
+        assert.includeMembers(
+          [...(deliveredWake.inputMessageIds ?? [])],
+          [wakeMessageId, userMessageId],
+        );
+      }
+      if (mode === "valid then stale") {
+        const staleRun = after.runs.find((run) => run.userMessageId === staleWakeMessageId)!;
+        assert.equal(staleRun.status, "queued");
+        const afterWakeSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-wake-completed`),
+              type: "run.updated",
+              threadId,
+              runId: deliveredWake.id,
+              providerInstanceId: deliveredWake.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...deliveredWake, status: "completed", completedAt },
+            },
+          ],
+        });
+        yield* eventSink.stream({ threadId, afterSequence: afterWakeSequence }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === userRun.id &&
+              stored.event.payload.status === "starting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const afterWake = yield* orchestrator.getThreadProjection(threadId);
+        const cancelledWake = afterWake.runs.find((run) => run.id === staleRun.id)!;
+        assert.equal(cancelledWake.status, "cancelled");
+        assert.isUndefined(cancelledWake.mergedIntoRunId);
+        assert.equal(afterWake.runs.find((run) => run.id === userRun.id)?.status, "starting");
+      }
       if (!deliverable) {
         assert.equal(
           after.attempts.find((attempt) => attempt.id === wakeRun.activeAttemptId)?.status,

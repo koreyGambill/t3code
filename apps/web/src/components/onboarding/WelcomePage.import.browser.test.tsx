@@ -23,7 +23,15 @@ import { expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 import { act, render, stubGlobal } from "../../../test/render";
 import { page } from "vite-plus/test/browser";
-import { createHashHistory, createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider, useLocation } from "@tanstack/react-router";
+import {
+  createHashHistory,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+  useLocation,
+} from "@tanstack/react-router";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -99,7 +107,10 @@ vi.mock(import("../../state/environments"), async (original) => {
   return {
     ...(await original()),
     useEnvironments: (() => ({
-      environments: [state.selectedEnvironment, ...useAtomValue(state.addedEnvironments as Atom.Atom<string[]>)].map((environmentId) => ({ environmentId, label: environmentId })),
+      environments: [
+        state.selectedEnvironment,
+        ...useAtomValue(state.addedEnvironments as Atom.Atom<string[]>),
+      ].map((environmentId) => ({ environmentId, label: environmentId })),
     })) as never,
     usePrimaryEnvironmentId: (() => "primary") as never,
   };
@@ -543,7 +554,9 @@ it("sets up a remote environment without probing WSL when local environments are
       <WelcomePage environmentId={remoteId} onDone={state.onDone} />
     </RegistryContext.Provider>,
   );
-  expect(new Set(state.scan.mock.calls.map(([call]) => call.environmentId))).toEqual(new Set([remoteId]));
+  expect(new Set(state.scan.mock.calls.map(([call]) => call.environmentId))).toEqual(
+    new Set([remoteId]),
+  );
   expect(bridge.getWslState).not.toHaveBeenCalled();
   expect(bridge.setWslBackendEnabled).not.toHaveBeenCalled();
 });

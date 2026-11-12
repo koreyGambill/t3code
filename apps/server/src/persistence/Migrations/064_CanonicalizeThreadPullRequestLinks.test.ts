@@ -156,6 +156,7 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
       `;
       assert.equal(v1?.payload_json, v1Payload);
 
+      yield* runMigrations();
       const maintenance = yield* ProjectionReplay.ProjectionReplay;
       assert.isTrue((yield* maintenance.rebuild).valid);
       for (const [host, repository, id] of [

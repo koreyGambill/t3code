@@ -3304,6 +3304,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       "backgroundHeld",
       "after-cancel",
       "cancelled",
+      "cancelled-merged",
     ] as const;
     it.effect.each(
       outcomes.flatMap((outcome) =>
@@ -3320,6 +3321,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           const eventSink = yield* EventSink.EventSinkV2;
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           const now = yield* DateTime.now;
+          const mergedCancellation = outcome === "cancelled-merged";
+          const cancelled = outcome === "cancelled" || mergedCancellation;
           const parentThreadId = ThreadId.make(`thread:followup-${outcome}-${sender}`);
           const projectId = ProjectId.make(`project:followup-${outcome}-${sender}`);
           const parentRunId = RunId.make(`run:followup-${outcome}-${sender}`);
@@ -3525,19 +3528,47 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               { taskId: "dev-server", kind: "command", awaited: false },
             ]);
           }
-          if (outcome === "cancelled") {
+          if (cancelled) {
             // task_cancel reaches the follow-up after its turn ended, while background work runs.
             yield* eventSink.write({
-              commandId: reconcileCommandId("followup-waiting"),
+              commandId: reconcileCommandId(`followup-waiting-${outcome}`),
               events: [
                 {
-                  id: EventId.make("event:followup-waiting"),
+                  id: EventId.make(`event:followup-waiting-${outcome}`),
                   type: "run.updated",
                   threadId: child.childThreadId,
                   runId: run.id,
                   occurredAt: now,
-                  payload: { ...run, status: "waiting", startedAt: now },
+                  payload: {
+                    ...run,
+                    status: "waiting",
+                    startedAt: now,
+                    ...(mergedCancellation
+                      ? { delegatedTaskId: NodeId.make("node:followup-merged-target") }
+                      : {}),
+                  },
                 },
+                ...(mergedCancellation
+                  ? [
+                      {
+                        id: EventId.make("event:followup-cancelled-merged-source"),
+                        type: "run.updated" as const,
+                        threadId: child.childThreadId,
+                        runId: RunId.make("run:followup-cancelled-merged-source"),
+                        occurredAt: now,
+                        payload: {
+                          ...run,
+                          id: RunId.make("run:followup-cancelled-merged-source"),
+                          ordinal: run.ordinal + 1,
+                          userMessageId: MessageId.make("message:followup-cancelled-merged-source"),
+                          status: "cancelled" as const,
+                          startedAt: null,
+                          completedAt: now,
+                          mergedIntoRunId: run.id,
+                        },
+                      },
+                    ]
+                  : []),
               ],
             });
             yield* orchestrator.cancelDelegatedTask({
@@ -3551,28 +3582,36 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               },
               stopDescendants: () => Effect.void,
             });
+            const cancelledTask = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).subagents.find((task) => task.id === run.delegatedTaskId);
+            assert.equal(cancelledTask?.cancelledRunId, run.id);
           }
           yield* eventSink.write({
             commandId: reconcileCommandId(`followup-finish-${outcome}-${sender}`),
             events: [
-              {
-                id: EventId.make(`event:followup-question-${outcome}-${sender}`),
-                type: "runtime-request.updated",
-                threadId: child.childThreadId,
-                runId: run.id,
-                occurredAt: now,
-                payload: {
-                  id: RuntimeRequestId.make(`request:followup-${outcome}-${sender}`),
-                  nodeId: run.rootNodeId!,
-                  providerTurnId: null,
-                  nativeRequestRef: null,
-                  kind: "user_input",
-                  status: "pending",
-                  responseCapability: { type: "message" },
-                  createdAt: now,
-                  resolvedAt: null,
-                },
-              },
+              ...(mergedCancellation
+                ? []
+                : ([
+                    {
+                      id: EventId.make(`event:followup-question-${outcome}-${sender}`),
+                      type: "runtime-request.updated",
+                      threadId: child.childThreadId,
+                      runId: run.id,
+                      occurredAt: now,
+                      payload: {
+                        id: RuntimeRequestId.make(`request:followup-${outcome}-${sender}`),
+                        nodeId: run.rootNodeId!,
+                        providerTurnId: null,
+                        nativeRequestRef: null,
+                        kind: "user_input",
+                        status: "pending",
+                        responseCapability: { type: "message" },
+                        createdAt: now,
+                        resolvedAt: null,
+                      },
+                    },
+                  ] as const)),
               {
                 id: EventId.make(`event:followup-finish-${outcome}-${sender}`),
                 type: "run.updated",
@@ -3581,6 +3620,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 occurredAt: now,
                 payload: {
                   ...run,
+                  ...(mergedCancellation
+                    ? { delegatedTaskId: NodeId.make("node:followup-merged-target") }
+                    : {}),
                   status:
                     outcome === "stopped"
                       ? "interrupted"
@@ -3588,7 +3630,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                           outcome === "overlapping" ||
                           outcome === "backgroundHeld" ||
                           outcome === "after-cancel" ||
-                          outcome === "cancelled"
+                          cancelled
                         ? "completed"
                         : outcome,
                   startedAt: now,
@@ -3699,10 +3741,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           }
           // Only an interrupted or cancelled follow-up ends its question, even after the original
           // was cancelled.
-          const ended =
-            outcome === "stopped" || outcome === "interrupted" || outcome === "cancelled";
+          const ended = outcome === "stopped" || outcome === "interrupted" || cancelled;
           const { runtimeRequests } = yield* orchestrator.getThreadProjection(child.childThreadId);
-          assert.equal(runtimeRequests[0]?.status, ended ? "resolved" : "pending");
+          if (mergedCancellation) assert.isEmpty(runtimeRequests);
+          else assert.equal(runtimeRequests[0]?.status, ended ? "resolved" : "pending");
           const finished = yield* orchestrator.getThreadProjection(parentThreadId);
           assert.deepEqual(
             finished.subagents.find((task) => task.id === child.taskId),
@@ -3725,7 +3767,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           }
           assert.equal(
             followup.status,
-            outcome === "stopped" || outcome === "cancelled"
+            outcome === "stopped" || cancelled
               ? "interrupted"
               : outcome === "restarted" ||
                   outcome === "overlapping" ||
@@ -3736,9 +3778,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           );
           assert.equal(
             followup.completionDelivery?.state,
-            outcome === "stopped" || outcome === "cancelled" ? "disposed" : "claimed",
+            outcome === "stopped" || cancelled ? "disposed" : "claimed",
           );
-          assert.equal(followup.cancelledRunId, outcome === "cancelled" ? run.id : undefined);
+          assert.equal(followup.cancelledRunId, cancelled ? run.id : undefined);
           if (outcome === "overlapping") {
             const barrierId = MessageId.make("message:followup-queue-barrier");
             yield* requests.offer({
@@ -3761,7 +3803,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               ),
               sender !== "active parent",
             );
-          } else if (outcome !== "stopped" && outcome !== "cancelled") {
+          } else if (outcome !== "stopped" && !cancelled) {
             let wake = yield* requests.take;
             while (
               wake.threadId !== parentThreadId ||

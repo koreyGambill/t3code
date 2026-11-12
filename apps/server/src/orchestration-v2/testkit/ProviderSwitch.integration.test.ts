@@ -2336,8 +2336,7 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CODEX_MODEL_SELECTION,
             responseByRunOrdinal: {
               1: "Codex current turn complete",
-              2: "Codex first queued turn complete",
-              3: "Codex second queued turn complete",
+              5: "Codex combined queued turn complete",
             },
             capturedTurns,
             holdFirstTurn: started,
@@ -2347,7 +2346,7 @@ describe("orchestration v2 provider switching", () => {
             driver: CLAUDE_DRIVER,
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
-            responseByRunOrdinal: { 4: "Claude turn complete" },
+            responseByRunOrdinal: { 6: "Claude turn complete" },
             capturedTurns,
           }),
         ]);
@@ -2522,10 +2521,22 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
         const turns = yield* Ref.get(capturedTurns);
-        assert.deepEqual(
-          projection.runs.map((run) => [run.providerInstanceId, run.status]),
+        const executedRuns = projection.runs.filter((run) => run.mergedIntoRunId === undefined);
+        const aliases = projection.runs.filter((run) => run.mergedIntoRunId !== undefined);
+        assert.lengthOf(aliases, 1);
+        const combinedRun = executedRuns.find((run) => run.id === aliases[0]?.mergedIntoRunId);
+        assert.isDefined(combinedRun);
+        assert.equal(aliases[0]?.status, "cancelled");
+        assert.includeMembers(
+          [...(combinedRun.inputMessageIds ?? [])],
           [
-            ["codex", "completed"],
+            MessageId.make("message:queued-provider-switch:2"),
+            MessageId.make("message:queued-provider-switch:3"),
+          ],
+        );
+        assert.deepEqual(
+          executedRuns.map((run) => [run.providerInstanceId, run.status]),
+          [
             ["codex", "completed"],
             ["codex", "completed"],
             ["claudeAgent", "completed"],
@@ -2536,30 +2547,31 @@ describe("orchestration v2 provider switching", () => {
           [
             ["codex", false],
             ["codex", false],
-            ["codex", false],
             ["claudeAgent", true],
           ],
         );
+        assert.include(turns[1]?.text ?? "", "Prompt 2");
+        assert.include(turns[1]?.text ?? "", "Prompt 3");
         assert.lengthOf(projection.contextHandoffs, 1);
-        assert.equal(projection.contextHandoffs[0]?.targetRunId, projection.runs[3]?.id);
+        assert.equal(projection.contextHandoffs[0]?.targetRunId, executedRuns[2]?.id);
         const handoffItem = projection.turnItems.find(
-          (item) => item.type === "handoff" && item.runId === projection.runs[3]?.id,
+          (item) => item.type === "handoff" && item.runId === executedRuns[2]?.id,
         );
         assert.equal(
           handoffItem?.type === "handoff" ? handoffItem.contextHandoffId : null,
           projection.contextHandoffs[0]?.id,
         );
         const queuedUserItem = projection.turnItems.find(
-          (item) => item.type === "user_message" && item.runId === projection.runs[3]?.id,
+          (item) => item.type === "user_message" && item.runId === executedRuns[2]?.id,
         );
         assert.isBelow(handoffItem?.ordinal ?? Infinity, queuedUserItem?.ordinal ?? -Infinity);
         assert.include(
           handoffItem?.type === "handoff" ? handoffItem.summary : "",
-          "Codex second queued turn complete",
+          "Codex combined queued turn complete",
         );
-        assert.include(turns[3]?.text ?? "", "Codex current turn complete");
-        assert.include(turns[3]?.text ?? "", "Codex first queued turn complete");
-        assert.include(turns[3]?.text ?? "", "Codex second queued turn complete");
+        assert.include(turns[2]?.text ?? "", "Codex current turn complete");
+        assert.include(turns[2]?.text ?? "", "Codex combined queued turn complete");
+        assert.notInclude(turns[2]?.text ?? "", "Codex first queued turn complete");
       }),
     ),
   );
