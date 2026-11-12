@@ -105,21 +105,23 @@ export const layer: Layer.Layer<
         readyCheckpointOrdinals.includes(ordinalWithinScope);
       // A scope opened by a checkout change starts at its own baseline, not at thread start.
       const scopeStartOrdinal = scope.baselineOrdinalWithinScope ?? 0;
+      // The baselines this capture materializes are attributed to the run materializing them. The
+      // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
+      const materializeBaseline = (ordinalWithinScope: number) =>
+        checkpoints.materializeBaselineCheckpoint({
+          scope,
+          ordinalWithinScope,
+          nodeId: rootNode.id,
+          capturedAt: run.requestedAt,
+          forceMissing: sideChat,
+        });
       const threadStartCheckpoint =
         baselineOrdinalWithinScope === scopeStartOrdinal || hasReadyCheckpoint(scopeStartOrdinal)
           ? null
-          : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
-              ordinalWithinScope: scopeStartOrdinal,
-              forceMissing: sideChat,
-            });
+          : yield* materializeBaseline(scopeStartOrdinal);
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
-            ordinalWithinScope: baselineOrdinalWithinScope,
-            forceMissing: sideChat,
-          });
+        : yield* materializeBaseline(baselineOrdinalWithinScope);
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,

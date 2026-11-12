@@ -148,6 +148,8 @@ A few settings need care:
   rules.
 - `idleCompaction` and `compactIdleThreads` no longer trigger compaction. Claude Code's
   own context threshold still applies.
+- `observability` cannot be managed. Its OTLP endpoints come from each user's environment
+  variables, settings file and desktop startup input, which a policy cannot override.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
   or pin single fields with [`providers.instances`](#providers). T3 Code refuses a lock on one
   field inside an instance. A whole-instance lock covers only that instance; to cover every
