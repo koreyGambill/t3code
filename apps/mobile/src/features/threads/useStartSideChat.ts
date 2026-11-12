@@ -77,6 +77,7 @@ export function useStartSideChat() {
         message: {
           messageId: MessageId.make(uuidv4()),
           role: "user",
+          origin: { kind: "user" },
           text: prompt,
           attachments: [],
         },

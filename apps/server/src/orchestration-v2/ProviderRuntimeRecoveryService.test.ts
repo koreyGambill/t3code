@@ -1583,6 +1583,7 @@ it.effect(
                     : Effect.succeed(projection),
               }),
               Layer.mock(EventSink.EventSinkV2)({
+                withProviderBatch: (effect) => effect,
                 commitCommand: (input) => {
                   committed.push(input);
                   return Effect.succeed({ committed: true, cancelledEffectCount: 1 } as never);
