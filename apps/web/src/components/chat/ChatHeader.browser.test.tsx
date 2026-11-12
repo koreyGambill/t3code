@@ -11,6 +11,7 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadShell: () => persisted.activeThread,
 }));
+const openMenu = vi.hoisted(() => vi.fn());
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentScope: () => true,
@@ -25,10 +26,10 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
     }) as never,
 }));
 vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
-  useThreadActionMenu: () => ({ openMenu: () => {}, closeMenu: () => {} }),
+  useThreadActionMenu: () => ({ openMenu, closeMenu: () => {} }),
 }));
 
-import { render } from "../../../test/render";
+import { render, stubGlobal } from "../../../test/render";
 import { ChatHeader } from "./ChatHeader";
 import { makeThreadFixture } from "../../test-fixtures";
 
@@ -127,4 +128,13 @@ it("keeps the parent glyph working during a delegated thread wait", async () => 
   persisted.activeThread = { ...backgroundWait, pendingBackgroundTasks: [] };
   await screen.rerender(header(persisted.title));
   await expect.element(screen.getByRole("img", { name: /, working$/ })).not.toBeInTheDocument();
+});
+
+it("opens the thread menu on a desktop title click without waiting", async () => {
+  persisted.activeThread = null;
+  openMenu.mockClear();
+  using _bridge = stubGlobal("desktopBridge", {});
+  await using screen = await render(header("New thread"));
+  await screen.getByRole("button", { name: "Thread actions for New thread" }).click();
+  expect(openMenu).toHaveBeenCalledOnce();
 });

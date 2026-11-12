@@ -10,6 +10,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { threadBackgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
+import { monitorHoldsWakeCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -73,6 +74,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunBackgroundWake"
     | "latestRunStopRequested"
     | "latestRunQuiet"
     | "modelSelection"
@@ -103,9 +105,12 @@ export function projectThreadAwarenessV2(
   )
     return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
+  const runStatus = thread.activityRunStatus ?? thread.status;
   if (
     thread.settledOverride === "settled" &&
-    (phase === "completed" || phase === "failed") &&
+    (phase === "completed" ||
+      phase === "failed" ||
+      (phase === "running" && runStatus === "completed")) &&
     !threadBackgroundWorkHoldsCompletion(thread)
   ) {
     return null;
@@ -158,7 +163,9 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      return threadBackgroundWorkHoldsCompletion(thread) ? "running" : "completed";
+      return threadBackgroundWorkHoldsCompletion(thread) || monitorHoldsWakeCompletion(thread)
+        ? "running"
+        : "completed";
     case "failed":
       return "failed";
     case "idle":

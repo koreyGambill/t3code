@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -29,10 +30,20 @@ import * as ProjectService from "./ProjectService.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
-  {},
+  {
+    baseDir: Schema.String,
+    repositoryRoot: Schema.optional(Schema.String),
+    scratchRoot: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
-    return "Threads without a project are not available on this environment.";
+    if (this.repositoryRoot === undefined) {
+      return "Threads without a project are not available on this environment.";
+    }
+    if (this.scratchRoot !== undefined) {
+      return `Threads without a project are off because the configured start folder ${this.scratchRoot} is inside the Git repository ${this.repositoryRoot}. Choose a start folder outside a repository in Settings.`;
+    }
+    return `Threads without a project are off because the T3 home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point T3CODE_HOME (or --base-dir) at a folder outside it. Then restart T3 Code.`;
   }
 }
 
@@ -257,25 +268,42 @@ const make = Effect.gen(function* () {
           dataRelative !== ".." &&
           !path.isAbsolute(dataRelative))
       )
-        return Option.none<string>();
+        return Result.fail(new ScratchUnavailableError({ baseDir: config.baseDir }));
       return yield* gitWorkflow
-        .isRepository(root === legacyScratchRoot ? config.baseDir : root)
+        .repositoryRoot(root === legacyScratchRoot ? config.baseDir : root)
         .pipe(
-          Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-          Effect.map((isRepository) => (isRepository ? Option.none<string>() : Option.some(root))),
+          Effect.catchIf(isGitMissing, () => Effect.succeed(null)),
+          Effect.flatMap(
+            (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
+              if (repositoryRoot === null) return Effect.succeed(Result.succeed(root));
+              const unavailable = new ScratchUnavailableError({
+                baseDir: config.baseDir,
+                repositoryRoot,
+                ...(root === legacyScratchRoot ? {} : { scratchRoot: root }),
+              });
+              return Effect.logWarning(unavailable.message).pipe(
+                Effect.as(Result.fail(unavailable)),
+              );
+            },
+          ),
         );
     },
     Effect.catchCause((cause) =>
-      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+      Cause.hasInterrupts(cause)
+        ? Effect.interrupt
+        : Effect.succeed(Result.fail(new ScratchUnavailableError({ baseDir: config.baseDir }))),
     ),
   );
   const scratchRoots = yield* Cache.make({ capacity: 1, lookup: resolveScratchRoot });
-  const scratchRoot = settings.getSettings.pipe(
+  const scratchProbe = settings.getSettings.pipe(
     Effect.flatMap((value) => Cache.get(scratchRoots, value.scratchStartDirectory)),
     Effect.catchCause((cause) =>
-      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+      Cause.hasInterrupts(cause)
+        ? Effect.interrupt
+        : Effect.succeed(Result.fail(new ScratchUnavailableError({ baseDir: config.baseDir }))),
     ),
   );
+  const scratchRoot = scratchProbe.pipe(Effect.map(Result.getSuccess));
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -284,14 +312,7 @@ const make = Effect.gen(function* () {
 
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
-      const workspaceRoot = yield* scratchRoot.pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(new ScratchUnavailableError()),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
+      const workspaceRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
       yield* makeScratchFolder(workspaceRoot);
       const id = yield* random
         .uuidV4()
