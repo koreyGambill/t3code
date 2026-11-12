@@ -65,7 +65,7 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const { run, rootNode, scope, providerThread, readyCheckpointOrdinals, sideChat } =
+      const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
         yield* projections.getCheckpointCaptureContext(input.threadId, input);
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
@@ -101,8 +101,8 @@ export const layer: Layer.Layer<
 
       const capturedAt = yield* DateTime.now;
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
-      const hasReadyCheckpoint = (ordinalWithinScope: number) =>
-        readyCheckpointOrdinals.includes(ordinalWithinScope);
+      const isPreserved = (ordinalWithinScope: number) =>
+        preservedCheckpointOrdinals.includes(ordinalWithinScope);
       // A scope opened by a checkout change starts at its own baseline, not at thread start.
       const scopeStartOrdinal = scope.baselineOrdinalWithinScope ?? 0;
       // The baselines this capture materializes are attributed to the run materializing them. The
@@ -116,10 +116,10 @@ export const layer: Layer.Layer<
           forceMissing: sideChat,
         });
       const threadStartCheckpoint =
-        baselineOrdinalWithinScope === scopeStartOrdinal || hasReadyCheckpoint(scopeStartOrdinal)
+        baselineOrdinalWithinScope === scopeStartOrdinal || isPreserved(scopeStartOrdinal)
           ? null
           : yield* materializeBaseline(scopeStartOrdinal);
-      const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
+      const baselineCheckpoint = isPreserved(baselineOrdinalWithinScope)
         ? null
         : yield* materializeBaseline(baselineOrdinalWithinScope);
       const checkpoint = yield* checkpoints.capture({

@@ -1311,7 +1311,8 @@ export function planComposerTurn(input: {
     // fall back to local execution when branch selection is missing.
     missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
     baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
-    turnDispatchMode: input.sendQueuesBehindSetup ? ("queue" as const) : dispatchMode,
+    turnDispatchMode:
+      input.sendQueuesBehindSetup && dispatchMode !== "steer" ? ("queue" as const) : dispatchMode,
     shouldQueueBehindActiveRun:
       input.sendQueuesBehindSetup || (input.phase === "running" && dispatchMode === "queue"),
   };
