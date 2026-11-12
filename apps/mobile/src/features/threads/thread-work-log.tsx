@@ -1392,6 +1392,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
+  readonly toolIconLabel?: string | undefined;
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
   readonly thought?: string | undefined;
@@ -1405,7 +1406,7 @@ export function ThreadWorkGroupToggle(props: {
       ? workLogIcons[props.toolSurface]
       : toolGroupIconPresentation(props.summaryKind);
   const accessibilityLabel = workRowAccessibilityLabel(
-    iconPresentation.label,
+    props.toolIconLabel ?? iconPresentation.label,
     props.thought ? `${props.thought} ${statusLabel}` : statusLabel,
   );
   const icon = workRowSymbolName(iconPresentation.iconName);

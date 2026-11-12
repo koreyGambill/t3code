@@ -597,6 +597,7 @@ export function WorkGroupToggleTimelineRow({
         row.toolSurface ? workLogIcons[row.toolSurface] : toolGroupIconPresentation(row.summaryKind)
       }
       toolIcon={row.toolIcon}
+      toolIconLabel={row.toolIconLabel}
       failed={row.hasFailure}
       expanded={row.expanded}
       createdAt={row.createdAt}
@@ -610,6 +611,7 @@ function WorkGroupHeader(props: {
   label: string;
   icon: WorkLogIconPresentation;
   toolIcon?: ToolActivityIcon | undefined;
+  toolIconLabel?: string | undefined;
   failed?: boolean | undefined;
   expanded: boolean;
   createdAt: string;
@@ -622,7 +624,7 @@ function WorkGroupHeader(props: {
       aria-expanded={props.expanded}
       onClick={props.onToggle}
       icon={
-        <WorkEntryIconTooltip label={props.icon.label}>
+        <WorkEntryIconTooltip label={props.toolIconLabel ?? props.icon.label}>
           <ToolActivityIconView
             icon={props.toolIcon}
             fallbackName={props.icon.iconName}

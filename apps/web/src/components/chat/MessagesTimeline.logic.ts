@@ -551,6 +551,7 @@ type MessagesTimelineRowContent =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
+      toolIconLabel?: string;
       hasFailure: boolean;
     }
   | {
@@ -1929,6 +1930,7 @@ export function deriveMessagesTimelineRows(input: {
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
+            ...(primarySourceIcon ? { toolIconLabel: primarySourceEntry?.toolSource?.name } : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),

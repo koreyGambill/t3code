@@ -25,6 +25,7 @@ import {
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  PROVIDER_DISPLAY_NAMES,
   isQuietAssistantText,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
@@ -231,7 +232,7 @@ function SubagentAvatar({
       {driver ? (
         <ProviderInstanceIcon
           driverKind={driver}
-          displayName={displayName ?? driver}
+          displayName={displayName ?? PROVIDER_DISPLAY_NAMES[driver] ?? driver}
           accentColor={accentColor}
           acpRegistryIconUrl={iconUrl}
           showBadge={showBadge}
@@ -254,7 +255,13 @@ function SubagentAvatar({
     </span>
   );
   return tooltip ? (
-    <WorkEntryIconTooltip label={displayName ?? driver ?? workLogIcons.bot.label}>
+    <WorkEntryIconTooltip
+      label={
+        displayName ??
+        (driver ? PROVIDER_DISPLAY_NAMES[driver] : undefined) ??
+        workLogIcons.bot.label
+      }
+    >
       {avatar}
     </WorkEntryIconTooltip>
   ) : (

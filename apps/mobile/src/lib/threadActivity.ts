@@ -210,6 +210,7 @@ type ThreadFeedEntryContent =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogPresentationEntry["toolSurface"];
       readonly toolIcon?: WorkLogPresentationEntry["toolIcon"];
+      readonly toolIconLabel?: string;
       readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
       readonly hasFailure: boolean;
       readonly live: boolean;
@@ -1768,6 +1769,9 @@ function appendToolGroupRows(
     ),
     ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
     ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
+    ...(primarySourceIcon
+      ? { toolIconLabel: primarySourceActivity?.workEntry.toolSource?.name }
+      : {}),
     ...(summaryToolIcon ? { summaryToolIcon } : {}),
     ...(thought ? { thought } : {}),
     hasFailure: (() => {

@@ -225,12 +225,26 @@ export function toolGroupIconPresentation(kind: ToolGroupSummaryKind): WorkLogIc
     case "tone-tool":
       return workLogIcons["zap"];
     case "update":
+      return { iconName: "hammer", label: "Updates" };
     case "mixed":
       return workLogIcons["hammer"];
   }
 }
 
 export function workEntryIconPresentation(
+  workEntry: WorkLogPresentationEntry,
+): WorkLogIconPresentation {
+  const icon = workEntryFallbackIconPresentation(workEntry);
+  if (
+    workEntry.toolSource?.kind === "integration" &&
+    (workEntry.toolIcon ?? workEntry.toolSource.icon)
+  ) {
+    return { ...icon, label: workEntry.toolSource.name };
+  }
+  return icon;
+}
+
+function workEntryFallbackIconPresentation(
   workEntry: WorkLogPresentationEntry,
 ): WorkLogIconPresentation {
   if (workEntry.structuredPayload?.type === "notification") {
@@ -256,6 +270,8 @@ export function workEntryIconPresentation(
     }
   }
   switch (workEntry.itemType) {
+    case "fork":
+      return { iconName: "zap", label: "Forked thread" };
     case "system_notice":
       return workLogIcons.warning;
     case "run_interrupt_request":

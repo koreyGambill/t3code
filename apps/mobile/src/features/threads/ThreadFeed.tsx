@@ -1677,6 +1677,7 @@ function renderFeedEntry(
         themeAppearance={props.themeAppearance}
         toolSurface={entry.toolSurface}
         toolIcon={entry.toolIcon}
+        toolIconLabel={entry.toolIconLabel}
         summaryToolIcon={entry.summaryToolIcon}
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}

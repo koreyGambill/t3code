@@ -221,6 +221,7 @@ describe("work row icon presentation", () => {
     [{ itemType: "file_search" }, "search", "Searched code"],
     [{ itemType: "web_search" }, "globe", "Searched web"],
     [{ itemType: "subagent" }, "bot", "Subagent"],
+    [{ itemType: "fork", tone: "info" }, "zap", "Forked thread"],
     [{ itemType: "system_notice" }, "warning", "Warning"],
     [{ itemType: "run_interrupt_request" }, "stop", "Stop request"],
     [{ itemType: "run_interrupt_result" }, "stop", "Stopped"],
@@ -231,10 +232,23 @@ describe("work row icon presentation", () => {
     [{ itemType: "todo_list" }, "list-todo", "To-do list"],
     [{ itemType: "dynamic_tool", toolData: { toolName: "WebFetch" } }, "wrench", "Tool"],
     [{ itemType: "dynamic_tool", toolData: { toolName: "unknown_tool" } }, "wrench", "Tool"],
+    [
+      {
+        itemType: "dynamic_tool",
+        toolSource: {
+          key: "linear",
+          name: "Linear",
+          kind: "integration",
+          icon: { _tag: "themed-logo", logoUrl: "https://linear.app/logo.svg" },
+        },
+      },
+      "wrench",
+      "Linear",
+    ],
     [{ toolSurface: "computer" }, "computer", "Computer use"],
     [{ tone: "thinking" }, "brain", "Thinking"],
     [{ tone: "error" }, "circle-alert", "Error"],
-    [{ tone: "info" }, "hammer", "Tools"],
+    [{ tone: "info" }, "hammer", "Updates"],
     [{}, "zap", "Tool"],
   ] satisfies ReadonlyArray<readonly [Partial<WorkLogPresentationEntry>, string, string]>)(
     "names the activity for %j",
@@ -283,6 +297,7 @@ describe("work row icon presentation", () => {
     ["command", "terminal", "Ran command"],
     ["agent-tool", "bot", "Subagent"],
     ["mixed", "hammer", "Tools"],
+    ["update", "hammer", "Updates"],
     ["thread-create", "t3-code", "Created thread"],
   ] as const)("names grouped %s activity", (kind, iconName, label) => {
     expect(toolGroupIconPresentation(kind)).toEqual({ iconName, label });
