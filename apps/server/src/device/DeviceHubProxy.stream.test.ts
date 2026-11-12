@@ -99,7 +99,10 @@ it.live("closes an upstream socket that is still connecting without an unhandled
       Effect.promise(
         () =>
           new Promise<NodeNet.Server>((resolve) => {
-            const server = NodeNet.createServer((socket) => dialed.resolve(socket));
+            const server = NodeNet.createServer((socket) => {
+              socket.once("data", () => dialed.resolve(socket));
+              socket.resume();
+            });
             server.listen(0, "127.0.0.1", () => resolve(server));
           }),
       ),
@@ -115,7 +118,10 @@ it.live("closes an upstream socket that is still connecting without an unhandled
     const reading = yield* Effect.forkChild(
       Effect.scoped(Effect.flatMap(upstream.reader, ({ pull }) => pull)),
     );
-    const connection = yield* Effect.promise(() => dialed.promise);
+    const connection = yield* Effect.acquireRelease(
+      Effect.promise(() => dialed.promise),
+      (socket) => Effect.sync(() => socket.destroy()),
+    );
     const abandoned = new Promise<void>((resolve) => connection.once("close", () => resolve()));
     yield* Fiber.interrupt(reading);
     yield* Effect.promise(() => abandoned);

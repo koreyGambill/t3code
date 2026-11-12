@@ -531,6 +531,17 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       }),
     }).pipe(Effect.asVoid);
 
+  // Pipe closure can precede process exit; use a live-clock grace period for its diagnostics.
+  const resolveTerminationError = (fallback: AcpError.AcpError) =>
+    options.terminationError === undefined
+      ? Effect.succeed(fallback)
+      : options.terminationError.pipe(
+          Effect.catchCause(() => Effect.succeed(fallback)),
+          Effect.timeoutOption("250 millis"),
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+          Effect.map(Option.getOrElse(() => fallback)),
+        );
+
   const handleTermination = (classify: () => Effect.Effect<AcpError.AcpError>) =>
     Ref.modify(terminationHandled, (handled) => {
       if (handled) {
@@ -855,16 +866,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         return handleTermination(() => Effect.succeed(normalized));
       },
       onSuccess: () =>
-        handleTermination(() => {
-          const ended = new AcpError.AcpInputStreamEndedError({});
-          if (!options.terminationError) return Effect.succeed(ended);
-          // Stdout can close without process exit; use a live-clock diagnostic grace period.
-          return options.terminationError.pipe(
-            Effect.timeoutOption("250 millis"),
-            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-            Effect.map(Option.getOrElse(() => ended)),
-          );
-        }),
+        handleTermination(() => resolveTerminationError(new AcpError.AcpInputStreamEndedError({}))),
     }),
     Effect.forkScoped,
   );
@@ -935,11 +937,17 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               : "Failed to write an outgoing ACP message",
             cause,
           });
-          return failOutgoingWrites(error).pipe(
-            Effect.andThen(
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : handleTermination(() => Effect.succeed(error)),
+          return (
+            Cause.hasInterruptsOnly(cause) ? Effect.succeed(error) : resolveTerminationError(error)
+          ).pipe(
+            Effect.flatMap((failure) =>
+              failOutgoingWrites(failure).pipe(
+                Effect.andThen(
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.void
+                    : handleTermination(() => Effect.succeed(failure)),
+                ),
+              ),
             ),
           );
         },
