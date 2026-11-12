@@ -119,12 +119,16 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     run: OrchestrationV2Run,
   ) {
-    const records = yield* threads.getThreadRecords(threadId, ["messages", "turnItems"], {
-      messageRoles: ["assistant"],
-      messageRunIds: [run.id],
-      turnItemRunId: run.id,
-      turnItemTypes: ["assistant_message"],
-    });
+    const records = yield* threads.getThreadRecords(
+      threadId,
+      ["messages", "turnItems", "providerTurns"],
+      {
+        messageRoles: ["assistant"],
+        messageRunIds: [run.id],
+        turnItemRunId: run.id,
+        turnItemTypes: ["assistant_message"],
+      },
+    );
     const text = subagentResultForRun(records, run).text.trim();
     return text.length <= REPLY_TEXT_LIMIT
       ? text

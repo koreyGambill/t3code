@@ -2023,6 +2023,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const repeated = yield* acknowledge("repeated");
         assert.lengthOf(repeated.storedEvents, 0);
         assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), after);
+        assert.deepEqual(yield* requests.take, wake);
         yield* orchestrator.dispatch({
           type: "delegated_task.completion-delivery.dispose",
           commandId: CommandId.make("command:late-read-live:dispose"),

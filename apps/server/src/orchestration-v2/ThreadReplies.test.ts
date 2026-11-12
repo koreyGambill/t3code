@@ -90,6 +90,7 @@ const threadsFor = (
               ]
             : [],
         turnItems: [],
+        providerTurns: [],
       })) as never,
     waitForThread: (input) =>
       Ref.updateAndGet(waited, (runs) => [...runs, input.runId]).pipe(
