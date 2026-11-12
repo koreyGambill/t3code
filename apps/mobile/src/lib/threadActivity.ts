@@ -24,6 +24,8 @@ import {
   liveThoughtLine,
   toolItemForDisplay,
   workEntryOutgoingMessage,
+  workEntryIconPresentation,
+  type WorkLogIconPresentation,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
   toolGroupAction,
@@ -67,7 +69,6 @@ import {
   classifyToolActivity,
   collectToolFilePaths,
   dynamicToolTitle,
-  isJavaScriptReplTool,
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
@@ -101,25 +102,7 @@ export interface ThreadFeedActivity {
   readonly fetchesDetail: boolean;
   readonly getFullDetail: () => string | null;
   readonly getCopyText: () => string;
-  readonly icon:
-    | "agent"
-    | "alert"
-    | "browser"
-    | "computer"
-    | "code"
-    | "check"
-    | "command"
-    | "edit"
-    | "eye"
-    | "globe"
-    | "search"
-    | "stop"
-    | "hammer"
-    | "lock"
-    | "message"
-    | "warning"
-    | "wrench"
-    | "zap";
+  readonly icon: WorkLogIconPresentation;
   readonly logo: T3McpToolLogo | null;
   readonly toolLike: boolean;
   readonly prominent: boolean;
@@ -227,6 +210,7 @@ type ThreadFeedEntryContent =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogPresentationEntry["toolSurface"];
       readonly toolIcon?: WorkLogPresentationEntry["toolIcon"];
+      readonly toolIconLabel?: string;
       readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
       readonly hasFailure: boolean;
       readonly live: boolean;
@@ -262,6 +246,11 @@ const WORK_LOG_LABEL_MAX_LENGTH = 200;
 
 function compactWorkEntryText(value: string): string {
   return truncate(value.replace(/\s+/gu, " "), WORK_LOG_LABEL_MAX_LENGTH);
+}
+
+export function workRowAccessibilityLabel(iconLabel: string, label: string): string {
+  const firstWord = (value: string) => value.split(/[\s:]/u, 1)[0]?.toLowerCase();
+  return firstWord(label) === firstWord(iconLabel) ? label : `${iconLabel}: ${label}`;
 }
 
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
@@ -496,84 +485,6 @@ function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntr
       return "tool";
     default:
       return "info";
-  }
-}
-
-function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
-  if (item.type === "notification") {
-    const source = item.source;
-    switch (source.kind) {
-      case "subagent":
-      case "delegated_task":
-        return "hammer";
-      case "command":
-        return "command";
-      case "monitor":
-        return "eye";
-      case "thread_reply":
-      case "background_task":
-      case "system":
-        return "zap";
-      default:
-        source satisfies never;
-        return "zap";
-    }
-  }
-  if (item.type === "dynamic_tool") {
-    const classified = classifyToolActivity({
-      itemType: "dynamic_tool_call",
-      data: { toolName: item.toolName ?? undefined, input: item.input },
-    });
-    if (classified === "read") {
-      return "eye";
-    }
-    if (classified === "search") return "search";
-  }
-  switch (item.type) {
-    case "reasoning":
-      return "agent";
-    case "command_execution":
-      return "command";
-    case "file_change":
-      return "edit";
-    case "file_search":
-      return "search";
-    case "web_search":
-      return "globe";
-    case "approval_request":
-      return item.requestKind === "permission" ? "lock" : "message";
-    case "user_input_request":
-    case "user_message":
-    case "assistant_message":
-      return "message";
-    case "dynamic_tool":
-      return isJavaScriptReplTool(item.toolName) ? "code" : "wrench";
-    case "subagent":
-      return "hammer";
-    case "run_interrupt_request":
-    case "run_interrupt_result":
-      return "stop";
-    case "system_notice":
-      return "warning";
-    case "error":
-      return item.failure.class === "usage_limit"
-        ? item.status === "completed"
-          ? "check"
-          : "warning"
-        : "alert";
-    case "checkpoint":
-    case "proposed_plan":
-    case "todo_list":
-      return "check";
-    case "compaction":
-    case "handoff":
-    case "fork":
-    case "thread_created":
-      return "zap";
-    case "secret_request":
-      return "lock";
-    case "link_request":
-      return "globe";
   }
 }
 
@@ -850,7 +761,7 @@ function toFeedActivity(
     fetchesDetail: turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
-    icon: workEntry.toolSurface ?? itemIcon(item),
+    icon: workEntryIconPresentation(workEntry),
     logo: toolPresentation?.logo ?? null,
     toolLike: itemIsToolLike(item),
     prominent:
@@ -1858,6 +1769,9 @@ function appendToolGroupRows(
     ),
     ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
     ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
+    ...(primarySourceIcon && primarySourceActivity?.workEntry.toolSource
+      ? { toolIconLabel: primarySourceActivity.workEntry.toolSource.name }
+      : {}),
     ...(summaryToolIcon ? { summaryToolIcon } : {}),
     ...(thought ? { thought } : {}),
     hasFailure: (() => {

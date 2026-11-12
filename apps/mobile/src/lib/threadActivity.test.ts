@@ -26,6 +26,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildThreadFeed,
   workEntryRowLabel,
+  workRowAccessibilityLabel,
   threadFeedCompactionLabels,
   createThreadFeedCache,
   deriveThreadFeedPresentation,
@@ -201,6 +202,11 @@ it("keeps the interrupted row for a compaction stopped before its provider start
         : [],
     ),
   ).toContain("run_interrupt_result");
+  expect(
+    rows
+      .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
+      .find((activity) => activity.projectedItem.item.type === "run_interrupt_result")?.icon,
+  ).toEqual({ iconName: "stop", label: "Stopped" });
 });
 
 it.each(["/compact", "Continue"])(
@@ -1957,4 +1963,15 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(activity.detail).toBe(text);
   expect(JSON.parse(activity.getFullDetail()!).item).toMatchObject({ text });
   expect(activity.getCopyText()).toContain(text);
+});
+
+it.each([
+  ["Ran command", "Ran ls", "Ran ls"],
+  ["Read file", "Read config.ts", "Read config.ts"],
+  ["Searched code", "Searched for TODO", "Searched for TODO"],
+  ["Thinking", "Thinking", "Thinking"],
+  ["Warning", "Unexpected response", "Warning: Unexpected response"],
+  ["Subagent", "Finished investigating", "Subagent: Finished investigating"],
+])("announces %s activity without repeating its verb", (iconLabel, label, expected) => {
+  expect(workRowAccessibilityLabel(iconLabel, label)).toBe(expected);
 });

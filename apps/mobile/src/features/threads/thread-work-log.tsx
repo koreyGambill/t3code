@@ -68,6 +68,7 @@ import {
   formatItemFullDetail,
   type ThreadFeedActivity,
   workEntryRowLabel,
+  workRowAccessibilityLabel,
 } from "../../lib/threadActivity";
 import {
   isJsonToolText,
@@ -82,7 +83,9 @@ import {
   type ThreadWorkGroupScrollPosition,
 } from "./thread-feed-live-follow";
 import {
-  resolveWorkEntryToolPresentation,
+  type WorkLogIconName,
+  toolGroupIconPresentation,
+  workLogIcons,
   toolGroupAction,
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
@@ -387,23 +390,23 @@ export function ShimmeringWorkContent(props: {
   );
 }
 
-function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
+function workRowSymbolName(icon: WorkLogIconName): WorkContentIcon {
   switch (icon) {
-    case "agent":
+    case "bot":
       return { ios: "sparkles", android: "auto_awesome" };
-    case "alert":
+    case "circle-alert":
       return { ios: "exclamationmark.triangle", android: "error" };
     case "browser":
       return { ios: "safari", android: "public" };
     case "check":
       return { ios: "checkmark", android: "check" };
-    case "command":
+    case "terminal":
       return { ios: "terminal", android: "terminal" };
     case "computer":
       return "computer";
     case "code":
       return "chevron.left.forwardslash.chevron.right";
-    case "edit":
+    case "square-pen":
       return { ios: "square.and.pencil", android: "edit" };
     case "eye":
       return { ios: "eye", android: "visibility" };
@@ -417,10 +420,20 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
       return { ios: "hammer", android: "construction" };
     case "lock":
       return { ios: "lock", android: "lock" };
-    case "message":
+    case "message-circle":
       return { ios: "bubble.left", android: "chat_bubble" };
     case "warning":
+      return "exclamationmark.triangle";
+    case "x":
       return { ios: "xmark", android: "close" };
+    case "brain":
+      return "brain";
+    case "list-todo":
+      return "checklist";
+    case "device":
+    case "t3-code":
+    case "pull-request":
+      return icon;
     case "wrench":
       return { ios: "wrench", android: "build" };
     case "zap":
@@ -1066,7 +1079,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         exit {failedExitCode}
       </Text>
     );
-  const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
@@ -1079,10 +1091,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     row.projectedItem.item.failure.class === "usage_limit" &&
     row.projectedItem.item.status !== "completed";
   const iconIsDestructive =
-    !isSystemNotice && !isUsageLimit && (row.icon === "alert" || row.icon === "warning");
+    !isSystemNotice &&
+    !isUsageLimit &&
+    (row.icon.iconName === "circle-alert" || row.icon.iconName === "warning");
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
-  const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
+  const icon = workRowSymbolName(row.icon.iconName);
+  const accessibilityLabel = workRowAccessibilityLabel(row.icon.label, accessiblePreview);
   const outgoing = workEntryOutgoingMessage(row.workEntry);
 
   return (
@@ -1098,7 +1113,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         accessibilityRole={
           notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
         }
-        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
+        accessibilityLabel={failed ? `${accessibilityLabel}, tool call failed` : accessibilityLabel}
         accessibilityHint={
           notifiedSubagentThreadId !== undefined
             ? "Opens this agent's thread. Long press to copy."
@@ -1377,6 +1392,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
+  readonly toolIconLabel?: string | undefined;
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
   readonly thought?: string | undefined;
@@ -1384,12 +1400,16 @@ export function ThreadWorkGroupToggle(props: {
   readonly onToggle: () => void;
 }) {
   const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
-  const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
-  const icon =
-    props.summaryToolIcon ??
-    (props.toolSurface
-      ? workRowSymbolName(props.toolSurface)
-      : toolGroupSummarySymbolName(props.summaryKind));
+  const iconPresentation = props.summaryToolIcon
+    ? workLogIcons[props.summaryToolIcon]
+    : props.toolSurface
+      ? workLogIcons[props.toolSurface]
+      : toolGroupIconPresentation(props.summaryKind);
+  const accessibilityLabel = workRowAccessibilityLabel(
+    props.toolIconLabel ?? iconPresentation.label,
+    props.thought ? `${props.thought} ${statusLabel}` : statusLabel,
+  );
+  const icon = workRowSymbolName(iconPresentation.iconName);
 
   return (
     <WorkLogBlock layout="group-header">
@@ -1594,43 +1614,4 @@ function ToolActivityImage(props: {
       ) : null}
     </View>
   );
-}
-
-function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
-  switch (kind) {
-    case "pull-request":
-    case "link-pr":
-    case "unlink-pr":
-    case "list-prs":
-    case "watch-pr":
-    case "unwatch-pr":
-      return PullRequestGlyph.pullRequest;
-    case "read":
-      return { ios: "eye", android: "visibility" };
-    case "edit":
-      return { ios: "square.and.pencil", android: "edit" };
-    case "thread-create":
-      return { ios: "bubble.left", android: "chat" };
-    case "command":
-      return { ios: "terminal", android: "terminal" };
-    case "device":
-      return { ios: "iphone", android: "smartphone" };
-    case "browser":
-    case "search":
-      return { ios: "globe", android: "public" };
-    case "code-search":
-      return "magnifyingglass";
-    case "other":
-      return { ios: "wrench", android: "build" };
-    case "reasoning":
-      return { ios: "brain", android: "psychology" };
-    case "agent-tool":
-      return { ios: "sparkles", android: "auto_awesome" };
-    case "tone-tool":
-      return { ios: "bolt", android: "bolt" };
-    case "dynamic-tool":
-    case "update":
-    case "mixed":
-      return { ios: "hammer", android: "construction" };
-  }
 }

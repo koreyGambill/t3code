@@ -1,3 +1,5 @@
+import { workLogIcons } from "@t3tools/client-runtime/work-log/presentation";
+import { WorkEntryIconTooltip } from "./TimelineToolActivityIcon";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -23,6 +25,7 @@ import {
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  PROVIDER_DISPLAY_NAMES,
   isQuietAssistantText,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
@@ -133,7 +136,11 @@ export function V2LifecycleRow(props: {
     return (
       <WorkLogRow
         data-v2-item-type={item.type}
-        icon={<WeavewingMark className="size-4 text-icon-muted" aria-hidden />}
+        icon={
+          <WorkEntryIconTooltip label={workLogIcons["t3-code"].label}>
+            <WeavewingMark className="size-4 text-icon-muted" aria-hidden />
+          </WorkEntryIconTooltip>
+        }
         label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
         trailing={
           <InlineButton
@@ -203,6 +210,7 @@ function SubagentAvatar({
   showBadge,
   status,
   className,
+  tooltip = true,
 }: {
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
@@ -211,8 +219,9 @@ function SubagentAvatar({
   showBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
   className?: string;
+  tooltip?: boolean;
 }) {
-  return (
+  const avatar = (
     <span
       aria-hidden
       className={cn(
@@ -223,7 +232,7 @@ function SubagentAvatar({
       {driver ? (
         <ProviderInstanceIcon
           driverKind={driver}
-          displayName={displayName ?? driver}
+          displayName={displayName ?? PROVIDER_DISPLAY_NAMES[driver] ?? driver}
           accentColor={accentColor}
           acpRegistryIconUrl={iconUrl}
           showBadge={showBadge}
@@ -245,6 +254,19 @@ function SubagentAvatar({
       ) : null}
     </span>
   );
+  return tooltip ? (
+    <WorkEntryIconTooltip
+      label={
+        displayName ??
+        (driver ? PROVIDER_DISPLAY_NAMES[driver] : undefined) ??
+        workLogIcons.bot.label
+      }
+    >
+      {avatar}
+    </WorkEntryIconTooltip>
+  ) : (
+    avatar
+  );
 }
 
 // Select strings; status pushes replace providers even when avatar fields are unchanged.
@@ -261,6 +283,7 @@ export function EnvironmentSubagentAvatar({
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  tooltip?: boolean;
 }) {
   const providerEnvironmentId = remote?.environmentId ?? environmentId;
   const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
@@ -446,6 +469,7 @@ function SubagentTimelineLink(props: {
   const content = (
     <>
       <EnvironmentSubagentAvatar
+        tooltip={false}
         environmentId={props.parentRef.environmentId}
         providerInstanceId={props.providerInstanceId}
         driver={props.driver}

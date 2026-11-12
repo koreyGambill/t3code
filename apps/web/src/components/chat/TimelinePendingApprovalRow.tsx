@@ -8,7 +8,11 @@ import { type PendingApproval } from "../../session-logic";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
-import { ToolActivityIconView, type WorkEntryIconName } from "./TimelineToolActivityIcon";
+import {
+  ToolActivityIconView,
+  WorkEntryIconTooltip,
+  type WorkEntryIconName,
+} from "./TimelineToolActivityIcon";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogRow } from "./WorkLog";
 
@@ -46,12 +50,14 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       data-v2-item-type="approval_request"
       wrapLabel
       icon={
-        <ToolActivityIconView
-          icon={undefined}
-          fallbackName={presentation.icon}
-          className="block size-4 shrink-0 stroke-2 text-icon-muted"
-          muted
-        />
+        <WorkEntryIconTooltip label={presentation.label}>
+          <ToolActivityIconView
+            icon={undefined}
+            fallbackName={presentation.icon}
+            className="block size-4 shrink-0 stroke-2 text-icon-muted"
+            muted
+          />
+        </WorkEntryIconTooltip>
       }
       label={
         <code

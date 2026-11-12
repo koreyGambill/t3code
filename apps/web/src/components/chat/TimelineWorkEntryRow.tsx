@@ -17,6 +17,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveViewedImageAsset,
+  workEntryIconPresentation,
+  workLogIcons,
   toolGroupAction,
   workEntryViewedImagePath,
   workEntryOutgoingMessage,
@@ -60,12 +62,12 @@ import {
   failedToolIconClassName,
   toolIconAcceptsTint,
   ToolActivityIconView,
+  WorkEntryIconTooltip,
 } from "./TimelineToolActivityIcon";
 import {
-  workToneIcon,
+  workToneClassName,
   workEntryRawCommand,
   buildToolCallExpandedBody,
-  workEntryIconName,
   THINKING_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_PLUGINS,
 } from "./TimelineWorkEntryRow.logic";
@@ -253,9 +255,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         data-v2-item-visibility={workEntry.projectedItem?.visibility}
         wrapLabel
         icon={
-          <CircleAlertIcon
-            className={cn("size-4", warning ? "text-warning" : "text-destructive")}
-          />
+          <WorkEntryIconTooltip label={warning ? "Usage limit" : "Error"}>
+            <CircleAlertIcon
+              aria-hidden
+              className={cn("size-4", warning ? "text-warning" : "text-destructive")}
+            />
+          </WorkEntryIconTooltip>
         }
         label={
           <span
@@ -293,7 +298,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       </WorkLogRow>
     );
   }
-  const iconConfig = workToneIcon(workEntry.tone);
+  const toneClassName = workToneClassName(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const showFailedIndicator =
     !showWarningIndicator && workEntryDisplayIndicatesToolFailure(workEntry);
@@ -301,8 +306,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     !showWarningIndicator &&
     showFailedIndicator &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
-  const entryIconName =
-    showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);
+  const entryIcon =
+    showWarningIndicator || showDestructiveRowStyle
+      ? { iconName: "circle-alert" as const, label: showWarningIndicator ? "Warning" : "Error" }
+      : workEntryIconPresentation(workEntry);
+  const iconLabel = showFailedIndicator ? `${entryIcon.label}, tool call failed` : entryIcon.label;
   const entryToolIcon =
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
@@ -387,7 +395,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           ? failedToolIconClassName
           : workEntry.tone === "tool"
             ? "text-icon-muted"
-            : iconConfig.className,
+            : toneClassName,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
@@ -425,18 +433,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
       icon={
-        <span
-          className={iconWrapperClass}
-          role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
-        >
-          <ToolActivityIconView
-            icon={entryToolIcon}
-            fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-2"
-            muted
-          />
-        </span>
+        <WorkEntryIconTooltip label={iconLabel}>
+          <span className={iconWrapperClass}>
+            <ToolActivityIconView
+              icon={entryToolIcon}
+              fallbackName={entryIcon.iconName}
+              className="block size-4 shrink-0 stroke-2"
+              muted
+            />
+          </span>
+        </WorkEntryIconTooltip>
       }
       label={
         <div className="min-w-0 flex-1 overflow-hidden">
@@ -525,7 +531,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryToolIcon) ? (
-            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+            <WorkEntryIconTooltip label={workLogIcons.x.label}>
+              <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+            </WorkEntryIconTooltip>
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span

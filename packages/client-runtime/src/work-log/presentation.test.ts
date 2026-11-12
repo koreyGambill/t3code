@@ -5,6 +5,8 @@ import * as DateTime from "effect/DateTime";
 
 import {
   resolveWorkEntryToolPresentation,
+  workEntryIconPresentation,
+  toolGroupIconPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -13,7 +15,7 @@ import {
 
 function commandItem(
   fields: Partial<Extract<OrchestrationV2TurnItem, { type: "command_execution" }>> = {},
-): OrchestrationV2TurnItem {
+): Extract<OrchestrationV2TurnItem, { type: "command_execution" }> {
   return {
     id: TurnItemId.make("command"),
     threadId: ThreadId.make("thread"),
@@ -202,5 +204,102 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("work row icon presentation", () => {
+  const base: WorkLogPresentationEntry = {
+    id: "work",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "Work",
+    tone: "tool",
+  };
+
+  it.each([
+    [{ itemType: "command_execution", command: "ls" }, "terminal", "Ran command"],
+    [{ requestKind: "file-read" }, "eye", "Read file"],
+    [{ itemType: "file_search" }, "search", "Searched code"],
+    [{ itemType: "web_search" }, "globe", "Searched web"],
+    [{ itemType: "subagent" }, "bot", "Subagent"],
+    [{ itemType: "fork", tone: "info" }, "zap", "Forked thread"],
+    [{ itemType: "system_notice" }, "warning", "Warning"],
+    [{ itemType: "run_interrupt_request" }, "stop", "Stop request"],
+    [{ itemType: "run_interrupt_result" }, "stop", "Stopped"],
+    [{ itemType: "error" }, "circle-alert", "Error"],
+    [{ itemType: "approval_request", requestKind: "permission" }, "lock", "Approval request"],
+    [{ itemType: "secret_request" }, "lock", "Secret request"],
+    [{ itemType: "reasoning", tone: "thinking" }, "brain", "Thinking"],
+    [{ itemType: "todo_list" }, "list-todo", "To-do list"],
+    [{ itemType: "dynamic_tool", toolData: { toolName: "WebFetch" } }, "wrench", "Tool"],
+    [{ itemType: "dynamic_tool", toolData: { toolName: "unknown_tool" } }, "wrench", "Tool"],
+    [
+      {
+        itemType: "dynamic_tool",
+        toolSource: {
+          key: "linear",
+          name: "Linear",
+          kind: "integration",
+          icon: { _tag: "themed-logo", logoUrl: "https://linear.app/logo.svg" },
+        },
+      },
+      "wrench",
+      "Linear",
+    ],
+    [{ toolSurface: "computer" }, "computer", "Computer use"],
+    [{ tone: "thinking" }, "brain", "Thinking"],
+    [{ tone: "error" }, "circle-alert", "Error"],
+    [{ tone: "info" }, "hammer", "Updates"],
+    [{}, "zap", "Tool"],
+  ] satisfies ReadonlyArray<readonly [Partial<WorkLogPresentationEntry>, string, string]>)(
+    "names the activity for %j",
+    (entry, iconName, label) => {
+      expect(workEntryIconPresentation({ ...base, ...entry })).toEqual({ iconName, label });
+    },
+  );
+
+  it("distinguishes monitor notifications from file reads sharing the eye icon", () => {
+    const structuredPayload: OrchestrationV2TurnItem = {
+      ...commandItem(),
+      type: "notification",
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: "Monitor finished",
+    };
+    expect(workEntryIconPresentation({ ...base, structuredPayload })).toEqual({
+      iconName: "eye",
+      label: "Monitor",
+    });
+    expect(workEntryIconPresentation({ ...base, requestKind: "file-read" })).toEqual({
+      iconName: "eye",
+      label: "Read file",
+    });
+  });
+
+  it.each([{ kind: "subagent" }, { kind: "delegated_task", taskIds: [] }] as const)(
+    "keeps subagent notifications paired with their icon (%j)",
+    (source) => {
+      const structuredPayload: OrchestrationV2TurnItem = {
+        ...commandItem(),
+        type: "notification",
+        source,
+        outcome: "completed",
+        summary: "Finished investigating",
+      };
+      expect(workEntryIconPresentation({ ...base, structuredPayload })).toEqual({
+        iconName: "bot",
+        label: "Subagent",
+      });
+    },
+  );
+
+  it.each([
+    ["read", "eye", "Read file"],
+    ["command", "terminal", "Ran command"],
+    ["agent-tool", "bot", "Subagent"],
+    ["mixed", "hammer", "Tools"],
+    ["update", "hammer", "Updates"],
+    ["thread-create", "t3-code", "Created thread"],
+  ] as const)("names grouped %s activity", (kind, iconName, label) => {
+    expect(toolGroupIconPresentation(kind)).toEqual({ iconName, label });
   });
 });
