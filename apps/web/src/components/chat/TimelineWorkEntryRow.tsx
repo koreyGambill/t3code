@@ -39,8 +39,8 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
-import { useThreadShell, useQuietThreadShell } from "../../state/entities";
-import { ThreadContextChip } from "../ThreadContextChip";
+import { useThreadShell } from "../../state/entities";
+import { ThreadContextChip, useThreadContextMetadata } from "../ThreadContextChip";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -234,7 +234,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ThreadId.make(outgoing.threadId),
       )
     : null;
-  const outgoingShell = useQuietThreadShell(outgoingTarget);
+  const outgoingRecord = outgoingTarget ? { ...outgoingTarget, title: "Thread" } : null;
+  const { shell: outgoingShell, title: outgoingTitle } = useThreadContextMetadata(outgoingRecord);
   const outgoingLabel = outgoing
     ? outgoingT3MessageLabel(outgoing, threadRef, outgoingShell)
     : null;
@@ -446,9 +447,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         : "text-foreground/80";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
   const accessiblePreview = [
-    outgoing
-      ? `${outgoingLabel} ${outgoingShell?.title || "Thread"}`
-      : (threadLabel?.text ?? previewText),
+    outgoing ? `${outgoingLabel} ${outgoingTitle}` : (threadLabel?.text ?? previewText),
     answerPreview,
   ]
     .filter(Boolean)
@@ -517,8 +516,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   {outgoingTarget ? (
                     <span className="min-w-0" onClick={stopRowToggle} onKeyDown={stopRowToggle}>
                       <ThreadContextChip
-                        record={{ ...outgoingTarget, title: "Thread" }}
+                        record={{ ...outgoingTarget, title: outgoingTitle }}
                         icon="thread"
+                        onOpenThread={ctx.onOpenThread}
                       />
                     </span>
                   ) : (

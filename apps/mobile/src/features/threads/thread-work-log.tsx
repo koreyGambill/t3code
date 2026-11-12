@@ -54,7 +54,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
-import { useQuietThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useThreadTitle } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
@@ -906,6 +906,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       )
     : null;
   const outgoingShell = useQuietThreadShell(outgoingTarget);
+  const outgoingTitle = useThreadTitle(outgoingTarget)?.trim() || "Thread";
   const outgoingLabel = outgoing
     ? outgoingT3MessageLabel(
         outgoing,
@@ -1055,7 +1056,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
-  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
+  const accessiblePreview = [
+    outgoing ? `${outgoingLabel} ${outgoingTitle}` : previewText,
+    answerPreview,
+  ]
+    .filter(Boolean)
+    .join(": ");
   const displayText =
     outgoingLabel ?? row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
@@ -1151,7 +1157,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               <View className="min-w-0 flex-1 flex-row items-center gap-1.5">
                 <Text className="shrink-0 text-sm text-foreground-muted">{outgoingLabel}</Text>
                 {outgoingTarget ? (
-                  <ThreadMessageLink thread={outgoingTarget} />
+                  <ThreadMessageLink thread={outgoingTarget} title={outgoingTitle} />
                 ) : (
                   <WorkLogLabel>Thread unavailable</WorkLogLabel>
                 )}

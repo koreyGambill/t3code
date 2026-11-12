@@ -49,6 +49,9 @@ const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
 const EMPTY_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("mobile-thread:empty"),
 );
+const EMPTY_THREAD_TITLE_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("mobile-thread-title:empty"),
+);
 const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(
   Atom.withLabel("mobile-thread-link-titles:empty"),
 );
@@ -221,8 +224,8 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
-export function useThreadTitle(ref: ScopedThreadRef): string | null {
-  return useAtomValue(threadTitleAtom(threadKey(ref)));
+export function useThreadTitle(ref: ScopedThreadRef | null): string | null {
+  return useAtomValue(ref === null ? EMPTY_THREAD_TITLE_ATOM : threadTitleAtom(threadKey(ref)));
 }
 
 export function useChildThreadInputs(ref: ScopedThreadRef) {
