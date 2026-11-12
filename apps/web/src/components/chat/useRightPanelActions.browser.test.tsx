@@ -85,7 +85,6 @@ it("routes panel commands to tiled owners while retaining the narrow panel close
       pullRequestsSurfaceAvailable: false,
       gitCwd: null,
       activeProjectCwd: null,
-      explicitDiffOpenRef: { current: null },
       onDiffPanelOpen: undefined,
       closeRightPanelSurface: (surface) => store.closeSurface(threadRef, surface.id),
     });

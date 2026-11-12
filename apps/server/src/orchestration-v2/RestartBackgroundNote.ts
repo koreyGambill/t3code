@@ -196,6 +196,11 @@ export function delegatedTaskResultRun(
 ): OrchestrationV2Run | undefined {
   const taskRuns = runs
     .filter((run) => run.delegatedTaskId === taskId)
+    .map((run) =>
+      run.mergedIntoRunId === undefined
+        ? run
+        : (runs.find((target) => target.id === run.mergedIntoRunId) ?? run),
+    )
     .toSorted((a, b) => b.ordinal - a.ordinal);
   const awaited = taskRuns.filter(
     (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),

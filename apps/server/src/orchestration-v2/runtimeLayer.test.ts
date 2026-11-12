@@ -6059,6 +6059,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make(`${threadId}-original`),
@@ -6071,6 +6072,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         const dispatchFollowUp = orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: origin === "user" ? "user" : "agent",
           creationSource: origin === "user" ? "web" : "mcp",
           ...(origin === "user" ? {} : { senderThreadId: ThreadId.make("sending-agent") }),
@@ -6831,6 +6833,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ) =>
           orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(`${threadId}:${name}`),
             threadId,
             messageId: MessageId.make(`${threadId}:${name}`),
@@ -7187,6 +7190,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       ] as const) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make(`${threadId}:${key}`),
           threadId,
           messageId: MessageId.make(`${threadId}:${key}`),
@@ -7201,6 +7205,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       // What t3_thread_send dispatches: no model of its own.
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`${threadId}:agent`),
         threadId,
         messageId: MessageId.make(`${threadId}:agent`),
@@ -7215,7 +7220,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isDefined(picked);
       assert.isDefined(agent);
       const now = yield* DateTime.now;
-      for (const runId of [active.id, picked.id]) {
+      for (const runId of [active.id]) {
         const current = yield* orchestrator.getThreadProjection(threadId);
         yield* eventSink.write({
           events: [
@@ -7236,7 +7241,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.resumeQueuedRuns;
       }
       const after = yield* orchestrator.getThreadProjection(threadId);
-      const delivered = after.runs.find((run) => run.id === agent.id)!;
+      const queuedAgent = after.runs.find((run) => run.id === agent.id)!;
+      const delivered = after.runs.find(
+        (run) => run.id === (queuedAgent.mergedIntoRunId ?? queuedAgent.id),
+      )!;
       assert.equal(delivered.status, "starting");
       assert.deepEqual(delivered.modelSelection, pickedSelection);
       assert.deepEqual(after.thread.modelSelection, pickedSelection);
@@ -7267,6 +7275,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       ] as const) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make(`${threadId}:${key}`),
           threadId,
           messageId: MessageId.make(`${threadId}:${key}`),
@@ -7280,6 +7289,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         commandId: CommandId.make(`${threadId}:wake`),
         threadId,
         messageId: MessageId.make(`${threadId}:wake`),
@@ -7331,6 +7341,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       ] as const) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make(`${threadId}:${key}`),
           threadId,
           messageId: MessageId.make(`${threadId}:${key}`),
@@ -7345,6 +7356,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const sendGoal = (key: string, text: string, deliveryIntent?: "auto") =>
         orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make(`${threadId}:${key}`),
           threadId,
           messageId: MessageId.make(`${threadId}:${key}`),

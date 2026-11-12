@@ -22,7 +22,11 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
+import {
+  isQuietAssistantText,
+  isOrchestrationV2WorkActive,
+  latestProviderTurnForAttempt,
+} from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -182,7 +186,7 @@ export function withExecutedModelNote(
   requestedModel: string,
   executedModel: string | null | undefined,
 ): string {
-  return executedModel == null || executedModel === requestedModel
+  return isQuietAssistantText(result) || executedModel == null || executedModel === requestedModel
     ? result
     : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
 }

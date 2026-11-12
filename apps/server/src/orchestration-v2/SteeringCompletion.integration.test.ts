@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
-  EnvironmentId,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -1631,6 +1630,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   assert.deepEqual(firstDelivery.taskIds, [firstTaskId]);
   yield* orchestrator.dispatch({
     type: "message.dispatch",
+    origin: { kind: "user" as const },
     commandId: CommandId.make("command:first-wake"),
     threadId,
     messageId: firstDelivery.messageId,
@@ -1661,6 +1661,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   const steeredRunning = yield* watchTurnRunning(3);
   yield* orchestrator.dispatch({
     type: "message.dispatch",
+    origin: { kind: "user" as const },
     commandId: CommandId.make("command:steer-wake"),
     threadId,
     messageId: MessageId.make("message:steer-wake"),
@@ -1716,6 +1717,7 @@ it.effect("wakes the parent for a sibling result after a steer restarts the comp
         const followUp = MessageId.make("message:follow-up");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("command:follow-up"),
           threadId,
           messageId: followUp,
@@ -2085,6 +2087,7 @@ it.effect("refuses a steer but starts a restart sent into a run that Stop reache
         const steerError = yield* orchestrator
           .dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("steer"),
             threadId,
             messageId: MessageId.make("message:steer"),
@@ -2100,6 +2103,7 @@ it.effect("refuses a steer but starts a restart sent into a run that Stop reache
         assert.include(String(steerError.cause), "is stopping and cannot be steered");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("restart"),
           threadId,
           messageId: MessageId.make("message:restart"),
@@ -2189,6 +2193,7 @@ it.effect.each([
 
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make("restart"),
             threadId,
             messageId: MessageId.make("message:restart"),
@@ -2260,6 +2265,7 @@ it.effect("queues a restart sent into a provider turn that failed before its run
 
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("restart"),
           threadId,
           messageId: MessageId.make("message:restart"),
@@ -2445,6 +2451,7 @@ it.effect("starts a goal that names no model on the thread's model ahead of a qu
         ] as const) {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(id),
             threadId,
             messageId: MessageId.make(`message:${id}`),
@@ -2484,6 +2491,7 @@ it.effect("restarts by stopping the running turn when the provider cannot interr
         yield* send("queued", "queued", "queue");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("restart"),
           threadId,
           messageId: MessageId.make("message:restart"),
@@ -2533,6 +2541,7 @@ it.effect("starts a restart that stops the running turn ahead of an older held q
         );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("second"),
           threadId,
           messageId: MessageId.make("message:second"),
@@ -2546,6 +2555,7 @@ it.effect("starts a restart that stops the running turn ahead of an older held q
         yield* Fiber.join(secondRunning);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("restart"),
           threadId,
           messageId: MessageId.make("message:restart"),
@@ -2576,6 +2586,7 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
         const threadManagement = yield* ThreadManagementService.ThreadManagementService;
         const threadId = yield* startFirstTurn;
         const input = {
+          origin: { kind: "user" },
           projectId: ProjectId.make("project:restart-send-delivery"),
           commandId: CommandId.make("restart"),
           threadId,

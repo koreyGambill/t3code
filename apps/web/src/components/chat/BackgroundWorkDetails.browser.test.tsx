@@ -45,6 +45,12 @@ it("opens full command details for short labels and keeps pending tasks current"
       work={backgroundWorkNowItem({
         environmentId: EnvironmentId.make("test"),
         threadId: ThreadId.make("thread"),
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("thread"),
+        },
+        projection: null,
         tasks: [
           {
             taskId: "native-task",

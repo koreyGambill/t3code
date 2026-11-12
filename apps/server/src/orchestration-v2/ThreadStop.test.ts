@@ -873,6 +873,7 @@ it.effect(
       assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held"]);
 
       const result = yield* threads.sendToThread({
+        origin: { kind: "user" },
         projectId: ProjectId.make("project:thread-stop"),
         commandId: CommandId.make("command:stop-mcp-send"),
         threadId,

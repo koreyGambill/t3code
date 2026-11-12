@@ -1496,7 +1496,6 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
-      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
     );

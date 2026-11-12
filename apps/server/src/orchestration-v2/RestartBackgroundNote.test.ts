@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   MessageId,
+  NodeId,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -10,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 
 import {
   cancelledRosterTaskWork,
+  delegatedTaskResultRun,
   cancelledTurnItemWork,
   isAwaitedWork,
   isRestartNoteContinuation,
@@ -261,4 +263,28 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
     }),
     [],
   );
+});
+
+it("tracks a delegated task through its merged run while ignoring held and cancelled followups", () => {
+  const taskId = NodeId.make("task:batched");
+  const target = run(2, claudeThread, { status: "running" });
+  const merged = run(1, claudeThread, {
+    delegatedTaskId: taskId,
+    status: "completed",
+    mergedIntoRunId: target.id,
+  });
+  const held = run(4, claudeThread, {
+    delegatedTaskId: taskId,
+    status: "queued",
+    queueHeld: true,
+    startedAt: null,
+  });
+  const cancelled = run(3, claudeThread, {
+    delegatedTaskId: taskId,
+    status: "cancelled",
+    startedAt: null,
+  });
+  assert.equal(delegatedTaskResultRun([merged, target, held, cancelled], taskId), target);
+  const completed = { ...target, status: "completed" as const };
+  assert.equal(delegatedTaskResultRun([merged, completed, held, cancelled], taskId), completed);
 });
