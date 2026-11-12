@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -579,7 +580,7 @@ describe("presentPendingBackgroundWork", () => {
     id: NodeId.make("node:delegated-task:done"),
     threadId: v2Projection.thread.id,
     runId: parentRunId,
-    parentNodeId: null,
+    parentNodeId: NodeId.make("parent-node"),
     origin: "app_owned" as const,
     createdBy: "agent" as const,
     driver: ProviderDriverKind.make("codex"),
@@ -633,7 +634,7 @@ describe("presentPendingBackgroundWork", () => {
     prompt: "Implement the feature",
     result: null,
   } satisfies OrchestrationV2TurnItem;
-  const projection = {
+  const projection: OrchestrationV2ThreadProjection = {
     ...v2Projection,
     runs: [parent],
     subagents: [done, running, later],
