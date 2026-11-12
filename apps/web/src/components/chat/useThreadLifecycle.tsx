@@ -598,19 +598,20 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           onForceStop: () => void forceStop.forceStopThread(activeThread.id, runStop.runId),
         })
       : null;
-  const backgroundWorkNow = activeThread
-    ? backgroundWorkNowItem({
-        threadId: activeThread.id,
-        lineage: activeThread.lineage,
-        tasks: activeBackgroundTasks,
-        turnItems,
-        projection: input.projection,
-        stopDisabled: !canOperateThread || isStoppingBackgroundWork,
-        stopping: isStoppingBackgroundWork,
-        onStop: handleStopBackgroundWorkStable,
-        onOpenThread: onOpenRelatedThreadStable,
-      })
-    : null;
+  const backgroundWorkNow =
+    !isWorking && activeThread
+      ? backgroundWorkNowItem({
+          threadId: activeThread.id,
+          lineage: activeThread.lineage,
+          tasks: activeBackgroundTasks,
+          turnItems,
+          projection: input.projection,
+          stopDisabled: !canOperateThread || isStoppingBackgroundWork,
+          stopping: isStoppingBackgroundWork,
+          onStop: handleStopBackgroundWorkStable,
+          onOpenThread: onOpenRelatedThreadStable,
+        })
+      : null;
   // The relative times read the clock; nowMinute re-renders them on the minute.
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;

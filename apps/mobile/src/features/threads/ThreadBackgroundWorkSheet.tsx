@@ -17,7 +17,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
-import { environmentThreadDetails, environmentThreadShells } from "../../state/threads";
+import { environmentThreadShells } from "../../state/threads";
+import { usePendingDelegatedTaskGroups } from "../../state/use-thread-detail";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -38,13 +39,13 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
   const thread = useAtomValue(
     environmentThreadShells.threadShellAtom(scopeThreadRef(target.environmentId, target.threadId)),
   );
-  const detail = useAtomValue(
-    environmentThreadDetails.quietThreadAtom(scopeThreadRef(target.environmentId, target.threadId)),
+  const groups = usePendingDelegatedTaskGroups(
+    scopeThreadRef(target.environmentId, target.threadId),
   );
   const presentation = presentPendingBackgroundWork(
     thread?.pendingBackgroundTasks ?? [],
     thread?.lineage,
-    detail?.projection,
+    groups,
   );
   const openThread = (threadId: ThreadId, environmentId?: EnvironmentId) => {
     void Haptics.selectionAsync();

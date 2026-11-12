@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
+  derivePendingDelegatedTaskGroups,
   presentPendingBackgroundWork,
   presentProviderGoal,
   type RunStopPresentation,
@@ -166,7 +167,11 @@ export function backgroundWorkNowItem(input: {
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
 }): ThreadNowItem | null {
   const { onOpenThread } = input;
-  const presentation = presentPendingBackgroundWork(input.tasks, input.lineage, input.projection);
+  const presentation = presentPendingBackgroundWork(
+    input.tasks,
+    input.lineage,
+    input.projection === null ? [] : derivePendingDelegatedTaskGroups(input.projection),
+  );
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
@@ -174,6 +179,7 @@ export function backgroundWorkNowItem(input: {
       (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId,
     );
     const subagent = item?.type === "subagent" ? item : undefined;
+    const activity = subagent?.progress?.replace(/\s+/gu, " ").trim() || null;
     return {
       task,
       label:
@@ -186,7 +192,7 @@ export function backgroundWorkNowItem(input: {
         ) : (
           task.label
         ),
-      activity: subagent?.progress?.replace(/\s+/gu, " ").trim() || null,
+      activity: activity === task.label ? null : activity,
       startedAtMs: item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null,
       updatedAtMs: subagent ? DateTime.toEpochMillis(subagent.updatedAt) : 0,
       childThreadId: task.childThreadId ?? subagent?.childThreadId ?? undefined,

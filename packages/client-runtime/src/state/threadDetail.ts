@@ -14,7 +14,12 @@ import {
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
-import { presentRunStop, type RunStopPresentation } from "./threadExecution.ts";
+import {
+  derivePendingDelegatedTaskGroups,
+  presentRunStop,
+  type PendingDelegatedTaskGroup,
+  type RunStopPresentation,
+} from "./threadExecution.ts";
 import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
@@ -416,6 +421,22 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue-count:${key}`));
   });
 
+  const pendingDelegatedTaskGroupsAtomFamily = Atom.family((key: string) => {
+    let groups: ReadonlyArray<PendingDelegatedTaskGroup> = [];
+    let signature = "[]";
+    return Atom.make((get) => {
+      const thread = get(quietThreadAtomFamily(key));
+      const next = thread === null ? [] : derivePendingDelegatedTaskGroups(thread.projection);
+      // Only the small presentation changes this subscription, not unrelated thread structure.
+      const nextSignature = JSON.stringify(next);
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        groups = next;
+      }
+      return groups;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-delegated-groups:${key}`));
+  });
+
   const turnSubagentsAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents"> | null = null;
     let value: ThreadTurnSubagents | null = null;
@@ -552,6 +573,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
     runStopAtom: (ref: ScopedThreadRef) => runStopAtomFamily(threadKey(ref)),
+    pendingDelegatedTaskGroupsAtom: (ref: ScopedThreadRef) =>
+      pendingDelegatedTaskGroupsAtomFamily(threadKey(ref)),
     turnSubagentsAtom: (ref: ScopedThreadRef) => turnSubagentsAtomFamily(threadKey(ref)),
     checkpointSummariesAtom: (ref: ScopedThreadRef) =>
       checkpointSummariesAtomFamily(threadKey(ref)),

@@ -412,6 +412,8 @@ export interface PendingBackgroundWorkPresentation {
 }
 
 interface DelegatedTaskGroupSource {
+  readonly thread: Pick<ThreadStructure["thread"], "archivedAt" | "deletedAt">;
+  readonly turnItems: ThreadStructure["turnItems"];
   readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "delegatedCompletion">>;
   readonly subagents: ReadonlyArray<
     Pick<
@@ -440,14 +442,20 @@ export interface PendingDelegatedTaskGroup {
 export function derivePendingDelegatedTaskGroups(
   projection: DelegatedTaskGroupSource,
 ): ReadonlyArray<PendingDelegatedTaskGroup> {
+  if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return [];
   const groups = new Map<RunId, Array<DelegatedTaskGroupSource["subagents"][number]>>();
   for (const run of projection.runs) {
     if (
-      run.status !== "rolled_back" &&
+      (run.status === "completed" ||
+        run.status === "failed" ||
+        run.status === "cancelled" ||
+        run.status === "interrupted" ||
+        run.status === "rolled_back") &&
       (run.delegatedCompletion === undefined || run.delegatedCompletion.disposition === "open")
     )
       groups.set(run.id, []);
   }
+  if (groups.size === 0) return [];
   for (const task of projection.subagents) {
     if (
       task.origin === "app_owned" &&
@@ -456,6 +464,11 @@ export function derivePendingDelegatedTaskGroups(
     )
       groups.get(task.runId)?.push(task);
   }
+  const taskIds = new Map(
+    projection.turnItems
+      .filter((item) => item.type === "subagent")
+      .map((item) => [item.subagentId, item.nativeItemRef?.nativeId || item.id]),
+  );
   return Array.from(groups, ([runId, tasks]) => {
     const pending = tasks.filter((task) => !isTerminalSubagentStatus(task.status));
     return {
@@ -463,7 +476,7 @@ export function derivePendingDelegatedTaskGroups(
       done: tasks.length - pending.length,
       total: tasks.length,
       items: pending.map((task): PendingBackgroundWorkItem => ({
-        taskId: task.id,
+        taskId: taskIds.get(task.id) ?? task.id,
         kind: "subagent",
         label: formatSubagentDisplayTitle(task.title ?? "").trim() || "subagent",
         childThreadId: task.remoteChild?.threadId ?? task.childThreadId ?? undefined,
@@ -501,9 +514,8 @@ export function isBackgroundWorkStopPending(
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   lineage?: Pick<OrchestrationV2ThreadProjection["thread"]["lineage"], "relationshipToParent">,
-  projection?: DelegatedTaskGroupSource | null,
+  groups: ReadonlyArray<PendingDelegatedTaskGroup> = [],
 ): PendingBackgroundWorkPresentation | null {
-  const groups = projection == null ? [] : derivePendingDelegatedTaskGroups(projection);
   if (groups.length > 0) {
     const groupedItems = groups.flatMap((group) => group.items);
     const groupedIds = new Set(groupedItems.map((item) => item.taskId));
