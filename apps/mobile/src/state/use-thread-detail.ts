@@ -20,7 +20,9 @@ const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).p
 const EMPTY_THREAD_STRUCTURE_ATOM = Atom.make<EnvironmentThreadStructure | null>(null).pipe(
   Atom.withLabel("mobile-thread-structure:empty"),
 );
-const EMPTY_DELEGATED_TASK_GROUPS_ATOM = Atom.make<ReadonlyArray<PendingDelegatedTaskGroup>>([]);
+const EMPTY_DELEGATED_TASK_GROUPS_ATOM = Atom.make<ReadonlyArray<PendingDelegatedTaskGroup>>(
+  [],
+).pipe(Atom.withLabel("mobile-thread-delegated-task-groups:empty"));
 const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make<
   OrchestrationV2ThreadProjection["visibleTurnItems"]
 >(Object.freeze([])).pipe(Atom.withLabel("mobile-thread-visible-turn-items:empty"));

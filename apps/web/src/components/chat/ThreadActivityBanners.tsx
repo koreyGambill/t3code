@@ -182,6 +182,7 @@ export function backgroundWorkNowItem(input: {
     const activity = subagent?.progress?.replace(/\s+/gu, " ").trim() || null;
     return {
       task,
+      grouped: presentation.groups.some((group) => group.items.includes(task)),
       label:
         item?.type === "command_execution" && commandDisplayText(item.input) === task.label ? (
           <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
@@ -205,9 +206,7 @@ export function backgroundWorkNowItem(input: {
   const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
-  const descriptionRows = rows.filter(
-    (row) => !presentation.groups.some((group) => group.items.includes(row.task)),
-  );
+  const descriptionRows = rows.filter((row) => row.activity || !row.grouped);
   return {
     id: `background-work:${input.threadId}`,
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
@@ -244,20 +243,28 @@ export function backgroundWorkNowItem(input: {
       ) : (
         presentation.title
       ),
-    description: only ? (
-      only.activity
-    ) : newest ? (
-      <>
-        {newest.label}: {newest.activity}
-      </>
-    ) : (
-      descriptionRows.map((row, index) => (
-        <Fragment key={row.task.taskId}>
-          {index > 0 ? ", " : null}
-          {row.label}
-        </Fragment>
-      ))
-    ),
+    description:
+      presentation.groups.length === 0 && only ? (
+        only.activity
+      ) : presentation.groups.length === 0 && newest ? (
+        <>
+          {newest.label}: {newest.activity}
+        </>
+      ) : (
+        descriptionRows.map((row, index) => (
+          <Fragment key={row.task.taskId}>
+            {index > 0 ? ", " : null}
+            {row.grouped ? (
+              row.activity
+            ) : (
+              <>
+                {row.label}
+                {row.activity ? <>: {row.activity}</> : null}
+              </>
+            )}
+          </Fragment>
+        ))
+      ),
     actions: (
       <>
         {startedAtMs === null ? null : (
