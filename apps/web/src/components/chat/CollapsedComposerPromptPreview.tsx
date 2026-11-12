@@ -38,6 +38,7 @@ const CONTEXT_REFERENCE_ICONS: Record<
   terminal: () => <TerminalIcon />,
   "preview-annotation": () => <MousePointerClickIcon />,
   "review-comment": () => <MessageCircleIcon />,
+  "artifact-answer": () => <MessageCircleIcon />,
   thread: () => <MessagesSquareIcon />,
   environment: () => <MonitorIcon />,
 };
@@ -97,7 +98,7 @@ export function CollapsedComposerPromptPreview(props: {
         return entry ? (
           <ContextChipShell
             key={key}
-            kind={entry.kind}
+            kind={entry.kind === "artifact-answer" ? "neutral" : entry.kind}
             icon={CONTEXT_REFERENCE_ICONS[entry.kind](segment.label, props.theme)}
             label={segment.label}
           />

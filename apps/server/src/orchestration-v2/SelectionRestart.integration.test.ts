@@ -499,6 +499,7 @@ it.live("a workspace handoff during a run does not leave the run interrupted", (
           );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           createdBy: "user",
           creationSource: "web",
           commandId: CommandId.make("command:workspace-handoff:first"),
@@ -534,6 +535,7 @@ it.live("a workspace handoff during a run does not leave the run interrupted", (
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make("command:workspace-handoff:rebind"),
+          workspaceChange: "agent-handoff",
           threadId,
           branch: "repro-handoff",
           worktreePath: handoffCwd,

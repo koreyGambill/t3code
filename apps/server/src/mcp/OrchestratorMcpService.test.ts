@@ -2830,6 +2830,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             createdBy: "user",
             creationSource: "web",
             commandId: CommandId.make("parent:start"),

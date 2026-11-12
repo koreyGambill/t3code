@@ -1672,6 +1672,7 @@ const runForkWithFailingNativeSource = (forkFailures: number) => {
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
+      origin: { kind: "user" as const },
       commandId: CommandId.make("fork-missing-continue"),
       threadId: targetThreadId,
       messageId: MessageId.make("fork-missing-continue"),

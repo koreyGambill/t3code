@@ -569,6 +569,7 @@ it.effect("applies an effort change to the running Claude query without waiting 
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          origin: { kind: "user" as const },
           commandId: CommandId.make("first"),
           threadId,
           messageId: MessageId.make("first"),

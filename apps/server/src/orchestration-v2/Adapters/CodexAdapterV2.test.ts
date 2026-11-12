@@ -1315,17 +1315,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      handleServerNotification: (method, handler) =>
-                        client.handleServerNotification(method, (payload) =>
-                          handler(payload).pipe(Effect.tap(() => afterNotification(method))),
-                        ),
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
                         ),
                       handleServerNotification: (method, handler) =>
                         client.handleServerNotification(method, (payload) =>
-                          onNotification(method).pipe(Effect.andThen(handler(payload))),
+                          onNotification(method).pipe(
+                            Effect.andThen(handler(payload)),
+                            Effect.tap(() => afterNotification(method)),
+                          ),
                         ),
                       raw: {
                         ...client.raw,
@@ -2875,6 +2874,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           undefined,
           undefined,
           undefined,
+          Effect.succeed(false),
           (method) =>
             Effect.sync(() => {
               if (method === "item/completed" || method === "turn/completed")

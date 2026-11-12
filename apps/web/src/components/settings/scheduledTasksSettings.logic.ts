@@ -1,4 +1,8 @@
-import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  isWebhookDedupeTemplate,
+  scheduledWakeLabel,
+} from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -45,9 +49,12 @@ export function scheduleLabel(
   timeZone?: string,
   runAt?: string | null,
 ): string {
+  const wake = scheduledWakeLabel(schedule);
+  if (wake !== null) return wake;
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
+    if (schedule.idleCheckin) return "Idle work check-in · after 30 min idle";
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
       ? `Every ${minutes} min`

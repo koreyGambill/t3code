@@ -951,6 +951,7 @@ it.effect("idle check-ins persist their cadence, skip busy ticks, and pause with
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             streamDomainEvents: Stream.empty,
+            getThreadRecords: () => Effect.succeed({ runs: [] } as never),
             getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
             sendToThread: (input) =>
               Ref.get(busy).pipe(

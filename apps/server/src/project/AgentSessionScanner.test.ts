@@ -1804,9 +1804,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect.each(["claudeAgent", "codex"] as const)(
-      "skips excessive %s records without blocking an older valid transcript",
-      (source) =>
+    it.effect.each([
+      { source: "claudeAgent", outcome: "Importable" },
+      { source: "codex", outcome: "Skipped" },
+    ] as const)(
+      "bounds large $source history without blocking an older valid transcript",
+      ({ source, outcome }) =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
@@ -1859,7 +1862,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             codexHomePath,
             workspaceRoot: workspace,
           });
-          expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
+          expect(outcomes.map((entry) => entry._tag)).toEqual([outcome, "Importable"]);
+          if (source === "claudeAgent" && outcomes[0]?._tag === "Importable") {
+            expect(outcomes[0].thread.messages).toHaveLength(200);
+            expect(outcomes[0].thread.omittedMessageCount).toBe(99_801);
+            expect(outcomes[0].thread.messages[0]?.text).toBe("First prompt");
+          }
           expect(outcomes[1]).toMatchObject({
             thread: { providerSessionId: "record-limit-session" },
           });

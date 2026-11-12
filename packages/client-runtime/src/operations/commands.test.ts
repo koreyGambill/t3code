@@ -437,6 +437,7 @@ describe("V2 environment commands", () => {
         commandId: CommandId.make("command-lost-ack"),
         threadId: v2ThreadId,
         message: {
+          origin: { kind: "user" },
           messageId: MessageId.make("message-lost-ack"),
           role: "user",
           text: "hello",
@@ -491,6 +492,7 @@ describe("V2 environment commands", () => {
         commandId: CommandId.make("command-socket-killer"),
         threadId: v2ThreadId,
         message: {
+          origin: { kind: "user" },
           messageId: MessageId.make("message-socket-killer"),
           role: "user",
           text: "hello",
@@ -541,6 +543,7 @@ describe("V2 environment commands", () => {
             commandId: CommandId.make(`command-host-gone-${resendAfterSocketLoss}`),
             threadId: v2ThreadId,
             message: {
+              origin: { kind: "user" },
               messageId: MessageId.make(`message-host-gone-${resendAfterSocketLoss}`),
               role: "user",
               text: "hello",

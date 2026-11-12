@@ -119,6 +119,7 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
       Layer.provide(
         Layer.mergeAll(
           IdAllocator.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
           Layer.mock(CheckpointStore.CheckpointStore)({
             isGitRepository: () =>
               Effect.fail(

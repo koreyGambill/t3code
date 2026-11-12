@@ -461,6 +461,11 @@ describe("ProviderContinuationService", () => {
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
           Layer.provide(
+            Layer.succeed(ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:continuation")),
+            }),
+          ),
+          Layer.provide(
             Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
           ),
         );

@@ -1177,6 +1177,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         Effect.gen(function* () {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            origin: { kind: "user" as const },
             commandId: CommandId.make(name),
             createdBy: "user",
             creationSource: "web",
@@ -5506,6 +5507,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         mode === "comment limit";
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         createdBy: "user",
         creationSource: "web",
         commandId: CommandId.make(`${threadId}-active`),
@@ -5541,6 +5543,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const userMessageId = MessageId.make(`${threadId}-user`);
       yield* orchestrator.dispatch({
         type: "message.dispatch",
+        origin: { kind: "user" as const },
         createdBy: "user",
         creationSource: "web",
         commandId: CommandId.make(`${threadId}-user`),

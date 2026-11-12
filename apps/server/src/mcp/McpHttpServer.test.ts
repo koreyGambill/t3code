@@ -1,3 +1,4 @@
+import * as DevelopmentEnvironments from "../developmentEnvironments/DevelopmentEnvironments.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -300,6 +301,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       Layer.mergeAll(
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
+        Layer.mock(DevelopmentEnvironments.DevelopmentEnvironments)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({

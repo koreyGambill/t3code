@@ -11,6 +11,7 @@ it("lets the offline send button submit an existing thread and blocks resume", a
     pendingAction: null,
     isRunning: false,
     canInterrupt: false,
+    runId: null,
     followUpBehavior: "queue" as const,
     canSteer: false,
     alternateShortcutLabel: null,
@@ -30,11 +31,7 @@ it("lets the offline send button submit an existing thread and blocks resume", a
   await screen.getByRole("button", { name: "Queue until reconnected" }).click();
   expect(submit).toHaveBeenCalledTimes(1);
   await screen.rerender(
-    <ComposerFooterPrimaryActions
-      {...props}
-      hasSendableContent={false}
-      canResume
-    />,
+    <ComposerFooterPrimaryActions {...props} hasSendableContent={false} canResume />,
   );
   await expect
     .element(screen.getByRole("button", { name: "Environment disconnected" }))
