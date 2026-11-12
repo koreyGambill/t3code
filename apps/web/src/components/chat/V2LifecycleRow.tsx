@@ -136,7 +136,7 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={
-          <WorkEntryIconTooltip label="Created thread">
+          <WorkEntryIconTooltip label={workLogIcons["t3-code"].label}>
             <WeavewingMark className="size-4 text-icon-muted" aria-hidden />
           </WorkEntryIconTooltip>
         }
@@ -209,6 +209,7 @@ function SubagentAvatar({
   showBadge,
   status,
   className,
+  tooltip = true,
 }: {
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
@@ -217,41 +218,47 @@ function SubagentAvatar({
   showBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
   className?: string;
+  tooltip?: boolean;
 }) {
-  return (
-    <WorkEntryIconTooltip label={workLogIcons.bot.label}>
-      <span
-        aria-hidden
-        className={cn(
-          "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
-          className,
-        )}
-      >
-        {driver ? (
-          <ProviderInstanceIcon
-            driverKind={driver}
-            displayName={displayName ?? driver}
-            accentColor={accentColor}
-            acpRegistryIconUrl={iconUrl}
-            showBadge={showBadge}
-            size="compact"
-            className="z-auto"
-            iconClassName="size-3.5"
-          />
-        ) : (
-          <BotIcon className="size-3.5 text-muted-foreground" />
-        )}
-        {status ? (
-          <span
-            className={cn(
-              "absolute size-2 rounded-full ring-2 ring-background",
-              showBadge ? "-left-px -top-px" : "-right-px -bottom-px",
-              subagentStatusVisual(status).dotClass,
-            )}
-          />
-        ) : null}
-      </span>
+  const avatar = (
+    <span
+      aria-hidden
+      className={cn(
+        "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
+        className,
+      )}
+    >
+      {driver ? (
+        <ProviderInstanceIcon
+          driverKind={driver}
+          displayName={displayName ?? driver}
+          accentColor={accentColor}
+          acpRegistryIconUrl={iconUrl}
+          showBadge={showBadge}
+          size="compact"
+          className="z-auto"
+          iconClassName="size-3.5"
+        />
+      ) : (
+        <BotIcon className="size-3.5 text-muted-foreground" />
+      )}
+      {status ? (
+        <span
+          className={cn(
+            "absolute size-2 rounded-full ring-2 ring-background",
+            showBadge ? "-left-px -top-px" : "-right-px -bottom-px",
+            subagentStatusVisual(status).dotClass,
+          )}
+        />
+      ) : null}
+    </span>
+  );
+  return tooltip ? (
+    <WorkEntryIconTooltip label={displayName ?? driver ?? workLogIcons.bot.label}>
+      {avatar}
     </WorkEntryIconTooltip>
+  ) : (
+    avatar
   );
 }
 
@@ -269,6 +276,7 @@ export function EnvironmentSubagentAvatar({
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  tooltip?: boolean;
 }) {
   const providerEnvironmentId = remote?.environmentId ?? environmentId;
   const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
@@ -454,6 +462,7 @@ function SubagentTimelineLink(props: {
   const content = (
     <>
       <EnvironmentSubagentAvatar
+        tooltip={false}
         environmentId={props.parentRef.environmentId}
         providerInstanceId={props.providerInstanceId}
         driver={props.driver}

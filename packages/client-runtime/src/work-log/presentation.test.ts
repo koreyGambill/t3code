@@ -218,15 +218,23 @@ describe("work row icon presentation", () => {
   it.each([
     [{ itemType: "command_execution", command: "ls" }, "terminal", "Ran command"],
     [{ requestKind: "file-read" }, "eye", "Read file"],
-    [{ itemType: "file_search" }, "search", "Searched"],
+    [{ itemType: "file_search" }, "search", "Searched code"],
     [{ itemType: "web_search" }, "globe", "Searched web"],
     [{ itemType: "subagent" }, "bot", "Subagent"],
-    [{ itemType: "dynamic_tool", toolData: { toolName: "WebFetch" } }, "wrench", "Web fetch"],
+    [{ itemType: "system_notice" }, "warning", "Warning"],
+    [{ itemType: "run_interrupt_request" }, "stop", "Stop request"],
+    [{ itemType: "run_interrupt_result" }, "stop", "Stopped"],
+    [{ itemType: "error" }, "circle-alert", "Error"],
+    [{ itemType: "approval_request", requestKind: "permission" }, "lock", "Approval request"],
+    [{ itemType: "secret_request" }, "lock", "Secret request"],
+    [{ itemType: "reasoning", tone: "thinking" }, "brain", "Thinking"],
+    [{ itemType: "todo_list" }, "list-todo", "To-do list"],
+    [{ itemType: "dynamic_tool", toolData: { toolName: "WebFetch" } }, "wrench", "Tool"],
     [{ itemType: "dynamic_tool", toolData: { toolName: "unknown_tool" } }, "wrench", "Tool"],
     [{ toolSurface: "computer" }, "computer", "Computer use"],
     [{ tone: "thinking" }, "brain", "Thinking"],
     [{ tone: "error" }, "circle-alert", "Error"],
-    [{ tone: "info" }, "hammer", "Work"],
+    [{ tone: "info" }, "hammer", "Tools"],
     [{}, "zap", "Tool"],
   ] satisfies ReadonlyArray<readonly [Partial<WorkLogPresentationEntry>, string, string]>)(
     "names the activity for %j",
@@ -253,11 +261,29 @@ describe("work row icon presentation", () => {
     });
   });
 
+  it.each([{ kind: "subagent" }, { kind: "delegated_task", taskIds: [] }] as const)(
+    "keeps subagent notifications paired with their icon (%j)",
+    (source) => {
+      const structuredPayload: OrchestrationV2TurnItem = {
+        ...commandItem(),
+        type: "notification",
+        source,
+        outcome: "completed",
+        summary: "Finished investigating",
+      };
+      expect(workEntryIconPresentation({ ...base, structuredPayload })).toEqual({
+        iconName: "bot",
+        label: "Subagent",
+      });
+    },
+  );
+
   it.each([
     ["read", "eye", "Read file"],
     ["command", "terminal", "Ran command"],
     ["agent-tool", "bot", "Subagent"],
-    ["mixed", "hammer", "Work"],
+    ["mixed", "hammer", "Tools"],
+    ["thread-create", "t3-code", "Created thread"],
   ] as const)("names grouped %s activity", (kind, iconName, label) => {
     expect(toolGroupIconPresentation(kind)).toEqual({ iconName, label });
   });

@@ -146,6 +146,7 @@ function WorkflowMemberRow(props: {
           }
         >
           <EnvironmentSubagentAvatar
+            tooltip={false}
             environmentId={props.environmentId}
             providerInstanceId={props.providerInstanceId}
             driver={props.driver}

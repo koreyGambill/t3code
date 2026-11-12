@@ -18,6 +18,7 @@ import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-
 import {
   resolveViewedImageAsset,
   workEntryIconPresentation,
+  workLogIcons,
   toolGroupAction,
   workEntryViewedImagePath,
   workEntryOutgoingMessage,
@@ -530,7 +531,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryToolIcon) ? (
-            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+            <WorkEntryIconTooltip label={workLogIcons.x.label}>
+              <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+            </WorkEntryIconTooltip>
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span

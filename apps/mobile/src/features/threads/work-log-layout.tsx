@@ -24,21 +24,8 @@ export function WorkLogRows({ children }: { children: ReactNode }) {
   return <View className="gap-px">{children}</View>;
 }
 
-export function WorkLogIconSlot({
-  children,
-  accessibilityLabel,
-}: {
-  children: ReactNode;
-  accessibilityLabel?: string;
-}) {
-  return (
-    <View
-      accessibilityLabel={accessibilityLabel}
-      className="relative h-6 w-6 shrink-0 items-center justify-center"
-    >
-      {children}
-    </View>
-  );
+export function WorkLogIconSlot({ children }: { children: ReactNode }) {
+  return <View className="relative h-6 w-6 shrink-0 items-center justify-center">{children}</View>;
 }
 
 export function WorkLogPressable({

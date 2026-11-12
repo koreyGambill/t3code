@@ -129,31 +129,60 @@ export type ToolGroupSummaryKind =
   | "tone-tool"
   | "mixed";
 
+export type WorkLogIconName =
+  | "bot"
+  | "brain"
+  | "browser"
+  | "check"
+  | "circle-alert"
+  | "code"
+  | "computer"
+  | "device"
+  | "eye"
+  | "globe"
+  | "hammer"
+  | "list-todo"
+  | "lock"
+  | "message-circle"
+  | "pull-request"
+  | "search"
+  | "square-pen"
+  | "stop"
+  | "t3-code"
+  | "terminal"
+  | "warning"
+  | "wrench"
+  | "x"
+  | "zap";
+
 export const workLogIcons = {
   bot: { iconName: "bot", label: "Subagent" },
   brain: { iconName: "brain", label: "Thinking" },
   browser: { iconName: "browser", label: "Browser" },
   check: { iconName: "check", label: "Update" },
-  "list-todo": { iconName: "list-todo", label: "Plan" },
+  "list-todo": { iconName: "list-todo", label: "To-do list" },
   "circle-alert": { iconName: "circle-alert", label: "Error" },
   computer: { iconName: "computer", label: "Computer use" },
   code: { iconName: "code", label: "JavaScript" },
   device: { iconName: "device", label: "Device" },
   eye: { iconName: "eye", label: "Read file" },
   globe: { iconName: "globe", label: "Searched web" },
-  hammer: { iconName: "hammer", label: "Work" },
+  hammer: { iconName: "hammer", label: "Tools" },
   "message-circle": { iconName: "message-circle", label: "Message" },
-  search: { iconName: "search", label: "Searched" },
+  search: { iconName: "search", label: "Searched code" },
   "square-pen": { iconName: "square-pen", label: "Edited file" },
   terminal: { iconName: "terminal", label: "Ran command" },
   "pull-request": { iconName: "pull-request", label: "Pull request" },
-  "t3-code": { iconName: "t3-code", label: "Weavewing" },
+  "t3-code": { iconName: "t3-code", label: "Created thread" },
+  stop: { iconName: "stop", label: "Stopped" },
+  lock: { iconName: "lock", label: "Permission request" },
+  warning: { iconName: "warning", label: "Warning" },
   wrench: { iconName: "wrench", label: "Tool" },
   x: { iconName: "x", label: "Failed" },
   zap: { iconName: "zap", label: "Tool" },
-} as const;
-
-export type WorkLogIconName = keyof typeof workLogIcons;
+} as const satisfies {
+  readonly [Name in WorkLogIconName]: { readonly iconName: Name; readonly label: string };
+};
 
 export interface WorkLogIconPresentation {
   readonly iconName: WorkLogIconName;
@@ -226,9 +255,31 @@ export function workEntryIconPresentation(
         return workLogIcons["zap"];
     }
   }
+  switch (workEntry.itemType) {
+    case "system_notice":
+      return workLogIcons.warning;
+    case "run_interrupt_request":
+      return { iconName: "stop", label: "Stop request" };
+    case "run_interrupt_result":
+      return workLogIcons.stop;
+    case "error": {
+      const item = workEntry.structuredPayload;
+      return item?.type === "error" && item.failure.class === "usage_limit"
+        ? item.status === "completed"
+          ? workLogIcons.check
+          : { iconName: "warning", label: "Usage limit" }
+        : workLogIcons["circle-alert"];
+    }
+    case "secret_request":
+      return { iconName: "lock", label: "Secret request" };
+    case "reasoning":
+      return workLogIcons.brain;
+    case "subagent":
+      return workLogIcons.bot;
+  }
   if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
     return {
-      iconName: "message-circle",
+      iconName: workEntry.requestKind === "permission" ? "lock" : "message-circle",
       label: workEntry.itemType === "user_input_request" ? "Question" : "Approval request",
     };
   }
@@ -244,16 +295,7 @@ export function workEntryIconPresentation(
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupIconPresentation(action);
 
-  switch (workEntry.itemType) {
-    case "dynamic_tool": {
-      const toolName = workEntryToolName(workEntry)?.split(/[./]/u).at(-1);
-      return /^(?:web[_-]?)?fetch$/iu.test(toolName ?? "")
-        ? { iconName: "wrench", label: "Web fetch" }
-        : workLogIcons.wrench;
-    }
-    case "subagent":
-      return workLogIcons["bot"];
-  }
+  if (workEntry.itemType === "dynamic_tool") return workLogIcons.wrench;
 
   return workLogIcons[
     workEntry.tone === "error"

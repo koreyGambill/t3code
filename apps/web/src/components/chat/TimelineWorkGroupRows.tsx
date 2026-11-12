@@ -441,7 +441,10 @@ function LiveActivityContent({
     <WorkLogRow
       icon={
         icon ? (
-          <WorkEntryIconTooltip label={failed ? `${icon.label}, tool call failed` : icon.label}>
+          <WorkEntryIconTooltip
+            label={failed ? `${icon.label}, tool call failed` : icon.label}
+            disabled={highlighted}
+          >
             <span
               className={cn(
                 "flex size-4 items-center justify-center",
@@ -475,7 +478,9 @@ function LiveActivityContent({
       }
       trailing={
         showTrailingFailureMark ? (
-          <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+          <WorkEntryIconTooltip label={workLogIcons.x.label} disabled={highlighted}>
+            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+          </WorkEntryIconTooltip>
         ) : null
       }
     />

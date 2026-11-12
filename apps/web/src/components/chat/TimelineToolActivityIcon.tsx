@@ -11,6 +11,9 @@ import {
   BrainIcon,
   CheckIcon,
   CircleAlertIcon,
+  CircleStopIcon,
+  LockIcon,
+  TriangleAlertIcon,
   EyeIcon,
   GlobeIcon,
   ListTodoIcon,
@@ -37,7 +40,16 @@ export function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boo
 
 export type { WorkLogIconName as WorkEntryIconName } from "@t3tools/client-runtime/work-log/presentation";
 
-export function WorkEntryIconTooltip({ label, children }: { label: string; children: ReactNode }) {
+export function WorkEntryIconTooltip({
+  label,
+  children,
+  disabled = false,
+}: {
+  label: string;
+  children: ReactNode;
+  disabled?: boolean;
+}) {
+  if (disabled) return children;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -246,6 +258,12 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <ListTodoIcon className={className} aria-hidden />;
     case "circle-alert":
       return <CircleAlertIcon className={className} aria-hidden />;
+    case "stop":
+      return <CircleStopIcon className={className} aria-hidden />;
+    case "lock":
+      return <LockIcon className={className} aria-hidden />;
+    case "warning":
+      return <TriangleAlertIcon className={className} aria-hidden />;
     case "eye":
       return <EyeIcon className={className} aria-hidden />;
     case "globe":
