@@ -7,9 +7,6 @@ it("lets the offline send button submit an existing thread and blocks resume", a
   const props = {
     compact: false,
     canOperateThread: true,
-    activeContextWindow: null,
-    reserveContextWindowMeter: false,
-    activeThreadModelDisplayName: null,
     isPreparingWorktree: false,
     pendingAction: null,
     isRunning: false,
@@ -17,8 +14,6 @@ it("lets the offline send button submit an existing thread and blocks resume", a
     followUpBehavior: "queue" as const,
     canSteer: false,
     alternateShortcutLabel: null,
-    showPlanFollowUpPrompt: false,
-    promptHasText: true,
     isSendBusy: false,
     sendDisabledReason: null,
     isEnvironmentUnavailable: true,
@@ -30,9 +25,6 @@ it("lets the offline send button submit an existing thread and blocks resume", a
     onResume: vi.fn(),
     onPreviousPendingQuestion: vi.fn(),
     onInterrupt: vi.fn(),
-    onImplementPlanInNewThread: vi.fn(),
-    compactDisabled: true,
-    compactDisabledReason: null,
   };
   await using screen = await render(<ComposerFooterPrimaryActions {...props} />);
   await screen.getByRole("button", { name: "Queue until reconnected" }).click();
@@ -40,7 +32,6 @@ it("lets the offline send button submit an existing thread and blocks resume", a
   await screen.rerender(
     <ComposerFooterPrimaryActions
       {...props}
-      promptHasText={false}
       hasSendableContent={false}
       canResume
     />,

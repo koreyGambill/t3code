@@ -104,6 +104,8 @@ interface BoxThread {
   readonly laterError: Ref.Ref<string | null>;
   /** A later run's reply, after the task's own, as a follow-up message would leave. */
   readonly laterReply: Ref.Ref<string | null>;
+  /** The model the provider there reported running the task's run. */
+  readonly executedModel: Ref.Ref<string | null>;
   /** The run each wait asked for, in order. */
   readonly waitedFor: Ref.Ref<ReadonlyArray<RunId | undefined>>;
   /** The thread's run ends with a task of its own still running, whose result wakes it again. */
@@ -149,6 +151,7 @@ const makeBoxThread = Effect.gen(function* () {
     error: yield* Ref.make<string | null>(null),
     laterError: yield* Ref.make<string | null>(null),
     laterReply: yield* Ref.make<string | null>(null),
+    executedModel: yield* Ref.make<string | null>(null),
     waitedFor: yield* Ref.make<ReadonlyArray<RunId | undefined>>([]),
     nested: yield* Ref.make(false),
     nestedWaiting: yield* Deferred.make<void>(),
@@ -233,6 +236,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ordinal: 1,
       status,
       modelSelection,
+      activeAttemptId: "attempt:box",
       requestedAt: DateTime.makeUnsafe(0),
       startedAt: DateTime.makeUnsafe(0),
       completedAt: null,
@@ -243,6 +247,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
       const reply = yield* Ref.get(thread.reply);
+      const model = yield* Ref.get(thread.executedModel);
       return shell === null
         ? (null as never)
         : {
@@ -267,6 +272,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
                       updatedAt: DateTime.makeUnsafe(0),
                     },
                   ],
+            providerTurns: (model === null
+              ? []
+              : [{ runAttemptId: "attempt:box", ordinal: 1, model }]) as never,
           };
     });
   // One record per command id, as its receipt replays a repeat.
@@ -874,7 +882,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(yield* Ref.get(thread.launched)).toBe(delegated.remoteChild.threadId);
       // Its link opens the thread there, so the parent can mention it like any other.
       expect(delegated.link).toBe(
-        `<t3-thread://v2/${box.environmentId}/${delegated.remoteChild.threadId}>`,
+        `[Laptop parent](t3-thread://v2/${box.environmentId}/${delegated.remoteChild.threadId})`,
       );
       // ...naming the parent here, so the thread there links back to it.
       expect(yield* Ref.get(thread.delegatedFrom)).toEqual({
@@ -933,12 +941,49 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         (run) => run.id === parentRunId,
       );
       expect(parentRun?.delegatedCompletion?.delivery?.taskIds).toEqual([delegated.taskId]);
-      // The wake is offered after the result commits, so the result can be seen first.
+      expect(yield* SubscriptionRef.get(offers)).toEqual([]);
+      if (parentRun === undefined) return yield* Effect.die("The parent run was not seeded.");
+      const now = yield* DateTime.now;
+      yield* a.sink.write({
+        commandId: CommandId.make("command:finish:laptop-parent"),
+        events: [
+          {
+            id: EventId.make("event:finish:laptop-parent"),
+            type: "run.updated",
+            threadId: parentThreadId,
+            runId: parentRunId,
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: { ...parentRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
       const offered = yield* SubscriptionRef.changes(offers).pipe(
         Stream.filter((seen) => seen.some((offer) => offer.threadId === parentThreadId)),
         Stream.runHead,
       );
-      expect(Option.isSome(offered)).toBe(true);
+      const wake = Option.isSome(offered)
+        ? offered.value.find((offer) => offer.threadId === parentThreadId)?.delegatedCompletion
+        : undefined;
+      expect(wake).toBeDefined();
+      if (wake === undefined) return yield* Effect.die("The parent wake was not offered.");
+      yield* a.orchestrator.dispatch({
+        type: "message.dispatch",
+        origin: { kind: "user" },
+        commandId: CommandId.make("command:wake:laptop-parent"),
+        threadId: parentThreadId,
+        messageId: wake.messageId,
+        text: "The delegated task completed.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: { ...wake, taskIds: [delegated.taskId] },
+      });
+      const observingRun = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs.find(
+        (run) => run.userMessageId === wake.messageId,
+      );
+      expect(observingRun).toBeDefined();
 
       const messageReads: Array<string> = [];
       const tracer = Tracer.make({
@@ -973,7 +1018,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       });
       expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
         state: "acknowledged",
-        observedByRunId: parentRunId,
+        observedByRunId: observingRun?.id,
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -999,10 +1044,7 @@ it.effect.each(["no active parent run", "a newer run owned by another provider"]
         yield* Ref.set(thread.status, "completed");
         yield* Deferred.succeed(thread.finished, undefined);
         yield* taskResult(a, delegated.taskId);
-        yield* SubscriptionRef.changes(offers).pipe(
-          Stream.filter((seen) => seen.some((offer) => offer.threadId === parentThreadId)),
-          Stream.runHead,
-        );
+        expect(yield* SubscriptionRef.get(offers)).toEqual([]);
 
         const parent = yield* a.projections.getThreadRecords(
           parentThreadId,
@@ -1083,7 +1125,7 @@ it.effect.each(["no active parent run", "a newer run owned by another provider"]
         });
         expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
           state: "acknowledged",
-          observedByRunId: null,
+          observedByRunId: parentRunId,
         });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -1322,11 +1364,14 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const long = "x".repeat(45_000);
       yield* Ref.set(thread.reply, long);
       yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
+      yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
       const task = yield* taskResult(a, taskId);
       expect(task?.status).toBe("completed");
-      expect(task?.result).toBe(long);
+      expect(task?.result).toBe(
+        `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
+      );
       // Every wait was for the run the launch started.
       const waits = yield* Ref.get(thread.waitedFor);
       expect(waits.length).toBeGreaterThan(0);
@@ -1436,11 +1481,7 @@ it.effect.each([null, "Working before the provider failed."])(
           summary: error,
           latestTerminalSummary: error,
         });
-        const offered = yield* SubscriptionRef.changes(offers).pipe(
-          Stream.filter((seen) => seen.some((offer) => offer.threadId === parentThreadId)),
-          Stream.runHead,
-        );
-        expect(Option.isSome(offered)).toBe(true);
+        expect(yield* SubscriptionRef.get(offers)).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
