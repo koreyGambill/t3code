@@ -1,3 +1,5 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "./state/shell.ts";
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
 import { resolveT3McpMessageTool } from "@t3tools/shared/t3McpToolPresentation";
 import { toolResultErrorText } from "@t3tools/shared/toolOutput";
@@ -130,6 +132,22 @@ export function outgoingT3Message(
       ? (toolResultErrorText(call.output) ?? "The tool call failed or was refused.")
       : undefined,
   };
+}
+
+export function outgoingT3MessageLabel(
+  message: OutgoingT3Message,
+  source: ScopedThreadRef | null,
+  target: Pick<EnvironmentThreadShell, "lineage" | "delegatedFrom"> | null,
+): string {
+  const child =
+    message.relationship === "delegated task" ||
+    (source !== null &&
+      (((message.environmentId === undefined || message.environmentId === source.environmentId) &&
+        target?.lineage.relationshipToParent === "subagent" &&
+        target.lineage.parentThreadId === source.threadId) ||
+        (target?.delegatedFrom?.environmentId === source.environmentId &&
+          target.delegatedFrom.threadId === source.threadId)));
+  return `${message.event === "failed" ? "Tried to send to" : "Sent to"} ${child ? "child thread" : "thread"}`;
 }
 
 function countEntities(ids: ReadonlyArray<string | undefined>): number {

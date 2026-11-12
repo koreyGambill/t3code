@@ -226,32 +226,10 @@ export function backgroundWorkNowItem(input: {
     id: `background-work:${input.threadId}`,
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
     title:
-      presentation.groups.length > 0 ? (
-        presentation.groups.map((group, index) => (
-          <Fragment key={group.runId}>
-            {index > 0 ? " · " : null}
-            {group.done} of {group.total} done · waiting on{" "}
-            {group.items.map((task, taskIndex) => {
-              const childThreadId = task.childThreadId;
-              return (
-                <Fragment key={task.taskId}>
-                  {taskIndex > 0 ? ", " : null}
-                  {childThreadId === undefined ? (
-                    task.label
-                  ) : (
-                    <InlineButton
-                      tone="muted"
-                      onClick={() => onOpenThread(childThreadId, task.environmentId)}
-                    >
-                      {task.label}
-                    </InlineButton>
-                  )}
-                </Fragment>
-              );
-            })}
-          </Fragment>
-        ))
-      ) : only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
+      presentation.groups.length === 0 &&
+      only &&
+      typeof only.label !== "string" &&
+      only.task.label !== only.task.kind ? (
         <>
           {presentation.waiting ? "Waiting" : "Running"} · {only.label}
         </>

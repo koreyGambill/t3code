@@ -1,5 +1,5 @@
+import { outgoingT3MessageLabel } from "@t3tools/client-runtime/t3ToolSummary";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
-import { OutgoingMessageCard } from "./SenderCard";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
-  type EnvironmentId,
+  EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -39,7 +39,8 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
-import { useThreadShell } from "../../state/entities";
+import { useThreadShell, useQuietThreadShell } from "../../state/entities";
+import { ThreadContextChip } from "../ThreadContextChip";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -158,18 +159,6 @@ type WorkEntryRowProps = {
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
-  const outgoing = workEntryOutgoingMessage(props.workEntry);
-  if (outgoing)
-    return (
-      <div className="min-w-0 py-2">
-        <OutgoingMessageCard
-          message={outgoing}
-          environmentId={ctx.activeThreadEnvironmentId}
-          onOpenThread={ctx.onOpenThread}
-        />
-        <WorkEntryLogRow {...props} />
-      </div>
-    );
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
@@ -236,6 +225,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
+  const outgoing = workEntryOutgoingMessage(workEntry);
+  const outgoingTarget = outgoing?.threadId
+    ? scopeThreadRef(
+        outgoing.environmentId
+          ? EnvironmentId.make(outgoing.environmentId)
+          : ctx.activeThreadEnvironmentId,
+        ThreadId.make(outgoing.threadId),
+      )
+    : null;
+  const outgoingShell = useQuietThreadShell(outgoingTarget);
+  const outgoingLabel = outgoing
+    ? outgoingT3MessageLabel(outgoing, threadRef, outgoingShell)
+    : null;
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -443,7 +445,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? "text-secondary-label"
         : "text-foreground/80";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
-  const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
+  const accessiblePreview = [
+    outgoing
+      ? `${outgoingLabel} ${outgoingShell?.title || "Thread"}`
+      : (threadLabel?.text ?? previewText),
+    answerPreview,
+  ]
     .filter(Boolean)
     .join(": ");
   const accessibleDisplayText = showFailedIndicator
@@ -504,6 +511,20 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                       : THOUGHT_PREVIEW_PLUGINS
                   }
                 />
+              ) : outgoing ? (
+                <span className="inline-flex max-w-full items-center gap-1">
+                  <span className="shrink-0">{outgoingLabel}</span>
+                  {outgoingTarget ? (
+                    <span className="min-w-0" onClick={stopRowToggle} onKeyDown={stopRowToggle}>
+                      <ThreadContextChip
+                        record={{ ...outgoingTarget, title: "Thread" }}
+                        icon="thread"
+                      />
+                    </span>
+                  ) : (
+                    <span className="truncate">Thread unavailable</span>
+                  )}
+                </span>
               ) : threadLabel ? (
                 <ThreadReadLabel
                   label={threadLabel}

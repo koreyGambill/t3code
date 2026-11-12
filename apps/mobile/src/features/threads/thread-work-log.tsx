@@ -1,5 +1,6 @@
+import { outgoingT3MessageLabel } from "@t3tools/client-runtime/t3ToolSummary";
 import { Button } from "../../components/ui/Button";
-import { OutgoingMessageCard } from "./SenderCard";
+import { ThreadMessageLink } from "./SenderCard";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
@@ -45,14 +46,15 @@ import {
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
-  type EnvironmentId,
+  EnvironmentId,
   type RunId,
-  type ThreadId,
+  ThreadId,
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import { useQuietThreadShell } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
@@ -896,6 +898,21 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const outgoing = workEntryOutgoingMessage(row.workEntry);
+  const outgoingTarget = outgoing?.threadId
+    ? scopeThreadRef(
+        outgoing.environmentId ? EnvironmentId.make(outgoing.environmentId) : props.environmentId,
+        ThreadId.make(outgoing.threadId),
+      )
+    : null;
+  const outgoingShell = useQuietThreadShell(outgoingTarget);
+  const outgoingLabel = outgoing
+    ? outgoingT3MessageLabel(
+        outgoing,
+        scopeThreadRef(props.environmentId, row.projectedItem.item.threadId),
+        outgoingShell,
+      )
+    : null;
   const openLinkedThread = useOpenLinkedThread();
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
@@ -1034,12 +1051,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         exit {failedExitCode}
       </Text>
     );
-  const previewText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
+  const previewText = outgoingLabel ?? row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
+  const displayText =
+    outgoingLabel ?? row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&
@@ -1053,7 +1071,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = workRowSymbolName(row.icon.iconName);
   const accessibilityLabel = workRowAccessibilityLabel(row.icon.label, accessiblePreview);
-  const outgoing = workEntryOutgoingMessage(row.workEntry);
 
   return (
     <Animated.View
@@ -1061,9 +1078,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       className="overflow-hidden"
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
-      {outgoing ? (
-        <OutgoingMessageCard message={outgoing} environmentId={props.environmentId} />
-      ) : null}
       <WorkLogPressable
         accessibilityRole={
           notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
@@ -1133,22 +1147,33 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 />
               )}
             </WorkLogIconSlot>
-            <WorkLogLabel
-              tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
-            >
-              {displayText}
-              {answerPreview ? (
-                <Text
-                  className={
-                    !expanded &&
-                    row.workEntry.questionAnswer &&
-                    hasQuestionAnswer(row.workEntry.questionAnswer)
-                      ? "text-foreground"
-                      : "text-foreground-subtle"
-                  }
-                >{`  ${answerPreview}`}</Text>
-              ) : null}
-            </WorkLogLabel>
+            {outgoing ? (
+              <View className="min-w-0 flex-1 flex-row items-center gap-1.5">
+                <Text className="shrink-0 text-sm text-foreground-muted">{outgoingLabel}</Text>
+                {outgoingTarget ? (
+                  <ThreadMessageLink thread={outgoingTarget} />
+                ) : (
+                  <WorkLogLabel>Thread unavailable</WorkLogLabel>
+                )}
+              </View>
+            ) : (
+              <WorkLogLabel
+                tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
+              >
+                {displayText}
+                {answerPreview ? (
+                  <Text
+                    className={
+                      !expanded &&
+                      row.workEntry.questionAnswer &&
+                      hasQuestionAnswer(row.workEntry.questionAnswer)
+                        ? "text-foreground"
+                        : "text-foreground-subtle"
+                    }
+                  >{`  ${answerPreview}`}</Text>
+                ) : null}
+              </WorkLogLabel>
+            )}
           </>
         )}
 

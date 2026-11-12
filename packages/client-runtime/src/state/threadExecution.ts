@@ -659,10 +659,14 @@ export function presentPendingBackgroundWork(
       tasks.filter((task) => !groupedIds.has(task.taskId)),
       lineage,
     );
-    const titles = groups.map(
-      (group) =>
-        `${group.done} of ${group.total} done · waiting on ${joinWithAnd(group.items.map((item) => item.label))}`,
-    );
+    const done = groups.reduce((count, group) => count + group.done, 0);
+    const total = groups.reduce((count, group) => count + group.total, 0);
+    const names = groupedItems
+      .slice(0, 2)
+      .map((item) => item.label)
+      .join(", ");
+    const extra = groupedItems.length > 2 ? ` +${groupedItems.length - 2}` : "";
+    const titles = [`${done} of ${total} done · waiting on ${names}${extra}`];
     if (remaining !== null) titles.push(remaining.title);
     return {
       title: titles.join(" · "),

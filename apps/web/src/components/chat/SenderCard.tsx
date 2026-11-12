@@ -1,7 +1,11 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
-import { EnvironmentId, ThreadId, type ScopedThreadRef, type TurnOrigin } from "@t3tools/contracts";
-import type { OutgoingT3Message } from "@t3tools/client-runtime/t3ToolSummary";
+import {
+  type EnvironmentId,
+  type ThreadId,
+  type ScopedThreadRef,
+  type TurnOrigin,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { SettingsIcon } from "lucide-react";
 import { senderCardDetails } from "@t3tools/client-runtime/user-message";
@@ -33,38 +37,10 @@ export function SenderCard(props: {
   );
 }
 
-export function OutgoingMessageCard(props: {
-  readonly message: OutgoingT3Message;
-  readonly environmentId: EnvironmentId;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-}) {
-  const { message } = props;
-  const thread = message.threadId
-    ? {
-        threadId: ThreadId.make(message.threadId),
-        environmentId: message.environmentId
-          ? EnvironmentId.make(message.environmentId)
-          : props.environmentId,
-      }
-    : null;
-  return (
-    <ThreadMessageCard
-      {...props}
-      thread={thread}
-      details={{ ...message, title: message.threadId ?? "Thread unavailable" }}
-      kind="outgoing"
-      error={message.error}
-    >
-      <p className="whitespace-pre-wrap">{message.body}</p>
-    </ThreadMessageCard>
-  );
-}
-
 function ThreadMessageCard(props: {
   readonly details: ReturnType<typeof senderCardDetails>;
   readonly thread: ScopedThreadRef | null;
   readonly kind: string;
-  readonly error?: string | undefined;
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly queued?: boolean;
@@ -72,11 +48,7 @@ function ThreadMessageCard(props: {
 }) {
   const sender = props.thread;
   const shell = useQuietThreadShell(sender);
-  const outgoing = props.kind === "outgoing";
-  const details = {
-    ...props.details,
-    title: outgoing ? shell?.title || props.details.title : props.details.title,
-  };
+  const details = props.details;
   const glyph = sender ? resolveThreadGlyph(sender.threadId, shell?.glyphSeed) : null;
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
@@ -111,7 +83,6 @@ function ThreadMessageCard(props: {
       style={style}
     >
       <div className="mb-2 flex min-w-0 items-center gap-2 text-xs">
-        {outgoing ? <span className="shrink-0 font-semibold text-muted-foreground">To</span> : null}
         {sender ? (
           <ThreadGlyph
             threadId={sender.threadId}
@@ -173,11 +144,6 @@ function ThreadMessageCard(props: {
       {details.noReply || props.queued ? (
         <p className="mb-2 text-xs text-muted-foreground">
           {props.queued ? "queued for next turn" : "no reply expected"}
-        </p>
-      ) : null}
-      {props.error ? (
-        <p className="mb-2 whitespace-pre-wrap wrap-anywhere text-sm text-destructive">
-          {props.error}
         </p>
       ) : null}
       <div

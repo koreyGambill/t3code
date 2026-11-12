@@ -221,6 +221,10 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
+export function useThreadTitle(ref: ScopedThreadRef): string | null {
+  return useAtomValue(threadTitleAtom(threadKey(ref)));
+}
+
 export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
 }

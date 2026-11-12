@@ -1,8 +1,10 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { compactDynamicToolOutput, compactT3MessageInput } from "@t3tools/shared/toolOutput";
 
 import {
   outgoingT3Message,
+  outgoingT3MessageLabel,
   summarizeT3ToolCalls,
   type T3ToolSummaryCall,
 } from "./t3ToolSummary.ts";
@@ -167,7 +169,7 @@ describe("summarizeT3ToolCalls", () => {
     }
   });
 
-  it("keeps unfinished calls as tool rows and failed launches without a target as failed cards", () => {
+  it("keeps unfinished calls as tool rows and failed launches without a target as failed sends", () => {
     expect(
       outgoingT3Message("t3_thread_send", {
         input: { threadId: "target", message: "Hello" },
@@ -337,5 +339,54 @@ describe("summarizeT3ToolCalls", () => {
       label: "Waited on 1 thread",
       failedCount: 0,
     });
+  });
+});
+
+describe("outgoingT3MessageLabel", () => {
+  it("distinguishes the sender's child from peers and another parent's delegated task", () => {
+    const source = {
+      environmentId: EnvironmentId.make("local"),
+      threadId: ThreadId.make("parent"),
+    };
+    const child = {
+      delegatedFrom: null,
+      lineage: {
+        parentThreadId: source.threadId,
+        rootThreadId: source.threadId,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const peer = outgoingT3Message(
+      "t3_thread_send",
+      completed(
+        { threadId: "target", message: "Follow up" },
+        { threadId: "target", taskId: "follow-up" },
+      ),
+    );
+    const delegated = outgoingT3Message(
+      "delegate_task",
+      completed({ task: "Review" }, { childThreadId: "child" }),
+    );
+    expect(peer).not.toBeNull();
+    expect(delegated).not.toBeNull();
+    if (peer === null || delegated === null) throw new Error("Expected outgoing messages");
+    expect(outgoingT3MessageLabel(peer, source, child)).toBe("Sent to child thread");
+    expect(
+      outgoingT3MessageLabel(peer, { ...source, threadId: ThreadId.make("other") }, child),
+    ).toBe("Sent to thread");
+    expect(outgoingT3MessageLabel({ ...peer, environmentId: "remote" }, source, child)).toBe(
+      "Sent to thread",
+    );
+    expect(
+      outgoingT3MessageLabel({ ...peer, environmentId: "remote" }, source, {
+        ...child,
+        delegatedFrom: { ...source, title: "Parent" },
+      }),
+    ).toBe("Sent to child thread");
+    expect(outgoingT3MessageLabel(peer, source, null)).toBe("Sent to thread");
+    expect(outgoingT3MessageLabel(delegated, source, null)).toBe("Sent to child thread");
+    expect(outgoingT3MessageLabel({ ...peer, event: "failed" }, source, child)).toBe(
+      "Tried to send to child thread",
+    );
   });
 });

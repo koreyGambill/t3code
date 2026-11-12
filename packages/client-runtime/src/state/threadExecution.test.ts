@@ -737,6 +737,35 @@ describe("presentPendingBackgroundWork", () => {
     expect(presentation?.items.map((task) => task.taskId)).toEqual([item.id, "command"]);
   });
 
+  it("combines held groups and bounds the waiting names without dropping their details", () => {
+    const secondRunId = RunId.make("second-parent");
+    const groups = derivePendingDelegatedTaskGroups({
+      ...projection,
+      runs: [parent, { ...parent, id: secondRunId }],
+      subagents: [
+        done,
+        running,
+        { ...running, id: NodeId.make("second"), runId: secondRunId, title: "Tests" },
+        { ...running, id: NodeId.make("third"), runId: secondRunId, title: "Docs" },
+      ],
+    });
+    const presentation = presentPendingBackgroundWork(
+      [{ taskId: item.id, kind: "subagent", childThreadId: running.childThreadId }],
+      undefined,
+      groups,
+    );
+    expect(presentation?.title).toBe("1 of 4 done · waiting on Implementation, Tests +1");
+    expect(presentation?.groups).toMatchObject([
+      { runId: parentRunId, done: 1, total: 2 },
+      { runId: secondRunId, done: 0, total: 2 },
+    ]);
+    expect(presentation?.items.map((task) => task.label)).toEqual([
+      "Implementation",
+      "Tests",
+      "Docs",
+    ]);
+  });
+
   it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
     "hides the group while its parent is %s",
     (status) => {

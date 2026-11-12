@@ -718,7 +718,7 @@ function t3ToolSummaryCall(entry: WorkLogPresentationEntry): T3ToolSummaryCall {
 
 const outgoingMessageCache = new WeakMap<WorkLogPresentationEntry, OutgoingT3Message | null>();
 
-/** Shared by timeline grouping and cards so outgoing messages stay visible when work folds. */
+/** Outgoing messages stay visible when the surrounding work folds. */
 export function workEntryOutgoingMessage(
   entry: WorkLogPresentationEntry,
 ): OutgoingT3Message | null {

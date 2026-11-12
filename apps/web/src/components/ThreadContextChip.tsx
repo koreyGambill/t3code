@@ -8,6 +8,7 @@ import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ThreadGlyph } from "./ThreadGlyph";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function ThreadContextChip(props: {
@@ -15,6 +16,7 @@ export function ThreadContextChip(props: {
   projectId?: ProjectId | null;
   copyMarkdown?: string;
   unreadable?: boolean;
+  icon?: "thread";
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -42,7 +44,13 @@ export function ThreadContextChip(props: {
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
-            {project ? (
+            {props.icon === "thread" ? (
+              <ThreadGlyph
+                threadId={threadId}
+                seed={shell?.glyphSeed}
+                className="size-[1em] self-center"
+              />
+            ) : project ? (
               <ProjectFavicon project={project} className="size-[1em] self-center" />
             ) : (
               <MessagesSquareIcon />
