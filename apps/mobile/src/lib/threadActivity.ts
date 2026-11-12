@@ -1769,8 +1769,8 @@ function appendToolGroupRows(
     ),
     ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
     ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
-    ...(primarySourceIcon
-      ? { toolIconLabel: primarySourceActivity?.workEntry.toolSource?.name }
+    ...(primarySourceIcon && primarySourceActivity?.workEntry.toolSource
+      ? { toolIconLabel: primarySourceActivity.workEntry.toolSource.name }
       : {}),
     ...(summaryToolIcon ? { summaryToolIcon } : {}),
     ...(thought ? { thought } : {}),

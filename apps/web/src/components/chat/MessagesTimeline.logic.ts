@@ -1930,7 +1930,9 @@ export function deriveMessagesTimelineRows(input: {
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
-            ...(primarySourceIcon ? { toolIconLabel: primarySourceEntry?.toolSource?.name } : {}),
+            ...(primarySourceIcon && primarySourceEntry?.toolSource
+              ? { toolIconLabel: primarySourceEntry.toolSource.name }
+              : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
