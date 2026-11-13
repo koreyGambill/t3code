@@ -29,6 +29,9 @@ import {
   liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapHeightStyle,
+  resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapTopPercent,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
@@ -4775,5 +4778,22 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
+  });
+});
+
+describe("timeline minimap rail with a single item", () => {
+  it("centers the lone strip on a rail as tall as a two-item one", () => {
+    expect(resolveTimelineMinimapTopPercent(0, 1)).toBe(50);
+    expect(resolveTimelineMinimapTopPercent(0, 2)).toBe(0);
+    expect(resolveTimelineMinimapTopPercent(1, 2)).toBe(100);
+    expect(resolveTimelineMinimapHeightStyle(1)).toBe(resolveTimelineMinimapHeightStyle(2));
+    expect(
+      resolveTimelineMinimapIndexFromPointer({
+        itemCount: 1,
+        railTop: 100,
+        railHeight: 8,
+        pointerY: 140,
+      }),
+    ).toBe(0);
   });
 });

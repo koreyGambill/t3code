@@ -7,7 +7,6 @@ import {
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
-  TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -98,7 +97,7 @@ export function TimelineMinimap({
     });
   };
 
-  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS) {
+  if (items.length === 0) {
     return null;
   }
 
