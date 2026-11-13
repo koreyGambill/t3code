@@ -280,6 +280,7 @@ vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({ ThreadModelSwitchDivider: () => null }));
+vi.mock("../features/threads/MessageReactionChip", () => ({ MessageReactionChip: () => null }));
 vi.mock("../features/threads/SenderCard", () => ({
   SenderCard: ({ children }: { children?: ReactNode }) => children,
 }));

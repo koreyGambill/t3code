@@ -2258,6 +2258,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * when it was requested, after what earlier merge-backs delivered unless its scope is `all`.
    * Null when earlier merge-backs already delivered all of it.
    */
+  // Command projections read only pending transfers; a merge-back's range also counts consumed ones.
+  const withConsumedMergeBacks = Effect.fnUntraced(function* <
+    Target extends Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "runs" | "thread">,
+  >(target: Target) {
+    const { contextTransfers } = yield* projectionStore
+      .getThreadRecords(target.thread.id, ["contextTransfers"], {
+        contextTransferStatuses: ["consumed"],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: target.thread.id, cause }),
+        ),
+      );
+    const known = new Set(target.contextTransfers.map((transfer) => transfer.id));
+    return {
+      ...target,
+      contextTransfers: [
+        ...target.contextTransfers,
+        ...contextTransfers.filter((transfer) => !known.has(transfer.id)),
+      ],
+    };
+  });
+
   const prepareMergeBackHandoff = Effect.fn("Orchestrator.prepareMergeBackHandoff")(function* (
     input: {
       readonly transfer: OrchestrationV2ContextTransfer;
@@ -2306,7 +2329,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (input.transfer.mergeBackScope ?? "all") === "all"
         ? 0
         : mergeBackIncludedThroughOrdinal({
-            target: input.target,
+            target: yield* withConsumedMergeBacks(input.target),
             sourceRuns: source.runs,
             sourceThreadId: source.thread.id,
             countQueued: false,
@@ -6243,7 +6266,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       scope === "additional" &&
       sourceRun.ordinal <=
         mergeBackIncludedThroughOrdinal({
-          target: targetProjection,
+          target: yield* withConsumedMergeBacks(targetProjection),
           sourceRuns: sourceProjection.runs,
           sourceThreadId: command.sourceThreadId,
           countQueued: true,
