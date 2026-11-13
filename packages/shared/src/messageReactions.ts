@@ -39,7 +39,7 @@ export function parseAssistantReactions(text: string, knownIndexes?: ReadonlySet
 
 /** Whether an assistant message contains only reactions, including an unfinished streaming tag. */
 export function isReactionOnlyAssistantText(text: string, streaming = false): boolean {
-  if (streaming && /^\s*\[react(?:[ \t]+[^\]\r\n]*)?$/.test(text)) return true;
+  if (streaming && /^\s*\[(?:r|re|rea|reac|react(?:[ \t]+[^\]\r\n]*)?)?$/.test(text)) return true;
   const parsed = parseAssistantReactions(text);
   return text.trim().length > 0 && parsed.body.length === 0;
 }

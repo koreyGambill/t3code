@@ -53,7 +53,7 @@ describe("parseAssistantReactions", () => {
     expect(isReactionOnlyAssistantText(text)).toBe(body === "");
   });
 
-  it.each(["[react", "[react 1:", " \n[react 1:ack 2:"])(
+  it.each(["[", "[r", "[re", "[rea", "[reac", "[react", "[react 1:", " \n[react 1:ack 2:"])(
     "hides an unfinished leading reaction only while streaming: %j",
     (text) => {
       expect(isReactionOnlyAssistantText(text, true)).toBe(true);

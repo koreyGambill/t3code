@@ -32,51 +32,53 @@ export function SenderCard(props: {
   const [expanded, setExpanded] = useState(false);
   return (
     <View className="min-w-0">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${details.title}: ${messageFirstLine(props.text)}`}
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded(!expanded)}
-        className="min-h-8 min-w-0 flex-row items-center gap-1.5 py-0.5"
-      >
-        <View className="w-6 shrink-0 items-center">
-          {glyph ? (
-            <Svg
-              width={16}
-              height={16}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke={color}
-              strokeWidth={1.6}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              {glyph.paths.map((path) => (
-                <Path key={path} d={path} />
-              ))}
-            </Svg>
-          ) : (
-            <SymbolView name="gearshape" size={16} tintColorClassName="accent-foreground-muted" />
-          )}
-        </View>
-        <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
-          {details.title} · {details.summary}
-        </Text>
-        {props.createdAt ? (
-          <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
-            {new Date(props.createdAt).toLocaleTimeString(undefined, {
-              hour: "numeric",
-              minute: "2-digit",
-            })}
+      <View className="min-w-0 flex-row items-center gap-1.5">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${details.title}: ${messageFirstLine(props.text)}`}
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded(!expanded)}
+          className="min-h-8 min-w-0 flex-1 flex-row items-center gap-1.5 py-0.5"
+        >
+          <View className="w-6 shrink-0 items-center">
+            {glyph ? (
+              <Svg
+                width={16}
+                height={16}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke={color}
+                strokeWidth={1.6}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {glyph.paths.map((path) => (
+                  <Path key={path} d={path} />
+                ))}
+              </Svg>
+            ) : (
+              <SymbolView name="gearshape" size={16} tintColorClassName="accent-foreground-muted" />
+            )}
+          </View>
+          <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
+            {details.title} · {details.summary}
           </Text>
-        ) : null}
+          {props.createdAt ? (
+            <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
+              {new Date(props.createdAt).toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </Text>
+          ) : null}
+          <SymbolView
+            name={expanded ? "chevron.down" : "chevron.right"}
+            size={12}
+            tintColorClassName="accent-foreground-muted"
+          />
+        </Pressable>
         <MessageReactionChip reaction={props.reaction} />
-        <SymbolView
-          name={expanded ? "chevron.down" : "chevron.right"}
-          size={12}
-          tintColorClassName="accent-foreground-muted"
-        />
-      </Pressable>
+      </View>
       {expanded ? (
         <View
           className="w-full overflow-hidden rounded-lg border border-border border-l-foreground-muted bg-subtle px-3 py-2"
@@ -143,7 +145,6 @@ export function SenderCard(props: {
               </Text>
             )}
             <Text className="shrink-0 text-xs text-foreground-muted">{details.relationship}</Text>
-            <MessageReactionChip reaction={props.reaction} />
             <View className="shrink-0">
               <Chip
                 label={details.event}

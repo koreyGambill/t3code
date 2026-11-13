@@ -1,4 +1,7 @@
-import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
+import {
+  isReactionOnlyAssistantText,
+  parseAssistantReactions,
+} from "@t3tools/shared/messageReactions";
 import {
   CommandId,
   EnvironmentId,
@@ -158,7 +161,7 @@ const make = Effect.gen(function* () {
     const outcome = "run" in ended ? outcomeOf(ended.run) : "failed";
     const reply = "run" in ended ? yield* replyText(request.targetThreadId, ended.run) : "";
     const parsed = parseAssistantReactions(reply);
-    const reactionOnly = parsed.reactions.size > 0 && !parsed.body;
+    const reactionOnly = isReactionOnlyAssistantText(reply);
     // Reaction-only replies close the request so recovery never wakes the sender.
     if (reactionOnly && outcome === "completed") return yield* markDelivered(request);
     const status =
@@ -255,7 +258,7 @@ const make = Effect.gen(function* () {
     answer: string,
   ) {
     const parsed = parseAssistantReactions(answer);
-    const reactionOnly = parsed.reactions.size > 0 && !parsed.body;
+    const reactionOnly = isReactionOnlyAssistantText(answer);
     if (reactionOnly && outcome === "completed") return yield* markDelivered(request);
     const sender = yield* threads.getThreadRecords(request.senderThreadId, []);
     if (sender.thread.deletedAt !== null || sender.thread.archivedAt !== null)
@@ -331,9 +334,15 @@ const make = Effect.gen(function* () {
         OrchestratorMcpThreadReadResult,
       );
       title = read.thread.title.trim() || "a thread";
-      const item = read.items.findLast(
-        (item) => item.type === "assistant_message" && item.runId === resultRunId,
+      const candidates = read.items.filter(
+        (item) =>
+          item.type === "assistant_message" && item.runId === resultRunId && item.text?.trim(),
       );
+      const item =
+        candidates.findLast((item) => !isReactionOnlyAssistantText(item.text!)) ??
+        (answer.length === 0 || isReactionOnlyAssistantText(answer)
+          ? candidates.at(-1)
+          : undefined);
       if (item !== undefined) answer = (item.text ?? "").slice(0, REPLY_TEXT_LIMIT);
       if (!read.hasMore || read.nextPosition === null) break;
       afterPosition = read.nextPosition;

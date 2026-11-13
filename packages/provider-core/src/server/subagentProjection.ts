@@ -212,6 +212,22 @@ export function subagentResultForRun(
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
 } {
+  const requireSubstantiveText =
+    options.requireReport ||
+    projection.turnItems.some(
+      (item) =>
+        item.runId === run.id &&
+        item.type === "assistant_message" &&
+        item.text.trim().length > 0 &&
+        !isReactionOnlyAssistantText(item.text),
+    ) ||
+    projection.messages.some(
+      (message) =>
+        message.runId === run.id &&
+        message.role === "assistant" &&
+        message.text.trim().length > 0 &&
+        !isReactionOnlyAssistantText(message.text),
+    );
   const turnItem =
     projection.turnItems
       .filter(
@@ -221,7 +237,7 @@ export function subagentResultForRun(
           candidate.runId === run.id &&
           candidate.type === "assistant_message" &&
           candidate.text.trim().length > 0 &&
-          (!options.requireReport || !isReactionOnlyAssistantText(candidate.text)),
+          (!requireSubstantiveText || !isReactionOnlyAssistantText(candidate.text)),
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const messages = projection.messages.filter(
@@ -229,7 +245,7 @@ export function subagentResultForRun(
       candidate.runId === run.id &&
       candidate.role === "assistant" &&
       candidate.text.trim().length > 0 &&
-      (!options.requireReport || !isReactionOnlyAssistantText(candidate.text)),
+      (!requireSubstantiveText || !isReactionOnlyAssistantText(candidate.text)),
   );
   // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =
