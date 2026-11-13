@@ -49,6 +49,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
@@ -128,6 +129,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
 const layerTest = Layer.mergeAll(
   RuntimeLayer.layer,
   RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
@@ -2505,6 +2507,127 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.isTrue(messageReads.every((query) => query.includes("message_id IN")));
         const wake = yield* requests.take;
         assert.equal(wake.delegatedCompletion?.parentRunId, runId);
+      }),
+    );
+    it.effect("finalizes a child without decoding unrelated parent runs", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:bounded-finalization");
+        const projectId = ProjectId.make("project:bounded-finalization");
+        const runId = RunId.make("run:bounded-finalization");
+        const rootNodeId = NodeId.make("node:bounded-finalization");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("task:bounded-finalization-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        yield* sink.write({
+          commandId: reconcileCommandId("bounded-finalization-history"),
+          events: Array.from({ length: 20 }, (_, index) =>
+            runEvent({
+              threadId,
+              runId: RunId.make(`run:unrelated-history:${index}`),
+              ordinal: index + 2,
+              status: "completed",
+              now,
+            }),
+          ),
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "bounded-finalization-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const childRecords = yield* store.getThreadRecords(child.childThreadId, ["runs"]);
+        const parentRecords = yield* store.getThreadRecords(threadId, ["subagents"]);
+        const childRun = childRecords.runs[0]!;
+        const originalTask = parentRecords.subagents.find((task) => task.id === child.taskId)!;
+        yield* sink.write({
+          commandId: reconcileCommandId("bounded-finalization-merged-history"),
+          events: Array.from({ length: 10 }, (_, index) => {
+            const taskId = NodeId.make(`node:merged-finalization:${index}`);
+            return [
+              {
+                id: EventId.make(`event:merged-finalization-task:${index}`),
+                type: "subagent.updated" as const,
+                threadId,
+                occurredAt: now,
+                payload: { ...originalTask, id: taskId, originalTaskId: child.taskId },
+              },
+              {
+                id: EventId.make(`event:merged-finalization-run:${index}`),
+                type: "run.updated" as const,
+                threadId: child.childThreadId,
+                occurredAt: now,
+                payload: {
+                  ...childRun,
+                  id: RunId.make(`run:merged-finalization:${index}`),
+                  ordinal: index + 2,
+                  delegatedTaskId: taskId,
+                  mergedIntoRunId: childRun.id,
+                  startedAt: null,
+                  status: "cancelled" as const,
+                },
+              },
+            ];
+          }).flat(),
+        });
+        const read = store.getThreadRecords;
+        const parentRunReadSizes: number[] = [];
+        let childResultReads = 0;
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() =>
+            vi.spyOn(store, "getThreadRecords").mockImplementation((id, fields, filter) =>
+              read(id, fields, filter).pipe(
+                Effect.tap((records) =>
+                  Effect.sync(() => {
+                    if (id === child.childThreadId && fields.includes("turnItems"))
+                      childResultReads++;
+                    if (id === threadId && fields.includes("runs"))
+                      parentRunReadSizes.push(
+                        (records as ProjectionStore.ProjectionRecords<"runs">).runs.length,
+                      );
+                  }),
+                ),
+              ),
+            ),
+          ),
+          () =>
+            Effect.gen(function* () {
+              yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
+              assert.equal(childResultReads, 1);
+              yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
+              assert.equal(childResultReads, 1);
+            }),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (task) => task.id === child.taskId,
+        );
+        assert.equal(task?.status, "completed");
+        const { contextTransfers } = yield* store.getThreadRecords(threadId, ["contextTransfers"]);
+        assert.lengthOf(
+          contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" && transfer.sourcePoint.runId === childRun.id,
+          ),
+          1,
+        );
+        assert.isNotEmpty(parentRunReadSizes);
+        assert.isAtMost(Math.max(...parentRunReadSizes), 2);
       }),
     );
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
