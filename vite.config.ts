@@ -192,6 +192,8 @@ export default defineConfig({
       "**/*.graphql.ts",
       "packages/source-control-github/schema/**",
       "apps/server/schema/**",
+      // Bundled upstream contracts; scripts/refresh-upstream-contracts.ts writes it.
+      "apps/server/src/upstreamClientCompat.snapshot.js",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -225,6 +227,8 @@ export default defineConfig({
       "**/*.graphql.ts",
       "packages/source-control-github/schema/**",
       "apps/server/schema/**",
+      // Bundled upstream contracts; scripts/refresh-upstream-contracts.ts writes it.
+      "apps/server/src/upstreamClientCompat.snapshot.js",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",

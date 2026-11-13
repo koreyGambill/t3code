@@ -26,6 +26,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  SETTINGS_SECRET_REFERENCES_CAPABILITY,
   SourceControlRepositoryError,
   WS_METHODS,
   WsRpcGroup,
@@ -170,6 +171,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { readClientWireCapabilities } from "./upstreamClientCompat.ts";
 import {
   layerWsRpc,
   resolveOpenDiscoveryForConfig,
@@ -1057,7 +1059,11 @@ it.effect.each([
             {},
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
-            { secretReferences: true },
+            {
+              secretReferences: true,
+              scheduledTaskSkippedStatus: true,
+              peerLinkUnauthorizedStatus: true,
+            },
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );
@@ -1212,7 +1218,11 @@ it.effect("access changes made while the snapshot loads reach the client after i
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+          },
         ).pipe(
           Layer.merge(RpcAuthorization.layer([AuthAccessReadScope])),
           Layer.provide(
@@ -1273,6 +1283,82 @@ it.effect("access changes made while the snapshot loads reach the client after i
       payload: { sessionId: revokedElsewhere },
     });
     yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+  ),
+);
+
+it.effect("lists an unauthorized peer link as expired to a client that has not declared it", () =>
+  Effect.gen(function* () {
+    const at = DateTime.makeUnsafe("2026-11-13T00:00:00.000Z");
+    const link = {
+      environmentId: EnvironmentId.make("peer"),
+      label: "Peer",
+      urls: ["http://peer.test"],
+      access: "read-only" as const,
+      linkedAt: at,
+      expiresAt: at,
+      lastReachedAt: null,
+      lastError: null,
+      status: "unauthorized" as const,
+    };
+    const exits = yield* Queue.unbounded<unknown>();
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("upstream-client"),
+            subject: "upstream-client",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          readClientWireCapabilities(SETTINGS_SECRET_REFERENCES_CAPABILITY),
+        ).pipe(
+          Layer.merge(RpcAuthorization.layer([AuthAccessReadScope])),
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/unused",
+              }),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+              Layer.mock(PeerLinks.PeerLinks)({ list: Effect.succeed([link]) }),
+            ),
+          ),
+        ),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("peer-links"),
+      tag: WS_METHODS.peerLinksList,
+      payload: {},
+      headers: Headers.empty,
+    });
+
+    assert.deepEqual(
+      yield* Queue.take(exits),
+      Exit.succeed({ links: [{ ...link, status: "expired" }] }),
+    );
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1413,7 +1499,11 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+          },
         ).pipe(Layer.provide(configRpcServices)),
       ),
     );
@@ -1773,7 +1863,11 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+          },
         ).pipe(Layer.provide(services)),
       ),
     );
@@ -1851,7 +1945,11 @@ it.effect("a git action that fails partway still refreshes the repository status
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+          },
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
@@ -1930,7 +2028,11 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+          },
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
@@ -2421,7 +2523,11 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+          },
         ).pipe(
           Layer.provide(services),
           Layer.merge(

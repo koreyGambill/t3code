@@ -18,7 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   comparisonBase,
   defaultConcurrency,
-  docReaderTests,
+  crossFileTests,
   gitLines,
   runSteps,
   splitTests,
@@ -42,10 +42,16 @@ describe("check:changed", () => {
     assert.isTrue(
       decide(["docs/user/t3-connect-troubleshooting.md"], packages, false).outputs.test_server,
     );
-    assert.deepStrictEqual(docReaderTests(["docs/user/t3-connect-troubleshooting.md"]), [
+    assert.deepStrictEqual(crossFileTests(["docs/user/t3-connect-troubleshooting.md"]), [
       "apps/server/src/cloud/ConnectReachability.test.ts",
     ]);
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
+  });
+
+  it("runs the upstream wire check for any shared contract change", () => {
+    assert.deepStrictEqual(crossFileTests(["packages/contracts/src/peerLink.ts"]), [
+      "apps/server/src/upstreamClientCompat.test.ts",
+    ]);
   });
 
   it.effect(
