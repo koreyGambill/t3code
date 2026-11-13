@@ -132,7 +132,15 @@ export function selectUpdatePath(
   force: "full" | "wsl-only" | undefined,
   changed: readonly string[],
 ) {
-  if (force) return force;
+  const incompatible = changed.some((file) =>
+    /^(packages\/(contracts|client-runtime|shared)\/|apps\/server\/src\/persistence\/.*[Mm]igrat)/.test(
+      file,
+    ),
+  );
+  if (force === "wsl-only" && incompatible)
+    throw new Error("Shared wire contracts or migrations changed; use --full.");
+  if (force === "full" || incompatible) return "full";
+  if (force === "wsl-only") return force;
   if (!shellCommit || !/^[0-9a-f]{40}$/.test(shellCommit)) return "full";
   // Shared packages and dependency/build inputs can also change the Electron shell.
   return changed.every(
@@ -454,7 +462,10 @@ async function worker(mode: string, configFile: string, extra: string[]) {
       // Keep only this update's backup, matching the single Windows rollback.
       const parent = NodePath.dirname(config.wslBackupRoot);
       for (const entry of NodeFS.readdirSync(parent))
-        if (/^[0-9a-f]{40}$/.test(entry) && entry !== NodePath.basename(config.wslBackupRoot))
+        if (
+          /^[0-9a-f]{40}(?:-[0-9a-f-]{36})?$/.test(entry) &&
+          entry !== NodePath.basename(config.wslBackupRoot)
+        )
           NodeFS.rmSync(NodePath.join(parent, entry), { recursive: true, force: true });
     }
     return result;
@@ -558,7 +569,7 @@ async function main() {
   --wsl-distro NAME           WSL distribution (or WSL_DISTRO_NAME)
   --wsl-home PATH             Installed T3 home (default ~/.t3)
   --drain-minutes N           Wait for active turns, then proceed (default 5, 0 skips)
-  --health-seconds N          Runtime health deadline (default 240; WSL-only capped at 45)
+  --health-seconds N          Runtime health deadline (default 240; non-migrating WSL-only capped at 45)
   --mcp-authorization-file PATH  File containing an MCP Authorization header
   --notify-thread ID          Send the activation result after restart
   --full / --wsl-only        Force shell replacement / runtime-only update
@@ -583,8 +594,14 @@ async function main() {
           ".weavewing-local-update.json",
         )
       : undefined);
-  let installed: { shellCommit?: string; digest?: string; exeHash?: string; shellHash?: string } =
-    {};
+  let installed: {
+    shellCommit?: string;
+    clientCommit?: string;
+    clientAssetsDirectory?: string;
+    digest?: string;
+    exeHash?: string;
+    shellHash?: string;
+  } = {};
   try {
     const receipt = JSON.parse(NodeFS.readFileSync(installedFile!, "utf8"));
     if (
@@ -624,14 +641,27 @@ async function main() {
       installed = {};
     }
   }
+  if (force === "wsl-only" && installed.clientAssetsDirectory !== "resources/client")
+    throw new Error("Installed shell cannot refresh loose client assets; run --full once first.");
   const updatePath = selectUpdatePath(
-    installed.shellHash ? installed.shellCommit : undefined,
+    installed.shellHash && installed.clientAssetsDirectory === "resources/client"
+      ? installed.shellCommit
+      : undefined,
     force,
     changed,
   );
   if (values["plan-only"]) {
     console.log(
-      JSON.stringify({ updatePath, shellCommit: installed.shellCommit, changed }, null, 2),
+      JSON.stringify(
+        {
+          updatePath,
+          shellCommit: installed.shellCommit,
+          clientCommit: installed.clientCommit,
+          changed,
+        },
+        null,
+        2,
+      ),
     );
     return;
   }
@@ -772,6 +802,9 @@ async function main() {
       output,
       updatePath,
       shellCommit: updatePath === "full" ? await git("rev-parse", "HEAD") : installed.shellCommit,
+      clientCommit: await git("rev-parse", "HEAD"),
+      clientAssetsDirectory: "resources/client",
+      clientSource: await windowsPath(NodePath.join(output, "client")),
       previousDigest: installed.digest,
       environmentId: NodeFS.readFileSync(
         NodePath.join(values["wsl-home"]!, "userdata/environment-id"),
@@ -792,7 +825,7 @@ async function main() {
         : NodePath.join(
             NodeOS.homedir(),
             ".local/share/weavewing-update-backups",
-            await git("rev-parse", "HEAD"),
+            `${await git("rev-parse", "HEAD")}-${NodeCrypto.randomUUID()}`,
           ),
       notifyThread: values["notify-thread"],
       authorizationFile: values["mcp-authorization-file"],
@@ -867,6 +900,17 @@ async function main() {
         "--verbose",
       ]);
     }
+    NodeFS.cpSync(NodePath.join(repo, "apps/server/dist/client"), NodePath.join(output, "client"), {
+      recursive: true,
+    });
+    if (updatePath === "full")
+      NodeFS.cpSync(
+        NodePath.join(output, "client"),
+        NodePath.join(output, "windows/win-unpacked/resources/client"),
+        {
+          recursive: true,
+        },
+      );
     const hash = (file: string) =>
       NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(file)).digest("hex");
     config.digest = hash(archive);

@@ -2,6 +2,8 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -58,6 +60,27 @@ describe("DesktopEnvironment", () => {
         "/install/resources/server.asar/apps/server/dist/client",
       );
     }),
+  );
+
+  it.effect("serves the local updater client outside the Windows sidecar", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const resourcesPath = yield* fs.makeTempDirectoryScoped();
+      const client = path.join(resourcesPath, "client");
+      yield* fs.makeDirectory(client);
+      yield* fs.writeFileString(path.join(client, "index.html"), "new client");
+      const environment = yield* makeEnvironment({
+        platform: "win32",
+        isPackaged: true,
+        resourcesPath,
+      });
+      assert.equal(environment.clientAssetsDir, client);
+      assert.equal(
+        environment.backendEntryPath,
+        path.join(resourcesPath, "server.asar/apps/server/dist/bin.mjs"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps implicit development state separate from production state", () =>

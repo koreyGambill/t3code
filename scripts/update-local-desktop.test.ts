@@ -177,6 +177,12 @@ it.each(["identity", "link"])("warns when the original %s was replaced", async (
 it.each([
   [undefined, undefined, ["apps/web/src/App.tsx"], "full"],
   ["a".repeat(40), undefined, ["apps/web/src/App.tsx", "apps/server/src/bin.ts"], "wsl-only"],
+  ["a".repeat(40), undefined, ["apps/web/src/App.tsx"], "wsl-only"],
+  ["a".repeat(40), undefined, ["apps/server/src/bin.ts"], "wsl-only"],
+  ["a".repeat(40), undefined, ["packages/contracts/src/environment.ts"], "full"],
+  ["a".repeat(40), undefined, ["packages/client-runtime/src/rpc.ts"], "full"],
+  ["a".repeat(40), undefined, ["apps/server/src/persistence/Migrations/100_New.ts"], "full"],
+  ["a".repeat(40), undefined, ["apps/server/src/persistence/databaseMigrationHead.ts"], "full"],
   ["a".repeat(40), undefined, ["apps/desktop/src/main.ts"], "full"],
   ["a".repeat(40), undefined, ["pnpm-lock.yaml"], "full"],
   ["a".repeat(40), undefined, ["apps/server/package.json"], "full"],
@@ -234,4 +240,12 @@ it("requires the expected runtime executable and original environment identity",
     await exited;
     NodeFS.rmSync(home, { recursive: true, force: true });
   }
+});
+
+it.each([
+  "packages/contracts/src/environment.ts",
+  "packages/client-runtime/src/rpc.ts",
+  "apps/server/src/persistence/Migrations/100_New.ts",
+])("refuses a forced runtime update across an incompatible change: %s", (file) => {
+  expect(() => selectUpdatePath("a".repeat(40), "wsl-only", [file])).toThrow("--full");
 });

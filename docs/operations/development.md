@@ -386,8 +386,18 @@ The driver creates private shims, so archived homes with broken `bin` links work
 `--vp-home`; `patchelf` can come from PATH. Both resource monitors must match the package version's
 release, and their source must be unchanged since that tag. The command targets Windows/WSL x64.
 
-`--check-only` (also `--dry-run`) runs the full build, archive smoke test, Windows native probe,
-staging, drain and state backups while leaving the installed app running. Use a new output directory
+The installed receipt selects the update path. Missing provenance, shell or dependency changes,
+shared packages, and migrations require a full update. `--full` forces that path. One full update
+installs a shell that can serve loose `resources/client` assets; older shells cannot use the fast path.
+After that, web/server-only changes build the Linux runtime and client, swap the Windows client assets,
+restart WSL and invoke the desktop's Force Reload shortcut without restarting Electron. The desktop
+must be running and available to focus for that shortcut. `--wsl-only` requests this path, but refuses
+shared wire or migration changes and shells without loose-client support. The Windows primary server
+keeps its previous code until the next full update. Receipts record shell and client commits separately.
+Use `--plan-only --installed-receipt /absolute/path/to/receipt.json` to inspect selection without a build.
+
+`--check-only` (also `--dry-run`) runs the selected build, archive smoke test, drain and state backups
+while leaving the installed app running. Full updates also stage Windows and probe native modules. Use a new output directory
 per run. Omit that flag to detach activation onto Windows. It waits up to `--drain-minutes N`
 (default 5, 0 skips) for active turns, then proceeds even if work remains. This wait admits new turns;
 save interactive work before its deadline. `--wsl-distro` defaults to `WSL_DISTRO_NAME` and
@@ -398,20 +408,22 @@ containing an existing MCP Authorization header. Without that credential, the av
 path is SQLite's persisted run projection; the receipt labels it `read-only-sqlite`. Read errors keep
 the drain waiting until its deadline. Waiting-for-input turns do not hold the update open.
 
-Activation snapshots WSL and Windows `statev2.sqlite` with SQLite's backup API in one step on a
+Both paths snapshot WSL state; full updates also snapshot Windows state. They snapshot `statev2.sqlite` with SQLite's backup API in one step on a
 read-only connection, then copies settings, secrets and thread workspaces. WAL writers can continue
 during the snapshot. Each snapshot helper has a four-minute deadline and removes partial output on
 failure. It excludes `server-owner.sqlite`, the live ownership lock. Check-only snapshots live in
 command scratch and are removed afterwards. Real activation keeps the WSL snapshot on the Linux disk
-under `~/.local/share/weavewing-update-backups/<commit>` (writing it through `/mnt/c` is too slow) and
+under `~/.local/share/weavewing-update-backups/<commit>-<attempt>` (writing it through `/mnt/c` is too slow) and
 retains the Windows snapshot in the rollback directory; each keeps only the latest update's copy.
 Keep logs and receipts separate from private state.
 It carries over the install's launchers, closes the main window gracefully, waits for the WSL server
 to exit, swaps the app and relaunches through `Start Weavewing.cmd`. Health checks require the process
-under the new archive digest to answer the environment endpoint. `--health-seconds` defaults to 240.
+under the new archive digest to answer the environment endpoint with the original environment id.
+`--health-seconds` defaults to 240; the non-migrating fast path caps it at 45 seconds. Transient probe
+failures remain in the receipt while health polling continues to its deadline.
 Failure restores and relaunches the previous app when graceful shutdown succeeds. State snapshots
 are retained for manual recovery; rollback does not overwrite live user data or undo database migrations.
-After a healthy swap, a separate `--health-seconds` deadline covers both existing Windows/WSL peer
+After a healthy full swap, a separate deadline of at most 20 seconds covers both existing Windows/WSL peer
 identities at their saved URLs and a read-only authenticated MCP call from each side. The probes read
 existing peer credentials locally. They never rotate credentials or re-link environments. A failed
 link check appears as a warning in the receipt and notification, because it can reflect peer startup

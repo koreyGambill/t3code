@@ -145,6 +145,103 @@ try {
     Assert ($calls.stops -eq $(if ($case -eq 'promotion-failed') { 0 } else { 1 })) 'Stopped server before promoting both files'
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
   }
+  foreach ($case in @('stopped-throws', 'health-transient', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery')) {
+    $fixture = Join-Path $root ('activation-' + $case)
+    $install = Join-Path $fixture 'installed'
+    $resources = Join-Path $install 'resources'
+    $rollback = Join-Path $fixture '.installed-local-update-rollback'
+    $candidate = Join-Path $fixture '.installed-candidate'
+    $payload = Join-Path $candidate 'payload'
+    $backupRoot = Join-Path $fixture 'state'
+    New-Item -ItemType Directory -Path $resources,$payload,(Join-Path $payload 'resources'),(Join-Path $rollback 'app') | Out-Null
+    Set-Content (Join-Path $resources 'wsl-runtime.tar.gz') 'old-archive'
+    Set-Content (Join-Path $resources 'wsl-runtime.tar.gz.sha256') 'old-digest'
+    Set-Content (Join-Path $install 'Weavewing.exe') 'fixture-shell'
+    Set-Content (Join-Path $install 'Start Weavewing.cmd') 'fixture-launcher'
+    Set-Content (Join-Path $payload 'Weavewing.exe') 'new-shell'
+    Set-Content (Join-Path $payload 'resources/wsl-runtime.tar.gz') 'new-archive'
+    Set-Content (Join-Path $payload 'Start Weavewing.cmd') 'fixture-launcher'
+    Set-Content (Join-Path $candidate '.weavewing-stage-owner') $install
+    Set-Content (Join-Path $rollback '.weavewing-update-owner') $install
+    Set-Content (Join-Path $rollback 'app/previous') 'preserve'
+    Copy-Item (Join-Path $PSScriptRoot 'stage-windows-desktop.ps1') (Join-Path $fixture 'stage-windows-desktop.ps1')
+    $client = Join-Path $resources 'client'
+    $clientSource = Join-Path $fixture 'client-source'
+    New-Item -ItemType Directory -Path $client,$clientSource | Out-Null
+    Set-Content (Join-Path $client 'index.html') 'old-client'
+    Set-Content (Join-Path $clientSource 'index.html') 'new-client'
+    $digest = (Get-FileHash (Join-Path $payload 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $oldDigest = (Get-FileHash (Join-Path $resources 'wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $configPath = Join-Path $fixture 'config.json'
+    $runtimeOnly = $case.StartsWith('runtime-')
+    @{ install = $install; updatePath = $(if ($runtimeOnly) { 'wsl-only' } else { 'full' }); archive = (Join-Path $payload 'resources/wsl-runtime.tar.gz'); digest = $digest; exeHash = (Get-FileHash (Join-Path $payload 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $false; drainMinutes = 0; healthSeconds = 0.1; backupRootWindows = $backupRoot; clientSource = $clientSource; clientCommit = 'client-head'; clientAssetsDirectory = 'resources/client' } | ConvertTo-Json | Set-Content $configPath
+    $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
+    $calls = @{ operations = @(); starts = 0; reloaded = 0; closed = 0; health = 0 }
+    function Get-Process {
+      if ($runtimeOnly -and $case -ne 'runtime-no-desktop') {
+        $process = [pscustomobject]@{ Path = (Join-Path $install 'Weavewing.exe'); Id = 100; MainWindowHandle = 123 }
+        $process | Add-Member ScriptMethod CloseMainWindow { $calls.closed++; return $true }
+        if ($calls.closed -eq 0 -or $calls.starts -gt 0) { $process }
+      }
+    }
+    function Start-Sleep {}
+    function Start-Process {
+      param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru, $RedirectStandardInput, $RedirectStandardOutput, $RedirectStandardError, [switch]$NoNewWindow)
+      if ($FilePath.EndsWith('Start Weavewing.cmd')) { $calls.starts++ }
+      else {
+        New-Item -ItemType Directory -Path (Join-Path $backupRoot 'backup-windows') | Out-Null
+        Set-Content (Join-Path $backupRoot 'backup-windows/saved') 'state'
+        @{ path = (Join-Path $backupRoot 'backup-windows') } | ConvertTo-Json | Set-Content $RedirectStandardOutput
+      }
+      $process = [pscustomobject]@{ Id = 999; Handle = 1; ExitCode = 0 }
+      $process | Add-Member ScriptMethod WaitForExit { return $true }
+      $process
+    }
+    function Invoke-LocalUpdateWsl {
+      param($distro, $arguments, $label, $seconds, $Invoke)
+      $calls.operations += $label
+      if ($label -eq 'health') {
+        $calls.health++
+        if ($case -eq 'health-transient' -and $calls.health -eq 2) { throw 'One slow wsl call' }
+        return @{ healthy = ($case -ne 'runtime-recovery' -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
+      }
+      if ($label -eq 'stopped' -and $case -eq 'stopped-throws') { throw 'WSL responsiveness failed after close' }
+      if ($label -eq 'capture-links') { throw 'No links in fixture' }
+      return @{ installed = $true; backedUp = $true; stopped = $true; path = 'fixture-wsl-backup' }
+    }
+    function Reload-LocalUpdateDesktop { $calls.reloaded++ }
+    try {
+      if ($case -in @('stopped-throws', 'runtime-no-desktop', 'runtime-recovery')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
+      else { Invoke-LocalDesktopUpdate $configPath 'Activate' }
+    } finally {
+      Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl
+      Remove-Item Function:Get-Process,Function:Start-Process,Function:Start-Sleep,Function:Reload-LocalUpdateDesktop
+    }
+    $receipt = Get-Content (Join-Path $fixture 'receipt.json') -Raw | ConvertFrom-Json
+    if ($case -eq 'stopped-throws') {
+      Assert ($receipt.status -eq 'failed' -and $calls.starts -eq 1 -and $receipt.rollbackHealthy) 'Stopped probe failure with an older rollback did not relaunch desktop'
+      Assert (-not (Test-Path $backupRoot)) 'Failed update left a retry-blocking Windows backup'
+      Assert (Test-Path (Join-Path $rollback 'app/previous')) 'Failure removed the existing rollback app'
+      Assert (@(Get-ChildItem $rollback -Recurse -Filter 'saved').Count -eq 1) 'Failure lost the owned state backup'
+    } elseif ($case -eq 'health-transient') {
+      Assert ($receipt.status -eq 'verified') 'One transient health probe rolled back a healthy update'
+    } elseif ($case -eq 'runtime-no-desktop') {
+      Assert ($calls.operations -notcontains 'stop-runtime') 'Runtime stopped without a desktop supervisor'
+    } else {
+      Assert ($calls.operations -contains 'backup') 'Runtime update skipped the WSL backup'
+      Assert ([Array]::IndexOf($calls.operations, 'backup') -lt [Array]::IndexOf($calls.operations, 'stop-runtime')) 'Runtime backup ran after stop'
+      Assert ($calls.operations -notcontains 'backup-windows') 'Runtime update backed up unused Windows state'
+      if ($case -eq 'runtime-recovery') {
+        Assert ($calls.closed -eq 1 -and $calls.starts -eq 1 -and $receipt.rollbackHealthy) 'Unhealthy runtime recovery did not restart desktop'
+        Assert ((Get-Content (Join-Path $client 'index.html')) -eq 'old-client') 'Runtime recovery kept the failed client'
+      } else {
+        Assert ($receipt.status -eq 'verified' -and $calls.reloaded -eq 1) 'Healthy runtime update did not reload the client'
+        Assert ((Get-Content (Join-Path $client 'index.html')) -eq 'new-client') 'Runtime update kept the old client'
+        Assert ((Get-Content (Join-Path $fixture 'runtime-rollback/client/index.html')) -eq 'old-client') 'Runtime update lost the client rollback'
+        Assert ((Get-Content (Join-Path $install '.weavewing-local-update.json') -Raw | ConvertFrom-Json).clientCommit -eq 'client-head') 'Runtime receipt lost client provenance'
+      }
+    }
+  }
   $fixture = Join-Path $root 'check-only-runtime'
   $install = Join-Path $fixture 'installed'
   $resources = Join-Path $install 'resources'
@@ -164,13 +261,14 @@ try {
     $calls.operations += $label
     if ($label -eq 'health') { return @{ healthy = $true; pid = 123; environmentId = 'fixture' } }
     if ($label -eq 'install-runtime') { return @{ installed = $true } }
+    if ($label -eq 'backup') { return @{ backedUp = $true } }
     throw "Check-only attempted forbidden operation: $label"
   }
   try { Invoke-LocalDesktopUpdate $configPath 'Activate' }
   finally { Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl }
   $receipt = Get-Content (Join-Path $fixture 'receipt.json') -Raw | ConvertFrom-Json
   Assert ($receipt.status -eq 'check-only-passed') 'Runtime check-only did not complete'
-  Assert (($calls.operations -join ',') -eq 'health,install-runtime') 'Check-only attempted a backup or restart'
+  Assert (($calls.operations -join ',') -eq 'health,install-runtime,backup') 'Check-only skipped backup or attempted restart'
   Assert ((Get-Content (Join-Path $resources 'wsl-runtime.tar.gz')) -eq 'old-archive') 'Check-only replaced the installed runtime selection'
 
   $fixtureHome = Join-Path $root 'home'

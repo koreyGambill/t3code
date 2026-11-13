@@ -7,6 +7,7 @@ import type {
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -142,8 +143,13 @@ function resolveDesktopRuntimeInfo(input: {
 
 const make = Effect.fn("desktop.environment.make")(function* (
   input: MakeDesktopEnvironmentInput,
-): Effect.fn.Return<DesktopEnvironment["Service"], Config.ConfigError, Path.Path> {
+): Effect.fn.Return<
+  DesktopEnvironment["Service"],
+  Config.ConfigError,
+  Path.Path | FileSystem.FileSystem
+> {
   const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
   const config = yield* DesktopConfig.DesktopConfig;
   const homeDirectory = input.homeDirectory;
   const devServerUrl = config.devServerUrl;
@@ -208,7 +214,15 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appRoot,
     serverRoot,
     backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
-    clientAssetsDir: path.join(serverRoot, "apps/server/dist/client"),
+    // Local updates can swap this directory while Electron keeps its ASAR headers cached.
+    clientAssetsDir:
+      input.isPackaged &&
+      input.platform === "win32" &&
+      (yield* fs
+        .exists(path.join(resourcesPath, "client/index.html"))
+        .pipe(Effect.orElseSucceed(() => false)))
+        ? path.join(resourcesPath, "client")
+        : path.join(serverRoot, "apps/server/dist/client"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
