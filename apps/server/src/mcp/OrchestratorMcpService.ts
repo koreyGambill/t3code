@@ -3840,7 +3840,8 @@ const make = Effect.gen(function* () {
         : false;
       const reply =
         followedReply ||
-        (parent !== undefined &&
+        (input.reply !== false &&
+          parent !== undefined &&
           (yield* ownsTaskCompletion(parent.thread.id, target.thread, result.run.delegatedTaskId)));
       return {
         threadId: input.threadId,

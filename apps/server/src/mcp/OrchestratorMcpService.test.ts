@@ -4238,7 +4238,7 @@ describe("OrchestratorMcpService thread lookup", () => {
               reply,
             });
             assert.equal(result.taskId, continued ? taskId : undefined);
-            assert.equal(result.reply, expected);
+            assert.equal(result.reply, reply === false ? false : expected);
           }
           const waited = yield* mcp.waitForThread(caller, { threadId: childId });
           assert.equal(waited.next, expected ? ORCHESTRATOR_MCP_RUNNING_TASK_NEXT : undefined);

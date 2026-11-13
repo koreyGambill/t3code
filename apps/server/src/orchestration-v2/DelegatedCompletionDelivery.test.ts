@@ -3474,8 +3474,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         }),
     );
 
-    // The child's follow-up run sends `t3_thread_send` to its own thread before it ends.
-    const startSelfQueuedFollowup = (name: string) =>
+    // The child has finished and reported; its parent has acknowledged it and ended its run.
+    const seedFinishedChildWithIdleParent = (name: string) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
@@ -3532,7 +3532,18 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             },
           ],
         });
-        const followupMessageId = MessageId.make(`message:${name}`);
+        return { parentThreadId, parentRunId, child, firstWake };
+      });
+
+    const parentSend = (input: {
+      readonly name: string;
+      readonly parentThreadId: ThreadId;
+      readonly childThreadId: ThreadId;
+      readonly reply?: "not expected";
+    }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const messageId = MessageId.make(`message:${input.name}`);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "agent",
@@ -3540,21 +3551,55 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           origin: {
             kind: "thread",
             event: "message",
+            ...(input.reply === undefined ? {} : { reply: input.reply }),
             title: "Parent",
-            threadId: parentThreadId,
+            threadId: input.parentThreadId,
             environmentId: EnvironmentId.make("environment:delegated"),
           },
-          commandId: CommandId.make(`command:${name}`),
-          threadId: child.childThreadId,
-          senderThreadId: parentThreadId,
-          messageId: followupMessageId,
+          commandId: CommandId.make(`command:${input.name}`),
+          threadId: input.childThreadId,
+          senderThreadId: input.parentThreadId,
+          messageId,
           text: "Check the same work again.",
           attachments: [],
           dispatchMode: { type: "start_immediately" },
         });
-        const queuedRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
-          (row) => row.userMessageId === followupMessageId,
+        return (yield* orchestrator.getThreadProjection(input.childThreadId)).runs.find(
+          (row) => row.userMessageId === messageId,
         )!;
+      });
+
+    it.effect("a parent's send that expects no reply starts no follow-up task", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const seeded = yield* seedFinishedChildWithIdleParent("no-reply-followup");
+        const run = yield* parentSend({
+          name: "no-reply-followup",
+          parentThreadId: seeded.parentThreadId,
+          childThreadId: seeded.child.childThreadId,
+          reply: "not expected",
+        });
+        assert.isUndefined(run.delegatedTaskId);
+        const parent = yield* orchestrator.getThreadProjection(seeded.parentThreadId);
+        assert.isFalse(
+          parent.subagents.some((task) => task.originalTaskId === seeded.child.taskId),
+        );
+      }),
+    );
+
+    // The child's follow-up run sends `t3_thread_send` to its own thread before it ends.
+    const startSelfQueuedFollowup = (name: string) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const { parentThreadId, parentRunId, child, firstWake } =
+          yield* seedFinishedChildWithIdleParent(name);
+        const queuedRun = yield* parentSend({
+          name,
+          parentThreadId,
+          childThreadId: child.childThreadId,
+        });
         const followupTaskId = queuedRun.delegatedTaskId;
         assert.isDefined(followupTaskId);
         const followupRun = { ...queuedRun, status: "running" as const, startedAt: now };

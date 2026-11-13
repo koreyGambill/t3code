@@ -10220,7 +10220,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.createdBy !== "user" &&
         command.usageLimitContinuationOfRunId === undefined &&
         command.senderThreadId !== undefined &&
-        command.senderThreadId !== parentThreadId)
+        command.senderThreadId !== parentThreadId) ||
+      // A parent that asks for no reply gets no completion report either.
+      (command.senderThreadId === parentThreadId &&
+        command.origin.kind === "thread" &&
+        command.origin.reply === "not expected")
     )
       return;
     const run =
