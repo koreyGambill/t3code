@@ -5942,27 +5942,45 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         );
 
         // The finishing work wakes the child once more; that wake ends with only a note or a reaction.
-        const wakeRunId = RunId.make(`run:late-settle-${key}-wake`);
+        const wakeMessageId = MessageId.make(`message:late-settle-${key}-wake`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          origin: { kind: "system", event: "background task continuation" },
+          commandId: CommandId.make(`command:late-settle-${key}-wake`),
+          threadId: blocked.childThreadId,
+          createdBy: "agent",
+          creationSource: "provider",
+          messageId: wakeMessageId,
+          text: "Background activity updated",
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "updated",
+            summary: "Background activity updated",
+          },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const wakeRun = (yield* orchestrator.getThreadProjection(blocked.childThreadId)).runs.find(
+          (row) => row.userMessageId === wakeMessageId,
+        )!;
+        assert.equal(wakeRun.delegatedTaskId, blocked.task.id);
         const wakeText = blocker === "a background command" ? "[quiet]" : "Nothing new.";
         yield* sink.write({
           events: [
-            message("wake", wakeRunId, "user", "Background activity updated", {
-              source: { kind: "background_task" },
-              outcome: "updated",
-              summary: "Background activity updated",
-            }),
+            message("wake-reply", wakeRun.id, "assistant", wakeText),
             {
-              ...runEvent({
-                threadId: blocked.childThreadId,
-                runId: wakeRunId,
-                ordinal: 2,
-                status: "completed",
-                now,
-                userMessageId: MessageId.make(`message:late-settle-${key}-wake`),
-              }),
-              id: EventId.make(`event:late-settle-${key}-wake-run`),
+              id: EventId.make(`event:late-settle-${key}-wake-finished`),
+              type: "run.updated" as const,
+              threadId: blocked.childThreadId,
+              runId: wakeRun.id,
+              occurredAt: now,
+              payload: {
+                ...wakeRun,
+                status: "completed" as const,
+                startedAt: now,
+                completedAt: now,
+              },
             },
-            message("wake-reply", wakeRunId, "assistant", wakeText),
           ],
         });
         const beforeSettle = yield* sink.latestSequence();

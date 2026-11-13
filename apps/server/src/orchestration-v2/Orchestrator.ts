@@ -193,6 +193,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   subagentReportText,
+  withExecutedModelNote,
   delegatedTaskProgress,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -14761,9 +14762,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // note or bare reaction would otherwise replace the report its parent is owed.
   const withEarlierTaskReport = Effect.fn("Orchestrator.withEarlierTaskReport")(function* (
     child: ProjectionRecords<"runs" | "messages" | "providerTurns">,
+    projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
     resultRun: OrchestrationV2Run,
-    latest: ReturnType<typeof subagentResultForRun>,
   ) {
+    const latest = subagentResultForRun(projection, resultRun);
     const inputs = child.messages.filter(
       (message) => message.runId === resultRun.id && message.role === "user",
     );
@@ -14780,12 +14782,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .filter((message) => message.notification?.source.kind === "monitor")
         .map((message) => message.runId),
     );
+    // The original task's spawn run carries no task id; wakes it bound to later do.
+    const forkNodeId =
+      child.thread.forkedFrom?.type === "node" ? child.thread.forkedFrom.nodeId : undefined;
+    const taskOf = (run: OrchestrationV2Run) => run.delegatedTaskId ?? forkNodeId;
     const earlier = child.runs
       .filter(
         (run) =>
           run.ordinal < resultRun.ordinal &&
           run.status === "completed" &&
-          run.delegatedTaskId === resultRun.delegatedTaskId &&
+          taskOf(run) === taskOf(resultRun) &&
           run.mergedIntoRunId === undefined &&
           !monitorRunIds.has(run.id),
       )
@@ -14802,13 +14808,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItemTypes: ["assistant_message"],
       },
     );
+    // Without provider turns the reports carry no model note; the result run's is added once.
     const report = earlier
-      .map((run) => subagentResultForRun({ ...records, providerTurns: child.providerTurns }, run))
+      .map((run) => subagentResultForRun({ ...records, providerTurns: [] }, run))
       .find((candidate) => candidate.messageId !== null);
     if (report === undefined) return latest;
+    const body =
+      latest.messageId === null
+        ? report.text
+        : `${report.text}\n\n${subagentResultForRun({ ...projection, providerTurns: [] }, resultRun).text}`;
+    const executedModel = latestProviderTurnForAttempt(
+      projection.providerTurns,
+      resultRun.activeAttemptId,
+    )?.model;
     return {
       ...latest,
-      text: latest.messageId === null ? report.text : `${report.text}\n\n${latest.text}`,
+      text:
+        executedModel === undefined
+          ? body
+          : withExecutedModelNote(body, resultRun.modelSelection.model, executedModel),
     };
   });
 
@@ -14985,11 +15003,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const cancelled = task.cancelledRunId === childRun.id;
       if (cancelled && terminalStatus === "completed") outcome = terminalStatus = "interrupted";
       const now = yield* DateTime.now;
-      const runResult = subagentResultForRun(childProjection, { ...childRun, status: outcome });
       const result =
         terminalStatus === "completed"
-          ? yield* withEarlierTaskReport(childControls, childRun, runResult)
-          : runResult;
+          ? yield* withEarlierTaskReport(childControls, childProjection, {
+              ...childRun,
+              status: outcome,
+            })
+          : subagentResultForRun(childProjection, { ...childRun, status: outcome });
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "subagent" }> =>
