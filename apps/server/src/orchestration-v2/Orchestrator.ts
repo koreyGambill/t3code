@@ -14050,7 +14050,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   )(function* (input: {
     readonly parentProjection: Pick<
       OrchestrationV2ThreadProjection,
-      "thread" | "messages" | "runs" | "subagents" | "providerTurns"
+      "thread" | "messages" | "runs" | "subagents"
     >;
     readonly parentRun: OrchestrationV2Run | undefined;
     readonly task: OrchestrationV2Subagent;
@@ -14228,6 +14228,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly task: OrchestrationV2Subagent;
         readonly resultRun?: OrchestrationV2Run;
         readonly childrenPending?: boolean;
+        readonly resultTransfers: ReadonlyArray<OrchestrationV2ContextTransfer>;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -14317,6 +14318,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      const parentThreadId = childControls.thread.lineage.parentThreadId;
+      if (
+        options.resultTransfers.some(
+          (transfer) =>
+            transfer.type === "subagent_result" &&
+            transfer.sourceThreadId === childThreadId &&
+            transfer.targetThreadId === parentThreadId &&
+            (transfer.sourcePoint.runId === childRun.id ||
+              (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
+        )
+      )
+        return;
+
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["messages", "turnItems"],
@@ -14332,21 +14346,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messages: childResult.messages,
         turnItems: childResult.turnItems,
       };
-      const parentThreadId = childControls.thread.lineage.parentThreadId;
-      const parentProjection = yield* projectionStore.getThreadRecords(
+      const parentControls = yield* projectionStore.getThreadRecords(parentThreadId, ["runs"], {
+        runIds: options.task.runId === null ? [] : [options.task.runId],
+      });
+      const parentRun = parentControls.runs[0];
+      const delivery = parentRun?.delegatedCompletion?.delivery;
+      const messages = yield* projectionStore.getThreadRecords(parentThreadId, ["messages"], {
+        messageIds: delivery == null ? [] : [delivery.messageId],
+      });
+      const deliveryRunId = messages.messages[0]?.runId;
+      const deliveryRuns = yield* projectionStore.getThreadRecords(parentThreadId, ["runs"], {
+        runIds: deliveryRunId == null ? [] : [deliveryRunId],
+      });
+      const records = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+        ["subagents", "nodes", "turnItems"],
+        {
+          subagentIds: [options.task.id, ...(delivery?.taskIds ?? [])],
+          nodeIds: [options.task.id],
+          turnItemNodeIds: [options.task.id],
+          turnItemTypes: ["subagent"],
+        },
       );
+      const parentProjection = {
+        ...records,
+        messages: messages.messages,
+        runs: [...parentControls.runs, ...deliveryRuns.runs],
+      };
       const task = parentProjection.subagents.find(
         (candidate) =>
           candidate.id === options.task.id &&
@@ -14359,24 +14385,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A cancelled task's completed run ends it interrupted.
       const cancelled = task.cancelledRunId === childRun.id;
       if (cancelled && terminalStatus === "completed") outcome = terminalStatus = "interrupted";
-      const existingResultTransfer = parentProjection.contextTransfers.find(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === childThreadId &&
-          transfer.targetThreadId === parentThreadId &&
-          (transfer.sourcePoint.runId === childRun.id ||
-            (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
-      );
-      if (existingResultTransfer !== undefined) {
-        return;
-      }
-
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
-      const parentRun =
-        task.runId === null
-          ? undefined
-          : parentProjection.runs.find((candidate) => candidate.id === task.runId);
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "subagent" }> =>
@@ -14499,6 +14509,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
       }
+      return resultTransfer;
     },
   );
 
@@ -14532,6 +14543,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "subagents",
       "contextTransfers",
     ]);
+    const resultTransfers = [...parent.contextTransfers];
     for (const task of parent.subagents) {
       // A cancelled task does not wait for the work its cancel is stopping.
       const cancelled = task.cancelledRunId !== undefined;
@@ -14547,12 +14559,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))
       )
         continue;
-      yield* finalizeAppOwnedSubagentTask(childControls, {
+      const resultTransfer = yield* finalizeAppOwnedSubagentTask(childControls, {
         ...options,
         task,
+        resultTransfers,
         childrenPending: progress.childrenPending,
         ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
       });
+      if (resultTransfer !== undefined) resultTransfers.push(resultTransfer);
     }
 
     // Only the run a cancelled task settled from ends with it. The row read above has no
@@ -15890,7 +15904,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             if (stored.event.type !== "provider-turn.updated") return;
             const threadId = stored.event.threadId;
             const turn = stored.event.payload;
-            const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+            const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+              runStatuses: ["running", "queued"],
+            });
             const run = projection.runs.find(
               (candidate) =>
                 candidate.activeAttemptId === turn.runAttemptId && candidate.status === "running",
