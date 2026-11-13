@@ -25,6 +25,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -310,6 +311,7 @@ it.effect(
           Layer.mergeAll(
             layerProjection,
             layerSessionManager,
+            Layer.mock(EventSink.EventSinkV2)({}),
             Layer.succeed(ServerEnvironmentIdentity, {
               getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:test")),
             }),

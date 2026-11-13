@@ -21,7 +21,10 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import {
+  withCheckpointRestoreReservation,
+  withWorkspaceLease,
+} from "../workspace/workspaceLease.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -430,9 +433,15 @@ export const layer: Layer.Layer<
               ? Option.getOrNull(yield* projects.get(thread.projectId))
               : null;
           const cwd = thread.worktreePath ?? project?.workspaceRoot;
-          yield* cwd === undefined
-            ? execute(input)
-            : withWorkspaceLease(path.resolve(cwd), execute(input));
+          if (cwd === undefined) return yield* execute(input);
+          const workspacePath = path.resolve(cwd);
+          const rollback = withWorkspaceLease(workspacePath, execute(input));
+          // Shared-workspace restores are rejected and conversation-only rewinds
+          // touch no files; reserving for them would stall turn starts on the
+          // slow provider rollback for nothing.
+          yield* input.restoreFiles === false
+            ? rollback
+            : withCheckpointRestoreReservation(fileSystem, path, workspacePath, rollback);
         },
         (effect, input) =>
           effect.pipe(

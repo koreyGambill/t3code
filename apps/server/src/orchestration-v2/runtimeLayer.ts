@@ -204,6 +204,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
 const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerEventSink,
       ProjectionStore.layer,
       layerProviderSessionManagerProvided,
       ServerEnvironment.layerIdentity,

@@ -129,7 +129,8 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
     );
   return Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
-    getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+    getTimelinePage: () =>
+      Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),

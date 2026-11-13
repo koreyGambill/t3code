@@ -302,9 +302,9 @@ function LinkEnvironmentAction({
             {relink === undefined ? "Link an environment" : `Link ${relink.label} again`}
           </DialogTitle>
           <DialogDescription>
-            Agents here can then launch, message and wait on threads there. It appears in that
-            environment's Sharing & access as "Linked environment", where revoking it ends this
-            link.
+            Agents here can then launch, message and wait on threads there. It appears as "Linked
+            environment" under Authorized clients in that environment's Sharing & access, where
+            revoking it ends this link.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -373,8 +373,8 @@ function LinkEnvironmentAction({
                 />
                 {target !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    Create a link on {target.label}: Settings → Sharing & access → Create link, then
-                    paste its code here.
+                    Create a link on {target.label}: Settings → Sharing & access → Authorized
+                    clients → Create link, then paste its code here.
                   </span>
                 ) : null}
               </label>
