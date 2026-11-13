@@ -252,7 +252,23 @@ describe("resolveUserMessagePresentation", () => {
         delegatedCompletion: { taskIds: [] },
         text: "Delegated tasks finished.",
       }),
-    ).toMatchObject({ attribution: "agent" });
+    ).toMatchObject({ attribution: "agent" }); // A server without structured origins names a linked environment's sender this way.
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "agent",
+        creationSource: "mcp",
+        linkedSender: {
+          environmentId: EnvironmentId.make("linked"),
+          threadId: ThreadId.make("thread:linked-lead"),
+          title: "Release lead",
+        },
+        text: "Linked review finished.",
+      }),
+    ).toMatchObject({
+      attribution: "agent",
+      sender: { title: "Release lead", threadId: "thread:linked-lead", environmentId: "linked" },
+    });
   });
 
   it("preserves raw historical schedule messages without inferring an origin", () => {

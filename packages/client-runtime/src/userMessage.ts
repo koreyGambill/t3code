@@ -7,6 +7,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2IdleCompaction,
+  type OrchestrationV2LinkedSender,
   type OrchestrationV2UserMessageInputIntent,
   type ScheduledTaskId,
 } from "@t3tools/contracts";
@@ -64,6 +65,7 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly senderThreadId?: string | undefined;
+  readonly linkedSender?: OrchestrationV2LinkedSender | undefined;
   readonly delegatedCompletion?: { readonly taskIds: ReadonlyArray<string> } | undefined;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
   readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
@@ -88,7 +90,12 @@ export function resolveUserMessagePresentation(message: {
       guestName: guest.name,
     };
   }
-  const origin = message.origin;
+  // A server without structured origins still names a linked environment's sending thread.
+  const origin =
+    message.origin ??
+    (message.linkedSender === undefined
+      ? undefined
+      : ({ kind: "thread", event: "message", ...message.linkedSender } satisfies TurnOrigin));
   if (origin !== undefined) {
     const sender = "threadId" in origin ? origin : undefined;
     return {
@@ -208,6 +215,7 @@ export function nonUserMessageOrigin(
 ): Exclude<TurnOrigin, { kind: "user" }> | null {
   if (message.origin !== undefined) return message.origin.kind === "user" ? null : message.origin;
   const presentation = resolveUserMessagePresentation(message);
+  if (presentation.sender !== undefined) return presentation.sender;
   return presentation.attribution === "automation"
     ? { kind: "scheduled-task", title: "Automation" }
     : presentation.attribution === "agent" || presentation.attribution === "t3code"

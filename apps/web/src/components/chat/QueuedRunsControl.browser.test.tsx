@@ -18,8 +18,17 @@ vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importO
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadProjection: (() => state.projection) as never,
-  useQuietThreadShell: ((target: unknown) =>
-    target === null ? null : { title: "Release lead" }) as never,
+  // The linked environment is connected, but its thread is not in the loaded shell.
+  useQuietThreadShell: ((target: { readonly environmentId: string } | null) =>
+    target === null || target.environmentId === "environment:linked"
+      ? null
+      : { title: "Release lead" }) as never,
+}));
+
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: ((environmentId: string | null) =>
+    environmentId === "environment:linked" ? { environmentId } : null) as never,
 }));
 
 vi.mock(import("../../state/query"), async (importOriginal) => ({
@@ -148,6 +157,19 @@ it("opens the sender thread from a queued incoming card", async () => {
         },
       ],
       [
+        "run:linked",
+        "Linked review finished.",
+        {
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkedSender: {
+            environmentId: "environment:linked",
+            threadId: "thread:linked-lead",
+            title: "Title when sent",
+          },
+        },
+      ],
+      [
         "run:server",
         "Continue where you left off.",
         {
@@ -164,6 +186,8 @@ it("opens the sender thread from a queued incoming card", async () => {
   };
   const onOpenThread = vi.fn();
   await using _screen = await renderQueue({ onOpenThread });
+  // Four rows collapse the queue.
+  await page.getByRole("button", { name: "Show all 4 queued" }).click();
 
   await page.getByRole("button", { name: /^Automation:/ }).click();
   await page.getByRole("button", { name: /^Release lead:/ }).click();
