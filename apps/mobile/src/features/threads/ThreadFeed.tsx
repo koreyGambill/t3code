@@ -249,7 +249,6 @@ import {
   useQuietThreadShell,
   useThreadChipIcons,
 } from "../../state/entities";
-import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
@@ -278,7 +277,6 @@ import {
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
-import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
 
@@ -1826,12 +1824,6 @@ function renderFeedEntry(
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
-      // A linked environment's agent sent it from a thread there.
-      const senderRef =
-        message.linkedSender ??
-        (message.senderThreadId
-          ? scopeThreadRef(props.environmentId, message.senderThreadId)
-          : null);
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer

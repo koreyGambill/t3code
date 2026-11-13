@@ -21,7 +21,6 @@ import {
 import { Link } from "@tanstack/react-router";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useQuietThreadShell } from "../../state/entities";
-import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";

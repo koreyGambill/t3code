@@ -226,6 +226,11 @@ const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined>
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
+const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
+  Config.Port(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
   Config.Int(name).pipe(
     Config.option,
