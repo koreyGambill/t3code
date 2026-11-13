@@ -31,23 +31,26 @@ import {
 
 export function serverPairingEndpoints(
   endpoints: ReadonlyArray<ServerDirectEndpoint>,
+  desktopLocal: boolean,
 ): ReadonlyArray<AdvertisedEndpoint> {
-  return endpoints.map((endpoint) => {
-    const tailnet = endpoint.kind === "tailnet";
-    return createAdvertisedEndpoint({
-      id: `server:${endpoint.httpBaseUrl}`,
-      label: tailnet ? "Tailscale" : "Local network",
-      provider: {
-        id: tailnet ? "tailscale" : "server",
+  return endpoints
+    .filter((endpoint) => !desktopLocal || endpoint.kind === "tailnet")
+    .map((endpoint) => {
+      const tailnet = endpoint.kind === "tailnet";
+      return createAdvertisedEndpoint({
+        id: `server:${endpoint.httpBaseUrl}`,
         label: tailnet ? "Tailscale" : "Local network",
-        kind: tailnet ? "private-network" : "core",
-        isAddon: false,
-      },
-      httpBaseUrl: endpoint.httpBaseUrl,
-      reachability: tailnet ? "private-network" : "lan",
-      source: "server",
+        provider: {
+          id: tailnet ? "tailscale" : "server",
+          label: tailnet ? "Tailscale" : "Local network",
+          kind: tailnet ? "private-network" : "core",
+          isAddon: false,
+        },
+        httpBaseUrl: endpoint.httpBaseUrl,
+        reachability: tailnet ? "private-network" : "lan",
+        source: "server",
+      });
     });
-  });
 }
 
 /** Keep terminal:read with terminal:operate to avoid creating unseen shells on every script run. */

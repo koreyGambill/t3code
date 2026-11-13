@@ -210,20 +210,19 @@ If that port is already in use, choose another with
 Windows and WSL are separate environments with their own projects, threads, and
 pairing links. In the Windows desktop app, open **Settings → Sharing & access**
 and choose the WSL environment at the top of the page. Create a pairing link
-under **Authorized clients** and choose its Tailscale or local network address.
+under **Authorized clients** and choose its Tailscale address.
 On the other laptop or phone, paste that link into **Settings → Environments →
-Add environment**. Both devices must be on the selected network.
+Add environment**. Both devices must be connected to the same Tailscale network.
 
 Use the WSL environment's port and pairing link. A link for Windows connects to
 Windows even when both environments run on the same computer. Windows' Tailscale
-HTTPS setting exposes its primary environment, so that HTTPS address may lead to
+HTTPS setting exposes the Windows environment, so that HTTPS address may lead to
 Windows rather than WSL. Plain HTTP pairing works in the desktop and mobile apps
 or a browser opened directly on the WSL server. The hosted app requires HTTPS.
 
-If the WSL address does not answer from the other device, use **T3 Connect** for
-that WSL environment, or check WSL networking and the Windows firewall. A
-`127.0.0.1` address works only on the host computer. From a terminal inside the
-same distro, `t3 pair` also creates a link for its running server.
+If no Tailscale address is offered or it does not answer from the other device,
+check WSL networking and the Windows firewall. A `127.0.0.1` address works only
+on the host computer.
 
 ### Hosted web app
 
