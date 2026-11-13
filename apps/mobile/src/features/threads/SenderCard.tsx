@@ -31,18 +31,27 @@ export function SenderCard(props: {
   const { themeAppearance } = useAppearancePreferences();
   const color = glyph ? (themeAppearance === "dark" ? glyph.color : glyph.lightColor) : undefined;
   const [expanded, setExpanded] = useState(false);
+  const openThread = useOpenLinkedThread();
+  const senderTitle = liveTitle || details.name || "Thread";
   return (
     <View className="min-w-0">
       <View className="min-w-0 flex-row items-center gap-1.5">
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={[
-            `${details.label} ${liveTitle || details.name || ""}`.trim(),
+            `${details.label} ${sender ? senderTitle : (details.name ?? "")}`.trim(),
             details.preview,
           ]
             .filter(Boolean)
             .join(": ")}
           accessibilityState={{ expanded }}
+          // The sender link sits inside this button, which screen readers treat as one element.
+          accessibilityActions={
+            sender ? [{ name: "openThread", label: `Open ${senderTitle}` }] : undefined
+          }
+          onAccessibilityAction={(event) => {
+            if (sender && event.nativeEvent.actionName === "openThread") openThread(sender);
+          }}
           onPress={() => setExpanded(!expanded)}
           className="min-h-8 min-w-0 flex-1 flex-row items-center gap-1.5 py-0.5"
         >
@@ -55,7 +64,7 @@ export function SenderCard(props: {
           </View>
           <Text className="shrink-0 text-sm text-foreground-muted">{details.label}</Text>
           {sender ? (
-            <ThreadMessageLink thread={sender} title={liveTitle || details.name || "Thread"} />
+            <ThreadMessageLink thread={sender} title={senderTitle} />
           ) : details.name ? (
             <Text
               numberOfLines={1}

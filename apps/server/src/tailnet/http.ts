@@ -86,8 +86,12 @@ const refused = (error: TailnetConnect.TailnetConnectRefusedError, listLink: boo
   Effect.succeed(
     html(
       renderRefusalPage({
-        heading: error.reason === "disabled" ? "Tailnet pairing is off" : undefined,
-        message: error.message,
+        ...(error.reason === "disabled"
+          ? {
+              heading: "Tailnet pairing is off on this server",
+              message: `Turn it on in Settings → Sharing & access for ${error.detail ?? "this environment"}.`,
+            }
+          : { message: error.message }),
         listLink,
       }),
       refusalStatus(error.reason),

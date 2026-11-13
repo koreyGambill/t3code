@@ -10,8 +10,7 @@ import {
 import { ChevronRightIcon, MessageSquareIcon, SettingsIcon } from "lucide-react";
 import { senderCardDetails } from "@t3tools/client-runtime/user-message";
 import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
-import { useQuietThreadShell } from "../../state/entities";
-import { ThreadContextChip } from "../ThreadContextChip";
+import { ThreadContextChip, useThreadContextMetadata } from "../ThreadContextChip";
 import { cn } from "../../lib/utils";
 import { WorkLogRow } from "./WorkLog";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
@@ -35,8 +34,9 @@ export function SenderCard(props: {
   readonly children: ReactNode;
 }) {
   const sender = "threadId" in props.origin ? props.origin : null;
-  const shell = useQuietThreadShell(sender);
+  const { shell, title } = useThreadContextMetadata(sender);
   const details = senderCardDetails(props.origin, props.text ?? "", props.threadRef, shell);
+  const name = sender ? title : details.name;
   const glyph = sender ? resolveThreadGlyph(sender.threadId, shell?.glyphSeed) : null;
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
@@ -47,11 +47,11 @@ export function SenderCard(props: {
       : "var(--border)",
   };
   return (
-    <div className="min-w-0">
+    <div className="w-full min-w-0">
       <WorkLogRow
         role="button"
         tabIndex={0}
-        aria-label={[`${details.label} ${details.name ?? ""}`.trim(), details.preview]
+        aria-label={[`${details.label} ${name ?? ""}`.trim(), details.preview]
           .filter(Boolean)
           .join(": ")}
         aria-expanded={expanded}
@@ -73,29 +73,32 @@ export function SenderCard(props: {
           )
         }
         label={
-          <span className="flex min-w-0 items-center gap-1 text-foreground/80">
-            <span className="min-w-0 truncate">{details.label}</span>
-            {sender ? (
-              <span
-                className="flex min-w-14 max-w-[60%] shrink"
-                onClick={stopRowToggle}
-                onKeyDown={stopRowToggle}
-              >
-                <ThreadContextChip
-                  record={{
-                    environmentId: sender.environmentId,
-                    threadId: sender.threadId,
-                    title: details.name ?? "Thread",
-                  }}
-                  icon="thread"
-                  onOpenThread={props.onOpenThread}
-                />
-              </span>
-            ) : details.name ? (
-              <span className="min-w-14 max-w-[60%] shrink truncate">{details.name}</span>
-            ) : null}
+          // A preview with no room wraps onto the clipped second line instead of leaving a bare "· …".
+          <span className="flex h-lh min-w-0 flex-wrap content-start items-center gap-x-1 overflow-hidden text-foreground/80">
+            <span className="flex min-w-0 max-w-full items-center gap-1">
+              <span className="min-w-0 truncate">{details.label}</span>
+              {sender ? (
+                <span
+                  className="flex min-w-14 max-w-60 shrink-[100000]"
+                  onClick={stopRowToggle}
+                  onKeyDown={stopRowToggle}
+                >
+                  <ThreadContextChip
+                    record={{
+                      environmentId: sender.environmentId,
+                      threadId: sender.threadId,
+                      title,
+                    }}
+                    icon="thread"
+                    onOpenThread={props.onOpenThread}
+                  />
+                </span>
+              ) : details.name ? (
+                <span className="min-w-14 max-w-60 shrink-[100000] truncate">{details.name}</span>
+              ) : null}
+            </span>
             {details.preview ? (
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              <span className="min-w-16 flex-1 basis-0 truncate text-muted-foreground">
                 · {details.preview}
               </span>
             ) : null}
@@ -129,7 +132,7 @@ export function SenderCard(props: {
         data-thread-find-fold={!expanded ? "" : undefined}
       >
         <section
-          aria-label={`${details.label} ${details.name ?? ""}`.trim()}
+          aria-label={`${details.label} ${name ?? ""}`.trim()}
           data-sender-card={props.origin.kind}
           className={cn(
             "ms-7 mt-0.5 mb-1.5 min-w-0 border-s-2 ps-3 text-sm text-foreground wrap-anywhere",

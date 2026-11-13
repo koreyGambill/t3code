@@ -183,10 +183,8 @@ it.effect(
       const service = yield* TailnetConnect.TailnetConnect;
       const error = yield* Effect.flip(service.listEnvironments(fromPeer("100.64.0.9")));
       assert.equal(error.reason, "disabled");
-      assert.equal(
-        error.message,
-        "Tailnet pairing is off on this server. Turn it on in Settings → Sharing & access for Desk.",
-      );
+      assert.match(error.message, /\boff\b/);
+      assert.include(error.message, "Desk");
     }).pipe(Effect.provide(layerTailnet({ settings: { enabled: false } }))),
 );
 

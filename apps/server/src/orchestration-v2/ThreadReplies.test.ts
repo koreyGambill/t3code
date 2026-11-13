@@ -47,6 +47,8 @@ interface World {
   readonly waits: Array<{ readonly ends: OrchestrationV2Run }>;
   messageRunId: RunId;
   targetDeleted: boolean;
+  /** The target is the sender's delegated task, so its reply comes from a child. */
+  targetDelegatedBySender?: boolean;
   answerText?: string;
   priorAnswers?: readonly string[];
   crashAfterReplyCommit?: boolean;
@@ -73,6 +75,10 @@ const threadsFor = (
           deletedAt: threadId === target && world.targetDeleted ? "deleted" : null,
           archivedAt: null,
           lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          delegatedFrom:
+            threadId === target && world.targetDelegatedBySender
+              ? { environmentId: "environment:replies", threadId: sender, title: "Lead" }
+              : undefined,
         },
         messages:
           threadId === target
@@ -458,6 +464,7 @@ describe("ThreadReplies", () => {
             environmentId: "environment:replies",
             threadId: target,
           });
+          expect(reply.origin).not.toHaveProperty("relationship");
           expect(reply).not.toHaveProperty("senderThreadId");
         }),
       );
@@ -470,6 +477,7 @@ describe("ThreadReplies", () => {
         waits: [],
         messageRunId: RunId.make("run:replies:steered"),
         targetDeleted: false,
+        targetDelegatedBySender: true,
       };
       // The send commits, then the server stops before its caller starts the follower.
       yield* admit;
@@ -481,6 +489,7 @@ describe("ThreadReplies", () => {
       expect(reply.messageId).toBe(ThreadReplies.replyMessageId(request.messageId));
       expect(reply.notification?.outcome).toBe("failed");
       expect(reply.text).toBe("Done: shipped it.");
+      expect(reply.origin).toMatchObject({ kind: "thread", relationship: "child" });
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 

@@ -386,12 +386,21 @@ const makeLaptop = Effect.fn(function* (
                   // Work another environment's link started on this laptop.
                   linkOrigin: { sessionId: "session:desk", label: "T3 Code · Desk" },
                 }
-              : liveThreadShell(
-                  threadId,
-                  threadId === ThreadId.make("thread:laptop-plan")
-                    ? { runtimeMode: "full-access", interactionMode: "plan" }
-                    : { runtimeMode: "full-access" },
-                ),
+              : threadId === ThreadId.make("thread:laptop-child-of-box")
+                ? {
+                    ...liveThreadShell(threadId, { runtimeMode: "full-access" }),
+                    delegatedFrom: {
+                      environmentId: box.environmentId,
+                      threadId: boxThread,
+                      title: "Box",
+                    },
+                  }
+                : liveThreadShell(
+                    threadId,
+                    threadId === ThreadId.make("thread:laptop-plan")
+                      ? { runtimeMode: "full-access", interactionMode: "plan" }
+                      : { runtimeMode: "full-access" },
+                  ),
           ),
         getProjectThreadRecords: ({ threadId }) =>
           Effect.succeed({
@@ -540,6 +549,20 @@ it.effect("an agent here works on a linked environment's threads within its own 
       });
       expect(failureOf(planned)).toMatchObject({ code: "interaction_mode_escalation_denied" });
       expect((yield* Ref.get(seen)).sends).toHaveLength(1);
+      expect((yield* Ref.get(seen)).sends[0]?.origin).not.toHaveProperty("relationship");
+
+      // A task the box delegated here reports back as its child.
+      yield* a.call("thread:laptop-child-of-box", "t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        message: "Delegated work is done.",
+        reply: false,
+      });
+      expect((yield* Ref.get(seen)).sends[1]?.origin).toMatchObject({
+        kind: "thread",
+        threadId: "thread:laptop-child-of-box",
+        relationship: "child",
+      });
 
       // stop=true stops the thread there as its Stop button does: the whole
       // thread and the tasks it delegated, not just the running turn.
