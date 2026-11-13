@@ -1047,7 +1047,7 @@ function ConnectionsSettingsContent({
       servedByEnvironment={isPrimaryAccess}
       endpointUrl={desktopServerExposureState?.endpointUrl}
       endpoints={
-        isPrimaryAccess && desktopBridge
+        isPrimaryAccess
           ? visibleDesktopAdvertisedEndpoints
           : serverPairingEndpoints(accessEnvironment?.serverConfig?.directEndpoints ?? [])
       }
