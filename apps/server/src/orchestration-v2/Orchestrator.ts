@@ -14763,6 +14763,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
   );
 
+  // A task can end on a wake after its report, such as background work finishing; the wake's
+  // note or bare reaction would otherwise replace the report its parent is owed.
+  const withEarlierTaskReport = Effect.fn("Orchestrator.withEarlierTaskReport")(function* (
+    child: ProjectionRecords<"runs" | "messages" | "providerTurns">,
+    resultRun: OrchestrationV2Run,
+    latest: ReturnType<typeof subagentResultForRun>,
+  ) {
+    const inputs = child.messages.filter(
+      (message) => message.runId === resultRun.id && message.role === "user",
+    );
+    const woke =
+      resultRun.restartContinuationOfRunId === undefined &&
+      inputs.length > 0 &&
+      inputs.every(
+        (message) => message.notification !== undefined || message.delegatedCompletion !== undefined,
+      );
+    if (latest.messageId !== null && !woke) return latest;
+    const monitorRunIds = new Set(
+      child.messages
+        .filter((message) => message.notification?.source.kind === "monitor")
+        .map((message) => message.runId),
+    );
+    const earlier = child.runs
+      .filter(
+        (run) =>
+          run.ordinal < resultRun.ordinal &&
+          run.status === "completed" &&
+          run.delegatedTaskId === resultRun.delegatedTaskId &&
+          run.mergedIntoRunId === undefined &&
+          !monitorRunIds.has(run.id),
+      )
+      .toSorted((left, right) => right.ordinal - left.ordinal);
+    if (earlier.length === 0) return latest;
+    const earlierIds = earlier.map((run) => run.id);
+    const records = yield* projectionStore.getThreadRecords(
+      child.thread.id,
+      ["messages", "turnItems"],
+      {
+        messageRoles: ["assistant"],
+        messageRunIds: earlierIds,
+        turnItemRunIds: earlierIds,
+        turnItemTypes: ["assistant_message"],
+      },
+    );
+    const report = earlier
+      .map((run) => subagentResultForRun({ ...records, providerTurns: child.providerTurns }, run))
+      .find((candidate) => candidate.messageId !== null);
+    if (report === undefined) return latest;
+    return {
+      ...latest,
+      text: latest.messageId === null ? report.text : `${report.text}\n\n${latest.text}`,
+    };
+  });
+
   /**
    * Callers must hold the parent thread's dispatch lock: wake-policy updates the same
    * subagent row with full-row payloads, so unserialized writers clobber policy or terminal status.
@@ -14936,7 +14990,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const cancelled = task.cancelledRunId === childRun.id;
       if (cancelled && terminalStatus === "completed") outcome = terminalStatus = "interrupted";
       const now = yield* DateTime.now;
-      const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
+      const runResult = subagentResultForRun(childProjection, { ...childRun, status: outcome });
+      const result =
+        terminalStatus === "completed"
+          ? yield* withEarlierTaskReport(childControls, childRun, runResult)
+          : runResult;
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "subagent" }> =>

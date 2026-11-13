@@ -14,6 +14,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   ProjectId,
@@ -5840,9 +5841,40 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           payload: { ...child.run, status: "completed" as const, startedAt: now, completedAt: now },
         });
 
+        const message = (
+          name: string,
+          runId: RunId,
+          role: "user" | "assistant",
+          text: string,
+          notification?: OrchestrationV2ConversationMessage["notification"],
+        ) => ({
+          id: EventId.make(`event:late-settle-${key}-${name}`),
+          type: "message.updated" as const,
+          threadId: blocked.childThreadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: MessageId.make(`message:late-settle-${key}-${name}`),
+            threadId: blocked.childThreadId,
+            runId,
+            nodeId: null,
+            role,
+            text,
+            attachments: [],
+            streaming: false,
+            createdBy: "agent" as const,
+            creationSource: "provider" as const,
+            ...(notification === undefined ? {} : { notification }),
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
         const beforeEnd = yield* sink.latestSequence();
         yield* sink.write({ events: [blockerEvent(true)] });
-        yield* sink.write({ events: [ended(blocked)] });
+        yield* sink.write({
+          events: [message("report", blocked.run.id, "assistant", "The real report."), ended(blocked)],
+        });
         yield* sink.write({ events: [ended(barrier)] });
         // Run updates are handled in order, so the barrier settling means the blocked child's
         // run end was handled too, while its work still ran.
@@ -5854,6 +5886,30 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           "running",
         );
 
+        // The finishing work wakes the child once more; that wake ends with only a note or a reaction.
+        const wakeRunId = RunId.make(`run:late-settle-${key}-wake`);
+        const wakeText = blocker === "a background command" ? "[quiet]" : "Nothing new.";
+        yield* sink.write({
+          events: [
+            message("wake", wakeRunId, "user", "Background activity updated", {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            }),
+            {
+              ...runEvent({
+                threadId: blocked.childThreadId,
+                runId: wakeRunId,
+                ordinal: 2,
+                status: "completed",
+                now,
+                userMessageId: MessageId.make(`message:late-settle-${key}-wake`),
+              }),
+              id: EventId.make(`event:late-settle-${key}-wake-run`),
+            },
+            message("wake-reply", wakeRunId, "assistant", wakeText),
+          ],
+        });
         const beforeSettle = yield* sink.latestSequence();
         yield* sink.write({ events: [blockerEvent(false)] });
         yield* settled(blocked.task.id, beforeSettle);
@@ -5861,6 +5917,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           (task) => task.id === blocked.task.id,
         );
         assert.equal(finished?.status, "completed");
+        assert.equal(
+          finished?.result,
+          blocker === "a background command"
+            ? "The real report."
+            : "The real report.\n\nNothing new.",
+        );
         assert.notEqual(finished?.completionDelivery?.state, "disposed");
       }),
   );
