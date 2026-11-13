@@ -27,9 +27,23 @@ import * as TailscaleClient from "./TailscaleClient.ts";
 export const TAILNET_PAGE_PATH = "/tailnet";
 export const TAILNET_PAIR_PATH = "/tailnet/pair";
 
-/** Whether a request path, query included, is one of the tailnet pages. */
+const decodedPath = (path: string) => {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+};
+
+/**
+ * Whether a request path, query included, may reach a tailnet page. Normalised as loosely as the
+ * router matches: case, repeated and trailing slashes, and percent-encoding are all ignored.
+ */
 export const isTailnetPagePath = (url: string) => {
-  const pathname = url.split(/[?#]/u, 1)[0] ?? "";
+  const pathname = decodedPath(url.split(/[?#]/u, 1)[0] ?? "")
+    .toLowerCase()
+    .replace(/\/{2,}/gu, "/")
+    .replace(/(.)\/$/u, "$1");
   return pathname === TAILNET_PAGE_PATH || pathname.startsWith(`${TAILNET_PAGE_PATH}/`);
 };
 
@@ -76,7 +90,7 @@ export class TailnetConnectRefusedError extends Schema.TaggedError<TailnetConnec
       case "cross_site":
         return "Another website tried to use this page. Open it directly instead.";
       case "host_not_allowed":
-        return "Open this page at this machine's Tailscale address or MagicDNS name.";
+        return "Open this page at this machine's Tailscale address or full MagicDNS name.";
       case "unknown_peer":
         return "Tailscale does not know the device this request came from.";
       case "tagged_node":
@@ -230,14 +244,12 @@ const make = Effect.gen(function* () {
   const isOwnHost = Effect.fn("TailnetConnect.isOwnHost")(function* (host: string | undefined) {
     const hostname = host === undefined ? undefined : hostnameOf(host);
     if (hostname === undefined || hostname.length === 0) return false;
-    // A DNS-rebinding page names its own domain; an address literal cannot be one.
+    // A DNS-rebinding page names a domain its owner controls. An address literal cannot be one, and
+    // only Tailscale answers for the MagicDNS name; a short name follows the device's search domains.
     if (NodeNet.isIP(hostname) !== 0) return true;
     const self = (yield* peers.pipe(Effect.catch(unavailable))).self;
     const magicDnsName = self?.magicDnsName?.toLowerCase();
-    return (
-      magicDnsName !== undefined &&
-      (hostname === magicDnsName || hostname === magicDnsName.split(".")[0])
-    );
+    return magicDnsName !== undefined && hostname.replace(/\.$/u, "") === magicDnsName;
   });
 
   const authorize = Effect.fn("TailnetConnect.authorize")(function* (request: TailnetRequest) {

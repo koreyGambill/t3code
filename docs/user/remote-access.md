@@ -211,7 +211,9 @@ Each machine can serve a pairing page to your own Tailscale devices. Turn on
 **Tailnet pairing** in **Settings → Sharing & access** for every machine you want
 to reach. On your phone or laptop, open and bookmark
 `http://<tailnet-ip>:<port>/tailnet`, for example
-`http://100.101.102.103:3773/tailnet`. The page lists that server and the T3
+`http://100.101.102.103:3773/tailnet`. The full MagicDNS name, such as
+`http://desk.tailnet-name.ts.net:3773/tailnet`, also works; the short name does
+not. The page lists that server and the T3
 Code servers it finds on your other online machines; tap **Pair** on one, then
 **Create pairing link**.
 

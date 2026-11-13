@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as HttpEffect from "effect/http/HttpEffect";
 
 import * as TailnetConnect from "./TailnetConnect.ts";
 import {
@@ -42,10 +43,9 @@ const tailnetRequest = Effect.map(
 );
 
 /**
- * Whether a browser sent this for another site. Any page a tailnet device opens could otherwise
- * call these routes as that device. Pages may be navigated to from anywhere, since a navigation
- * cannot be read; minting needs a navigation from this origin's own form. Clients that send none
- * of these headers are not browsers acting for a site.
+ * Whether a browser sent this for another site, which would act as the tailnet device. Another site
+ * cannot read a navigation, so pages allow one. Minting also wants the confirm form's navigation;
+ * that is hygiene, not a boundary, since this origin's scripts are trusted anyway.
  */
 const isCrossSite = (request: HttpServerRequest.HttpServerRequest, use: "page" | "mint") => {
   const origin = request.headers.origin;
@@ -59,6 +59,28 @@ const isCrossSite = (request: HttpServerRequest.HttpServerRequest, use: "page" |
   }
   return site !== undefined && site !== "same-origin" && site !== "none" && mode !== "navigate";
 };
+
+const CORS_RESPONSE_HEADERS = [
+  "access-control-allow-origin",
+  "access-control-allow-credentials",
+  "access-control-allow-headers",
+  "access-control-allow-methods",
+  "access-control-expose-headers",
+  "access-control-max-age",
+];
+
+/**
+ * Whatever spelling of the path the router matched, no other site may read these responses. Runs
+ * after the browser API's CORS handler, which registers before any route does.
+ */
+const withoutCors = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(
+    CORS_RESPONSE_HEADERS.reduce(
+      (stripped, header) => HttpServerResponse.removeHeader(stripped, header),
+      response,
+    ),
+  ),
+);
 
 const refused = (error: TailnetConnect.TailnetConnectRefusedError, listLink: boolean) =>
   Effect.succeed(
@@ -80,6 +102,7 @@ export const layer = HttpRouter.use((router) =>
       "GET",
       TailnetConnect.TAILNET_PAGE_PATH,
       Effect.gen(function* () {
+        yield* withoutCors;
         yield* refuseCrossSite("page");
         const page = yield* service.listEnvironments(yield* tailnetRequest);
         return html(renderEnvironmentsPage(page));
@@ -90,6 +113,7 @@ export const layer = HttpRouter.use((router) =>
       "GET",
       TailnetConnect.TAILNET_PAIR_PATH,
       Effect.gen(function* () {
+        yield* withoutCors;
         yield* refuseCrossSite("page");
         return html(
           renderPairingConfirmPage(yield* service.describePairing(yield* tailnetRequest)),
@@ -101,6 +125,7 @@ export const layer = HttpRouter.use((router) =>
       "POST",
       TailnetConnect.TAILNET_PAIR_PATH,
       Effect.gen(function* () {
+        yield* withoutCors;
         yield* refuseCrossSite("mint");
         const pairing = yield* service.issuePairing(yield* tailnetRequest);
         const now = yield* DateTime.now;

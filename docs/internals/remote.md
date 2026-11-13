@@ -171,9 +171,11 @@ pairing link for a caller that `tailscale whois` names from the socket's peer
 address, never from headers. That identity is the device's, not the page's:
 any website open on the user's phone reaches the server as the phone. So the
 [routes](../../apps/server/src/tailnet/http.ts) skip the browser API's wildcard
-CORS, refuse requests whose `Origin` or `Sec-Fetch-*` headers show another site,
-and mint only on a POST navigation from the page's own form. The Host must also
-be an address literal or this node's MagicDNS name, against DNS rebinding.
+CORS on every spelling the router matches, and refuse requests whose `Origin` or
+`Sec-Fetch-*` headers show another site. Minting takes a POST from the page's own
+confirm form; that keeps stray loads from minting, but the same origin's scripts
+are trusted either way. The Host must also be an address literal or this node's
+full MagicDNS name, against DNS rebinding.
 Loopback is refused, which refuses Tailscale Serve and T3 Connect too, whose
 proxies arrive over loopback. So is the server's own tailnet address, from which
 any local process, or under WSL any Windows process, would pass as the owner.

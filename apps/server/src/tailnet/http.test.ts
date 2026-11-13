@@ -79,7 +79,7 @@ it("never lets another site read a pairing link or the tailnet pages", async () 
     ["POST", "/tailnet/pair", { origin: "https://evil.example" }, { status: 403, mints: 0 }],
     // Another port on the same address is another origin.
     ["POST", "/tailnet/pair", { origin: "http://100.64.0.1:9999" }, { status: 403, mints: 0 }],
-    // Only the confirm form's navigation mints; a same-origin script does not.
+    // Minting follows the confirm form's navigation, not a fetch.
     [
       "POST",
       "/tailnet/pair",
@@ -105,6 +105,20 @@ it("never lets another site read a pairing link or the tailnet pages", async () 
     ["POST", "/tailnet/pair", SAME_ORIGIN_FORM, { status: 200, mints: 1 }],
     // Non-browser clients send no provenance headers.
     ["POST", "/tailnet/pair", {}, { status: 200, mints: 1 }],
+    // The router also matches these spellings, so CORS must not come back through them.
+    ...["/TAILNET/pair", "//tailnet/pair", "/tailne%74/pair", "/tailnet/pair/"].flatMap(
+      (path) =>
+        [
+          ["POST", path, OTHER_SITE_FETCH, { status: 403, mints: 0 }],
+          ["POST", path, {}, { status: 200, mints: 1 }],
+          [
+            "OPTIONS",
+            path,
+            { ...OTHER_SITE_FETCH, "access-control-request-method": "POST" },
+            { status: 404, mints: 0 },
+          ],
+        ] as const,
+    ),
   ];
   for (const [method, path, headers, expected] of cases) {
     const result = await send(method, path, headers);

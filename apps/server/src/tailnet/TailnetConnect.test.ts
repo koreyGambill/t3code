@@ -150,6 +150,9 @@ it.effect("admits only the allowed logins' own devices, asking Tailscale who the
       [fromPeer("::ffff:100.64.0.9"), `allowed ${OWNER}`],
       [fromPeer("fd7a:115c:a1e0::9"), `allowed ${OWNER}`],
       [fromPeer("100.64.0.9", `desk.tail.ts.net:${SERVER_PORT}`), `allowed ${OWNER}`],
+      [fromPeer("100.64.0.9", `DESK.tail.ts.net.:${SERVER_PORT}`), `allowed ${OWNER}`],
+      // A short name resolves through the device's search domains, which the tailnet does not own.
+      [fromPeer("100.64.0.9", `desk:${SERVER_PORT}`), "host_not_allowed"],
       [fromPeer("100.64.0.10"), "login_not_allowed"],
       [fromPeer("100.64.0.11"), "tagged_node"],
       [fromPeer("100.64.0.12"), "shared_node"],
