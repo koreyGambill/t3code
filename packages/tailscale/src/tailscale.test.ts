@@ -259,39 +259,51 @@ describe("tailscale", () => {
     });
   });
 
-  it.effect("falls back to the Windows host's client when WSL has no tailscale", () => {
-    const spawned: Array<string> = [];
-    const layer = layerSpawner(
-      ChildProcessSpawner.make((command) => {
-        const { command: executable } = command as unknown as { readonly command: string };
-        spawned.push(executable);
-        if (executable === "tailscale") {
-          return Effect.callback<never, never>(() => {
-            throw Object.assign(new Error("spawn tailscale ENOENT"), { code: "ENOENT" });
-          });
-        }
-        return Effect.succeed(
-          mockHandle({
-            stdout: JSON.stringify({
-              Node: { ComputedName: "phone", Tags: null },
-              UserProfile: { LoginName: "me@example.com" },
+  it.effect(
+    "reads from the Windows host's client when WSL has no tailscale, and only reads",
+    () => {
+      const spawned: Array<string> = [];
+      const layer = layerSpawner(
+        ChildProcessSpawner.make((command) => {
+          const { command: executable } = command as unknown as { readonly command: string };
+          spawned.push(executable);
+          if (executable === "tailscale") {
+            return Effect.callback<never, never>(() => {
+              throw Object.assign(new Error("spawn tailscale ENOENT"), { code: "ENOENT" });
+            });
+          }
+          return Effect.succeed(
+            mockHandle({
+              stdout: JSON.stringify({
+                Node: { ComputedName: "phone", Tags: null },
+                UserProfile: { LoginName: "me@example.com" },
+              }),
             }),
-          }),
-        );
-      }),
-    );
+          );
+        }),
+      );
 
-    return Effect.gen(function* () {
-      const whois = yield* readTailscaleWhois("100.64.0.9").pipe(Effect.provide(layer));
-      assert.deepEqual(whois, {
-        nodeName: "phone",
-        login: "me@example.com",
-        tagged: false,
-        shared: false,
+      return Effect.gen(function* () {
+        const whois = yield* readTailscaleWhois("100.64.0.9").pipe(Effect.provide(layer));
+        assert.deepEqual(whois, {
+          nodeName: "phone",
+          login: "me@example.com",
+          tagged: false,
+          shared: false,
+        });
+        assert.deepEqual(spawned, ["tailscale", WSL_WINDOWS_TAILSCALE_PATH]);
+
+        // Serve stays the business of the host's own T3 Code, never this WSL server's.
+        spawned.length = 0;
+        const serveError = yield* ensureTailscaleServe({ localPort: 3774 }).pipe(
+          Effect.flip,
+          Effect.provide(layer),
+        );
+        assert.instanceOf(serveError, TailscaleCommandSpawnError);
+        assert.deepEqual(spawned, ["tailscale"]);
       });
-      assert.deepEqual(spawned, ["tailscale", WSL_WINDOWS_TAILSCALE_PATH]);
-    });
-  });
+    },
+  );
 
   it.effect("reports an address the client does not know as peer-not-found", () => {
     const layer = layerMockSpawner(() => ({ code: 1, stderr: "peer not found\n" }));
@@ -367,6 +379,7 @@ describe("tailscale", () => {
         name: "desk",
         magicDnsName: "desk.tail.ts.net",
         tailnetIpv4Address: "100.64.0.1",
+        tailnetAddresses: ["100.64.0.1", "fd7a:115c:a1e0::1"],
         online: true,
         login: "me@example.com",
         tagged: false,

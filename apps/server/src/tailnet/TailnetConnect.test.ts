@@ -29,6 +29,7 @@ const node = (overrides: Partial<TailscaleNode>): TailscaleNode => ({
   name: null,
   magicDnsName: null,
   tailnetIpv4Address: null,
+  tailnetAddresses: [],
   online: true,
   login: OWNER,
   tagged: false,
@@ -40,6 +41,7 @@ const SELF = node({
   name: "desk",
   magicDnsName: "desk.tail.ts.net",
   tailnetIpv4Address: "100.64.0.1",
+  tailnetAddresses: ["100.64.0.1", "fd7a:115c:a1e0::1"],
 });
 
 const person = (login: string, nodeName = "phone"): TailscaleWhois => ({
@@ -64,6 +66,7 @@ const layerServerConfig = Layer.effect(
 
 const layerTailnet = (input: {
   readonly settings?: DeepPartial<ServerSettings["tailnetConnect"]>;
+  readonly self?: TailscaleNode;
   readonly peers?: ReadonlyArray<TailscaleNode>;
   /** A descriptor, `hang` for a probe that never answers, or nothing for a 404. */
   readonly answer?: (
@@ -78,7 +81,7 @@ const layerTailnet = (input: {
           TailscaleClient.TailscaleClient,
           TailscaleClient.TailscaleClient.of({
             whois: (address) => Effect.succeed(WHOIS[address] ?? null),
-            peers: Effect.succeed({ self: SELF, peers: input.peers ?? [] }),
+            peers: Effect.succeed({ self: input.self ?? SELF, peers: input.peers ?? [] }),
           }),
         ),
         ServerSettingsService.layerTest({ tailnetConnect: { enabled: true, ...input.settings } }),
@@ -152,6 +155,9 @@ it.effect("admits only the allowed logins' own devices, asking Tailscale who the
       [fromPeer("100.64.0.12"), "shared_node"],
       [fromPeer("100.64.0.99"), "unknown_peer"],
       [fromPeer("192.168.1.20"), "not_tailnet"],
+      // Any process on the server's machine, the Windows host's included under WSL.
+      [fromPeer("100.64.0.1"), "own_machine"],
+      [fromPeer("fd7a:115c:a1e0::1"), "own_machine"],
       // Tailscale Serve and T3 Connect proxy over loopback.
       [{ remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", host: "x" }, "not_tailnet"],
       [{ ...fromPeer("100.64.0.9"), localAddress: "192.168.1.5" }, "not_tailnet"],
@@ -174,6 +180,23 @@ it.effect("refuses everyone while the setting is off", () =>
   ),
 );
 
+it.effect("asks for allowed logins on a tagged server, which has no owner", () =>
+  Effect.gen(function* () {
+    assert.equal(yield* refusalOf(fromPeer("100.64.0.9")), "server_tagged");
+  }).pipe(Effect.provide(layerTailnet({ self: { ...SELF, login: null, tagged: true } }))),
+);
+
+it.effect("caps how often one device can make the server scan the tailnet", () =>
+  Effect.gen(function* () {
+    const results = yield* Effect.forEach(Array.from({ length: 21 }), () =>
+      refusalOf(fromPeer("100.64.0.9")),
+    );
+    assert.deepEqual(results.slice(19), [`allowed ${OWNER}`, "rate_limited"]);
+    yield* TestClock.adjust("1 minute");
+    assert.equal(yield* refusalOf(fromPeer("100.64.0.9")), `allowed ${OWNER}`);
+  }).pipe(Effect.provide(layerTailnet({}))),
+);
+
 it.effect("replaces the node owner with the configured logins", () =>
   Effect.gen(function* () {
     assert.equal(yield* refusalOf(fromPeer("100.64.0.9")), "login_not_allowed");
@@ -185,6 +208,11 @@ it.effect("mints a standard one-time pairing link the T3 apps accept, at most te
   Effect.gen(function* () {
     const service = yield* TailnetConnect.TailnetConnect;
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    // The page that asks first mints nothing.
+    const described = yield* service.describePairing(fromPeer("100.64.0.9"));
+    assert.equal(described.environmentLabel, "Desk");
+    assert.deepEqual(yield* auth.listPairingLinks(), []);
+
     const pairing = yield* service.issuePairing(fromPeer("100.64.0.9"));
 
     const pairingUrl = new URL(pairing.pairingUrl);

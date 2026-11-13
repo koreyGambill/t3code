@@ -37,13 +37,17 @@ interface TailscaleExecutable {
   readonly path: string;
 }
 
-/** Tried in order: a later candidate runs only when an earlier one cannot be spawned. */
+/**
+ * Tried in order: a later candidate runs only when an earlier one cannot be spawned. The Windows
+ * host's client is only read from WSL, so a WSL server never reconfigures the host's Serve.
+ */
 const tailscaleExecutablesForPlatform = (
   platform: NodeJS.Platform,
+  access: "read" | "write",
 ): readonly [TailscaleExecutable, ...TailscaleExecutable[]] =>
   platform === "win32"
     ? [{ label: "tailscale.exe", path: "tailscale.exe" }]
-    : platform === "linux"
+    : platform === "linux" && access === "read"
       ? [
           { label: "tailscale", path: "tailscale" },
           { label: "tailscale.exe", path: WSL_WINDOWS_TAILSCALE_PATH },
@@ -257,10 +261,11 @@ export const parseTailscaleStatus = (
  * such as a nonzero exit, belongs to the candidate that ran.
  */
 const withTailscaleExecutable = <A, E, R>(
+  access: "read" | "write",
   run: (executable: TailscaleExecutable) => Effect.Effect<A, E | TailscaleCommandSpawnError, R>,
 ) =>
   Effect.flatMap(HostProcess.Platform, (platform) => {
-    const [first, ...rest] = tailscaleExecutablesForPlatform(platform);
+    const [first, ...rest] = tailscaleExecutablesForPlatform(platform, access);
     return rest.reduce(
       (attempt, next) =>
         attempt.pipe(Effect.catchIf(Schema.is(TailscaleCommandSpawnError), () => run(next))),
@@ -273,7 +278,7 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* withTailscaleExecutable((executable) => {
+  return yield* withTailscaleExecutable("read", (executable) => {
     const commandContext = {
       executable: executable.label,
       subcommand,
@@ -466,6 +471,8 @@ export interface TailscaleNode {
   readonly name: string | null;
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Address: string | null;
+  /** Every address Tailscale assigned it, IPv6 included. */
+  readonly tailnetAddresses: ReadonlyArray<string>;
   readonly online: boolean;
   /** Null for a tagged node. */
   readonly login: string | null;
@@ -500,6 +507,7 @@ export const parseTailscalePeers = (
               (address): address is string =>
                 typeof address === "string" && isTailscaleIpv4Address(address),
             ) ?? null,
+          tailnetAddresses: ips.filter((address): address is string => typeof address === "string"),
           online: self || raw.Online === true,
           login:
             tagged || userId === null ? null : nonEmptyString(status.User?.[userId]?.LoginName),
@@ -560,7 +568,7 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
 ): Effect.fn.Return<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const timeout = Duration.fromInputUnsafe(timeoutInput);
-  return yield* withTailscaleExecutable((executable) => {
+  return yield* withTailscaleExecutable("write", (executable) => {
     const commandContext = {
       executable: executable.label,
       subcommand: "serve" as const,

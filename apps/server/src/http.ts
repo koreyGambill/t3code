@@ -54,6 +54,7 @@ import {
   DESKTOP_RENDERER_ORIGINS,
 } from "./httpCors.ts";
 import { requestUrl } from "./requestUrl.ts";
+import { isTailnetPagePath } from "./tailnet/TailnetConnect.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -258,7 +259,7 @@ export const layerBrowserApiCors = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
     // Credentialed dev requests need explicit Vite/Electron origins; packaged desktop uses the default wildcard.
-    return HttpRouter.cors({
+    const cors = HttpMiddleware.cors({
       ...(devOrigin
         ? {
             allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
@@ -269,6 +270,16 @@ export const layerBrowserApiCors = Layer.unwrap(
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
+    // The tailnet pages trust whichever tailnet device sends the request, so no other site may read them.
+    return HttpRouter.middleware(
+      (httpApp) => {
+        const withCors = cors(httpApp);
+        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+          isTailnetPagePath(request.url) ? httpApp : withCors,
+        );
+      },
+      { global: true },
+    );
   }),
 );
 

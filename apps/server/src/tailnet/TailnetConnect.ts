@@ -27,21 +27,34 @@ import * as TailscaleClient from "./TailscaleClient.ts";
 export const TAILNET_PAGE_PATH = "/tailnet";
 export const TAILNET_PAIR_PATH = "/tailnet/pair";
 
+/** Whether a request path, query included, is one of the tailnet pages. */
+export const isTailnetPagePath = (url: string) => {
+  const pathname = url.split(/[?#]/u, 1)[0] ?? "";
+  return pathname === TAILNET_PAGE_PATH || pathname.startsWith(`${TAILNET_PAGE_PATH}/`);
+};
+
 const WHOIS_CACHE_TTL = Duration.seconds(30);
 const PEERS_CACHE_TTL = Duration.seconds(30);
 const PROBE_TIMEOUT = Duration.millis(1_500);
 const PROBE_CONCURRENCY = 8;
 const PAIRING_LIMIT = 10;
 const PAIRING_LIMIT_WINDOW = Duration.minutes(10);
+// Each listing probes up to MAX_PROBES addresses, so a caller cannot make the server scan freely.
+const LISTING_LIMIT = 20;
+const LISTING_LIMIT_WINDOW = Duration.minutes(1);
+const MAX_PROBES = 48;
 
 export const TailnetConnectRefusal = Schema.Literals([
   "disabled",
   "not_tailnet",
+  "own_machine",
+  "cross_site",
   "host_not_allowed",
   "unknown_peer",
   "tagged_node",
   "shared_node",
   "login_not_allowed",
+  "server_tagged",
   "rate_limited",
   "tailscale_unavailable",
   "remote_clients_disallowed",
@@ -58,6 +71,10 @@ export class TailnetConnectRefusedError extends Schema.TaggedError<TailnetConnec
         return "Tailnet pairing is off on this server.";
       case "not_tailnet":
         return "Open this page over the tailnet, at this machine's Tailscale address.";
+      case "own_machine":
+        return "This machine cannot pair with itself over the tailnet. Open this page from another device.";
+      case "cross_site":
+        return "Another website tried to use this page. Open it directly instead.";
       case "host_not_allowed":
         return "Open this page at this machine's Tailscale address or MagicDNS name.";
       case "unknown_peer":
@@ -68,8 +85,10 @@ export class TailnetConnectRefusedError extends Schema.TaggedError<TailnetConnec
         return "Devices shared in from another tailnet cannot pair.";
       case "login_not_allowed":
         return "Your Tailscale login is not allowed to pair with this server.";
+      case "server_tagged":
+        return "This server is a tagged Tailscale node, which belongs to no person. List the logins that may pair under Allowed Tailscale logins in its Sharing & access settings.";
       case "rate_limited":
-        return "Too many pairing links from this device. Wait a few minutes and try again.";
+        return "Too many requests from this device. Wait a few minutes and try again.";
       case "tailscale_unavailable":
         return "Tailscale did not answer on this server. Check that Tailscale is running.";
       case "remote_clients_disallowed":
@@ -122,6 +141,13 @@ export interface TailnetPairing {
 export class TailnetConnect extends Context.Service<
   TailnetConnect,
   {
+    /** Checks the caller without minting, for the page that asks before it does. */
+    readonly describePairing: (
+      request: TailnetRequest,
+    ) => Effect.Effect<
+      { readonly caller: TailnetCaller; readonly environmentLabel: string },
+      TailnetConnectRefusedError
+    >;
     readonly listEnvironments: (request: TailnetRequest) => Effect.Effect<
       {
         readonly caller: TailnetCaller;
@@ -182,6 +208,7 @@ const make = Effect.gen(function* () {
     new Map<string, { readonly expiresAt: number; readonly whois: TailscaleWhois | null }>(),
   );
   const pairingsByAddress = yield* Ref.make(new Map<string, ReadonlyArray<number>>());
+  const listingsByAddress = yield* Ref.make(new Map<string, ReadonlyArray<number>>());
   // Every page load needs this node's facts; `tailscale status` can take seconds on Windows.
   const peers = yield* Effect.cachedWithTTL(tailscale.peers, PEERS_CACHE_TTL);
 
@@ -224,17 +251,24 @@ const make = Effect.gen(function* () {
     if (address === undefined || tailnetAddress(request.localAddress) === undefined) {
       return yield* refuse("not_tailnet");
     }
+    // Any process on this machine, the Windows host's included under WSL, would pass as its owner.
+    if (address === tailnetAddress(request.localAddress)) return yield* refuse("own_machine");
     if (!(yield* isOwnHost(request.host))) return yield* refuse("host_not_allowed");
+    const self = (yield* peers.pipe(Effect.catch(unavailable))).self;
+    if (self?.tailnetAddresses.some((own) => tailnetAddress(own) === address)) {
+      return yield* refuse("own_machine");
+    }
     const peer = yield* whois(address).pipe(Effect.catch(unavailable));
     if (peer === null) return yield* refuse("unknown_peer");
     if (peer.tagged) return yield* refuse("tagged_node");
     if (peer.shared) return yield* refuse("shared_node");
+    if (settings.allowedLogins.length === 0 && self?.tagged === true) {
+      return yield* refuse("server_tagged");
+    }
     const allowedLogins =
       settings.allowedLogins.length > 0
         ? settings.allowedLogins
-        : [(yield* peers.pipe(Effect.catch(unavailable))).self?.login].filter(
-            (login): login is string => login != null,
-          );
+        : [self?.login].filter((login): login is string => login != null);
     const login = peer.login;
     if (login === null || !allowedLogins.some((allowed) => sameLogin(allowed, login))) {
       return yield* refuse("login_not_allowed");
@@ -244,6 +278,26 @@ const make = Effect.gen(function* () {
       origin: `http://${request.host}`,
       discoveryPorts: settings.discoveryPorts,
     };
+  });
+
+  /** Records one use for `address`, or false when it already used `limit` within `window`. */
+  const takeSlot = Effect.fn("TailnetConnect.takeSlot")(function* (
+    uses: Ref.Ref<Map<string, ReadonlyArray<number>>>,
+    address: string,
+    limit: number,
+    window: Duration.Duration,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const windowStart = now - Duration.toMillis(window);
+    return yield* Ref.modify(uses, (byAddress) => {
+      const recent = (byAddress.get(address) ?? []).filter((at) => at > windowStart);
+      if (recent.length >= limit) return [false, byAddress] as const;
+      const next = new Map(
+        [...byAddress].filter(([, times]) => times.some((at) => at > windowStart)),
+      );
+      next.set(address, [...recent, now]);
+      return [true, next] as const;
+    });
   });
 
   const probe = Effect.fn("TailnetConnect.probe")(
@@ -277,6 +331,11 @@ const make = Effect.gen(function* () {
     "TailnetConnect.listEnvironments",
   )(function* (request) {
     const { caller, discoveryPorts } = yield* authorize(request);
+    if (
+      !(yield* takeSlot(listingsByAddress, caller.address, LISTING_LIMIT, LISTING_LIMIT_WINDOW))
+    ) {
+      return yield* refuse("rate_limited");
+    }
     const descriptor = yield* serverEnvironment.getDescriptor;
     const tailnet = yield* peers.pipe(Effect.catch(unavailable));
     const ports = [...new Set([...discoveryPorts, ...(serverPort > 0 ? [serverPort] : [])])];
@@ -295,11 +354,13 @@ const make = Effect.gen(function* () {
         node.tailnetIpv4Address !== null,
     );
     const found = yield* Effect.forEach(
-      nodes.flatMap((node) =>
-        ports
-          .filter((port) => !(node === tailnet.self && port === serverPort))
-          .map((port) => [node, port] as const),
-      ),
+      nodes
+        .flatMap((node) =>
+          ports
+            .filter((port) => !(node === tailnet.self && port === serverPort))
+            .map((port) => [node, port] as const),
+        )
+        .slice(0, MAX_PROBES),
       ([node, port]) => probe(node, port),
       { concurrency: PROBE_CONCURRENCY },
     );
@@ -321,25 +382,15 @@ const make = Effect.gen(function* () {
     return { caller, environments };
   });
 
-  const takePairingSlot = Effect.fn("TailnetConnect.takePairingSlot")(function* (address: string) {
-    const now = yield* Clock.currentTimeMillis;
-    const windowStart = now - Duration.toMillis(PAIRING_LIMIT_WINDOW);
-    return yield* Ref.modify(pairingsByAddress, (byAddress) => {
-      const recent = (byAddress.get(address) ?? []).filter((at) => at > windowStart);
-      if (recent.length >= PAIRING_LIMIT) return [false, byAddress] as const;
-      const next = new Map(
-        [...byAddress].filter(([, times]) => times.some((at) => at > windowStart)),
-      );
-      next.set(address, [...recent, now]);
-      return [true, next] as const;
-    });
-  });
-
   const issuePairing: TailnetConnect["Service"]["issuePairing"] = Effect.fn(
     "TailnetConnect.issuePairing",
   )(function* (request) {
     const { caller, origin } = yield* authorize(request);
-    if (!(yield* takePairingSlot(caller.address))) return yield* refuse("rate_limited");
+    if (
+      !(yield* takeSlot(pairingsByAddress, caller.address, PAIRING_LIMIT, PAIRING_LIMIT_WINDOW))
+    ) {
+      return yield* refuse("rate_limited");
+    }
     const descriptor = yield* serverEnvironment.getDescriptor;
     const issued = yield* environmentAuth
       .issuePairingCredential({ label: `Tailnet: ${caller.nodeName ?? caller.address}` })
@@ -363,7 +414,15 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return TailnetConnect.of({ listEnvironments, issuePairing });
+  const describePairing: TailnetConnect["Service"]["describePairing"] = Effect.fn(
+    "TailnetConnect.describePairing",
+  )(function* (request) {
+    const { caller } = yield* authorize(request);
+    const descriptor = yield* serverEnvironment.getDescriptor;
+    return { caller, environmentLabel: descriptor.label };
+  });
+
+  return TailnetConnect.of({ describePairing, listEnvironments, issuePairing });
 });
 
 export const layer = Layer.effect(TailnetConnect, make);

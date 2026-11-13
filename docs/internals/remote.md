@@ -168,12 +168,18 @@ every route. See [environment authentication](./environment-auth.md) and the
 [Tailnet pairing](../../apps/server/src/tailnet/TailnetConnect.ts) is the one
 place Tailscale identity grants anything. `/tailnet/pair` mints an ordinary
 pairing link for a caller that `tailscale whois` names from the socket's peer
-address, never from headers. Loopback is refused, which also refuses Tailscale
-Serve and T3 Connect, whose proxies arrive over loopback without a verifiable
-caller. The Host must be an address literal or this node's MagicDNS name, so a
-DNS-rebinding page cannot read a minted link. A server mints only for itself;
-its listing links to the other servers' own pages. Changing the setting needs
-`access:write`, the same authority that creates pairing links.
+address, never from headers. That identity is the device's, not the page's:
+any website open on the user's phone reaches the server as the phone. So the
+[routes](../../apps/server/src/tailnet/http.ts) skip the browser API's wildcard
+CORS, refuse requests whose `Origin` or `Sec-Fetch-*` headers show another site,
+and mint only on a POST navigation from the page's own form. The Host must also
+be an address literal or this node's MagicDNS name, against DNS rebinding.
+Loopback is refused, which refuses Tailscale Serve and T3 Connect too, whose
+proxies arrive over loopback. So is the server's own tailnet address, from which
+any local process, or under WSL any Windows process, would pass as the owner.
+A server mints only for itself; its listing links to the other servers' own
+pages. Changing the setting needs `access:write`, the same authority that
+creates pairing links.
 
 SSH can launch a server as well as forward a port. Desktop main owns that
 lifecycle because it can spawn SSH and handle authentication prompts. The

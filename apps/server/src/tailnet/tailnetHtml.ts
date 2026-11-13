@@ -5,6 +5,7 @@ import { QrCode } from "@t3tools/shared/qrCode";
 
 import {
   TAILNET_PAGE_PATH,
+  TAILNET_PAIR_PATH,
   type TailnetCaller,
   type TailnetEnvironmentEntry,
   type TailnetPairing,
@@ -34,11 +35,12 @@ const COPY_SCRIPT_HASH = NodeCrypto.createHash("sha256").update(COPY_SCRIPT).dig
 
 export const TAILNET_PAGE_HEADERS = {
   "content-type": "text/html; charset=utf-8",
-  "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${COPY_SCRIPT_HASH}'; form-action 'none'; frame-ancestors 'none'`,
+  "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${COPY_SCRIPT_HASH}'; form-action 'self'; frame-ancestors 'none'`,
   "x-frame-options": "DENY",
   "cache-control": "no-store",
   pragma: "no-cache",
-  "referrer-policy": "no-referrer",
+  // Not no-referrer: browsers then send `Origin: null` on the form's own POST, which the mint refuses.
+  "referrer-policy": "same-origin",
   "x-content-type-options": "nosniff",
 };
 
@@ -86,7 +88,7 @@ const shell = (title: string, body: string, withScript = false) => `<!doctype ht
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="referrer" content="no-referrer" />
+    <meta name="referrer" content="same-origin" />
     <title>${escapeHtml(title)}</title>
     <style>${STYLES}</style>
   </head>
@@ -115,6 +117,7 @@ export function renderEnvironmentsPage(input: {
   readonly caller: TailnetCaller;
   readonly environments: ReadonlyArray<TailnetEnvironmentEntry>;
 }): string {
+  const labels = input.environments.map((environment) => environment.label);
   const rows = input.environments
     .map(
       (environment) => `<li class="row">
@@ -124,7 +127,10 @@ export function renderEnvironmentsPage(input: {
           }</div>
           <div class="row-sub">${escapeHtml(
             [
-              environment.machine === environment.label ? null : environment.machine,
+              environment.machine === environment.label &&
+              labels.indexOf(environment.label) === labels.lastIndexOf(environment.label)
+                ? null
+                : environment.machine,
               environment.address,
             ]
               .filter((part) => part !== null && part !== "")
@@ -180,10 +186,32 @@ export function renderPairingPage(input: {
   );
 }
 
-export function renderRefusalPage(message: string): string {
+export function renderPairingConfirmPage(input: {
+  readonly caller: TailnetCaller;
+  readonly environmentLabel: string;
+}): string {
+  return shell(
+    `Pair with ${input.environmentLabel}`,
+    `<h1>Pair with ${escapeHtml(input.environmentLabel)}</h1>
+    <p>${callerLine(input.caller)} The link you create pairs one device, once, and expires within minutes.</p>
+    <form class="card" method="post" action="${TAILNET_PAIR_PATH}">
+      <button type="submit" class="button">Create pairing link</button>
+    </form>
+    <p class="foot"><a href="${TAILNET_PAGE_PATH}">All environments</a></p>`,
+  );
+}
+
+export function renderRefusalPage(input: {
+  readonly message: string;
+  readonly listLink: boolean;
+}): string {
   return shell(
     "Cannot pair",
     `<h1>This device cannot pair here</h1>
-    <p>${escapeHtml(message)}</p>`,
+    <p>${escapeHtml(input.message)}</p>${
+      input.listLink
+        ? `\n    <p class="foot"><a href="${TAILNET_PAGE_PATH}">All environments</a></p>`
+        : ""
+    }`,
   );
 }

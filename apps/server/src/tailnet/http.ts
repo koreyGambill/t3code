@@ -6,6 +6,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as TailnetConnect from "./TailnetConnect.ts";
 import {
   renderEnvironmentsPage,
+  renderPairingConfirmPage,
   renderPairingPage,
   renderRefusalPage,
   TAILNET_PAGE_HEADERS,
@@ -40,8 +41,36 @@ const tailnetRequest = Effect.map(
   },
 );
 
-const refused = (error: TailnetConnect.TailnetConnectRefusedError) =>
-  Effect.succeed(html(renderRefusalPage(error.message), refusalStatus(error.reason)));
+/**
+ * Whether a browser sent this for another site. Any page a tailnet device opens could otherwise
+ * call these routes as that device. Pages may be navigated to from anywhere, since a navigation
+ * cannot be read; minting needs a navigation from this origin's own form. Clients that send none
+ * of these headers are not browsers acting for a site.
+ */
+const isCrossSite = (request: HttpServerRequest.HttpServerRequest, use: "page" | "mint") => {
+  const origin = request.headers.origin;
+  if (origin !== undefined && origin !== `http://${request.headers.host ?? ""}`) return true;
+  const site = request.headers["sec-fetch-site"];
+  const mode = request.headers["sec-fetch-mode"];
+  if (use === "mint") {
+    return (
+      (site !== undefined && site !== "same-origin") || (mode !== undefined && mode !== "navigate")
+    );
+  }
+  return site !== undefined && site !== "same-origin" && site !== "none" && mode !== "navigate";
+};
+
+const refused = (error: TailnetConnect.TailnetConnectRefusedError, listLink: boolean) =>
+  Effect.succeed(
+    html(renderRefusalPage({ message: error.message, listLink }), refusalStatus(error.reason)),
+  );
+
+const refuseCrossSite = (use: "page" | "mint") =>
+  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+    isCrossSite(request, use)
+      ? Effect.fail(new TailnetConnect.TailnetConnectRefusedError({ reason: "cross_site" }))
+      : Effect.void,
+  );
 
 export const layer = HttpRouter.use((router) =>
   Effect.gen(function* () {
@@ -51,15 +80,28 @@ export const layer = HttpRouter.use((router) =>
       "GET",
       TailnetConnect.TAILNET_PAGE_PATH,
       Effect.gen(function* () {
+        yield* refuseCrossSite("page");
         const page = yield* service.listEnvironments(yield* tailnetRequest);
         return html(renderEnvironmentsPage(page));
-      }).pipe(Effect.catchTags({ TailnetConnectRefusedError: refused })),
+      }).pipe(Effect.catchTags({ TailnetConnectRefusedError: (error) => refused(error, false) })),
     );
 
     yield* router.add(
       "GET",
       TailnetConnect.TAILNET_PAIR_PATH,
       Effect.gen(function* () {
+        yield* refuseCrossSite("page");
+        return html(
+          renderPairingConfirmPage(yield* service.describePairing(yield* tailnetRequest)),
+        );
+      }).pipe(Effect.catchTags({ TailnetConnectRefusedError: (error) => refused(error, true) })),
+    );
+
+    yield* router.add(
+      "POST",
+      TailnetConnect.TAILNET_PAIR_PATH,
+      Effect.gen(function* () {
+        yield* refuseCrossSite("mint");
         const pairing = yield* service.issuePairing(yield* tailnetRequest);
         const now = yield* DateTime.now;
         const expiresInMinutes = Math.max(
@@ -69,10 +111,10 @@ export const layer = HttpRouter.use((router) =>
         return html(renderPairingPage({ pairing, expiresInMinutes }));
       }).pipe(
         Effect.catchTags({
-          TailnetConnectRefusedError: refused,
+          TailnetConnectRefusedError: (error) => refused(error, true),
           TailnetPairingIssueError: (error) =>
             Effect.logError("tailnet pairing failed", { cause: error.cause }).pipe(
-              Effect.as(html(renderRefusalPage(error.message), 500)),
+              Effect.as(html(renderRefusalPage({ message: error.message, listLink: true }), 500)),
             ),
         }),
       ),
