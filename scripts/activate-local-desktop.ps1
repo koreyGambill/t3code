@@ -1,6 +1,18 @@
 param([string]$ConfigPath, [ValidateSet('Preflight', 'Prepare', 'Launch', 'Activate')][string]$Mode = 'Activate')
 $ErrorActionPreference = 'Stop'
 
+# The updater runs the launcher's executable itself, so any line it cannot reproduce must fail before the swap.
+function Read-LocalUpdateLauncher($path) {
+  $variables = @{}
+  foreach ($line in Get-Content -LiteralPath $path) {
+    $trimmed = $line.Trim()
+    if ($trimmed -eq '' -or $trimmed -eq '@echo off' -or $trimmed -eq 'setlocal' -or $trimmed -eq 'start "" "%~dp0Weavewing.exe" %*') { continue }
+    if ($trimmed -match '^set "([A-Za-z_][A-Za-z0-9_]*)=([^"%]*)"$') { $variables[$Matches[1]] = $Matches[2]; continue }
+    throw "Unsupported launcher line in ${path}: $trimmed"
+  }
+  return $variables
+}
+
 function Wait-LocalUpdateDrain([double]$Minutes, [scriptblock]$Read, [scriptblock]$Now = { [DateTime]::UtcNow }, [scriptblock]$Delay = { param($seconds) Start-Sleep -Seconds $seconds }) {
   $deadline = (& $Now).AddMinutes($Minutes)
   $last = $null
@@ -193,20 +205,17 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       return $true
     }
     function Read-UpdateTail($path) {
-      $text = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+      $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
       if (-not $text) { return '' }
       return $text.Substring([Math]::Max(0, $text.Length - 4000))
     }
     function Start-UpdateDesktop {
       # The launcher's `start` drops redirected handles, so run its executable with its variables to keep the exit code and output.
-      $variables = @{}
-      foreach ($line in Get-Content -LiteralPath (Join-Path $install 'Start Weavewing.cmd')) {
-        if ($line -match '^\s*set\s+"([^=]+)=(.*)"\s*$') { $variables[$Matches[1]] = $Matches[2] }
-      }
+      $variables = Read-LocalUpdateLauncher (Join-Path $install 'Start Weavewing.cmd')
       # Windows-local and reused per install: the app writes here for its lifetime, and the next launch truncates it.
       $output = Join-Path ([IO.Path]::GetTempPath()) ('weavewing-desktop-' + (Split-Path $install -Leaf))
-      # The inherited stdin would be this run's file on the WSL share.
-      Set-Content -LiteralPath ($output + '.stdin') -Value '' -NoNewline
+      # The inherited stdin would be this run's file on the WSL share. A lingering reader must not block a relaunch.
+      if (-not (Test-Path -LiteralPath ($output + '.stdin'))) { New-Item -ItemType File -Path ($output + '.stdin') | Out-Null }
       $previous = @{}
       foreach ($name in $variables.Keys) { $previous[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $variables[$name]) }
       try {
@@ -228,6 +237,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       $desktop.launch.stdoutTail = Read-UpdateTail $desktop.launch.stdout
       $desktop.launch.stderrTail = Read-UpdateTail $desktop.launch.stderr
       $desktop.process = $null
+      # Exit 0 beside a live main window is a single-instance hand-off; health decides.
+      if ($desktop.launch.exitCode -eq 0 -and @(Get-UpdateProcesses | Where-Object { $_.MainWindowHandle -ne 0 }).Count -gt 0) { $desktop.launch.handedOff = $true; return $false }
       return $true
     }
     function Wait-UpdateHealthy($digest) {
@@ -277,6 +288,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       if ($config.updatePath -eq 'wsl-only' -and $config.shellHash -and (Get-FileHash -LiteralPath (Join-Path $install 'resources/app.asar') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.shellHash) { throw 'Installed shell no longer matches its receipt; use --full.' }
       if ($config.updatePath -eq 'wsl-only' -and $config.exeHash -and (Get-FileHash -LiteralPath (Join-Path $install 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.exeHash) { throw 'Installed shell no longer matches its receipt; use --full.' }
       if (-not (Test-Path -LiteralPath (Join-Path $install 'Start Weavewing.cmd'))) { throw 'Install must have Start Weavewing.cmd.' }
+      Read-LocalUpdateLauncher (Join-Path $install 'Start Weavewing.cmd') | Out-Null
       Assert-UpdateRollback
       if ($config.updatePath -ne 'wsl-only' -and -not $config.checkOnly -and (Test-Path -LiteralPath $config.backupRootWindows)) { throw "Interrupted state backup: inspect $($config.backupRootWindows) before updating." }
       $oldDigest = (Get-FileHash -LiteralPath (Join-Path $install 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -412,7 +424,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       $swapStarted = $true
       Invoke-LocalUpdateSwap $install $payload $rollback { Start-UpdateDesktop; Save-UpdateStatus 'waiting-new-runtime' } {
         if (Wait-UpdateHealthy $config.digest) { return $true }
-        if ($null -ne $desktop.launch.exitCode) { throw "New desktop exited with code $($desktop.launch.exitCode) before its runtime became healthy; see desktopLaunches in the receipt." }
+        if ($null -ne $desktop.launch.exitCode -and -not $desktop.launch.handedOff) { throw "New desktop exited with code $($desktop.launch.exitCode) before its runtime became healthy; see desktopLaunches in the receipt." }
         return $false
       } {
         $current = try { Probe-Update 'health' @($config.digest) } catch { @{ } }

@@ -23,6 +23,15 @@ try {
       Write-Host "PASS case: early-$mode-$failure"
     }
   }
+  $launcherPath = Join-Path $root 'launcher.cmd'
+  Set-Content $launcherPath @('@echo off', 'setlocal', 'set "T3CODE_DISABLE_AUTO_UPDATE=true"', 'set "T3CODE_DESKTOP_APP_USER_MODEL_ID=com.example.fixture"', 'start "" "%~dp0Weavewing.exe" %*')
+  $variables = Read-LocalUpdateLauncher $launcherPath
+  Assert ($variables.Count -eq 2 -and $variables.T3CODE_DESKTOP_APP_USER_MODEL_ID -eq 'com.example.fixture') 'Launcher variables were not read'
+  foreach ($line in @('set "PATH=%PATH%;C:\tools"', 'call other.cmd', 'start "" "%~dp0Other.exe" %*', 'set NAME=value')) {
+    Set-Content $launcherPath @('@echo off', $line, 'start "" "%~dp0Weavewing.exe" %*')
+    Must-Fail { Read-LocalUpdateLauncher $launcherPath }
+  }
+  Write-Host 'PASS case: launcher-lines'
   $clock = @{ now = [DateTime]'2026-01-01T00:00:00Z'; reads = 0; delays = 0 }
   $result = Wait-LocalUpdateDrain 0 { throw 'Zero drain must not read' }
   Assert ($result.reason -eq 'deadline') 'Zero drain did not skip'
@@ -148,7 +157,7 @@ try {
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
     Write-Host "PASS case: runtime-selection-$case"
   }
-  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'desktop-exits', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
+  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
     $fixture = Join-Path $root ('activation-' + $case)
     $install = Join-Path $fixture 'installed'
     $resources = Join-Path $install 'resources'
@@ -198,6 +207,10 @@ try {
         $process = [pscustomobject]@{ Path = (Join-Path $install 'Weavewing.exe'); Id = 100; MainWindowHandle = 123 }
         $process | Add-Member ScriptMethod CloseMainWindow { $calls.closed++; return $true }
         if ($calls.closed -eq 0 -or $calls.starts -gt 0 -or $calls.sleeps -lt 3) { $process }
+      } elseif ($case -eq 'desktop-handoff' -and $calls.starts -gt 0) {
+        $process = [pscustomobject]@{ Path = (Join-Path $install 'Weavewing.exe'); Id = 101; MainWindowHandle = 456 }
+        $process | Add-Member ScriptMethod CloseMainWindow { $calls.closed++; return $true }
+        if ($calls.closed -eq 0) { $process }
       } elseif ($runtimeOnly -and $case -ne 'runtime-no-desktop') {
         $process = [pscustomobject]@{ Path = (Join-Path $install 'Weavewing.exe'); Id = 100; MainWindowHandle = 123 }
         $process | Add-Member ScriptMethod CloseMainWindow { $calls.closed++; return $true }
@@ -212,14 +225,14 @@ try {
         $calls.starts++
         $calls.launcherVariables += $env:T3CODE_FIXTURE_LAUNCHER
         Assert ($RedirectStandardOutput.StartsWith($fixture) -and $RedirectStandardError -and $RedirectStandardInput) 'Desktop output was not captured locally'
-        $exited = $case -eq 'desktop-exits' -and $calls.starts -eq 1
-        if ($exited) { Set-Content $RedirectStandardOutput 'protocol.registerSchemesAsPrivileged should be called before app is ready' }
+        $exited = $case -in @('desktop-exits', 'desktop-handoff') -and $calls.starts -eq 1
+        if ($exited -and $case -eq 'desktop-exits') { [IO.File]::WriteAllText($RedirectStandardOutput, "protocol.registerSchemesAsPrivileged should be called before app is ready $([char]0x2026)", [Text.UTF8Encoding]::new($false)) }
       } else {
         New-Item -ItemType Directory -Path (Join-Path $backupRoot 'backup-windows') | Out-Null
         Set-Content (Join-Path $backupRoot 'backup-windows/saved') 'state'
         @{ path = (Join-Path $backupRoot 'backup-windows') } | ConvertTo-Json | Set-Content $RedirectStandardOutput
       }
-      $process = [pscustomobject]@{ Id = 999; Handle = 1; ExitCode = $(if ($exited) { 1 } else { 0 }); HasExited = $exited }
+      $process = [pscustomobject]@{ Id = 999; Handle = 1; ExitCode = $(if ($exited -and $case -eq 'desktop-exits') { 1 } else { 0 }); HasExited = $exited }
       $process | Add-Member ScriptMethod WaitForExit { return $true }
       $process
     }
@@ -236,6 +249,8 @@ try {
       if ($label -eq 'capture-links') { throw 'No links in fixture' }
       return @{ installed = $true; backedUp = $true; stopped = $true; path = 'fixture-wsl-backup' }
     }
+    # A reader left over from a failed launch must not block the recovery relaunch.
+    $stdinHolder = $(if ($case -eq 'desktop-exits') { [IO.File]::Open((Join-Path $fixture 'weavewing-desktop-installed.stdin'), 'OpenOrCreate', 'Read', 'Read') })
     try {
       if ($case -in @('stopped-throws', 'close-late-exit', 'desktop-exits', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
       else { Invoke-LocalDesktopUpdate $configPath 'Activate' }
@@ -243,6 +258,7 @@ try {
       Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl
       Remove-Item Function:Get-Process,Function:Start-Process,Function:Start-Sleep
       $env:TMP = $tmp
+      if ($stdinHolder) { $stdinHolder.Dispose() }
     }
     Assert (@($calls.launcherVariables | Where-Object { $_ -ne 'from launcher' }).Count -eq 0 -and -not $env:T3CODE_FIXTURE_LAUNCHER) 'Desktop launch did not scope the launcher variables to the desktop'
     $receipt = Get-Content (Join-Path $fixture 'receipt.json') -Raw | ConvertFrom-Json
@@ -257,8 +273,10 @@ try {
     } elseif ($case -eq 'desktop-exits') {
       $launch = @($receipt.desktopLaunches)[0]
       Assert ($receipt.status -eq 'failed' -and $receipt.error -match 'exited with code 1' -and $calls.crashedHealth -le 1) 'Exited desktop did not fail the update before the health deadline'
-      Assert ($launch.exitCode -eq 1 -and $launch.stdoutTail -match 'registerSchemesAsPrivileged') 'Receipt lost the exited desktop output'
+      Assert ($launch.exitCode -eq 1 -and $launch.stdoutTail.EndsWith("ready $([char]0x2026)")) 'Receipt lost the exited desktop output'
       Assert ($calls.starts -eq 2 -and $receipt.rollbackHealthy -and (Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'fixture-shell') 'Exited desktop did not restore and relaunch the previous app'
+    } elseif ($case -eq 'desktop-handoff') {
+      Assert ($receipt.status -eq 'verified' -and @($receipt.desktopLaunches)[0].handedOff -and $calls.starts -eq 1) 'Single-instance hand-off rolled back a healthy update'
     } elseif ($case -eq 'health-transient') {
       Assert ($receipt.status -eq 'verified') 'One transient health probe rolled back a healthy update'
     } elseif ($case -eq 'runtime-no-desktop') {

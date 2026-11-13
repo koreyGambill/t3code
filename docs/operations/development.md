@@ -422,7 +422,9 @@ Keep logs and receipts separate from private state.
 It carries over the install's launchers, closes the main window gracefully, waits for the WSL server
 to exit, swaps the app and relaunches `Weavewing.exe` with the `set "NAME=VALUE"` variables from
 `Start Weavewing.cmd`, writing its output to `%TEMP%\weavewing-desktop-<install-name>.stdout`/`.stderr`.
-A desktop that exits before its runtime is healthy fails activation at once; the receipt's
+Preflight refuses a launcher with any other line except `@echo off`, `setlocal` and its `start` line.
+A desktop that exits before its runtime is healthy fails activation at once, unless it exited cleanly
+and handed off to a running Weavewing window; the receipt's
 `desktopLaunches` keeps its exit code and output. Health checks require the process
 under the new archive digest to answer the environment endpoint with the original environment id.
 `--health-seconds` defaults to 240; the non-migrating fast path caps it at 45 seconds. Transient probe
