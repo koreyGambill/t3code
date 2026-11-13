@@ -420,7 +420,10 @@ under `~/.local/share/weavewing-update-backups/<commit>-<attempt>` (writing it t
 retains the Windows snapshot in the rollback directory; each keeps only the latest update's copy.
 Keep logs and receipts separate from private state.
 It carries over the install's launchers, closes the main window gracefully, waits for the WSL server
-to exit, swaps the app and relaunches through `Start Weavewing.cmd`. Health checks require the process
+to exit, swaps the app and relaunches `Weavewing.exe` with the `set "NAME=VALUE"` variables from
+`Start Weavewing.cmd`, writing its output to `%TEMP%\weavewing-desktop-<install-name>.stdout`/`.stderr`.
+A desktop that exits before its runtime is healthy fails activation at once; the receipt's
+`desktopLaunches` keeps its exit code and output. Health checks require the process
 under the new archive digest to answer the environment endpoint with the original environment id.
 `--health-seconds` defaults to 240; the non-migrating fast path caps it at 45 seconds. Transient probe
 failures remain in the receipt while health polling continues to its deadline.

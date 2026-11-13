@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
@@ -295,5 +296,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
   });
 });
 
+// Built before Clerk registers its scheme, which Electron rejects once ready, so it must not yield.
 export const layer = (input: MakeDesktopEnvironmentInput) =>
-  Layer.effect(DesktopEnvironment, make(input));
+  Layer.effect(DesktopEnvironment, make(input)).pipe(
+    Layer.provide(DesktopPreReadyFileSystem.layer),
+  );

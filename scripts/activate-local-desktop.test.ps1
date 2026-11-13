@@ -148,7 +148,7 @@ try {
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
     Write-Host "PASS case: runtime-selection-$case"
   }
-  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
+  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'desktop-exits', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
     $fixture = Join-Path $root ('activation-' + $case)
     $install = Join-Path $fixture 'installed'
     $resources = Join-Path $install 'resources'
@@ -160,10 +160,11 @@ try {
     Set-Content (Join-Path $resources 'wsl-runtime.tar.gz') 'old-archive'
     Set-Content (Join-Path $resources 'wsl-runtime.tar.gz.sha256') 'old-digest'
     Set-Content (Join-Path $install 'Weavewing.exe') 'fixture-shell'
-    Set-Content (Join-Path $install 'Start Weavewing.cmd') 'fixture-launcher'
+    $launcher = @('@echo off', 'set "T3CODE_FIXTURE_LAUNCHER=from launcher"', 'start "" "%~dp0Weavewing.exe" %*')
+    Set-Content (Join-Path $install 'Start Weavewing.cmd') $launcher
     Set-Content (Join-Path $payload 'Weavewing.exe') 'new-shell'
     Set-Content (Join-Path $payload 'resources/wsl-runtime.tar.gz') 'new-archive'
-    Set-Content (Join-Path $payload 'Start Weavewing.cmd') 'fixture-launcher'
+    Set-Content (Join-Path $payload 'Start Weavewing.cmd') $launcher
     Set-Content (Join-Path $candidate '.weavewing-stage-owner') $install
     Set-Content (Join-Path $rollback '.weavewing-update-owner') $install
     Set-Content (Join-Path $rollback 'app/previous') 'preserve'
@@ -186,9 +187,12 @@ try {
     $runtimeOnly = $case.StartsWith('runtime-')
     $config = @{ install = $install; updatePath = $(if ($runtimeOnly) { 'wsl-only' } else { 'full' }); archive = (Join-Path $payload 'resources/wsl-runtime.tar.gz'); digest = $digest; exeHash = (Get-FileHash (Join-Path $payload 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $false; drainMinutes = 0; healthSeconds = 0.1; backupRootWindows = $backupRoot; clientSource = $clientSource; clientCommit = 'client-head'; clientAssetsDirectory = 'resources/client' }
     if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) { $config.closeSeconds = 0 }
+    if ($case -eq 'desktop-exits') { $config.healthSeconds = 3 }
     $config | ConvertTo-Json | Set-Content $configPath
     $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
-    $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0 }
+    $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0; crashedHealth = 0; launcherVariables = @() }
+    $tmp = $env:TMP
+    $env:TMP = $fixture
     function Get-Process {
       if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) {
         $process = [pscustomobject]@{ Path = (Join-Path $install 'Weavewing.exe'); Id = 100; MainWindowHandle = 123 }
@@ -203,13 +207,19 @@ try {
     function Start-Sleep { if ($calls.closed -gt 0) { $calls.sleeps++ } }
     function Start-Process {
       param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru, $RedirectStandardInput, $RedirectStandardOutput, $RedirectStandardError, [switch]$NoNewWindow)
-      if ($FilePath.EndsWith('Start Weavewing.cmd')) { $calls.starts++ }
-      else {
+      $exited = $false
+      if ($FilePath.EndsWith('Weavewing.exe') -and -not $ArgumentList) {
+        $calls.starts++
+        $calls.launcherVariables += $env:T3CODE_FIXTURE_LAUNCHER
+        Assert ($RedirectStandardOutput.StartsWith($fixture) -and $RedirectStandardError -and $RedirectStandardInput) 'Desktop output was not captured locally'
+        $exited = $case -eq 'desktop-exits' -and $calls.starts -eq 1
+        if ($exited) { Set-Content $RedirectStandardOutput 'protocol.registerSchemesAsPrivileged should be called before app is ready' }
+      } else {
         New-Item -ItemType Directory -Path (Join-Path $backupRoot 'backup-windows') | Out-Null
         Set-Content (Join-Path $backupRoot 'backup-windows/saved') 'state'
         @{ path = (Join-Path $backupRoot 'backup-windows') } | ConvertTo-Json | Set-Content $RedirectStandardOutput
       }
-      $process = [pscustomobject]@{ Id = 999; Handle = 1; ExitCode = 0 }
+      $process = [pscustomobject]@{ Id = 999; Handle = 1; ExitCode = $(if ($exited) { 1 } else { 0 }); HasExited = $exited }
       $process | Add-Member ScriptMethod WaitForExit { return $true }
       $process
     }
@@ -219,6 +229,7 @@ try {
       if ($label -eq 'health') {
         $calls.health++
         if ($case -eq 'health-transient' -and $calls.health -eq 2) { throw 'One slow wsl call' }
+        if ($case -eq 'desktop-exits' -and $calls.starts -eq 1) { $calls.crashedHealth++; return @{ healthy = $false; pid = 123 } }
         return @{ healthy = ($case -notin @('runtime-recovery', 'runtime-recovery-late-exit') -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
       }
       if ($label -eq 'stopped' -and $case -eq 'stopped-throws') { throw 'WSL responsiveness failed after close' }
@@ -226,12 +237,14 @@ try {
       return @{ installed = $true; backedUp = $true; stopped = $true; path = 'fixture-wsl-backup' }
     }
     try {
-      if ($case -in @('stopped-throws', 'close-late-exit', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
+      if ($case -in @('stopped-throws', 'close-late-exit', 'desktop-exits', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
       else { Invoke-LocalDesktopUpdate $configPath 'Activate' }
     } finally {
       Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl
       Remove-Item Function:Get-Process,Function:Start-Process,Function:Start-Sleep
+      $env:TMP = $tmp
     }
+    Assert (@($calls.launcherVariables | Where-Object { $_ -ne 'from launcher' }).Count -eq 0 -and -not $env:T3CODE_FIXTURE_LAUNCHER) 'Desktop launch did not scope the launcher variables to the desktop'
     $receipt = Get-Content (Join-Path $fixture 'receipt.json') -Raw | ConvertFrom-Json
     if ($case -eq 'stopped-throws') {
       Assert ($receipt.status -eq 'failed' -and $calls.starts -eq 1 -and $receipt.rollbackHealthy) 'Stopped probe failure with an older rollback did not relaunch desktop'
@@ -241,6 +254,11 @@ try {
     } elseif ($case -eq 'close-late-exit') {
       Assert ($receipt.status -eq 'failed' -and $receipt.closeRequested -and $calls.sleeps -ge 3) 'Late desktop exit was not awaited'
       Assert ($calls.starts -eq 1 -and $receipt.rollbackHealthy) 'Desktop that exited after the close deadline was not relaunched'
+    } elseif ($case -eq 'desktop-exits') {
+      $launch = @($receipt.desktopLaunches)[0]
+      Assert ($receipt.status -eq 'failed' -and $receipt.error -match 'exited with code 1' -and $calls.crashedHealth -le 1) 'Exited desktop did not fail the update before the health deadline'
+      Assert ($launch.exitCode -eq 1 -and $launch.stdoutTail -match 'registerSchemesAsPrivileged') 'Receipt lost the exited desktop output'
+      Assert ($calls.starts -eq 2 -and $receipt.rollbackHealthy -and (Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'fixture-shell') 'Exited desktop did not restore and relaunch the previous app'
     } elseif ($case -eq 'health-transient') {
       Assert ($receipt.status -eq 'verified') 'One transient health probe rolled back a healthy update'
     } elseif ($case -eq 'runtime-no-desktop') {

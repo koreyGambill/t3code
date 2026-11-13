@@ -116,6 +116,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   $log = Join-Path $root 'activation.log'
   $helperReceipts = Join-Path $root 'helpers'
   $details = @{ status = $Mode }
+  $desktop = @{ process = $null; launch = $null }
   function Save-UpdateStatus($status) {
     $details.status = $status
     $details.at = [DateTime]::UtcNow.ToString('o')
@@ -191,15 +192,50 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       }
       return $true
     }
+    function Read-UpdateTail($path) {
+      $text = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+      if (-not $text) { return '' }
+      return $text.Substring([Math]::Max(0, $text.Length - 4000))
+    }
     function Start-UpdateDesktop {
-      $launcher = Start-Process -FilePath (Join-Path $install 'Start Weavewing.cmd') -WorkingDirectory $install -WindowStyle Hidden -PassThru
-      Record-UpdateHelper $launcher.Id 'desktop-launcher'
+      # The launcher's `start` drops redirected handles, so run its executable with its variables to keep the exit code and output.
+      $variables = @{}
+      foreach ($line in Get-Content -LiteralPath (Join-Path $install 'Start Weavewing.cmd')) {
+        if ($line -match '^\s*set\s+"([^=]+)=(.*)"\s*$') { $variables[$Matches[1]] = $Matches[2] }
+      }
+      # Windows-local and reused per install: the app writes here for its lifetime, and the next launch truncates it.
+      $output = Join-Path ([IO.Path]::GetTempPath()) ('weavewing-desktop-' + (Split-Path $install -Leaf))
+      # The inherited stdin would be this run's file on the WSL share.
+      Set-Content -LiteralPath ($output + '.stdin') -Value '' -NoNewline
+      $previous = @{}
+      foreach ($name in $variables.Keys) { $previous[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $variables[$name]) }
+      try {
+        $process = Start-Process -FilePath (Join-Path $install 'Weavewing.exe') -WorkingDirectory $install -RedirectStandardInput ($output + '.stdin') -RedirectStandardOutput ($output + '.stdout') -RedirectStandardError ($output + '.stderr') -PassThru
+      } finally {
+        foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
+      }
+      $null = $process.Handle
+      $desktop.process = $process
+      $desktop.launch = @{ pid = $process.Id; stdout = ($output + '.stdout'); stderr = ($output + '.stderr'); at = [DateTime]::UtcNow.ToString('o') }
+      $details.desktopLaunches = @($details.desktopLaunches | Where-Object { $_ }) + @($desktop.launch)
+      Record-UpdateHelper $process.Id 'desktop'
+    }
+    function Test-UpdateDesktopExited {
+      if (-not $desktop.process -or -not $desktop.process.HasExited) { return $false }
+      $desktop.launch.exitCode = $desktop.process.ExitCode
+      $desktop.launch.exitedAt = [DateTime]::UtcNow.ToString('o')
+      # The next launch truncates these files.
+      $desktop.launch.stdoutTail = Read-UpdateTail $desktop.launch.stdout
+      $desktop.launch.stderrTail = Read-UpdateTail $desktop.launch.stderr
+      $desktop.process = $null
+      return $true
     }
     function Wait-UpdateHealthy($digest) {
       $deadline = [DateTime]::UtcNow.AddSeconds($config.healthSeconds)
       do {
         $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
         if ($remaining -le 0) { break }
+        if (Test-UpdateDesktopExited) { return $false }
         try {
           $health = Probe-Update 'health' @($digest) ([Math]::Min(5, $remaining))
           $details.lastHealth = $health
@@ -374,7 +410,11 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       $details.windowsBackup.path = Join-Path $rollback 'backup-windows'
       Save-UpdateStatus 'activating'
       $swapStarted = $true
-      Invoke-LocalUpdateSwap $install $payload $rollback { Start-UpdateDesktop; Save-UpdateStatus 'waiting-new-runtime' } { Wait-UpdateHealthy $config.digest } {
+      Invoke-LocalUpdateSwap $install $payload $rollback { Start-UpdateDesktop; Save-UpdateStatus 'waiting-new-runtime' } {
+        if (Wait-UpdateHealthy $config.digest) { return $true }
+        if ($null -ne $desktop.launch.exitCode) { throw "New desktop exited with code $($desktop.launch.exitCode) before its runtime became healthy; see desktopLaunches in the receipt." }
+        return $false
+      } {
         $current = try { Probe-Update 'health' @($config.digest) } catch { @{ } }
         Close-UpdateDesktop
         if ($current.pid) {

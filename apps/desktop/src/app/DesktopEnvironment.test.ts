@@ -2,6 +2,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -74,7 +75,13 @@ describe("DesktopEnvironment", () => {
       const sidecar = path.join(resourcesPath, "server.asar/apps/server/dist/client");
 
       yield* fs.writeFileString(path.join(client, ".shell-version"), "0.0.22\n");
-      const matching = yield* makeEnvironment(input);
+      // Construction runs before Electron is ready; yielding lets Clerk's scheme registration fail.
+      const construction = yield* makeEnvironment(input).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const constructed = construction.pollUnsafe();
+      assert.ok(constructed && Exit.isSuccess(constructed), "construction yielded");
+      const matching = constructed.value;
       assert.equal(matching.clientAssetsDir, client);
       assert.equal(
         matching.backendEntryPath,
