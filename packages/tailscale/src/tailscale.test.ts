@@ -391,7 +391,8 @@ describe("tailscale", () => {
           Effect.provide(layer),
         );
         assert.instanceOf(serveError, TailscaleCommandSpawnError);
-        assert.deepEqual(spawned, ["tailscale"]);
+        // Its HTTPS precheck is a read and may use the host; the serve write never does.
+        assert.deepEqual(spawned, ["tailscale", WSL_WINDOWS_TAILSCALE_PATH, "tailscale"]);
       });
     },
   );

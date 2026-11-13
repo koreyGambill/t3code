@@ -663,6 +663,12 @@ describe("upstream client payloads", () => {
     };
 
     expect(decodeDispatchCommand(upstreamPayload)).toMatchObject({ origin: { kind: "user" } });
+    // Upstream's linked-sender field rides alongside the defaulted origin.
+    const linkedSender = { environmentId: "env-linked", threadId: "thread-lead", title: "Lead" };
+    expect(decodeDispatchCommand({ ...upstreamPayload, linkedSender })).toMatchObject({
+      origin: { kind: "user" },
+      linkedSender,
+    });
     expect(
       decodeDispatchCommand({ ...upstreamPayload, origin: { kind: "wake", detail: "check" } }),
     ).toMatchObject({ origin: { kind: "wake", detail: "check" } });
