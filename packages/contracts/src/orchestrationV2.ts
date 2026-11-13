@@ -3499,7 +3499,9 @@ export const OrchestrationV2Command = Schema.Union([
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
-    origin: TurnOrigin,
+    origin: TurnOrigin.pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed({ kind: "user" } as const)),
+    ),
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     /** Atomically records the sender's request for this message's terminal reply. */
@@ -4073,7 +4075,9 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   workspaceStrategy: OrchestrationV2ThreadLaunchRequestWorkspaceStrategy,
   initialMessage: Schema.optional(
     Schema.Struct({
-      origin: TurnOrigin,
+      origin: TurnOrigin.pipe(
+        Schema.withDecodingDefaultKey(Effect.succeed({ kind: "user" } as const)),
+      ),
       messageId: Schema.optional(MessageId),
       text: Schema.String,
       context: Schema.optional(OrchestrationMessageContext),

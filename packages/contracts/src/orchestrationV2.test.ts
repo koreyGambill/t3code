@@ -642,3 +642,44 @@ describe("latestProviderTurnForAttempt", () => {
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
 });
+
+describe("upstream client payloads", () => {
+  const decodeDispatchCommand = Schema.decodeUnknownSync(
+    OrchestrationV2RpcSchemas.dispatchCommand.input,
+  );
+  const decodeLaunchThread = Schema.decodeUnknownSync(OrchestrationV2RpcSchemas.launchThread.input);
+
+  it("decodes message.dispatch without origin as a user turn and keeps explicit origins", () => {
+    const upstreamPayload = {
+      type: "message.dispatch",
+      commandId: "command-1",
+      threadId: "thread-1",
+      messageId: "message-1",
+      text: "hello",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "mobile",
+      dispatchMode: { type: "start_immediately" },
+    };
+
+    expect(decodeDispatchCommand(upstreamPayload)).toMatchObject({ origin: { kind: "user" } });
+    expect(
+      decodeDispatchCommand({ ...upstreamPayload, origin: { kind: "wake", detail: "check" } }),
+    ).toMatchObject({ origin: { kind: "wake", detail: "check" } });
+  });
+
+  it("decodes launchThread's initialMessage without origin as a user turn", () => {
+    const decoded = decodeLaunchThread({
+      commandId: "command-1",
+      projectId: "project-1",
+      title: "Title",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+      initialMessage: { text: "hello", attachments: [] },
+    });
+
+    expect(decoded.initialMessage?.origin).toEqual({ kind: "user" });
+  });
+});

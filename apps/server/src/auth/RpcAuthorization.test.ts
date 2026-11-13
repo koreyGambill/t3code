@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
@@ -425,6 +426,12 @@ describe("settings mutation authorization", () => {
           patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      // Tailnet pairing decides who may pair, which only an access grant may change.
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { tailnetConnect: { enabled: true } },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
       expect(handled).toBe(false);
     }),
   );

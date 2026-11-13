@@ -205,6 +205,33 @@ tailscale serve --https=443 --set-path=/ off
 If that port is already in use, choose another with
 `--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
 
+### Pair from your tailnet without copying codes
+
+Each machine can serve a pairing page to your own Tailscale devices. Turn on
+**Tailnet pairing** in **Settings → Sharing & access** for every machine you want
+to reach. On your phone or laptop, open and bookmark
+`http://<tailnet-ip>:<port>/tailnet`, for example
+`http://100.101.102.103:3773/tailnet`. The full MagicDNS name, such as
+`http://desk.tailnet-name.ts.net:3773/tailnet`, also works; the short name does
+not. The page lists that server and the T3
+Code servers it finds on your other online machines; tap **Pair** on one, then
+**Create pairing link**.
+
+The link works once and expires in five minutes. In the
+mobile app, copy it, then paste it into **Address** under **Add environment**.
+On a computer, **Open in T3 Code desktop** adds it directly, and the QR code
+works from another device's **Add environment** scanner.
+
+Each server asks Tailscale who the device is. By default only the Tailscale
+login that owns that machine can pair; list other logins under **Allowed
+Tailscale logins**. A machine logged in to Tailscale with a tag belongs to no
+person, so on it you must list the allowed logins before anyone can pair.
+Tagged devices and devices shared from another tailnet can never pair, and a
+machine cannot pair with itself this way. Use the plain tailnet address: the
+page is not served over Tailscale HTTPS, T3 Connect, or a LAN address. A server finds others on ports 3773 and
+3774 and its own port; other ports go in `tailnetConnect.discoveryPorts` in its
+`settings.json`.
+
 ### Connect to a Windows desktop's WSL environment
 
 Windows and WSL are separate environments with their own projects, threads, and

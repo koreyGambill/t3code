@@ -180,6 +180,9 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
+import * as TailnetHttp from "./tailnet/http.ts";
+import * as TailnetConnect from "./tailnet/TailnetConnect.ts";
+import * as TailscaleClient from "./tailnet/TailscaleClient.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -860,6 +863,9 @@ const layerMakeRoutes = Layer.mergeAll(
     StatusSourcesHttp.layer,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
+    TailnetHttp.layer.pipe(
+      Layer.provide(TailnetConnect.layer.pipe(Layer.provide(TailscaleClient.layerCli))),
+    ),
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

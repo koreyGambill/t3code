@@ -49,6 +49,7 @@ import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
+import { TailnetPairingRow } from "./TailnetPairingRow";
 import { Input } from "../ui/input";
 import {
   Dialog,
@@ -1254,6 +1255,13 @@ function ConnectionsSettingsContent({
               </>
             ) : canManageLocalBackend ? (
               renderDisabledNetworkAccessRow()
+            ) : null}
+            {canWriteAccess && accessServerConfig ? (
+              <TailnetPairingRow
+                environmentId={accessEnvironmentId}
+                settings={accessServerConfig.settings.tailnetConnect}
+                managed={managedCapabilityDenial(accessServerConfig.managedPolicy, "remoteClients")}
+              />
             ) : null}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow
