@@ -1729,7 +1729,7 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: { ...turnInput.message, text: renderedText },
             // Everything before the user's own words, including the origin header.
-            ...(text === userText
+            ...(renderedText === userText
               ? {}
               : { inlineContextLength: renderedText.length - userText.length }),
           }).pipe(

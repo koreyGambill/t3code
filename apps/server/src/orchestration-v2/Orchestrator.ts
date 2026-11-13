@@ -193,6 +193,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   subagentReportText,
+  withExecutedModelNote,
   delegatedTaskProgress,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -2129,14 +2130,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const offerDelegatedCompletionDeliveries =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId) {
-      const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
-      for (const run of projection.runs) {
-        if (
-          run.delegatedCompletion?.delivery !== undefined &&
-          run.delegatedCompletion.delivery !== null
-        ) {
-          yield* offerDelegatedCompletionDelivery(threadId, run.id);
-        }
+      for (const runId of yield* projectionStore.listDelegatedCompletionDeliveryRunIds(threadId)) {
+        yield* offerDelegatedCompletionDelivery(threadId, runId);
       }
     });
 
@@ -2253,13 +2248,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  /**
-   * The source delta a merge-back delivers into `targetRunId`: through the source run captured
-   * when it was requested, after what earlier merge-backs delivered unless its scope is `all`.
-   * Null when earlier merge-backs already delivered all of it.
-   */
   // Command projections read only pending transfers; a merge-back's range also counts consumed ones.
-  const withConsumedMergeBacks = Effect.fnUntraced(function* <
+  const withConsumedMergeBacks = Effect.fn("Orchestrator.withConsumedMergeBacks")(function* <
     Target extends Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "runs" | "thread">,
   >(target: Target) {
     const { contextTransfers } = yield* projectionStore
@@ -2281,6 +2271,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  /**
+   * The source delta a merge-back delivers into `targetRunId`: through the source run captured
+   * when it was requested, after what earlier merge-backs delivered unless its scope is `all`.
+   * Null when earlier merge-backs already delivered all of it.
+   */
   const prepareMergeBackHandoff = Effect.fn("Orchestrator.prepareMergeBackHandoff")(function* (
     input: {
       readonly transfer: OrchestrationV2ContextTransfer;
@@ -10220,7 +10215,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.createdBy !== "user" &&
         command.usageLimitContinuationOfRunId === undefined &&
         command.senderThreadId !== undefined &&
-        command.senderThreadId !== parentThreadId)
+        command.senderThreadId !== parentThreadId) ||
+      // A parent that asks for no reply gets no completion report either.
+      (command.senderThreadId === parentThreadId &&
+        command.origin.kind === "thread" &&
+        command.origin.reply === "not expected")
     )
       return;
     const run =
@@ -14759,6 +14758,78 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
   );
 
+  // A task can end on a wake after its report, such as background work finishing; the wake's
+  // note or bare reaction would otherwise replace the report its parent is owed.
+  const withEarlierTaskReport = Effect.fn("Orchestrator.withEarlierTaskReport")(function* (
+    child: ProjectionRecords<"runs" | "messages" | "providerTurns">,
+    projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
+    resultRun: OrchestrationV2Run,
+  ) {
+    const latest = subagentResultForRun(projection, resultRun);
+    const inputs = child.messages.filter(
+      (message) => message.runId === resultRun.id && message.role === "user",
+    );
+    const woke =
+      resultRun.restartContinuationOfRunId === undefined &&
+      inputs.length > 0 &&
+      inputs.every(
+        (message) =>
+          message.notification !== undefined || message.delegatedCompletion !== undefined,
+      );
+    if (latest.messageId !== null && !woke) return latest;
+    const monitorRunIds = new Set(
+      child.messages
+        .filter((message) => message.notification?.source.kind === "monitor")
+        .map((message) => message.runId),
+    );
+    // The original task's spawn run carries no task id; wakes it bound to later do.
+    const forkNodeId =
+      child.thread.forkedFrom?.type === "node" ? child.thread.forkedFrom.nodeId : undefined;
+    const taskOf = (run: OrchestrationV2Run) => run.delegatedTaskId ?? forkNodeId;
+    const earlier = child.runs
+      .filter(
+        (run) =>
+          run.ordinal < resultRun.ordinal &&
+          run.status === "completed" &&
+          taskOf(run) === taskOf(resultRun) &&
+          run.mergedIntoRunId === undefined &&
+          !monitorRunIds.has(run.id),
+      )
+      .toSorted((left, right) => right.ordinal - left.ordinal);
+    if (earlier.length === 0) return latest;
+    const earlierIds = earlier.map((run) => run.id);
+    const records = yield* projectionStore.getThreadRecords(
+      child.thread.id,
+      ["messages", "turnItems"],
+      {
+        messageRoles: ["assistant"],
+        messageRunIds: earlierIds,
+        turnItemRunIds: earlierIds,
+        turnItemTypes: ["assistant_message"],
+      },
+    );
+    // Without provider turns the reports carry no model note; the result run's is added once.
+    const report = earlier
+      .map((run) => subagentResultForRun({ ...records, providerTurns: [] }, run))
+      .find((candidate) => candidate.messageId !== null);
+    if (report === undefined) return latest;
+    const body =
+      latest.messageId === null
+        ? report.text
+        : `${report.text}\n\n${subagentResultForRun({ ...projection, providerTurns: [] }, resultRun).text}`;
+    const executedModel = latestProviderTurnForAttempt(
+      projection.providerTurns,
+      resultRun.activeAttemptId,
+    )?.model;
+    return {
+      ...latest,
+      text:
+        executedModel === undefined
+          ? body
+          : withExecutedModelNote(body, resultRun.modelSelection.model, executedModel),
+    };
+  });
+
   /**
    * Callers must hold the parent thread's dispatch lock: wake-policy updates the same
    * subagent row with full-row payloads, so unserialized writers clobber policy or terminal status.
@@ -14932,7 +15003,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const cancelled = task.cancelledRunId === childRun.id;
       if (cancelled && terminalStatus === "completed") outcome = terminalStatus = "interrupted";
       const now = yield* DateTime.now;
-      const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
+      const result =
+        terminalStatus === "completed"
+          ? yield* withEarlierTaskReport(childControls, childProjection, {
+              ...childRun,
+              status: outcome,
+            })
+          : subagentResultForRun(childProjection, { ...childRun, status: outcome });
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "subagent" }> =>
