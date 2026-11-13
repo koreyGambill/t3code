@@ -460,6 +460,7 @@ function QueuedMessage(props: {
       )}
       {origin ? (
         <SenderCard
+          text={props.previewText}
           origin={origin}
           environmentId={props.environmentId}
           onOpenThread={props.onOpenThread}

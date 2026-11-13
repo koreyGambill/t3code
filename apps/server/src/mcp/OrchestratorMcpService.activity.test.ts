@@ -127,7 +127,7 @@ function makeRun(input: {
 
 it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
-  const projection = {
+  let projection = {
     thread: baseThread({
       threadId: parentThreadId,
       title: "Parent",
@@ -138,6 +138,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
       makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
+    turnItems: [],
     visibleTurnItems: [],
     providerTurns: [],
     runtimeRequests: [],
@@ -152,6 +153,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          delegatedTaskResultPending: () => Effect.succeed(false),
           getThreadRecords: (threadId) =>
             callerUnavailable
               ? Effect.fail(
@@ -200,6 +202,27 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+
+    const latestRun = projection.runs[1]!;
+    projection = {
+      ...projection,
+      runs: [{ ...latestRun, status: "completed" }],
+      turnItems: [
+        {
+          id: TurnItemId.make("peer-reaction"),
+          messageId: "peer-reaction",
+          type: "assistant_message",
+          runId: latestRun.id,
+          ordinal: 1,
+          text: "[react 1:ack]",
+        } as never,
+      ],
+    };
+    const progress = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      progressOnly: true,
+    });
+    expect(progress.progress?.lastAssistantReply?.text).toBe("[react 1:ack]");
 
     callerUnavailable = true;
     const denied = yield* service

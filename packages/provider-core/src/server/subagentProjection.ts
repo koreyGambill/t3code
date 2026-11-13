@@ -1,3 +1,7 @@
+import {
+  isReactionOnlyAssistantText,
+  parseAssistantReactions,
+} from "@t3tools/shared/messageReactions";
 import type {
   EventId,
   MessageId,
@@ -22,11 +26,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import {
-  isQuietAssistantText,
-  isOrchestrationV2WorkActive,
-  latestProviderTurnForAttempt,
-} from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -186,19 +186,48 @@ export function withExecutedModelNote(
   requestedModel: string,
   executedModel: string | null | undefined,
 ): string {
-  return isQuietAssistantText(result) || executedModel == null || executedModel === requestedModel
+  return isReactionOnlyAssistantText(result) ||
+    executedModel == null ||
+    executedModel === requestedModel
     ? result
-    : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
+    : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${parseAssistantReactions(result).body}`;
+}
+
+/** A child completion always carries a report or explains that none was supplied. */
+export function subagentReportText(text: string, status = "completed"): string {
+  const { body } = parseAssistantReactions(text);
+  return body.trim()
+    ? body
+    : status === "completed"
+      ? "Child task completed without an assistant result."
+      : `Child task ended with status ${status}.`;
 }
 
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
+  options = { requireReport: true },
 ): {
   readonly text: string;
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
 } {
+  const requireSubstantiveText =
+    options.requireReport ||
+    projection.turnItems.some(
+      (item) =>
+        item.runId === run.id &&
+        item.type === "assistant_message" &&
+        item.text.trim().length > 0 &&
+        !isReactionOnlyAssistantText(item.text),
+    ) ||
+    projection.messages.some(
+      (message) =>
+        message.runId === run.id &&
+        message.role === "assistant" &&
+        message.text.trim().length > 0 &&
+        !isReactionOnlyAssistantText(message.text),
+    );
   const turnItem =
     projection.turnItems
       .filter(
@@ -207,14 +236,16 @@ export function subagentResultForRun(
         ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }> =>
           candidate.runId === run.id &&
           candidate.type === "assistant_message" &&
-          candidate.text.trim().length > 0,
+          candidate.text.trim().length > 0 &&
+          (!requireSubstantiveText || !isReactionOnlyAssistantText(candidate.text)),
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const messages = projection.messages.filter(
     (candidate) =>
       candidate.runId === run.id &&
       candidate.role === "assistant" &&
-      candidate.text.trim().length > 0,
+      candidate.text.trim().length > 0 &&
+      (!requireSubstantiveText || !isReactionOnlyAssistantText(candidate.text)),
   );
   // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =
@@ -231,13 +262,14 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
-  const text =
+  const rawText =
     (failure?.type === "error" ? failure.failure.message : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
+  const text = options.requireReport ? subagentReportText(rawText, run.status) : rawText;
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,

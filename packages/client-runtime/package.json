@@ -407,6 +407,10 @@
       "types": "./src/state/threadVisits.ts",
       "default": "./src/state/threadVisits.ts"
     },
+    "./state/message-reactions": {
+      "types": "./src/state/messageReactions.ts",
+      "default": "./src/state/messageReactions.ts"
+    },
     "./state/turn-item-presentation": {
       "types": "./src/state/turnItemPresentation.ts",
       "default": "./src/state/turnItemPresentation.ts"

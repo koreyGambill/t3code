@@ -1,3 +1,4 @@
+import { MessageReactionChip } from "./MessageReactionChip";
 import { SenderCard } from "./SenderCard";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -1334,6 +1335,9 @@ function AgentMessageFoldHeader(props: {
     | Extract<import("@t3tools/contracts").TurnOrigin, { readonly threadId: unknown }>
     | undefined;
   readonly summary: string;
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly iconSubtleColor: ColorValue;
@@ -1369,6 +1373,7 @@ function AgentMessageFoldHeader(props: {
       <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
         {props.summary}
       </Text>
+      <MessageReactionChip reaction={props.reaction} />
       <ThreadDisclosureChevron
         expanded={props.expanded}
         collapsedDirection="down"
@@ -1779,8 +1784,13 @@ function renderFeedEntry(
     const origin = isUser ? nonUserMessageOrigin(message) : null;
     if (origin) {
       return (
-        <View className="mb-5 w-full">
-          <SenderCard origin={origin} text={presentation.text}>
+        <View className="mb-2 w-full">
+          <SenderCard
+            origin={origin}
+            text={presentation.text}
+            createdAt={message.createdAt}
+            reaction={message.reaction}
+          >
             <MessageAttachmentList
               attachments={attachments}
               environmentId={props.environmentId}
@@ -1927,6 +1937,7 @@ function renderFeedEntry(
               {foldRowId !== null ? (
                 <AgentMessageFoldHeader
                   sender={presentation.sender}
+                  reaction={message.reaction}
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                       .split(/\r?\n/)

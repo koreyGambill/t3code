@@ -1,6 +1,6 @@
+import { isReactionOnlyAssistantText } from "@t3tools/shared/messageReactions";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
-  isQuietAssistantText,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -9,9 +9,11 @@ import type { ThreadStructureTurnItem } from "./models.ts";
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 
-/** Whether an assistant message consists entirely of the silent completion marker. */
-export function turnItemIsQuietAssistantMessage(item: OrchestrationV2TurnItem): boolean {
-  return item.type === "assistant_message" && isQuietAssistantText(item.text);
+/** Whether an assistant message contains reactions with no user-facing body. */
+export function turnItemIsReactionOnlyAssistantMessage(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "assistant_message" && isReactionOnlyAssistantText(item.text, item.streaming)
+  );
 }
 
 export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): boolean {

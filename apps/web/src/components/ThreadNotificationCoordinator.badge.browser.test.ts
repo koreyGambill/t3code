@@ -123,7 +123,7 @@ const thread = {
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
-  latestRunQuiet: false,
+  latestRunReactionOnly: false,
   pendingRequestId: "request-1",
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
@@ -167,7 +167,7 @@ function toV2ThreadShell(input: typeof thread) {
       : input.hasPendingApprovals
         ? { id: input.pendingRequestId, kind: "command", createdAt: SHELL_NOW }
         : null,
-    latestRunQuiet: input.latestRunQuiet,
+    latestRunReactionOnly: input.latestRunReactionOnly,
     latestVisibleMessage: null,
     latestUserMessageAt: null,
     hasActionableProposedPlan: false,
@@ -305,7 +305,7 @@ it("presents completion notifications and sound as soon as the shell completes",
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
 });
 
-it("silences quiet completions across notifications, sound, glyphs, and badges", async () => {
+it("silences reaction-only completions across notifications, sound, glyphs, and badges", async () => {
   await using app = setup();
   state.mode = "notifications-and-sound";
   state.glyphAlerts = true;
@@ -313,7 +313,7 @@ it("silences quiet completions across notifications, sound, glyphs, and badges",
   state.shells.set(
     "one",
     shell({
-      latestRunQuiet: true,
+      latestRunReactionOnly: true,
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
     }),
   );
@@ -321,7 +321,7 @@ it("silences quiet completions across notifications, sound, glyphs, and badges",
   expect(state.sound).not.toHaveBeenCalled();
   expect(state.glyph).not.toHaveBeenCalled();
   expect(state.badge).not.toHaveBeenCalledWith(1);
-  state.shells.set("one", shell({ latestRunQuiet: true, hasPendingApprovals: true }));
+  state.shells.set("one", shell({ latestRunReactionOnly: true, hasPendingApprovals: true }));
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Approval needed"]);
 });
 it.each([false, true])(

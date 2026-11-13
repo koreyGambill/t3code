@@ -1401,50 +1401,52 @@ it.effect("fails the task when the box revokes the link, and cancel interrupts i
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task's result is its own run's whole last reply, not a later run's", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
+it.effect.each(["report", "[react 1:ack]", "[quiet]"])(
+  "a task's result is its own run's whole last reply (%s)",
+  (answer) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Review the diff.",
-        role: "review",
-        target: { environmentId: box.environmentId },
-        clientRequestId: "review-on-box",
-      });
-      expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      const { taskId } = result.structuredContent as { taskId: NodeId };
-      // The role reaches the thread there, as it does a child here.
-      expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.",
-      );
+        const result = yield* a.call("delegate_task", {
+          task: "Review the diff.",
+          role: "review",
+          target: { environmentId: box.environmentId },
+          clientRequestId: "review-on-box",
+        });
+        expect(result.isError, JSON.stringify(result.content)).toBe(false);
+        const { taskId } = result.structuredContent as { taskId: NodeId };
+        // The role reaches the thread there, as it does a child here.
+        expect(yield* Ref.get(thread.message)).toBe(
+          "Act as the review sub-agent for this task.\n\nReview the diff.",
+        );
 
-      // A reply longer than one read, then a later run's reply on the same thread.
-      const long = "x".repeat(45_000);
-      yield* Ref.set(thread.reply, long);
-      yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
-      yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
-      yield* Ref.set(thread.status, "completed");
-      yield* Deferred.succeed(thread.finished, undefined);
-      const task = yield* taskResult(a, taskId);
-      expect(task?.status).toBe("completed");
-      expect(task?.result).toBe(
-        `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
-      );
-      // Every wait was for the run the launch started.
-      const waits = yield* Ref.get(thread.waitedFor);
-      expect(waits.length).toBeGreaterThan(0);
-      expect(waits.every((runId) => runId === boxRunId)).toBe(true);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        // A reply longer than one read, then a later run's reply on the same thread.
+        const long = answer === "report" ? "x".repeat(45_000) : answer;
+        yield* Ref.set(thread.reply, long);
+        yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
+        yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        const task = yield* taskResult(a, taskId);
+        expect(task?.status).toBe("completed");
+        expect(task?.result).toBe(
+          `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${answer === "report" ? long : "Child task completed without an assistant result."}`,
+        );
+        // Every wait was for the run the launch started.
+        const waits = yield* Ref.get(thread.waitedFor);
+        expect(waits.length).toBeGreaterThan(0);
+        expect(waits.every((runId) => runId === boxRunId)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there waits on its own task ends with the answer after it", () =>

@@ -1,69 +1,42 @@
+import { MessageReactionChip } from "./MessageReactionChip";
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
-import {
-  type EnvironmentId,
-  type ThreadId,
-  type ScopedThreadRef,
-  type TurnOrigin,
-} from "@t3tools/contracts";
+import { type EnvironmentId, type ThreadId, type TurnOrigin } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { SettingsIcon } from "lucide-react";
-import { senderCardDetails } from "@t3tools/client-runtime/user-message";
+import { ChevronRightIcon, SettingsIcon } from "lucide-react";
+import { senderCardDetails, messageFirstLine } from "@t3tools/client-runtime/user-message";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { resolveThreadGlyph } from "@t3tools/client-runtime/thread-glyphs";
 import { useQuietThreadShell } from "../../state/entities";
 import { ThreadGlyph } from "../ThreadGlyph";
 import { Badge } from "../ui/badge";
-import { Button, InlineButton } from "../ui/button";
+import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
-import { observeResize } from "../../lib/observeResize";
+import { WorkLogRow } from "./WorkLog";
+import { TimelineRowTimestamp } from "./TimelineRowParts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { findRevealRef } from "./markdownFindContext";
 
 export function SenderCard(props: {
   readonly origin: Exclude<TurnOrigin, { kind: "user" }>;
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly text?: string;
+  readonly createdAt?: string;
+  readonly timestampFormat?: TimestampFormat;
   readonly queued?: boolean;
+  readonly reaction?:
+    | import("@t3tools/client-runtime/state/message-reactions").InputMessageReaction
+    | undefined;
   readonly children: ReactNode;
 }) {
-  return (
-    <ThreadMessageCard
-      {...props}
-      details={senderCardDetails(props.origin)}
-      thread={"threadId" in props.origin ? props.origin : null}
-      kind={props.origin.kind}
-    />
-  );
-}
-
-function ThreadMessageCard(props: {
-  readonly details: ReturnType<typeof senderCardDetails>;
-  readonly thread: ScopedThreadRef | null;
-  readonly kind: string;
-  readonly environmentId: EnvironmentId;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-  readonly queued?: boolean;
-  readonly children: ReactNode;
-}) {
-  const sender = props.thread;
+  const sender = "threadId" in props.origin ? props.origin : null;
   const shell = useQuietThreadShell(sender);
-  const details = props.details;
+  const details = senderCardDetails(props.origin, props.text);
   const glyph = sender ? resolveThreadGlyph(sender.threadId, shell?.glyphSeed) : null;
   const [expanded, setExpanded] = useState(false);
-  const [overflowing, setOverflowing] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
-  const contentRef = (content: HTMLDivElement | null) => {
-    const clip = content?.parentElement;
-    if (!content || !clip) return;
-    // The clip is height-capped, so only the unclipped content reports growth.
-    const measure = () => {
-      if (!expanded) setOverflowing(content.offsetHeight > clip.clientHeight + 1);
-    };
-    measure();
-    return observeResize(content, measure);
-  };
-  const folded = !expanded && overflowing;
   const color = glyph
     ? `light-dark(${glyph.lightColor}, ${glyph.color})`
     : "var(--muted-foreground)";
@@ -73,91 +46,116 @@ function ThreadMessageCard(props: {
     backgroundColor: `light-dark(color-mix(in srgb, ${color} 10%, transparent), color-mix(in srgb, ${color} 6%, transparent))`,
   };
   return (
-    <section
-      aria-label={`${details.title} · ${details.relationship}`}
-      data-sender-card={props.kind}
-      className={cn(
-        "w-full min-w-0 rounded-lg border border-border px-3 py-2 text-foreground",
-        props.queued && "border-dashed",
-      )}
-      style={style}
-    >
-      <div className="mb-2 flex min-w-0 items-center gap-2 text-xs">
-        {sender ? (
-          <ThreadGlyph
-            threadId={sender.threadId}
-            seed={shell?.glyphSeed}
-            className="size-4 shrink-0"
-          />
-        ) : (
-          <SettingsIcon className="size-4 shrink-0 text-muted-foreground" />
-        )}
-        <span className="min-w-0 truncate font-semibold" style={{ color }}>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                sender ? (
-                  <InlineButton
-                    className="max-w-full"
-                    role="link"
-                    tone="inherit"
-                    render={
-                      sender.environmentId === props.environmentId ? undefined : (
-                        <Link
-                          to="/$environmentId/$threadId"
-                          params={buildThreadRouteParams(sender)}
-                        />
-                      )
-                    }
-                    onClick={
-                      sender.environmentId === props.environmentId
-                        ? () => props.onOpenThread(sender.threadId)
-                        : undefined
-                    }
-                  >
-                    <span className="truncate">{details.title}</span>
-                  </InlineButton>
-                ) : (
-                  <span>{details.title}</span>
-                )
-              }
-            />
-            <TooltipPopup>{details.title}</TooltipPopup>
-          </Tooltip>
-        </span>
-        <span className="shrink-0 text-muted-foreground">{details.relationship}</span>
-        <Badge variant={details.event === "failed" ? "error-outline" : "outline"}>
-          {details.event}
-        </Badge>
-        {overflowing ? (
-          <Button
-            className="ms-auto shrink-0"
-            size="xs"
-            variant="ghost-muted"
+    <div className="min-w-0">
+      <WorkLogRow
+        icon={
+          sender ? (
+            <ThreadGlyph threadId={sender.threadId} seed={shell?.glyphSeed} className="size-4" />
+          ) : (
+            <SettingsIcon className="size-4 text-muted-foreground" />
+          )
+        }
+        label={
+          <InlineButton
+            className="w-full min-w-0"
+            tone="muted"
+            aria-label={`${details.title}: ${messageFirstLine(props.text ?? "")}`}
             aria-expanded={expanded}
             onClick={() => setExpanded(!expanded)}
           >
-            {expanded ? "Show less" : "Show more"}
-          </Button>
-        ) : null}
-      </div>
-      {details.noReply || props.queued ? (
-        <p className="mb-2 text-xs text-muted-foreground">
-          {props.queued ? "queued for next turn" : "no reply expected"}
-        </p>
-      ) : null}
+            <span className="min-w-0 flex-1 truncate text-start">
+              {details.title} · {details.summary}
+            </span>
+            <ChevronRightIcon
+              aria-hidden
+              className={cn("size-3 shrink-0 text-icon-muted", expanded && "rotate-90")}
+            />
+          </InlineButton>
+        }
+        trailing={
+          <>
+            {props.createdAt ? (
+              <TimelineRowTimestamp
+                createdAt={props.createdAt}
+                timestampFormat={props.timestampFormat ?? "locale"}
+                alwaysVisible
+              />
+            ) : null}
+            <MessageReactionChip reaction={props.reaction} />
+          </>
+        }
+      />
       <div
         ref={revealRef}
+        hidden={!expanded}
         data-thread-find-text="true"
-        data-thread-find-fold={folded ? "" : undefined}
-        className={cn(
-          "wrap-anywhere text-sm",
-          !expanded && "max-h-10 overflow-hidden",
-          folded && "[mask-image:linear-gradient(to_bottom,black_calc(100%-0.75rem),transparent)]",
-        )}
+        data-thread-find-fold={!expanded ? "" : undefined}
       >
-        <div ref={contentRef}>{props.children}</div>
+        <section
+          aria-label={`${details.title} · ${details.relationship}`}
+          data-sender-card={props.origin.kind}
+          className={cn(
+            "w-full min-w-0 rounded-lg border border-border px-3 py-2 text-foreground",
+            props.queued && "border-dashed",
+          )}
+          style={style}
+        >
+          <div className="mb-2 flex min-w-0 items-center gap-2 text-xs">
+            {sender ? (
+              <ThreadGlyph
+                threadId={sender.threadId}
+                seed={shell?.glyphSeed}
+                className="size-4 shrink-0"
+              />
+            ) : (
+              <SettingsIcon className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0 truncate font-semibold" style={{ color }}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    sender ? (
+                      <InlineButton
+                        className="max-w-full"
+                        role="link"
+                        tone="inherit"
+                        render={
+                          sender.environmentId === props.environmentId ? undefined : (
+                            <Link
+                              to="/$environmentId/$threadId"
+                              params={buildThreadRouteParams(sender)}
+                            />
+                          )
+                        }
+                        onClick={
+                          sender.environmentId === props.environmentId
+                            ? () => props.onOpenThread(sender.threadId)
+                            : undefined
+                        }
+                      >
+                        <span className="truncate">{details.title}</span>
+                      </InlineButton>
+                    ) : (
+                      <span>{details.title}</span>
+                    )
+                  }
+                />
+                <TooltipPopup>{details.title}</TooltipPopup>
+              </Tooltip>
+            </span>
+            <span className="shrink-0 text-muted-foreground">{details.relationship}</span>
+            <Badge variant={details.event === "failed" ? "error-outline" : "outline"}>
+              {details.event}
+            </Badge>
+          </div>
+          {details.noReply || props.queued ? (
+            <p className="mb-2 text-xs text-muted-foreground">
+              {props.queued ? "queued for next turn" : "no reply expected"}
+            </p>
+          ) : null}
+          <div className="wrap-anywhere text-sm">{props.children}</div>
+        </section>
       </div>
-    </section>
+    </div>
   );
 }

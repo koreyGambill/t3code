@@ -1,7 +1,10 @@
 import {
+  isReactionOnlyAssistantText,
+  parseAssistantReactions,
+} from "@t3tools/shared/messageReactions";
+import {
   CommandId,
   EnvironmentId,
-  isQuietAssistantText,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadSendResult,
@@ -129,7 +132,7 @@ const make = Effect.gen(function* () {
         turnItemTypes: ["assistant_message"],
       },
     );
-    const text = subagentResultForRun(records, run).text.trim();
+    const text = subagentResultForRun(records, run, { requireReport: false }).text.trim();
     return text.length <= REPLY_TEXT_LIMIT
       ? text
       : `${text.slice(0, REPLY_TEXT_LIMIT)}\n\n[Cut off. Read the rest with t3_thread_read.]`;
@@ -157,9 +160,10 @@ const make = Effect.gen(function* () {
     const target = yield* threads.getThreadRecords(request.targetThreadId, []);
     const outcome = "run" in ended ? outcomeOf(ended.run) : "failed";
     const reply = "run" in ended ? yield* replyText(request.targetThreadId, ended.run) : "";
-    const quiet = isQuietAssistantText(reply);
-    // Quiet successful replies close the request so recovery never wakes the sender.
-    if (quiet && outcome === "completed") return yield* markDelivered(request);
+    const parsed = parseAssistantReactions(reply);
+    const reactionOnly = isReactionOnlyAssistantText(reply);
+    // Reaction-only replies close the request so recovery never wakes the sender.
+    if (reactionOnly && outcome === "completed") return yield* markDelivered(request);
     const status =
       "gone" in ended
         ? ended.gone
@@ -180,7 +184,7 @@ const make = Effect.gen(function* () {
         threadId: request.targetThreadId,
         environmentId,
       },
-      text: quiet || reply.length === 0 ? `${status}.` : reply,
+      text: reactionOnly || reply.length === 0 ? `${status}.` : parsed.body,
       notification: {
         source: { kind: "thread_reply", threadId: request.targetThreadId },
         outcome,
@@ -253,8 +257,9 @@ const make = Effect.gen(function* () {
     title: string,
     answer: string,
   ) {
-    const quiet = isQuietAssistantText(answer);
-    if (quiet && outcome === "completed") return yield* markDelivered(request);
+    const parsed = parseAssistantReactions(answer);
+    const reactionOnly = isReactionOnlyAssistantText(answer);
+    if (reactionOnly && outcome === "completed") return yield* markDelivered(request);
     const sender = yield* threads.getThreadRecords(request.senderThreadId, []);
     if (sender.thread.deletedAt !== null || sender.thread.archivedAt !== null)
       return yield* markDelivered(request);
@@ -271,9 +276,9 @@ const make = Effect.gen(function* () {
         environmentId: remote.environmentId,
       },
       text:
-        quiet || answer.length === 0
+        reactionOnly || answer.length === 0
           ? `${outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "was stopped"}.`
-          : answer,
+          : parsed.body,
       notification: {
         source: {
           kind: "thread_reply",
@@ -329,9 +334,15 @@ const make = Effect.gen(function* () {
         OrchestratorMcpThreadReadResult,
       );
       title = read.thread.title.trim() || "a thread";
-      const item = read.items.findLast(
-        (item) => item.type === "assistant_message" && item.runId === resultRunId,
+      const candidates = read.items.filter(
+        (item) =>
+          item.type === "assistant_message" && item.runId === resultRunId && item.text?.trim(),
       );
+      const item =
+        candidates.findLast((item) => !isReactionOnlyAssistantText(item.text!)) ??
+        (answer.length === 0 || isReactionOnlyAssistantText(answer)
+          ? candidates.at(-1)
+          : undefined);
       if (item !== undefined) answer = (item.text ?? "").slice(0, REPLY_TEXT_LIMIT);
       if (!read.hasMore || read.nextPosition === null) break;
       afterPosition = read.nextPosition;

@@ -6,6 +6,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  MessageId,
   EnvironmentId,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
@@ -835,6 +836,19 @@ it.live("persists one origin notification for a remote completion across reply r
         createdBy: "user",
         creationSource: "web",
       });
+      const replyToMessageId = MessageId.make("message:remote-question");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-reply-origin"),
+        threadId: sender,
+        messageId: replyToMessageId,
+        origin: { kind: "system", event: "notice" },
+        text: "Please finish the remote work.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "system",
+        creationSource: "server",
+      });
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const session = yield* Ref.make("");
       const b = yield* serveBox(seen, session);
@@ -849,15 +863,16 @@ it.live("persists one origin notification for a remote completion across reply r
         environmentId: box.environmentId,
         threadId: boxThread,
         message: "Finish remotely",
+        replyTo: 1,
         clientRequestId: "remote-reply-integration",
       });
       expect(result.isError).toBe(false);
-      expect(result.structuredContent).toMatchObject({ reply: true });
+      expect(result.structuredContent).toMatchObject({ reply: true, replyToMessageId });
       yield* Deferred.await(committed);
       const projection = yield* orchestrator.getThreadProjection(sender);
       const sequence = yield* orchestrator.getThreadEventSequence(sender);
-      expect(projection.messages).toHaveLength(1);
-      expect(projection.messages[0]).toMatchObject({
+      expect(projection.messages).toHaveLength(2);
+      expect(projection.messages[1]).toMatchObject({
         notification: {
           source: { kind: "thread_reply", environmentId: box.environmentId, threadId: boxThread },
           outcome: "completed",
@@ -872,6 +887,7 @@ it.live("persists one origin notification for a remote completion across reply r
         threadId: sender,
         environmentId: laptop.environmentId,
         reply: "expected",
+        replyToMessageId,
       });
       const rows = yield* a.sql<{
         message_id: string;
@@ -884,7 +900,7 @@ it.live("persists one origin notification for a remote completion across reply r
         environmentId: box.environmentId,
         limits: { runtimeMode: "full-access", interactionMode: "default" },
       });
-      expect(projection.messages[0]?.origin).toMatchObject({
+      expect(projection.messages[1]?.origin).toMatchObject({
         kind: "thread",
         event: "reply",
         environmentId: "environment-box",
@@ -898,13 +914,18 @@ it.live("persists one origin notification for a remote completion across reply r
       );
       yield* recovered.start();
       yield* Deferred.await(recoveredCommit);
-      expect((yield* orchestrator.getThreadProjection(sender)).messages).toHaveLength(1);
+      expect((yield* orchestrator.getThreadProjection(sender)).messages).toHaveLength(2);
       expect(yield* orchestrator.getThreadEventSequence(sender)).toBe(sequence);
       const remoteSends = (yield* Ref.get(a.peerCalls)).filter(
         (call) => call.tool === "t3_thread_send",
       );
       expect(remoteSends).toHaveLength(2);
       expect(remoteSends.map((call) => call.arguments.reply)).toEqual([false, false]);
+      expect(remoteSends.map((call) => call.arguments.replyTo)).toEqual([undefined, undefined]);
+      expect(remoteSends.map((call) => call.arguments.origin)).toEqual([
+        expect.objectContaining({ replyToMessageId }),
+        expect.objectContaining({ replyToMessageId }),
+      ]);
       expect(new Set(remoteSends.map((call) => call.arguments.clientRequestId)).size).toBe(1);
     }).pipe(
       Effect.provide(

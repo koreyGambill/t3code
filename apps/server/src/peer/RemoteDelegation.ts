@@ -29,7 +29,10 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
-import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
+import {
+  subagentReportText,
+  withExecutedModelNote,
+} from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -594,7 +597,8 @@ const make = Effect.gen(function* () {
       text += part.text ?? "";
       textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
     }
-    return run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel);
+    const report = subagentReportText(text, run?.status);
+    return run === undefined ? report : withExecutedModelNote(report, run.model, run.executedModel);
   });
 
   /**

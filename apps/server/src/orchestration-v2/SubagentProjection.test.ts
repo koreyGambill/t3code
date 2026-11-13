@@ -425,7 +425,7 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
     };
   };
   const progress = message("progress", "Starting step 0.", 1);
-  const report = message("report", "All steps passed.", 2);
+  const report = message("report", "    All steps passed.\n", 2);
   const result = subagentResultForRun(
     {
       ...projection,
@@ -434,16 +434,51 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
     },
     run,
   );
-  assert.equal(result.text, "All steps passed.");
+  assert.equal(result.text, "    All steps passed.\n");
   assert.equal(result.messageId, report.message.id);
   assert.equal(result.turnItemId, report.turnItem.id);
+  for (const text of ["[react 1:ack]", "[quiet]", " "]) {
+    const reaction = message("reaction", text, 3);
+    for (const turnItems of [[reaction.turnItem, report.turnItem, progress.turnItem], []]) {
+      const result = subagentResultForRun(
+        {
+          ...projection,
+          messages: [
+            progress.message,
+            { ...report.message, updatedAt: DateTime.makeUnsafe("2026-07-24T10:05:01.000Z") },
+            reaction.message,
+          ],
+          turnItems,
+        },
+        run,
+      );
+      assert.equal(result.text, "    All steps passed.\n");
+      assert.equal(result.messageId, report.message.id);
+    }
+    const empty = message("empty", text, 3);
+    assert.equal(
+      subagentResultForRun(
+        { ...projection, messages: [empty.message], turnItems: [empty.turnItem] },
+        { ...run, status: "completed" },
+      ).text,
+      "Child task completed without an assistant result.",
+    );
+  }
+  const reacted = message("reacted", "[react 1:ack]\nAll steps passed.", 4);
+  assert.equal(
+    subagentResultForRun(
+      { ...projection, messages: [reacted.message], turnItems: [reacted.turnItem] },
+      run,
+    ).text,
+    "All steps passed.",
+  );
   const reported = { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" };
   assert.equal(
     subagentResultForRun(
       { ...projection, messages: [report.message], providerTurns: [reported as never] },
       run,
     ).text,
-    "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\nAll steps passed.",
+    "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n    All steps passed.\n",
   );
 });
 

@@ -1,5 +1,6 @@
 import { workLogIcons } from "@t3tools/client-runtime/work-log/presentation";
 import { WorkEntryIconTooltip } from "./TimelineToolActivityIcon";
+import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -26,7 +27,6 @@ import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subage
 import {
   ProviderDriverKind,
   PROVIDER_DISPLAY_NAMES,
-  isQuietAssistantText,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
   type OrchestrationV2Notification,
@@ -455,11 +455,11 @@ function SubagentTimelineLink(props: {
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
-  const rawDetail = settled ? result || progress : progress || result;
+  const rawDetail = parseAssistantReactions(
+    (settled ? result || progress : progress || result) ?? "",
+  ).body;
   const detail =
-    rawDetail && !isQuietAssistantText(rawDetail) && !GENERIC_CHILD_END.test(rawDetail)
-      ? plainDetail(rawDetail) || null
-      : null;
+    rawDetail && !GENERIC_CHILD_END.test(rawDetail) ? plainDetail(rawDetail) || null : null;
   const failed = status === "failed";
   const timing = {
     status: liveStatus,

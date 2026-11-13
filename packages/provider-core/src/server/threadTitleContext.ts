@@ -1,5 +1,5 @@
+import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import type { ChatAttachment } from "@t3tools/contracts";
-import { isQuietAssistantText } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 
@@ -30,12 +30,13 @@ export function limitTitleMessage(text: string, budget: number): string {
 
 export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>) {
   const sections = messages.flatMap((source, index) => {
-    const message = isAttachmentOnlyBootstrapPrompt(source.text) ? { ...source, text: "" } : source;
+    const text =
+      source.role === "assistant" ? parseAssistantReactions(source.text).body : source.text;
+    const message = { ...source, text: isAttachmentOnlyBootstrapPrompt(text) ? "" : text };
     // Thinking traces dwarf answers without identifying the thread subject.
     if (
       message.role === "system" ||
       message.role === "reasoning" ||
-      (message.role === "assistant" && isQuietAssistantText(message.text)) ||
       (!message.text.trim() && !message.attachments?.length)
     )
       return [];

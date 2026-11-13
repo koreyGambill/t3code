@@ -310,6 +310,50 @@ it.effect.each(storageCases)(
         });
         yield* reply.respond({ threadId, providerSessionId, requestId, decision: "accept" });
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply"]);
+        const origin = {
+          kind: "thread" as const,
+          event: "message" as const,
+          threadId: ThreadId.make("thread:peer"),
+          environmentId: EnvironmentId.make("environment:test"),
+          title: "Peer",
+        };
+        const initialMessage = events.find((event) => event.type === "message.updated")!;
+        const initialRun = events.find((event) => event.type === "run.created")!;
+        const steeringMessageId = MessageId.make("message:peer-steer");
+        yield* store.apply({
+          ...initialMessage,
+          id: EventId.make("control:peer-origin"),
+          payload: { ...initialMessage.payload, origin },
+        });
+        yield* store.apply({
+          ...initialMessage,
+          id: EventId.make("control:peer-steer"),
+          payload: {
+            ...initialMessage.payload,
+            id: steeringMessageId,
+            origin,
+            text: "One more finding.",
+          },
+        });
+        yield* store.apply({
+          ...initialRun,
+          id: EventId.make("control:peer-inputs"),
+          type: "run.updated",
+          payload: {
+            ...initialRun.payload,
+            inputMessageIds: [messageId, steeringMessageId],
+          },
+        });
+        yield* control.steer({
+          threadId,
+          providerThreadId,
+          providerTurnId,
+          providerSessionId,
+          messageId: steeringMessageId,
+        });
+        const steeringText =
+          '<t3_origin n="2" from="thread" title="Peer" thread="thread:peer">An agent, not the user.</t3_origin>\n\nOne more finding.';
+        assert.equal(calls.at(-1), steeringText);
         const wrongSession = ProviderSessionId.make("session:wrong");
         assert.equal(
           (yield* Effect.exit(
@@ -333,7 +377,7 @@ it.effect.each(storageCases)(
           ))._tag,
           "Failure",
         );
-        assert.lengthOf(calls, 3);
+        assert.lengthOf(calls, 4);
         const turn = context.providerTurn!;
         yield* store.apply({
           id: EventId.make("control:turn-completed"),
@@ -343,7 +387,13 @@ it.effect.each(storageCases)(
           payload: { ...turn, status: "completed", completedAt: now },
         });
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
+        assert.deepEqual(calls, [
+          "interrupt",
+          "Use the smaller fix.",
+          "reply",
+          steeringText,
+          "interrupt",
+        ]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(

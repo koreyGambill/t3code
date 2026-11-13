@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -47,6 +48,7 @@ interface World {
   messageRunId: RunId;
   targetDeleted: boolean;
   answerText?: string;
+  priorAnswers?: readonly string[];
   crashAfterReplyCommit?: boolean;
   peerCall?: PeerMcpClient.PeerMcpClient["Service"]["call"];
 }
@@ -80,13 +82,16 @@ const threadsFor = (
                   role: "user",
                   text: "do it",
                 })),
-                {
-                  id: MessageId.make("message:replies:answer"),
-                  runId: RunId.make("run:replies:steered"),
-                  role: "assistant",
-                  text: world.answerText ?? "Done: shipped it.",
-                  updatedAt: 0,
-                },
+                ...[...(world.priorAnswers ?? []), world.answerText ?? "Done: shipped it."].map(
+                  (text, index) => ({
+                    id: MessageId.make(`message:replies:answer:${index}`),
+                    runId: RunId.make("run:replies:steered"),
+                    role: "assistant",
+                    text,
+                    createdAt: DateTime.makeUnsafe(index),
+                    updatedAt: DateTime.makeUnsafe(index),
+                  }),
+                ),
               ]
             : [],
         turnItems: [],
@@ -169,15 +174,29 @@ describe("ThreadReplies", () => {
     [false, true].flatMap((remote) =>
       (
         [
-          { status: "completed", reply: null },
-          { status: "failed", reply: "failed." },
-          { status: "cancelled", reply: "was stopped." },
+          { status: "completed", reply: null, answer: " \n[react 1:ack]\n " },
+          { status: "completed", reply: null, answer: "[quiet]" },
+          { status: "completed", reply: null, answer: "[react 0:ack]" },
+          { status: "completed", reply: null, answer: "[react 1:replied]" },
+          {
+            status: "completed",
+            reply: "Answer: X",
+            answer: "[react 1:ack]",
+            priorAnswers: ["Answer: X"],
+          },
+          { status: "failed", reply: "failed.", answer: "[react 1:ack]" },
+          { status: "cancelled", reply: "was stopped.", answer: "[react 1:ack]" },
+          {
+            status: "completed",
+            reply: "Decision needed.",
+            answer: "Decision needed.",
+          },
         ] as const
-      ).map((outcome) => ({ remote, ...outcome })),
+      ).map((outcome) => ({ remote, priorAnswers: [], ...outcome })),
     ),
   )(
-    "closes a quiet reply request and preserves unsuccessful outcomes (remote=$remote, status=$status)",
-    ({ remote, status, reply }) =>
+    "closes reaction-only requests and forwards visible replies or unsuccessful outcomes (remote=$remote, status=$status)",
+    ({ remote, status, reply, answer, priorAnswers }) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const finished = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
@@ -189,7 +208,8 @@ describe("ThreadReplies", () => {
           waits: [{ ends: run("run:replies:steered", status) }],
           messageRunId: RunId.make("run:replies:steered"),
           targetDeleted: false,
-          answerText: " \n[quiet]\n ",
+          answerText: answer,
+          priorAnswers,
           peerCall: ((call) =>
             Effect.succeed(
               call.tool === "t3_thread_send"
@@ -209,15 +229,20 @@ describe("ThreadReplies", () => {
                     }
                   : {
                       thread: { title: "Remote builder" },
-                      items: [
-                        {
-                          type: "assistant_message",
-                          runId: world.messageRunId,
-                          text: world.answerText,
-                        },
-                      ],
-                      hasMore: false,
-                      nextPosition: null,
+                      items: (call.arguments.afterPosition === undefined && priorAnswers.length > 0
+                        ? priorAnswers
+                        : [answer]
+                      ).map((text) => ({
+                        type: "assistant_message",
+                        runId: world.messageRunId,
+                        text,
+                      })),
+                      hasMore:
+                        call.arguments.afterPosition === undefined && priorAnswers.length > 0,
+                      nextPosition:
+                        call.arguments.afterPosition === undefined && priorAnswers.length > 0
+                          ? 1
+                          : null,
                     },
             )) as PeerMcpClient.PeerMcpClient["Service"]["call"],
         };

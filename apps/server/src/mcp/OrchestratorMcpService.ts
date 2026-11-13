@@ -136,6 +136,7 @@ import {
 import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import { resolveThreadReplyTo } from "./threadReplyTo.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { summarizeThreadProgress } from "../peer/threadProgress.ts";
 import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
@@ -3443,7 +3444,8 @@ const make = Effect.gen(function* () {
                   turnItemTypes: ["assistant_message"],
                 })
                 .pipe(Effect.mapError(threadManagementFailure));
-        const reply = run === undefined ? null : subagentResultForRun(records, run);
+        const reply =
+          run === undefined ? null : subagentResultForRun(records, run, { requireReport: false });
         const requests = target.runtimeRequests.filter((request) => request.status === "pending");
         const children = yield* threadManagement
           .getThreadRecords(input.threadId, ["subagents"], {
@@ -3607,6 +3609,10 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+      const replyToMessageId =
+        input.replyTo === undefined && parent === undefined
+          ? input.origin?.replyToMessageId
+          : yield* resolveThreadReplyTo(threadManagement, scope.thread?.threadId, input.replyTo);
 
       const mode = input.mode ?? "auto";
       const key = yield* requestKey(input.clientRequestId);
@@ -3640,6 +3646,7 @@ const make = Effect.gen(function* () {
                   title: parent.thread.title,
                   threadId: parent.thread.id,
                   environmentId: scope.environmentId,
+                  ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
                 },
           projectId: target.thread.projectId,
           commandId: stableCommandId({
@@ -3679,6 +3686,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         link: threadLinkFor(scope, input.threadId, target.thread.title),
         messageId,
+        ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
         runId: result.run.id,
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,

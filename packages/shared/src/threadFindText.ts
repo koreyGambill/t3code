@@ -1,4 +1,4 @@
-import { isQuietAssistantText } from "@t3tools/contracts";
+import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import {
   matchInlineSkills,
   formatProviderSkillDisplayName,
@@ -237,13 +237,14 @@ export function searchableMessageSegments(
     return markdownThreadFindText(text, true, cwd, skills);
   }
   if (message.role !== "assistant") return null;
-  if (isQuietAssistantText(message.text)) return [];
+  const { body } = parseAssistantReactions(message.text);
+  if (!body && message.text.trim()) return [];
   return markdownThreadFindText(
-    message.text || (message.streaming ? "" : "(empty response)"),
+    body || (message.streaming ? "" : "(empty response)"),
     false,
     cwd,
     skills,
-    shouldPreserveAssistantLineBreaks(message.text),
+    shouldPreserveAssistantLineBreaks(body),
     true,
   );
 }

@@ -1,3 +1,4 @@
+import { isReactionOnlyAssistantText } from "@t3tools/shared/messageReactions";
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
@@ -49,7 +50,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
-  isQuietAssistantText,
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
@@ -1084,7 +1084,7 @@ type ShellThreadRow = {
   readonly latest_run_requested_at: string | null;
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
-  readonly latest_run_reply_prefix: string | null;
+  readonly latest_run_reply_text: string | null;
   readonly latest_run_stop_requested: number;
   readonly latest_run_background_wake: number;
   readonly active_run_id: string | null;
@@ -1268,6 +1268,7 @@ const decodeRuntimeRequestPayload = Schema.decodeUnknownEffect(
 const decodeMessagePayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema),
 );
+const decodeReplyText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));
 const decodePlanJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
 );
@@ -1723,9 +1724,9 @@ export function threadShellFromProjection(
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
-    latestRunQuiet:
+    latestRunReactionOnly:
       latestRun?.status === "completed" &&
-      isQuietAssistantText(
+      isReactionOnlyAssistantText(
         projection.turnItems
           .filter(
             (item) =>
@@ -1880,7 +1881,7 @@ type ShellThreadState = {
   readonly latestRunRequestedAt: DateTime.Utc | null;
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
-  readonly latestRunQuiet: boolean;
+  readonly latestRunReactionOnly: boolean;
   readonly latestRunStopRequested: boolean;
   readonly latestRunBackgroundWake: boolean;
   readonly activeRunId: RunId | null;
@@ -2046,7 +2047,7 @@ function shellFromState(input: {
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
-    latestRunQuiet: input.state.latestRunQuiet,
+    latestRunReactionOnly: input.state.latestRunReactionOnly,
     latestRunStopRequested: input.state.latestRunStopRequested,
     latestRunBackgroundWake: input.state.latestRunBackgroundWake,
     activeRunId: input.state.activeRunId,
@@ -6754,13 +6755,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
               CASE WHEN presented.status = 'completed' THEN (
-                -- Match JavaScript trim, and return one extra character to reject longer replies.
-                SELECT CASE WHEN instr(json_extract(reply.payload_json, '$.text'), char(0)) > 0 THEN ''
-                -- SQLite text results stop at NUL, which must not shorten a longer reply into the marker.
-                ELSE substr(trim(json_extract(reply.payload_json, '$.text'),
-                  char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
-                    8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
-                ), 1, 8) END
+                -- Bound bytes before JSON encoding, which preserves embedded NULs for parsing.
+                SELECT CASE WHEN length(CAST(json_extract(reply.payload_json, '$.text') AS BLOB)) <= 1024
+                  AND (instr(json_extract(reply.payload_json, '$.text'), '[react') > 0
+                    OR instr(json_extract(reply.payload_json, '$.text'), '[quiet]') > 0)
+                  THEN json_quote(json_extract(reply.payload_json, '$.text')) END
                 FROM orchestration_v2_projection_turn_items reply
                 WHERE reply.run_id = presented.run_id AND reply.type = 'assistant_message'
                   AND (reply.node_id = json_extract(presented.payload_json, '$.rootNodeId') OR reply.node_id IS NULL
@@ -6771,7 +6770,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ))
                 ORDER BY reply.ordinal DESC, reply.turn_item_id DESC
                 LIMIT 1
-              ) END AS latest_run_reply_prefix,
+              ) END AS latest_run_reply_text,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
@@ -7477,11 +7476,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunRequestedAt,
           latestRunStartedAt,
           latestRunCompletedAt,
-          latestRunQuiet:
+          latestRunReactionOnly:
             latestRunStatus === "completed" &&
             latestRunId === row.latest_run_id &&
-            (row.latest_run_reply_prefix?.length ?? 0) < 8 &&
-            isQuietAssistantText(row.latest_run_reply_prefix ?? ""),
+            isReactionOnlyAssistantText(
+              row.latest_run_reply_text === null
+                ? ""
+                : yield* decodeReplyText(row.latest_run_reply_text),
+            ),
           latestRunStopRequested,
           latestRunBackgroundWake,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
@@ -7754,7 +7756,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               activityRunStatus: state.activityRunStatus,
               latestRunCompletedAt: state.latestRunCompletedAt,
               latestRunStopRequested: state.latestRunStopRequested,
-              latestRunQuiet: state.latestRunQuiet,
+              latestRunReactionOnly: state.latestRunReactionOnly,
               latestRunBackgroundWake: state.latestRunBackgroundWake,
               pendingRuntimeRequest: state.pendingRuntimeRequest,
               pendingBackgroundTasks: state.pendingBackgroundTasks,

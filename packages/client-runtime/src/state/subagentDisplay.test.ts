@@ -12,7 +12,7 @@ describe("subagentDetailPreview", () => {
     ).toBe("Last progress");
     expect(subagentDetailPreview({ status: "pending" })).toBeNull();
     expect(
-      subagentDetailPreview({ ...details, status: "completed", result: " [quiet] " }),
+      subagentDetailPreview({ ...details, status: "completed", result: " [react 1:ack] " }),
     ).toBeNull();
   });
 });

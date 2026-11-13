@@ -165,10 +165,13 @@ it("opens the sender thread from a queued incoming card", async () => {
   const onOpenThread = vi.fn();
   await using _screen = await renderQueue({ onOpenThread });
 
+  await page.getByRole("button", { name: /^Automation:/ }).click();
+  await page.getByRole("button", { name: /^Release lead:/ }).click();
   await expect.element(page.getByText(/Follow the runbook/)).toBeVisible();
   await expect.element(page.getByRole("link", { name: "Release lead", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Release lead", exact: true }).click();
   expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead");
+  await page.getByRole("button", { name: /^T3 Code:/ }).click();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
 });
 

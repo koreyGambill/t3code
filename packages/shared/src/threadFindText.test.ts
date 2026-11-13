@@ -42,16 +42,26 @@ it("excludes the hidden prompt of an attachment-only message", () => {
   ).toEqual([]);
 });
 
-it("excludes quiet assistant replies while preserving user text and literal mentions", () => {
+it("excludes reaction-only assistant replies while preserving user text and literal mentions", () => {
   expect(
-    searchableMessageSegments({ role: "assistant", text: " \n[quiet]\n", streaming: false }),
+    searchableMessageSegments({ role: "assistant", text: " \n[react 1:ack]\n", streaming: false }),
   ).toEqual([]);
-  expect(searchableMessageSegments({ role: "user", text: "[quiet]", streaming: false })).toEqual([
-    "[quiet]",
-  ]);
   expect(
-    searchableMessageSegments({ role: "assistant", text: "Use [quiet]", streaming: false }),
-  ).toEqual(["Use [quiet]"]);
+    searchableMessageSegments({ role: "assistant", text: "[react 1:replied]", streaming: false }),
+  ).toEqual([]);
+  expect(
+    searchableMessageSegments({ role: "user", text: "[react 1:ack]", streaming: false }),
+  ).toEqual(["[react 1:ack]"]);
+  expect(
+    searchableMessageSegments({ role: "assistant", text: "Use `[react 1:ack]`", streaming: false }),
+  ).toEqual(["Use [react 1:ack]"]);
+  expect(
+    searchableMessageSegments({
+      role: "assistant",
+      text: "[react 1:ack]\nA decision.",
+      streaming: false,
+    }),
+  ).toEqual(["A decision."]);
 });
 
 it("does not upgrade literal legacy tags in messages with structured context", () => {

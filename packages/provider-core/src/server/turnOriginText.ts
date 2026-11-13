@@ -1,19 +1,14 @@
 import type { EnvironmentId, TurnOrigin } from "@t3tools/contracts";
+import { numberedTurnOrigins } from "@t3tools/shared/messageReactions";
 import { escapeXmlAttribute } from "@t3tools/shared/xml";
 
 export function renderTurnOriginText(
   origin: TurnOrigin,
   text: string,
   receivingEnvironmentId: EnvironmentId | null,
+  index = 1,
 ): string {
-  if (origin.kind === "user") return text;
-  // Native compaction is a provider control command, not model input.
-  if (
-    origin.kind === "system" &&
-    (origin.event === "command" || origin.event === "idle compaction") &&
-    text.trim().toLowerCase() === "/compact"
-  )
-    return text;
+  if (numberedTurnOrigins([{ origin, text }]).length === 0) return text;
   const event =
     origin.kind === "thread"
       ? origin.event === "message"
@@ -25,9 +20,16 @@ export function renderTurnOriginText(
           ? "fired"
           : undefined;
   const title =
-    origin.kind === "system" ? origin.event : origin.kind === "wake" ? origin.detail : origin.title;
+    origin.kind === "system"
+      ? origin.event
+      : origin.kind === "wake"
+        ? origin.detail
+        : "title" in origin
+          ? origin.title
+          : undefined;
   const sender = origin.kind === "thread" || origin.kind === "subagent" ? origin : undefined;
   const attributes = {
+    n: String(index),
     from: origin.kind,
     event,
     title,

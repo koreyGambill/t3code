@@ -975,98 +975,109 @@ it.effect("SQL queue readiness skips held runs without bypassing active work", (
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("SQL shells and relay awareness recognize only completed quiet root replies", () =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = yield* addRolledBackRecoveryCandidate("quiet-reply");
-    const initial = yield* store.getThreadProjection(threadId);
-    const run = initial.runs[0]!;
-    const runRootNodeId = run.rootNodeId!;
-    let sequence = 0;
-    for (const [text, status, expected] of [
-      ["[quiet]", "running", false],
-      ["[quiet]", "completed", true],
-      [" \n\t\u00a0[quiet]\u3000\ufeff", "completed", true],
-      ["[quiet] needs a decision", "completed", false],
-      ["[quiet]\0needs a decision", "completed", false],
-      ["[quiet]", "failed", false],
-    ] as const) {
-      for (const [id, rootNodeId, ordinal, reply] of [
-        ["commentary", runRootNodeId, 2, "Checking the result."],
-        ["final", runRootNodeId, 3, text],
-        ["child", NodeId.make("node:quiet:child"), 4, "A child reply."],
+it.effect(
+  "SQL shells and relay awareness recognize only completed reaction-only root replies",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("quiet-reply");
+      const initial = yield* store.getThreadProjection(threadId);
+      const run = initial.runs[0]!;
+      const runRootNodeId = run.rootNodeId!;
+      let sequence = 0;
+      for (const [text, status, expected] of [
+        ["[react 1:ack]", "running", false],
+        ["[react 1:ack]", "completed", true],
+        ["[react 1:ack 2:ack 3:ack]", "completed", true],
+        ["A decision is needed.", "completed", false],
+        ["[quiet]", "completed", true],
+        [" \n[quiet]\t", "completed", true],
+        ["[quiet]", "running", false],
+        ["[react 0:ack]", "completed", true],
+        ["Ordinary reply ".repeat(200), "completed", false],
+        ["[react 1:ack]\n" + "A".repeat(2000), "completed", false],
+        ["[react 1:ack]\0" + "A".repeat(2000), "completed", false],
+        [" \n\t\u00a0[react 1:ack]\u3000\ufeff", "completed", true],
+        ["[react 1:ack] needs a decision", "completed", false],
+        ["[react 1:ack]\0needs a decision", "completed", false],
+        ["[react 1:ack]", "failed", false],
       ] as const) {
-        const nodeId = NodeId.make(`node:quiet:message:${id}`);
+        for (const [id, rootNodeId, ordinal, reply] of [
+          ["commentary", runRootNodeId, 2, "Checking the result."],
+          ["final", runRootNodeId, 3, text],
+          ["child", NodeId.make("node:quiet:child"), 4, "A child reply."],
+        ] as const) {
+          const nodeId = NodeId.make(`node:quiet:message:${id}`);
+          yield* store.apply({
+            id: EventId.make(`event:quiet:node:${sequence++}`),
+            type: "node.updated",
+            threadId,
+            occurredAt: initial.updatedAt,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId: run.id,
+              rootNodeId,
+              parentNodeId: rootNodeId,
+              kind: "assistant_message",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: initial.updatedAt,
+              completedAt: initial.updatedAt,
+            },
+          });
+          yield* store.apply({
+            id: EventId.make(`event:quiet:item:${sequence++}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: initial.updatedAt,
+            payload: {
+              id: TurnItemId.make(`item:quiet:${id}`),
+              threadId,
+              runId: run.id,
+              nodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              title: null,
+              startedAt: initial.updatedAt,
+              updatedAt: initial.updatedAt,
+              ordinal,
+              type: "assistant_message",
+              messageId: MessageId.make(`message:quiet:${id}`),
+              text: reply,
+              streaming: false,
+              status: "completed",
+              completedAt: initial.updatedAt,
+            },
+          });
+        }
         yield* store.apply({
-          id: EventId.make(`event:quiet:node:${sequence++}`),
-          type: "node.updated",
+          id: EventId.make(`event:quiet:run:${sequence++}`),
+          type: "run.updated",
           threadId,
           occurredAt: initial.updatedAt,
-          payload: {
-            id: nodeId,
-            threadId,
-            runId: run.id,
-            rootNodeId,
-            parentNodeId: rootNodeId,
-            kind: "assistant_message",
-            status: "completed",
-            countsForRun: false,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-            startedAt: initial.updatedAt,
-            completedAt: initial.updatedAt,
-          },
+          payload: { ...run, status, completedAt: status === "running" ? null : initial.updatedAt },
         });
-        yield* store.apply({
-          id: EventId.make(`event:quiet:item:${sequence++}`),
-          type: "turn-item.updated",
-          threadId,
-          occurredAt: initial.updatedAt,
-          payload: {
-            id: TurnItemId.make(`item:quiet:${id}`),
-            threadId,
-            runId: run.id,
-            nodeId,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            title: null,
-            startedAt: initial.updatedAt,
-            updatedAt: initial.updatedAt,
-            ordinal,
-            type: "assistant_message",
-            messageId: MessageId.make(`message:quiet:${id}`),
-            text: reply,
-            streaming: false,
-            status: "completed",
-            completedAt: initial.updatedAt,
-          },
-        });
+        const projection = yield* store.getThreadProjection(threadId);
+        const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
+        const awareness = (yield* store.getAgentAwarenessSnapshot(threadId)).threads[0];
+        for (const shell of [
+          yield* store.getThreadShell(threadId),
+          listed,
+          ProjectionStore.threadShellFromProjection(projection),
+          awareness,
+        ]) {
+          assert.equal(shell?.latestRunReactionOnly ?? false, expected, `${status}: ${text}`);
+        }
       }
-      yield* store.apply({
-        id: EventId.make(`event:quiet:run:${sequence++}`),
-        type: "run.updated",
-        threadId,
-        occurredAt: initial.updatedAt,
-        payload: { ...run, status, completedAt: status === "running" ? null : initial.updatedAt },
-      });
-      const projection = yield* store.getThreadProjection(threadId);
-      const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
-      const awareness = (yield* store.getAgentAwarenessSnapshot(threadId)).threads[0];
-      for (const shell of [
-        yield* store.getThreadShell(threadId),
-        listed,
-        ProjectionStore.threadShellFromProjection(projection),
-        awareness,
-      ]) {
-        assert.equal(shell?.latestRunQuiet ?? false, expected, `${status}: ${text}`);
-      }
-    }
-  }).pipe(Effect.provide(layerTest)),
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits", () =>
