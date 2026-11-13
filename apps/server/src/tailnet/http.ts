@@ -84,7 +84,14 @@ const withoutCors = HttpEffect.appendPreResponseHandler((_request, response) =>
 
 const refused = (error: TailnetConnect.TailnetConnectRefusedError, listLink: boolean) =>
   Effect.succeed(
-    html(renderRefusalPage({ message: error.message, listLink }), refusalStatus(error.reason)),
+    html(
+      renderRefusalPage({
+        heading: error.reason === "disabled" ? "Tailnet pairing is off" : undefined,
+        message: error.message,
+        listLink,
+      }),
+      refusalStatus(error.reason),
+    ),
   );
 
 const refuseCrossSite = (use: "page" | "mint") =>

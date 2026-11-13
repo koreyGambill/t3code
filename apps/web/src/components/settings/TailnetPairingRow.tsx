@@ -19,10 +19,12 @@ const parseLogins = (value: string) => [
 /** Lets the user's own tailnet devices pair from this server's /tailnet page. */
 export function TailnetPairingRow({
   environmentId,
+  environmentLabel,
   settings,
   managed,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
   readonly settings: TailnetConnectSettings;
   readonly managed: string | undefined;
 }) {
@@ -35,19 +37,24 @@ export function TailnetPairingRow({
       {...searchableSetting("tailnet-pairing")}
       description={
         <>
-          Open <code>/tailnet</code> at this machine's Tailscale address on a phone or laptop to
-          pair with all your T3 Code servers, without copying a code.
+          Open <code>/tailnet</code> at {environmentLabel}'s Tailscale address on a phone or laptop
+          to pair with all your T3 Code servers, without copying a code.
         </>
       }
       managed={settings.enabled ? undefined : managed}
       control={
-        <Switch
-          checked={settings.enabled}
-          onCheckedChange={(checked) =>
-            updateSettings({ tailnetConnect: { enabled: Boolean(checked) } })
-          }
-          aria-label="Tailnet pairing"
-        />
+        <>
+          <span className="min-w-0 max-w-48 truncate text-xs text-muted-foreground" aria-hidden>
+            For {environmentLabel}
+          </span>
+          <Switch
+            checked={settings.enabled}
+            onCheckedChange={(checked) =>
+              updateSettings({ tailnetConnect: { enabled: Boolean(checked) } })
+            }
+            aria-label={`Tailnet pairing for ${environmentLabel}`}
+          />
+        </>
       }
     >
       {settings.enabled ? (
