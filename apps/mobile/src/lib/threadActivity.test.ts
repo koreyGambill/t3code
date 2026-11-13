@@ -419,7 +419,9 @@ describe("buildThreadFeed", () => {
     for (const [text, count] of [
       ["Starting", 2],
       ["[react 1:ack]", 1],
-      ["[quiet]", 2],
+      ["[quiet]", 1],
+      [" \n[quiet]\t", 1],
+      ["[react 0:ack]", 1],
       ["Decision needed", 2],
       ["A [react 1:ack] marker", 2],
     ] as const) {

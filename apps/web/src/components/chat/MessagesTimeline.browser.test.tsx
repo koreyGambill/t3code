@@ -1225,14 +1225,9 @@ describe("MessagesTimeline automation prompts", () => {
       findQuery: "duplicates",
       activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
     });
-    await vi.waitFor(() =>
-      expect(
-        screen.container
-          .querySelector("[data-sender-card]")!
-          .closest("[role=button]")!
-          .getAttribute("aria-expanded"),
-      ).toBe("true"),
-    );
+    await expect
+      .element(screen.getByRole("button", { name: /^Automation:/ }))
+      .toHaveAttribute("aria-expanded", "true");
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
     const details = screen.container.querySelector("[data-thread-find-text]")!;
     expect(range.getBoundingClientRect().top - details.getBoundingClientRect().top).toBeGreaterThan(
@@ -1334,14 +1329,9 @@ describe("MessagesTimeline agent messages", () => {
         activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
       },
     );
-    await vi.waitFor(() =>
-      expect(
-        screen.container
-          .querySelector("[data-sender-card]")!
-          .closest("[role=button]")!
-          .getAttribute("aria-expanded"),
-      ).toBe("true"),
-    );
+    await expect
+      .element(screen.getByRole("button", { name: /^Agent:/ }))
+      .toHaveAttribute("aria-expanded", "true");
     const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
     const body = screen.container.querySelector("[data-user-message-body]")!;
     expect(range.getBoundingClientRect().height).toBeGreaterThan(0);

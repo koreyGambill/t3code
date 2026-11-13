@@ -46,53 +46,50 @@ export function SenderCard(props: {
     backgroundColor: `light-dark(color-mix(in srgb, ${color} 10%, transparent), color-mix(in srgb, ${color} 6%, transparent))`,
   };
   return (
-    <WorkLogRow
-      role="button"
-      tabIndex={0}
-      aria-label={`${details.title}: ${messageFirstLine(props.text ?? "")}`}
-      aria-expanded={expanded}
-      onClick={() => setExpanded(!expanded)}
-      onKeyDown={(event) => {
-        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-          event.preventDefault();
-          setExpanded(!expanded);
+    <div className="min-w-0">
+      <WorkLogRow
+        icon={
+          sender ? (
+            <ThreadGlyph threadId={sender.threadId} seed={shell?.glyphSeed} className="size-4" />
+          ) : (
+            <SettingsIcon className="size-4 text-muted-foreground" />
+          )
         }
-      }}
-      icon={
-        sender ? (
-          <ThreadGlyph threadId={sender.threadId} seed={shell?.glyphSeed} className="size-4" />
-        ) : (
-          <SettingsIcon className="size-4 text-muted-foreground" />
-        )
-      }
-      label={
-        <span className="text-muted-foreground">
-          {details.title} · {details.summary}
-        </span>
-      }
-      trailing={
-        <>
-          {props.createdAt ? (
-            <TimelineRowTimestamp
-              createdAt={props.createdAt}
-              timestampFormat={props.timestampFormat ?? "locale"}
-              alwaysVisible
+        label={
+          <InlineButton
+            className="w-full min-w-0"
+            tone="muted"
+            aria-label={`${details.title}: ${messageFirstLine(props.text ?? "")}`}
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            <span className="min-w-0 flex-1 truncate text-start">
+              {details.title} · {details.summary}
+            </span>
+            <ChevronRightIcon
+              aria-hidden
+              className={cn("size-3 shrink-0 text-icon-muted", expanded && "rotate-90")}
             />
-          ) : null}
-          <MessageReactionChip reaction={props.reaction} />
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("size-3 shrink-0 text-icon-muted", expanded && "rotate-90")}
-          />
-        </>
-      }
-    >
+          </InlineButton>
+        }
+        trailing={
+          <>
+            {props.createdAt ? (
+              <TimelineRowTimestamp
+                createdAt={props.createdAt}
+                timestampFormat={props.timestampFormat ?? "locale"}
+                alwaysVisible
+              />
+            ) : null}
+            <MessageReactionChip reaction={props.reaction} />
+          </>
+        }
+      />
       <div
         ref={revealRef}
         hidden={!expanded}
         data-thread-find-text="true"
         data-thread-find-fold={!expanded ? "" : undefined}
-        onClick={(event) => event.stopPropagation()}
       >
         <section
           aria-label={`${details.title} · ${details.relationship}`}
@@ -150,7 +147,6 @@ export function SenderCard(props: {
             <Badge variant={details.event === "failed" ? "error-outline" : "outline"}>
               {details.event}
             </Badge>
-            <MessageReactionChip reaction={props.reaction} />
           </div>
           {details.noReply || props.queued ? (
             <p className="mb-2 text-xs text-muted-foreground">
@@ -160,6 +156,6 @@ export function SenderCard(props: {
           <div className="wrap-anywhere text-sm">{props.children}</div>
         </section>
       </div>
-    </WorkLogRow>
+    </div>
   );
 }

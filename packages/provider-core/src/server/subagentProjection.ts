@@ -196,8 +196,7 @@ export function withExecutedModelNote(
 /** A child completion always carries a report or explains that none was supplied. */
 export function subagentReportText(text: string, status = "completed"): string {
   const { body } = parseAssistantReactions(text);
-  // Older children may still end with the retired silence marker.
-  return body.trim() && body.trim() !== "[quiet]"
+  return body.trim()
     ? body
     : status === "completed"
       ? "Child task completed without an assistant result."
@@ -221,14 +220,16 @@ export function subagentResultForRun(
         ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }> =>
           candidate.runId === run.id &&
           candidate.type === "assistant_message" &&
-          candidate.text.trim().length > 0,
+          candidate.text.trim().length > 0 &&
+          (!options.requireReport || !isReactionOnlyAssistantText(candidate.text)),
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const messages = projection.messages.filter(
     (candidate) =>
       candidate.runId === run.id &&
       candidate.role === "assistant" &&
-      candidate.text.trim().length > 0,
+      candidate.text.trim().length > 0 &&
+      (!options.requireReport || !isReactionOnlyAssistantText(candidate.text)),
   );
   // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =

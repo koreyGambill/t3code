@@ -24,8 +24,9 @@ describe("parseAssistantReactions", () => {
   });
 
   it.each([
-    "[quiet]",
     "",
+    "[quiet] body",
+    "A [quiet] marker",
     "[react]",
     "[react 1:ack 1:ack]",
     "[react 1:ack] body",
@@ -45,10 +46,21 @@ describe("parseAssistantReactions", () => {
     ["Use staging. [react 1:replied]", "Use staging."],
     ["Decision. [react 1:told]", "Decision."],
     ["[react 1:done]", ""],
+    ["[react 0:ack]", ""],
+    [" \n[quiet]\t", ""],
   ])("strips unknown kinds without deriving them: %j", (text, body) => {
     expect(parseAssistantReactions(text)).toEqual({ reactions: new Map(), body });
     expect(isReactionOnlyAssistantText(text)).toBe(body === "");
   });
+
+  it.each(["[react", "[react 1:", " \n[react 1:ack 2:"])(
+    "hides an unfinished leading reaction only while streaming: %j",
+    (text) => {
+      expect(isReactionOnlyAssistantText(text, true)).toBe(true);
+      expect(isReactionOnlyAssistantText(text)).toBe(false);
+      expect(isReactionOnlyAssistantText(`${text}\nordinary text`, true)).toBe(false);
+    },
+  );
 
   it("retains known acknowledgments alongside unknown kinds", () => {
     expect(parseAssistantReactions("[react 1:ack 2:info]\nDecision.")).toEqual({

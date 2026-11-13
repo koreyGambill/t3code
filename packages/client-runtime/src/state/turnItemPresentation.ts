@@ -11,7 +11,9 @@ const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 
 /** Whether an assistant message contains reactions with no user-facing body. */
 export function turnItemIsReactionOnlyAssistantMessage(item: OrchestrationV2TurnItem): boolean {
-  return item.type === "assistant_message" && isReactionOnlyAssistantText(item.text);
+  return (
+    item.type === "assistant_message" && isReactionOnlyAssistantText(item.text, item.streaming)
+  );
 }
 
 export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): boolean {

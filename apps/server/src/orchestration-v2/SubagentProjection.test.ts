@@ -438,6 +438,23 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(result.messageId, report.message.id);
   assert.equal(result.turnItemId, report.turnItem.id);
   for (const text of ["[react 1:ack]", "[quiet]", " "]) {
+    const reaction = message("reaction", text, 3);
+    for (const turnItems of [[reaction.turnItem, report.turnItem, progress.turnItem], []]) {
+      const result = subagentResultForRun(
+        {
+          ...projection,
+          messages: [
+            progress.message,
+            { ...report.message, updatedAt: DateTime.makeUnsafe("2026-07-24T10:05:01.000Z") },
+            reaction.message,
+          ],
+          turnItems,
+        },
+        run,
+      );
+      assert.equal(result.text, "    All steps passed.\n");
+      assert.equal(result.messageId, report.message.id);
+    }
     const empty = message("empty", text, 3);
     assert.equal(
       subagentResultForRun(

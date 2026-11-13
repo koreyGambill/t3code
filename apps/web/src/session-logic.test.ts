@@ -1090,7 +1090,10 @@ describe("native provider presentation in the v2 timeline", () => {
       [" \n[react 1:ack]\t", 0],
       ["[react 1:ack] is a literal marker", 1],
       ["[react 1:ack]", 0],
-      ["[quiet]", 1],
+      ["[quiet]", 0],
+      [" \n[quiet]\t", 0],
+      ["[react 0:ack]", 0],
+      ["[react 1:", 0],
       ["Decision needed", 1],
     ] as const) {
       const input = { visibleTurnItems: [visible(assistant(text))], optimisticMessages: [] };

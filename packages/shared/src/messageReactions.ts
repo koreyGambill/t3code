@@ -5,6 +5,7 @@ export type MessageReaction = "ack";
 /** Reads a leading reaction line or trailing tag, ignoring unsupported reaction kinds. */
 export function parseAssistantReactions(text: string, knownIndexes?: ReadonlySet<number>) {
   const unchanged = () => ({ reactions: new Map<number, MessageReaction>(), body: text });
+  if (text.trim() === "[quiet]") return { reactions: new Map<number, MessageReaction>(), body: "" };
   if (!text.includes("[react")) return unchanged();
   const matches = [...text.matchAll(/\[react[ \t]+([^\]\r\n]+)\]/g)];
   const match = matches[0];
@@ -36,8 +37,9 @@ export function parseAssistantReactions(text: string, knownIndexes?: ReadonlySet
   };
 }
 
-/** Whether a final assistant message contains only reactions and no user-facing body. */
-export function isReactionOnlyAssistantText(text: string): boolean {
+/** Whether an assistant message contains only reactions, including an unfinished streaming tag. */
+export function isReactionOnlyAssistantText(text: string, streaming = false): boolean {
+  if (streaming && /^\s*\[react(?:[ \t]+[^\]\r\n]*)?$/.test(text)) return true;
   const parsed = parseAssistantReactions(text);
   return text.trim().length > 0 && parsed.body.length === 0;
 }

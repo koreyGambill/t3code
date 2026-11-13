@@ -3444,7 +3444,8 @@ const make = Effect.gen(function* () {
                   turnItemTypes: ["assistant_message"],
                 })
                 .pipe(Effect.mapError(threadManagementFailure));
-        const reply = run === undefined ? null : subagentResultForRun(records, run);
+        const reply =
+          run === undefined ? null : subagentResultForRun(records, run, { requireReport: false });
         const requests = target.runtimeRequests.filter((request) => request.status === "pending");
         const children = yield* threadManagement
           .getThreadRecords(input.threadId, ["subagents"], {

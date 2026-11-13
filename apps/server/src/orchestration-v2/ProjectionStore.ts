@@ -6755,8 +6755,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
               CASE WHEN presented.status = 'completed' THEN (
-                -- JSON encoding preserves embedded NULs so SQLite cannot truncate the reply.
-                SELECT json_quote(json_extract(reply.payload_json, '$.text'))
+                -- Bound bytes before JSON encoding, which preserves embedded NULs for parsing.
+                SELECT CASE WHEN length(CAST(json_extract(reply.payload_json, '$.text') AS BLOB)) <= 1024
+                  AND (instr(json_extract(reply.payload_json, '$.text'), '[react') > 0
+                    OR instr(json_extract(reply.payload_json, '$.text'), '[quiet]') > 0)
+                  THEN json_quote(json_extract(reply.payload_json, '$.text')) END
                 FROM orchestration_v2_projection_turn_items reply
                 WHERE reply.run_id = presented.run_id AND reply.type = 'assistant_message'
                   AND (reply.node_id = json_extract(presented.payload_json, '$.rootNodeId') OR reply.node_id IS NULL

@@ -1,4 +1,7 @@
-import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
+import {
+  isReactionOnlyAssistantText,
+  parseAssistantReactions,
+} from "@t3tools/shared/messageReactions";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -32,7 +35,9 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.message.streaming ? ctx.threadRef : null,
     row.projectedItem?.item.id,
   );
-  const text = parseAssistantReactions(liveText ?? row.message.text).body;
+  const rawText = liveText ?? row.message.text;
+  if (isReactionOnlyAssistantText(rawText, row.message.streaming)) return null;
+  const text = parseAssistantReactions(rawText).body;
   const messageText =
     text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
 
