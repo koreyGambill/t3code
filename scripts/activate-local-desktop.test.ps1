@@ -148,7 +148,7 @@ try {
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
     Write-Host "PASS case: runtime-selection-$case"
   }
-  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery')) {
+  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
     $fixture = Join-Path $root ('activation-' + $case)
     $install = Join-Path $fixture 'installed'
     $resources = Join-Path $install 'resources'
@@ -175,17 +175,22 @@ try {
     Set-Content (Join-Path $client 'old-chunk.js') 'old-chunk'
     Set-Content (Join-Path $clientSource 'index.html') 'new-client'
     Set-Content (Join-Path $clientSource '.shell-version') '1.2.3'
+    New-Item -ItemType Directory -Path (Join-Path $client 'assets'),(Join-Path $clientSource 'assets') | Out-Null
+    Set-Content (Join-Path $client 'assets/old-chunk.js') 'old-nested'
+    Set-Content (Join-Path $client 'assets/shared.js') 'old-shared'
+    Set-Content (Join-Path $clientSource 'assets/shared.js') 'new-shared'
+    Set-Content (Join-Path $clientSource 'assets/new-chunk.js') 'new-nested'
     $digest = (Get-FileHash (Join-Path $payload 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
     $oldDigest = (Get-FileHash (Join-Path $resources 'wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
     $configPath = Join-Path $fixture 'config.json'
     $runtimeOnly = $case.StartsWith('runtime-')
     $config = @{ install = $install; updatePath = $(if ($runtimeOnly) { 'wsl-only' } else { 'full' }); archive = (Join-Path $payload 'resources/wsl-runtime.tar.gz'); digest = $digest; exeHash = (Get-FileHash (Join-Path $payload 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $false; drainMinutes = 0; healthSeconds = 0.1; backupRootWindows = $backupRoot; clientSource = $clientSource; clientCommit = 'client-head'; clientAssetsDirectory = 'resources/client' }
-    if ($case -eq 'close-late-exit') { $config.closeSeconds = 0 }
+    if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) { $config.closeSeconds = 0 }
     $config | ConvertTo-Json | Set-Content $configPath
     $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
     $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0 }
     function Get-Process {
-      if ($case -eq 'close-late-exit') {
+      if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) {
         $process = [pscustomobject]@{ Path = (Join-Path $install 'Weavewing.exe'); Id = 100; MainWindowHandle = 123 }
         $process | Add-Member ScriptMethod CloseMainWindow { $calls.closed++; return $true }
         if ($calls.closed -eq 0 -or $calls.starts -gt 0 -or $calls.sleeps -lt 3) { $process }
@@ -214,14 +219,14 @@ try {
       if ($label -eq 'health') {
         $calls.health++
         if ($case -eq 'health-transient' -and $calls.health -eq 2) { throw 'One slow wsl call' }
-        return @{ healthy = ($case -ne 'runtime-recovery' -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
+        return @{ healthy = ($case -notin @('runtime-recovery', 'runtime-recovery-late-exit') -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
       }
       if ($label -eq 'stopped' -and $case -eq 'stopped-throws') { throw 'WSL responsiveness failed after close' }
       if ($label -eq 'capture-links') { throw 'No links in fixture' }
       return @{ installed = $true; backedUp = $true; stopped = $true; path = 'fixture-wsl-backup' }
     }
     try {
-      if ($case -in @('stopped-throws', 'close-late-exit', 'runtime-no-desktop', 'runtime-recovery')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
+      if ($case -in @('stopped-throws', 'close-late-exit', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
       else { Invoke-LocalDesktopUpdate $configPath 'Activate' }
     } finally {
       Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl
@@ -244,7 +249,8 @@ try {
       Assert ($calls.operations -contains 'backup') 'Runtime update skipped the WSL backup'
       Assert ([Array]::IndexOf($calls.operations, 'backup') -lt [Array]::IndexOf($calls.operations, 'stop-runtime')) 'Runtime backup ran after stop'
       Assert ($calls.operations -notcontains 'backup-windows') 'Runtime update backed up unused Windows state'
-      if ($case -eq 'runtime-recovery') {
+      if ($case -in @('runtime-recovery', 'runtime-recovery-late-exit')) {
+        if ($case -eq 'runtime-recovery-late-exit') { Assert ($receipt.closeError -and $calls.sleeps -ge 3) 'Late desktop exit was not awaited during runtime recovery' }
         Assert ($calls.closed -eq 1 -and $calls.starts -eq 1 -and $receipt.rollbackHealthy) 'Unhealthy runtime recovery did not restart desktop'
         Assert ((Get-Content (Join-Path $client 'index.html')) -eq 'old-client') 'Runtime recovery kept the failed client'
         Assert (-not (Test-Path (Join-Path $client '.shell-version')) -and @(Get-ChildItem $resources -Filter 'client-*').Count -eq 0) 'Runtime recovery left failed or scratch client files'
@@ -253,6 +259,7 @@ try {
         Assert ((Get-Content (Join-Path $client 'index.html')) -eq 'new-client') 'Runtime update kept the old client'
         Assert ((Get-Content (Join-Path $client '.shell-version')) -eq '1.2.3') 'Runtime update dropped the shell marker'
         Assert ((Get-Content (Join-Path $client 'old-chunk.js')) -eq 'old-chunk') 'Runtime update deleted a chunk the open page still needs'
+        Assert ((Get-Content (Join-Path $client 'assets/old-chunk.js')) -eq 'old-nested' -and (Get-Content (Join-Path $client 'assets/shared.js')) -eq 'new-shared' -and (Get-Content (Join-Path $client 'assets/new-chunk.js')) -eq 'new-nested') 'Runtime update did not merge nested client assets'
         Assert (@(Get-ChildItem $resources -Filter 'client-*').Count -eq 0) 'Runtime update left client scratch directories'
         Assert ((Get-Content (Join-Path $install '.weavewing-local-update.json') -Raw | ConvertFrom-Json).clientCommit -eq 'client-head') 'Runtime receipt lost client provenance'
       }

@@ -7,6 +7,7 @@ import * as NodeSqlite from "node:sqlite";
 import { expect, it, vi } from "vite-plus/test";
 
 import {
+  assertShellVersion,
   captureLocalLinks,
   checkLocalLink,
   selectUpdatePath,
@@ -251,4 +252,10 @@ it.each([
   "apps/server/src/threadWorkspace/workspaceMigration.ts",
 ])("refuses a forced runtime update across an incompatible change: %s", (file) => {
   expect(() => selectUpdatePath("a".repeat(40), "wsl-only", [file])).toThrow("--full");
+});
+
+it("refuses a runtime-only update across a version bump", async () => {
+  const manifest = (version: string) => () => Promise.resolve(JSON.stringify({ version }));
+  await expect(assertShellVersion(manifest("0.1.9"), "0.1.9")).resolves.toBeUndefined();
+  await expect(assertShellVersion(manifest("0.1.9"), "0.1.10")).rejects.toThrow("--full");
 });

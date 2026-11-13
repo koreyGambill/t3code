@@ -311,8 +311,12 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
           try { Probe-Update 'stop-runtime' @($config.digest) | Out-Null } catch { Add-Content -LiteralPath $log -Value $_ }
           $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
           if (-not $details.rollbackHealthy) {
-            Close-UpdateDesktop
-            Start-UpdateDesktop
+            try { Close-UpdateDesktop } catch {
+              $details.closeError = $_.Exception.Message
+              # A close that timed out may still finish; start only if nothing remains.
+              if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
+            }
+            if (@(Get-UpdateProcesses).Count -eq 0) { Start-UpdateDesktop }
             $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
             if (-not $details.rollbackHealthy) { throw 'Previous runtime remains unhealthy after relaunching desktop.' }
           }

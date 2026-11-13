@@ -127,6 +127,18 @@ async function backupState(source: string, destination: string, timeout = 240_00
   }
 }
 
+// The loose client's marker is the build version; a runtime-only update keeps the installed shell.
+export async function assertShellVersion(
+  readShellManifest: () => Promise<string>,
+  version: string,
+) {
+  const shellVersion = JSON.parse(await readShellManifest()).version;
+  if (shellVersion !== version)
+    throw new Error(
+      `Installed shell is ${shellVersion} but this build is ${version}; a runtime-only update would orphan its client. Use --full.`,
+    );
+}
+
 export function selectUpdatePath(
   shellCommit: string | undefined,
   force: "full" | "wsl-only" | undefined,
@@ -735,6 +747,11 @@ async function main() {
   const version = JSON.parse(
     NodeFS.readFileSync(NodePath.join(repo, "apps/server/package.json"), "utf8"),
   ).version;
+  if (updatePath === "wsl-only")
+    await assertShellVersion(
+      () => git("show", `${installed.shellCommit}:apps/server/package.json`),
+      version,
+    );
   await git("diff", "--exit-code", `v${version}`, "--", "native/resource-monitor");
   NodeFS.mkdirSync(output, { mode: 0o700, recursive: true });
   helperReceiptDirectory = NodePath.join(output, "helpers");
