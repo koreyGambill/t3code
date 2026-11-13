@@ -5,8 +5,48 @@ import {
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
+  selectPairingEndpoint,
+  serverPairingEndpoints,
+  resolveAdvertisedEndpointPairingUrl,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+
+it.each([
+  {
+    label: "WSL with Tailscale",
+    desktopLocal: true,
+    hasTailnet: true,
+    expected: ["private-network"],
+  },
+  { label: "WSL without Tailscale", desktopLocal: true, hasTailnet: false, expected: [] },
+  {
+    label: "remote environment",
+    desktopLocal: false,
+    hasTailnet: true,
+    expected: [],
+  },
+] as const)("builds pairing routes for $label", ({ desktopLocal, hasTailnet, expected }) => {
+  const directEndpoints = [
+    { kind: "lan", httpBaseUrl: "http://172.30.64.1:3774/" },
+    { kind: "lan", httpBaseUrl: "http://192.168.1.42:3774/" },
+    { kind: "tailnet", httpBaseUrl: "http://100.84.12.7:3774/" },
+  ] as const;
+  const endpoints = serverPairingEndpoints(
+    directEndpoints.filter((endpoint) => hasTailnet || endpoint.kind !== "tailnet"),
+    desktopLocal,
+  );
+  expect(endpoints.map((endpoint) => endpoint.reachability)).toEqual(expected);
+  const selected = selectPairingEndpoint(endpoints);
+  if (!desktopLocal || !hasTailnet) {
+    expect(selected).toBeNull();
+  } else {
+    expect(resolveAdvertisedEndpointPairingUrl(selected!, "test-token")).toBe(
+      "http://100.84.12.7:3774/pair#token=test-token",
+    );
+    expect(selected?.compatibility.hostedHttpsApp).toBe("mixed-content-blocked");
+  }
+  expect(serverPairingEndpoints([], desktopLocal)).toEqual([]);
+});
 
 describe("togglePairingScopeSelection", () => {
   it.each([
