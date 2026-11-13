@@ -10,6 +10,7 @@ import {
   assertShellVersion,
   captureLocalLinks,
   checkLocalLink,
+  installedReceiptPath,
   selectUpdatePath,
   runtimeHealth,
 } from "./update-local-desktop.ts";
@@ -258,4 +259,15 @@ it("refuses a runtime-only update across a version bump", async () => {
   const manifest = (version: string) => () => Promise.resolve(JSON.stringify({ version }));
   await expect(assertShellVersion(manifest("0.1.9"), "0.1.9")).resolves.toBeUndefined();
   await expect(assertShellVersion(manifest("0.1.9"), "0.1.10")).rejects.toThrow("--full");
+});
+
+it("resolves the installed receipt from --install-dir unless one is given explicitly", async () => {
+  const toLinux = vi.fn((path: string) => Promise.resolve(`/mnt/c/${path.slice(3)}`));
+  await expect(
+    installedReceiptPath({ "install-dir": "C:\\Apps\\Weavewing" }, toLinux),
+  ).resolves.toBe("/mnt/c/Apps\\Weavewing/.weavewing-local-update.json");
+  await expect(
+    installedReceiptPath({ "install-dir": "C:\\x", "installed-receipt": "/r.json" }, toLinux),
+  ).resolves.toBe("/r.json");
+  await expect(installedReceiptPath({}, toLinux)).resolves.toBeUndefined();
 });

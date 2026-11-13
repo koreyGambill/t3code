@@ -139,6 +139,16 @@ export async function assertShellVersion(
     );
 }
 
+/** An explicit receipt wins; otherwise the install directory's receipt, for plan-only runs too. */
+export async function installedReceiptPath(
+  values: { "installed-receipt"?: string; "install-dir"?: string },
+  toLinuxPath: (windowsPath: string) => Promise<string>,
+) {
+  if (values["installed-receipt"]) return values["installed-receipt"];
+  if (!values["install-dir"]) return undefined;
+  return NodePath.join(await toLinuxPath(values["install-dir"]), ".weavewing-local-update.json");
+}
+
 export function selectUpdatePath(
   shellCommit: string | undefined,
   force: "full" | "wsl-only" | undefined,
@@ -584,7 +594,7 @@ async function main() {
   --notify-thread ID          Send the activation result after restart
   --full / --wsl-only        Force shell replacement / runtime-only update
   --plan-only                Report selection without building or Windows interop
-  --installed-receipt PATH   Receipt to inspect with --plan-only
+  --installed-receipt PATH   Receipt to read instead of <install-dir>/.weavewing-local-update.json
   --check-only, --dry-run     Build, verify, stage, drain and back up; leave install running`);
     return;
   }
@@ -596,14 +606,9 @@ async function main() {
   if (values.full && values["wsl-only"])
     throw new Error("Choose only one of --full and --wsl-only.");
   const force = values.full ? "full" : values["wsl-only"] ? "wsl-only" : undefined;
-  const installedFile =
-    values["installed-receipt"] ??
-    (values["install-dir"] && !values["plan-only"]
-      ? NodePath.join(
-          await run("wslpath", ["-u", values["install-dir"]], { stdio: "pipe" }),
-          ".weavewing-local-update.json",
-        )
-      : undefined);
+  const installedFile = await installedReceiptPath(values, (path) =>
+    run("wslpath", ["-u", path], { stdio: "pipe" }),
+  );
   let installed: {
     shellCommit?: string;
     clientCommit?: string;
@@ -612,17 +617,23 @@ async function main() {
     exeHash?: string;
     shellHash?: string;
   } = {};
-  try {
-    const receipt = JSON.parse(NodeFS.readFileSync(installedFile!, "utf8"));
-    if (
-      receipt &&
-      typeof receipt === "object" &&
-      typeof receipt.shellCommit === "string" &&
-      typeof receipt.shellHash === "string"
-    )
-      installed = receipt;
-  } catch {
-    /* Missing provenance requires the full path. */
+  let receiptStatus = "no receipt: pass --install-dir or --installed-receipt";
+  if (installedFile) {
+    receiptStatus = `unreadable or invalid receipt: ${installedFile}`;
+    try {
+      const receipt = JSON.parse(NodeFS.readFileSync(installedFile, "utf8"));
+      if (
+        receipt &&
+        typeof receipt === "object" &&
+        typeof receipt.shellCommit === "string" &&
+        typeof receipt.shellHash === "string"
+      ) {
+        installed = receipt;
+        receiptStatus = `read ${installedFile}`;
+      }
+    } catch {
+      /* Missing provenance requires the full path. */
+    }
   }
   let changed: string[] = [];
   if (installed.shellCommit) {
@@ -665,6 +676,7 @@ async function main() {
       JSON.stringify(
         {
           updatePath,
+          receipt: receiptStatus,
           shellCommit: installed.shellCommit,
           clientCommit: installed.clientCommit,
           changed,
