@@ -22,6 +22,7 @@ import {
   EventId,
   GitManagerError,
   MessageId,
+  OrchestrationDispatchCommandError,
   ProjectId,
   ThreadId,
   TurnItemId,
@@ -52,6 +53,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -1413,6 +1415,21 @@ it.effect(
         Option.some(new TerminalCwdStatError({ cwd: moved.message, cause: moved })),
       );
     }).pipe(Effect.provide(upstreamClientServices)),
+);
+
+it.effect("refuses to turn a thread into a project and names Change folder", () =>
+  Effect.gen(function* () {
+    const exit = yield* upstreamClientRequest(
+      { tag: WS_METHODS.projectsCreateFromThread, payload: { threadId: "thread" } },
+      AuthOrchestrationOperateScope,
+      Layer.empty,
+    );
+
+    const error = Exit.findErrorOption(exit).pipe(
+      Option.filter(Schema.is(OrchestrationDispatchCommandError)),
+    );
+    assert.include(Option.getOrThrow(error).message, "Change folder");
+  }).pipe(Effect.provide(upstreamClientServices)),
 );
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>

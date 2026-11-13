@@ -33,7 +33,6 @@ import {
 
 // Accepted gaps, each asserted to still fail so a fixed one is removed here.
 const KNOWN_GAPS: ReadonlyMap<string, string> = new Map([
-  ["projects.createFromThread", "not served: the fork changes a thread's folder instead"],
   ["server.checkOtlpEndpoint request", "unchecked: no random string matches its URL pattern"],
 ]);
 // Arrays whose fork-only items upstream clients drop by design, because they cannot act on them.

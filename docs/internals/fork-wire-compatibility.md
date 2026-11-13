@@ -17,7 +17,9 @@ The rule for changes to `packages/contracts` that cross the wire:
   mappings live in `apps/server/src/upstreamClientCompat.ts`, and `ws.ts` applies them.
   `skipped` scheduled-task runs become `succeeded`, `unauthorized` peer links become `expired`, and
   `TerminalWorkspaceChangedError` becomes a `TerminalCwdStatError` whose rendered message carries its text.
-- **Methods upstream clients call stay served** under the same names and request shapes.
+- **Methods upstream clients call stay served** under the same names and request shapes. A feature
+  the fork dropped answers with a typed error upstream clients show: `projects.createFromThread`
+  points to Change folder, and `threadProjectFromScratch` stays unadvertised so they hide the action.
 
 `apps/server/src/upstreamClientCompat.test.ts` enforces the rule against a pinned bundle of
 upstream's contracts. It decodes sampled upstream requests with the fork's schemas. It also decodes

@@ -2964,6 +2964,7 @@ export const layerWsRpc = (
                 (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
               ),
             ),
+        [WS_METHODS.projectsCreateFromThread]: () => UpstreamClientCompat.createProjectFromThread,
         [WS_METHODS.threadsChangeFolder]: (input) => developmentEnvironments.changeFolder(input),
         [WS_METHODS.projectCloneCancel]: (input) =>
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),

@@ -305,6 +305,8 @@ import {
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
+  ProjectCreateFromThreadInput,
+  ProjectCreateFromThreadResult,
   ProjectCreateNewInput,
   ProjectCreateNewResult,
   ProjectEnsureScratchResult,
@@ -538,6 +540,7 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+  projectsCreateFromThread: "projects.createFromThread",
   threadsChangeFolder: "threads.changeFolder",
 
   shellOpenInEditor: "shell.openInEditor",
@@ -1583,6 +1586,12 @@ const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
 const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   payload: ProjectCreateNewInput,
   success: ProjectCreateNewResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsCreateFromThreadRpc = Rpc.make(WS_METHODS.projectsCreateFromThread, {
+  payload: ProjectCreateFromThreadInput,
+  success: ProjectCreateFromThreadResult,
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
@@ -2710,6 +2719,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
+  WsProjectsCreateFromThreadRpc,
   WsThreadsChangeFolderRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,

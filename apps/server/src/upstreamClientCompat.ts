@@ -1,4 +1,5 @@
 import {
+  OrchestrationDispatchCommandError,
   PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
   SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY,
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
@@ -121,3 +122,14 @@ export function terminalManagerForClient(
     close: (...args) => Effect.mapError(manager.close(...args), forClient),
   };
 }
+
+/**
+ * Upstream clients' "Turn into project". This server keeps a thread's project and moves it by
+ * changing its folder, and it leaves `threadProjectFromScratch` unadvertised so they hide the action.
+ */
+export const createProjectFromThread = Effect.fail(
+  new OrchestrationDispatchCommandError({
+    message:
+      "This server does not turn threads into projects. Use Change folder in the thread's menu of this server's T3 Code app to move the thread.",
+  }),
+);
