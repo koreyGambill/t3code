@@ -200,7 +200,7 @@ try {
         if ($calls.closed -eq 0 -or $calls.starts -gt 0) { $process }
       }
     }
-    function Start-Sleep { $calls.sleeps++ }
+    function Start-Sleep { if ($calls.closed -gt 0) { $calls.sleeps++ } }
     function Start-Process {
       param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru, $RedirectStandardInput, $RedirectStandardOutput, $RedirectStandardError, [switch]$NoNewWindow)
       if ($FilePath.EndsWith('Start Weavewing.cmd')) { $calls.starts++ }
