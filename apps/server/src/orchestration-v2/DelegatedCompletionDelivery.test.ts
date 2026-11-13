@@ -2518,130 +2518,134 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
     it.effect.each(["restart continuation", "checkpoint"] as const)(
       "finalizes a child without decoding unrelated parent runs (%s)",
       (trigger) =>
-      Effect.gen(function* () {
-        const key = trigger === "checkpoint" ? "-checkpoint" : "";
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const store = yield* ProjectionStore.ProjectionStoreV2;
-        const now = yield* DateTime.now;
-        const threadId = ThreadId.make(`thread:bounded-finalization${key}`);
-        const projectId = ProjectId.make(`project:bounded-finalization${key}`);
-        const runId = RunId.make(`run:bounded-finalization${key}`);
-        const rootNodeId = NodeId.make(`node:bounded-finalization${key}`);
-        yield* seedParentWithTerminalTask({
-          threadId,
-          projectId,
-          runId,
-          rootNodeId,
-          taskId: NodeId.make(`task:bounded-finalization${key}-seed`),
-          deliveryState: "acknowledged",
-          now,
-        });
-        yield* sink.write({
-          commandId: reconcileCommandId(`bounded-finalization${key}-history`),
-          events: Array.from({ length: 20 }, (_, index) =>
-            runEvent({
-              threadId,
-              runId: RunId.make(`run:unrelated-history${key}:${index}`),
-              ordinal: index + 2,
-              status: "completed",
-              now,
-            }),
-          ),
-        });
-        const child = yield* seedRestartCancelledChild({
-          parentThreadId: threadId,
-          projectId,
-          parentRunId: runId,
-          rootNodeId,
-          name: `bounded-finalization${key}-child`,
-          completionWake: "always",
-          continuationPending: false,
-          runStatus: "completed",
-          now,
-        });
-        const childRecords = yield* store.getThreadRecords(child.childThreadId, ["runs"]);
-        const parentRecords = yield* store.getThreadRecords(threadId, ["subagents"]);
-        const childRun = childRecords.runs[0]!;
-        const originalTask = parentRecords.subagents.find((task) => task.id === child.taskId)!;
-        yield* sink.write({
-          commandId: reconcileCommandId(`bounded-finalization${key}-merged-history`),
-          events: Array.from({ length: 10 }, (_, index) => {
-            const taskId = NodeId.make(`node:merged-finalization${key}:${index}`);
-            return [
-              {
-                id: EventId.make(`event:merged-finalization-task${key}:${index}`),
-                type: "subagent.updated" as const,
+        Effect.gen(function* () {
+          const key = trigger === "checkpoint" ? "-checkpoint" : "";
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make(`thread:bounded-finalization${key}`);
+          const projectId = ProjectId.make(`project:bounded-finalization${key}`);
+          const runId = RunId.make(`run:bounded-finalization${key}`);
+          const rootNodeId = NodeId.make(`node:bounded-finalization${key}`);
+          yield* seedParentWithTerminalTask({
+            threadId,
+            projectId,
+            runId,
+            rootNodeId,
+            taskId: NodeId.make(`task:bounded-finalization${key}-seed`),
+            deliveryState: "acknowledged",
+            now,
+          });
+          yield* sink.write({
+            commandId: reconcileCommandId(`bounded-finalization${key}-history`),
+            events: Array.from({ length: 20 }, (_, index) =>
+              runEvent({
                 threadId,
-                occurredAt: now,
-                payload: { ...originalTask, id: taskId, originalTaskId: child.taskId },
-              },
-              {
-                id: EventId.make(`event:merged-finalization-run${key}:${index}`),
-                type: "run.updated" as const,
-                threadId: child.childThreadId,
-                occurredAt: now,
-                payload: {
-                  ...childRun,
-                  id: RunId.make(`run:merged-finalization${key}:${index}`),
-                  ordinal: index + 2,
-                  delegatedTaskId: taskId,
-                  mergedIntoRunId: childRun.id,
-                  startedAt: null,
-                  status: "cancelled" as const,
+                runId: RunId.make(`run:unrelated-history${key}:${index}`),
+                ordinal: index + 2,
+                status: "completed",
+                now,
+              }),
+            ),
+          });
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId: threadId,
+            projectId,
+            parentRunId: runId,
+            rootNodeId,
+            name: `bounded-finalization${key}-child`,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          });
+          const childRecords = yield* store.getThreadRecords(child.childThreadId, ["runs"]);
+          const parentRecords = yield* store.getThreadRecords(threadId, ["subagents"]);
+          const childRun = childRecords.runs[0]!;
+          const originalTask = parentRecords.subagents.find((task) => task.id === child.taskId)!;
+          yield* sink.write({
+            commandId: reconcileCommandId(`bounded-finalization${key}-merged-history`),
+            events: Array.from({ length: 10 }, (_, index) => {
+              const taskId = NodeId.make(`node:merged-finalization${key}:${index}`);
+              return [
+                {
+                  id: EventId.make(`event:merged-finalization-task${key}:${index}`),
+                  type: "subagent.updated" as const,
+                  threadId,
+                  occurredAt: now,
+                  payload: { ...originalTask, id: taskId, originalTaskId: child.taskId },
                 },
-              },
-            ];
-          }).flat(),
-        });
-        const read = store.getThreadRecords;
-        const parentRunReadSizes: number[] = [];
-        let childResultReads = 0;
-        yield* Effect.acquireUseRelease(
-          Effect.sync(() =>
-            vi.spyOn(store, "getThreadRecords").mockImplementation((id, fields, filter) =>
-              read(id, fields, filter).pipe(
-                Effect.tap((records) =>
-                  Effect.sync(() => {
-                    if (id === child.childThreadId && fields.includes("turnItems"))
-                      childResultReads++;
-                    if (id === threadId && fields.includes("runs"))
-                      parentRunReadSizes.push(
-                        (records as ProjectionStore.ProjectionRecords<"runs">).runs.length,
-                      );
-                  }),
+                {
+                  id: EventId.make(`event:merged-finalization-run${key}:${index}`),
+                  type: "run.updated" as const,
+                  threadId: child.childThreadId,
+                  occurredAt: now,
+                  payload: {
+                    ...childRun,
+                    id: RunId.make(`run:merged-finalization${key}:${index}`),
+                    ordinal: index + 2,
+                    delegatedTaskId: taskId,
+                    mergedIntoRunId: childRun.id,
+                    startedAt: null,
+                    status: "cancelled" as const,
+                  },
+                },
+              ];
+            }).flat(),
+          });
+          const read = store.getThreadRecords;
+          const parentRunReadSizes: number[] = [];
+          let childResultReads = 0;
+          yield* Effect.acquireUseRelease(
+            Effect.sync(() =>
+              vi.spyOn(store, "getThreadRecords").mockImplementation((id, fields, filter) =>
+                read(id, fields, filter).pipe(
+                  Effect.tap((records) =>
+                    Effect.sync(() => {
+                      if (id === child.childThreadId && fields.includes("turnItems"))
+                        childResultReads++;
+                      if (id === threadId && fields.includes("runs"))
+                        parentRunReadSizes.push(
+                          (records as ProjectionStore.ProjectionRecords<"runs">).runs.length,
+                        );
+                    }),
+                  ),
                 ),
               ),
             ),
-          ),
-          () =>
-            Effect.gen(function* () {
-              const recover = orchestrator.recoverDelegatedTask(
-                child.childThreadId,
-                trigger === "restart continuation" ? { sourceRunId: child.childRunId } : undefined,
-              );
-              yield* recover;
-              assert.equal(childResultReads, 1);
-              yield* recover;
-              assert.equal(childResultReads, 1);
-            }),
-          (spy) => Effect.sync(() => spy.mockRestore()),
-        );
-        const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
-          (task) => task.id === child.taskId,
-        );
-        assert.equal(task?.status, "completed");
-        const { contextTransfers } = yield* store.getThreadRecords(threadId, ["contextTransfers"]);
-        assert.lengthOf(
-          contextTransfers.filter(
-            (transfer) =>
-              transfer.type === "subagent_result" && transfer.sourcePoint.runId === childRun.id,
-          ),
-          1,
-        );
-        assert.isNotEmpty(parentRunReadSizes);
-        assert.isAtMost(Math.max(...parentRunReadSizes), 2);
-      }),
+            () =>
+              Effect.gen(function* () {
+                const recover = orchestrator.recoverDelegatedTask(
+                  child.childThreadId,
+                  trigger === "restart continuation"
+                    ? { sourceRunId: child.childRunId }
+                    : undefined,
+                );
+                yield* recover;
+                assert.equal(childResultReads, 1);
+                yield* recover;
+                assert.equal(childResultReads, 1);
+              }),
+            (spy) => Effect.sync(() => spy.mockRestore()),
+          );
+          const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (task) => task.id === child.taskId,
+          );
+          assert.equal(task?.status, "completed");
+          const { contextTransfers } = yield* store.getThreadRecords(threadId, [
+            "contextTransfers",
+          ]);
+          assert.lengthOf(
+            contextTransfers.filter(
+              (transfer) =>
+                transfer.type === "subagent_result" && transfer.sourcePoint.runId === childRun.id,
+            ),
+            1,
+          );
+          assert.isNotEmpty(parentRunReadSizes);
+          assert.isAtMost(Math.max(...parentRunReadSizes), 2);
+        }),
     );
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
       Effect.gen(function* () {
@@ -4749,7 +4753,9 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     {
       name: "keeps while a released background command runs",
       key: "-background",
-      pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" as const, awaited: false as const }],
+      pendingBackgroundTasks: [
+        { taskId: "dev-server", kind: "command" as const, awaited: false as const },
+      ],
       released: false,
     },
   ])(
@@ -5919,7 +5925,10 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         const beforeEnd = yield* sink.latestSequence();
         yield* sink.write({ events: [blockerEvent(true)] });
         yield* sink.write({
-          events: [message("report", blocked.run.id, "assistant", "The real report."), ended(blocked)],
+          events: [
+            message("report", blocked.run.id, "assistant", "The real report."),
+            ended(blocked),
+          ],
         });
         yield* sink.write({ events: [ended(barrier)] });
         // Run updates are handled in order, so the barrier settling means the blocked child's

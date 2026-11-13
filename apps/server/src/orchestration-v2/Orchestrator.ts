@@ -14771,7 +14771,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       resultRun.restartContinuationOfRunId === undefined &&
       inputs.length > 0 &&
       inputs.every(
-        (message) => message.notification !== undefined || message.delegatedCompletion !== undefined,
+        (message) =>
+          message.notification !== undefined || message.delegatedCompletion !== undefined,
       );
     if (latest.messageId !== null && !woke) return latest;
     const monitorRunIds = new Set(
