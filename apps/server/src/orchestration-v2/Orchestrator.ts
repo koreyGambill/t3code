@@ -2129,14 +2129,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const offerDelegatedCompletionDeliveries =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId) {
-      const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
-      for (const run of projection.runs) {
-        if (
-          run.delegatedCompletion?.delivery !== undefined &&
-          run.delegatedCompletion.delivery !== null
-        ) {
-          yield* offerDelegatedCompletionDelivery(threadId, run.id);
-        }
+      for (const runId of yield* projectionStore.listDelegatedCompletionDeliveryRunIds(threadId)) {
+        yield* offerDelegatedCompletionDelivery(threadId, runId);
       }
     });
 

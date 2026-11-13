@@ -2514,31 +2514,35 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.equal(wake.delegatedCompletion?.parentRunId, runId);
       }),
     );
-    it.effect("finalizes a child without decoding unrelated parent runs", () =>
+    // A restart continuation finalizes its own run; a checkpoint also re-offers missed wakes.
+    it.effect.each(["restart continuation", "checkpoint"] as const)(
+      "finalizes a child without decoding unrelated parent runs (%s)",
+      (trigger) =>
       Effect.gen(function* () {
+        const key = trigger === "checkpoint" ? "-checkpoint" : "";
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread:bounded-finalization");
-        const projectId = ProjectId.make("project:bounded-finalization");
-        const runId = RunId.make("run:bounded-finalization");
-        const rootNodeId = NodeId.make("node:bounded-finalization");
+        const threadId = ThreadId.make(`thread:bounded-finalization${key}`);
+        const projectId = ProjectId.make(`project:bounded-finalization${key}`);
+        const runId = RunId.make(`run:bounded-finalization${key}`);
+        const rootNodeId = NodeId.make(`node:bounded-finalization${key}`);
         yield* seedParentWithTerminalTask({
           threadId,
           projectId,
           runId,
           rootNodeId,
-          taskId: NodeId.make("task:bounded-finalization-seed"),
+          taskId: NodeId.make(`task:bounded-finalization${key}-seed`),
           deliveryState: "acknowledged",
           now,
         });
         yield* sink.write({
-          commandId: reconcileCommandId("bounded-finalization-history"),
+          commandId: reconcileCommandId(`bounded-finalization${key}-history`),
           events: Array.from({ length: 20 }, (_, index) =>
             runEvent({
               threadId,
-              runId: RunId.make(`run:unrelated-history:${index}`),
+              runId: RunId.make(`run:unrelated-history${key}:${index}`),
               ordinal: index + 2,
               status: "completed",
               now,
@@ -2550,7 +2554,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           projectId,
           parentRunId: runId,
           rootNodeId,
-          name: "bounded-finalization-child",
+          name: `bounded-finalization${key}-child`,
           completionWake: "always",
           continuationPending: false,
           runStatus: "completed",
@@ -2561,25 +2565,25 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const childRun = childRecords.runs[0]!;
         const originalTask = parentRecords.subagents.find((task) => task.id === child.taskId)!;
         yield* sink.write({
-          commandId: reconcileCommandId("bounded-finalization-merged-history"),
+          commandId: reconcileCommandId(`bounded-finalization${key}-merged-history`),
           events: Array.from({ length: 10 }, (_, index) => {
-            const taskId = NodeId.make(`node:merged-finalization:${index}`);
+            const taskId = NodeId.make(`node:merged-finalization${key}:${index}`);
             return [
               {
-                id: EventId.make(`event:merged-finalization-task:${index}`),
+                id: EventId.make(`event:merged-finalization-task${key}:${index}`),
                 type: "subagent.updated" as const,
                 threadId,
                 occurredAt: now,
                 payload: { ...originalTask, id: taskId, originalTaskId: child.taskId },
               },
               {
-                id: EventId.make(`event:merged-finalization-run:${index}`),
+                id: EventId.make(`event:merged-finalization-run${key}:${index}`),
                 type: "run.updated" as const,
                 threadId: child.childThreadId,
                 occurredAt: now,
                 payload: {
                   ...childRun,
-                  id: RunId.make(`run:merged-finalization:${index}`),
+                  id: RunId.make(`run:merged-finalization${key}:${index}`),
                   ordinal: index + 2,
                   delegatedTaskId: taskId,
                   mergedIntoRunId: childRun.id,
@@ -2612,13 +2616,13 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           ),
           () =>
             Effect.gen(function* () {
-              yield* orchestrator.recoverDelegatedTask(child.childThreadId, {
-                sourceRunId: child.childRunId,
-              });
+              const recover = orchestrator.recoverDelegatedTask(
+                child.childThreadId,
+                trigger === "restart continuation" ? { sourceRunId: child.childRunId } : undefined,
+              );
+              yield* recover;
               assert.equal(childResultReads, 1);
-              yield* orchestrator.recoverDelegatedTask(child.childThreadId, {
-                sourceRunId: child.childRunId,
-              });
+              yield* recover;
               assert.equal(childResultReads, 1);
             }),
           (spy) => Effect.sync(() => spy.mockRestore()),
