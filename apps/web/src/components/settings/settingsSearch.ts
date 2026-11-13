@@ -1254,6 +1254,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     localBackendManagementOnly: true,
   },
   {
+    id: "tailnet-pairing",
+    title: "Tailnet pairing",
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: ["tailscale phone pair devices whois login connect page"],
+  },
+  {
     id: "wsl-backend",
     title: "WSL backend",
     to: "/settings/access",

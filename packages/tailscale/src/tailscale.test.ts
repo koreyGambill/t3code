@@ -12,12 +12,15 @@ import {
   parseTailscaleExitNode,
   parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
+  parseTailscalePeers,
   parseTailscaleStatus,
   readTailscaleSshEnabled,
   readTailscaleStatus,
+  readTailscaleWhois,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleStatusParseError,
+  WSL_WINDOWS_TAILSCALE_PATH,
 } from "./tailscale.ts";
 
 const encoder = new TextEncoder();
@@ -255,6 +258,138 @@ describe("tailscale", () => {
       assert.instanceOf(error, TailscaleStatusParseError);
     });
   });
+
+  it.effect("falls back to the Windows host's client when WSL has no tailscale", () => {
+    const spawned: Array<string> = [];
+    const layer = layerSpawner(
+      ChildProcessSpawner.make((command) => {
+        const { command: executable } = command as unknown as { readonly command: string };
+        spawned.push(executable);
+        if (executable === "tailscale") {
+          return Effect.callback<never, never>(() => {
+            throw Object.assign(new Error("spawn tailscale ENOENT"), { code: "ENOENT" });
+          });
+        }
+        return Effect.succeed(
+          mockHandle({
+            stdout: JSON.stringify({
+              Node: { ComputedName: "phone", Tags: null },
+              UserProfile: { LoginName: "me@example.com" },
+            }),
+          }),
+        );
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const whois = yield* readTailscaleWhois("100.64.0.9").pipe(Effect.provide(layer));
+      assert.deepEqual(whois, {
+        nodeName: "phone",
+        login: "me@example.com",
+        tagged: false,
+        shared: false,
+      });
+      assert.deepEqual(spawned, ["tailscale", WSL_WINDOWS_TAILSCALE_PATH]);
+    });
+  });
+
+  it.effect("reports an address the client does not know as peer-not-found", () => {
+    const layer = layerMockSpawner(() => ({ code: 1, stderr: "peer not found\n" }));
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleWhois("100.64.0.10").pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.subcommand, "whois");
+      assert.equal(error.stderrDiagnostic, "peer-not-found");
+    });
+  });
+
+  it.effect("names tagged and shared nodes without a login", () => {
+    const layer = layerMockSpawner(() => ({
+      stdout: JSON.stringify({
+        Node: { Name: "ci.tail.ts.net.", Tags: ["tag:ci"], Sharer: 42 },
+        UserProfile: { LoginName: "tagged-devices" },
+      }),
+    }));
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* readTailscaleWhois("100.64.0.11").pipe(Effect.provide(layer)), {
+        nodeName: "ci.tail.ts.net",
+        login: null,
+        tagged: true,
+        shared: true,
+      });
+    });
+  });
+
+  it.effect("lists peers with their owners", () =>
+    Effect.gen(function* () {
+      const peers = yield* parseTailscalePeers(
+        JSON.stringify({
+          Self: {
+            DNSName: "desk.tail.ts.net.",
+            HostName: "DESK",
+            TailscaleIPs: ["100.64.0.1", "fd7a:115c:a1e0::1"],
+            UserID: 1,
+            Online: false,
+          },
+          Peer: {
+            "nodekey:a": {
+              DNSName: "laptop.tail.ts.net.",
+              TailscaleIPs: ["fd7a:115c:a1e0::2", "100.64.0.2"],
+              UserID: 1,
+              Online: true,
+            },
+            "nodekey:b": {
+              HostName: "ci",
+              TailscaleIPs: ["100.64.0.3"],
+              UserID: 2,
+              Online: true,
+              Tags: ["tag:ci"],
+            },
+            "nodekey:c": {
+              DNSName: "guest.other.ts.net.",
+              TailscaleIPs: ["100.64.0.4"],
+              UserID: 3,
+              Online: false,
+              ShareeNode: true,
+            },
+          },
+          User: {
+            "1": { LoginName: "me@example.com" },
+            "2": { LoginName: "tagged-devices" },
+            "3": { LoginName: "friend@example.com" },
+          },
+        }),
+      );
+      assert.deepEqual(peers.self, {
+        name: "desk",
+        magicDnsName: "desk.tail.ts.net",
+        tailnetIpv4Address: "100.64.0.1",
+        online: true,
+        login: "me@example.com",
+        tagged: false,
+        shared: false,
+      });
+      assert.deepEqual(
+        peers.peers.map((peer) => [peer.name, peer.tailnetIpv4Address, peer.login, peer.online]),
+        [
+          ["laptop", "100.64.0.2", "me@example.com", true],
+          ["ci", "100.64.0.3", null, true],
+          ["guest", "100.64.0.4", "friend@example.com", false],
+        ],
+      );
+      assert.deepEqual(
+        peers.peers.map((peer) => [peer.tagged, peer.shared]),
+        [
+          [false, false],
+          [true, false],
+          [false, true],
+        ],
+      );
+    }),
+  );
 
   it.effect("turns spawn defects into typed spawn failures", () => {
     // A non-directory entry on PATH makes node's spawn throw ENOTDIR

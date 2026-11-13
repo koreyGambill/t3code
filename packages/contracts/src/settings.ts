@@ -1,5 +1,6 @@
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
@@ -1336,6 +1337,27 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+const TailnetConnectPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }));
+
+/** Ports the tailnet page probes on each of the caller's machines, besides this server's own. */
+const DEFAULT_TAILNET_CONNECT_DISCOVERY_PORTS = [3773, 3774] as const;
+
+/**
+ * Lets the user's own tailnet devices open `/tailnet` and pair without copying a token. Callers
+ * are identified by Tailscale, never by request headers. An empty `allowedLogins` admits only the
+ * login that owns this machine's Tailscale node.
+ */
+export const TailnetConnectSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  allowedLogins: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  discoveryPorts: Schema.Array(TailnetConnectPort).pipe(
+    Schema.withDecodingDefault(Effect.succeed([...DEFAULT_TAILNET_CONNECT_DISCOVERY_PORTS])),
+  ),
+});
+export type TailnetConnectSettings = typeof TailnetConnectSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1449,6 +1471,9 @@ export const ServerSettings = Schema.Struct({
    * and tasks on another machine; tasks already running there finish.
    */
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  tailnetConnect: TailnetConnectSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(TailnetConnectSettings)({}))),
+  ),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1869,6 +1894,13 @@ export const ServerSettingsPatch = Schema.Struct({
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  tailnetConnect: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      allowedLogins: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+      discoveryPorts: Schema.optionalKey(Schema.Array(TailnetConnectPort)),
+    }),
+  ),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
@@ -1965,6 +1997,8 @@ export function requiredScopesForServerSettingsPatch(
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
+    // It decides who may pair, so it needs the authority that creates pairing links.
+    ...(patch.tailnetConnect !== undefined ? [AuthAccessWriteScope] : []),
   ];
 }
 
