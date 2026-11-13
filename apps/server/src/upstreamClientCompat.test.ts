@@ -10,6 +10,9 @@ import {
   SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY,
   ScheduledTask,
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
+  TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY,
+  TerminalCwdStatError,
+  TerminalWorkspaceChangedError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -22,6 +25,7 @@ import * as AST from "effect/SchemaAST";
 
 import * as Upstream from "./upstreamClientCompat.snapshot.js";
 import {
+  errorForClient,
   readClientWireCapabilities,
   responseForClient,
   type ClientWireCapabilities,
@@ -31,13 +35,6 @@ import {
 const KNOWN_GAPS: ReadonlyMap<string, string> = new Map([
   ["projects.createFromThread", "not served: the fork changes a thread's folder instead"],
   ["server.checkOtlpEndpoint request", "unchecked: no random string matches its URL pattern"],
-  ...["open", "write", "resize", "clear", "close"].map(
-    (method) =>
-      [
-        `terminal.${method} error`,
-        "TerminalWorkspaceChangedError reaches upstream clients as an undecodable failure",
-      ] as const,
-  ),
 ]);
 // Arrays whose fork-only items upstream clients drop by design, because they cannot act on them.
 const TOLERATED_DROPS: ReadonlyMap<string, string> = new Map([
@@ -55,8 +52,9 @@ const MAX_DISCARDS = 2_000;
 const FORCED_SAMPLES_PER_LITERAL = 3;
 
 const upstreamClient = readClientWireCapabilities(SETTINGS_SECRET_REFERENCES_CAPABILITY);
-const mappers: Readonly<Record<string, (value: never, client: ClientWireCapabilities) => unknown>> =
-  responseForClient;
+type Mapper = (value: never, client: ClientWireCapabilities) => unknown;
+const responseMappers: Readonly<Record<string, Mapper>> = responseForClient;
+const errorMappers: Readonly<Record<string, Mapper>> = errorForClient;
 
 type Wire = unknown;
 
@@ -340,6 +338,9 @@ interface WireRpc {
 
 const successOf = (rpc: WireRpc) =>
   RpcSchema.isStreamSchema(rpc.successSchema) ? rpc.successSchema.success : rpc.successSchema;
+// A stream RPC fails through its stream schema.
+const errorOf = (rpc: WireRpc) =>
+  RpcSchema.isStreamSchema(rpc.successSchema) ? rpc.successSchema.error : rpc.errorSchema;
 
 const forkRpcs: ReadonlyMap<string, WireRpc> = WsRpcGroup.requests;
 const upstreamRpcs = Upstream.WsRpcGroup.requests;
@@ -398,14 +399,15 @@ describe("upstream client wire compatibility", () => {
           upstream: Upstream.ExecutionEnvironmentDescriptor,
         },
         ...sharedRpcs.flatMap(({ tag, fork, upstream }) => {
-          const map = mappers[tag];
+          const map = responseMappers[tag];
+          const mapError = errorMappers[tag];
           const success = { fork: successOf(fork), upstream: successOf(upstream) };
-          const error = { fork: fork.errorSchema, upstream: upstream.errorSchema };
+          const error = { fork: errorOf(fork), upstream: errorOf(upstream) };
           return [
             { name: `${tag} success`, ...success, ...(map ? { map } : {}) },
             ...(AST.toType(error.fork.ast)._tag === "Never"
               ? []
-              : [{ name: `${tag} error`, ...error }]),
+              : [{ name: `${tag} error`, ...error, ...(mapError ? { map: mapError } : {}) }]),
           ];
         }),
       ];
@@ -428,6 +430,7 @@ describe("upstream client wire compatibility", () => {
           SETTINGS_SECRET_REFERENCES_CAPABILITY,
           SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY,
           PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
+          TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY,
         ].join(","),
       );
       const [task] = (yield* sampleValues(ScheduledTask)) as ReadonlyArray<ScheduledTask>;
@@ -442,6 +445,17 @@ describe("upstream client wire compatibility", () => {
       expect(listLinks(unauthorized, forkClient).links[0]?.status).toBe("unauthorized");
       expect(runNow(skipped, upstreamClient).task.lastRunStatus).toBe("succeeded");
       expect(listLinks(unauthorized, upstreamClient).links[0]?.status).toBe("expired");
+
+      const moved = new TerminalWorkspaceChangedError({
+        threadId: "thread",
+        terminalId: "default",
+        worktreePath: "/work/new",
+      });
+      const openError = errorForClient[WS_METHODS.terminalOpen];
+      expect(openError(moved, forkClient)).toBe(moved);
+      const mapped = openError(moved, upstreamClient);
+      expect(mapped).toBeInstanceOf(TerminalCwdStatError);
+      expect(mapped.message).toBe(`Failed to access terminal cwd: ${moved.message}`);
     }),
   );
 });

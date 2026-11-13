@@ -15,7 +15,8 @@ The rule for changes to `packages/contracts` that cross the wire:
   the fork's clients declare in `packages/client-runtime/src/connection/compatibility.ts`. The server
   maps the value to upstream's nearest one for any client that has not declared the flag. The
   mappings live in `apps/server/src/upstreamClientCompat.ts`, and `ws.ts` applies them.
-  `skipped` scheduled-task runs become `succeeded`, and `unauthorized` peer links become `expired`.
+  `skipped` scheduled-task runs become `succeeded`, `unauthorized` peer links become `expired`, and
+  `TerminalWorkspaceChangedError` becomes a `TerminalCwdStatError` whose rendered message carries its text.
 - **Methods upstream clients call stay served** under the same names and request shapes.
 
 `apps/server/src/upstreamClientCompat.test.ts` enforces the rule against a pinned bundle of
