@@ -2247,13 +2247,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  /**
-   * The source delta a merge-back delivers into `targetRunId`: through the source run captured
-   * when it was requested, after what earlier merge-backs delivered unless its scope is `all`.
-   * Null when earlier merge-backs already delivered all of it.
-   */
   // Command projections read only pending transfers; a merge-back's range also counts consumed ones.
-  const withConsumedMergeBacks = Effect.fnUntraced(function* <
+  const withConsumedMergeBacks = Effect.fn("Orchestrator.withConsumedMergeBacks")(function* <
     Target extends Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "runs" | "thread">,
   >(target: Target) {
     const { contextTransfers } = yield* projectionStore
@@ -2275,6 +2270,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  /**
+   * The source delta a merge-back delivers into `targetRunId`: through the source run captured
+   * when it was requested, after what earlier merge-backs delivered unless its scope is `all`.
+   * Null when earlier merge-backs already delivered all of it.
+   */
   const prepareMergeBackHandoff = Effect.fn("Orchestrator.prepareMergeBackHandoff")(function* (
     input: {
       readonly transfer: OrchestrationV2ContextTransfer;
