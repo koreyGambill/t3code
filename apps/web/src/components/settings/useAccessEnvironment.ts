@@ -1,6 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { resolveAccessEnvironmentId } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
@@ -17,7 +16,7 @@ export function useAccessEnvironment(requested: EnvironmentId | null) {
     (environment) =>
       environment.environmentId === primaryEnvironmentId ||
       environment.environmentId === requested ||
-      (environment.entry.enabled && !isDesktopLocalConnectionTarget(environment.entry.target)),
+      environment.entry.enabled,
   );
   const environmentId = resolveAccessEnvironmentId({
     primaryEnvironmentId,

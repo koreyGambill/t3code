@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
   type ServerClientSessionRecord,
@@ -21,11 +22,33 @@ import {
   type DesktopUpdateState,
   type DesktopWslState,
   type EnvironmentId,
+  type ServerDirectEndpoint,
 } from "@t3tools/contracts";
 import {
   getDesktopUpdateDownloadedVersion,
   resolveDesktopUpdateButtonAction,
 } from "../desktopUpdate.logic";
+
+export function serverPairingEndpoints(
+  endpoints: ReadonlyArray<ServerDirectEndpoint>,
+): ReadonlyArray<AdvertisedEndpoint> {
+  return endpoints.map((endpoint) => {
+    const tailnet = endpoint.kind === "tailnet";
+    return createAdvertisedEndpoint({
+      id: `server:${endpoint.httpBaseUrl}`,
+      label: tailnet ? "Tailscale" : "Local network",
+      provider: {
+        id: tailnet ? "tailscale" : "server",
+        label: tailnet ? "Tailscale" : "Local network",
+        kind: tailnet ? "private-network" : "core",
+        isAddon: false,
+      },
+      httpBaseUrl: endpoint.httpBaseUrl,
+      reachability: tailnet ? "private-network" : "lan",
+      source: "server",
+    });
+  });
+}
 
 /** Keep terminal:read with terminal:operate to avoid creating unseen shells on every script run. */
 export function togglePairingScopeSelection(

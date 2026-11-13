@@ -125,6 +125,7 @@ import {
   toDesktopPairingLinkRecord,
   toDesktopClientSessionRecord,
   selectPairingEndpoint,
+  serverPairingEndpoints,
   isTailscaleHttpsEndpoint,
   endpointDefaultPreferenceKey,
 } from "./ConnectionsSettings.logic";
@@ -1045,7 +1046,11 @@ function ConnectionsSettingsContent({
     <PairingClientsList
       servedByEnvironment={isPrimaryAccess}
       endpointUrl={desktopServerExposureState?.endpointUrl}
-      endpoints={visibleDesktopAdvertisedEndpoints}
+      endpoints={
+        isPrimaryAccess && desktopBridge
+          ? visibleDesktopAdvertisedEndpoints
+          : serverPairingEndpoints(accessEnvironment?.serverConfig?.directEndpoints ?? [])
+      }
       defaultEndpointKey={defaultDesktopAdvertisedEndpointKey}
       isLoading={isLoadingDesktopAccessManagement}
       pairingLinks={pairingLinks}

@@ -5,8 +5,23 @@ import {
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
+  serverPairingEndpoints,
+  resolveAdvertisedEndpointPairingUrl,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+
+it("builds WSL pairing links with the WSL server's own address and port", () => {
+  const endpoints = serverPairingEndpoints([
+    { kind: "tailnet", httpBaseUrl: "http://100.84.12.7:3774/" },
+    { kind: "lan", httpBaseUrl: "http://192.168.1.42:3774/" },
+  ]);
+  expect(endpoints.map((endpoint) => endpoint.reachability)).toEqual(["private-network", "lan"]);
+  expect(resolveAdvertisedEndpointPairingUrl(endpoints[0]!, "test-token")).toBe(
+    "http://100.84.12.7:3774/pair#token=test-token",
+  );
+  expect(endpoints[0]?.compatibility.hostedHttpsApp).toBe("mixed-content-blocked");
+  expect(serverPairingEndpoints([])).toEqual([]);
+});
 
 describe("togglePairingScopeSelection", () => {
   it.each([
