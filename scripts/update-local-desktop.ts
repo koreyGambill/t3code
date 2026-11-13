@@ -127,7 +127,20 @@ async function backupState(source: string, destination: string, timeout = 240_00
   }
 }
 
-async function health(home: string, digest: string) {
+export function selectUpdatePath(
+  shellCommit: string | undefined,
+  force: "full" | "wsl-only" | undefined,
+  changed: readonly string[],
+) {
+  if (force) return force;
+  if (!shellCommit || !/^[0-9a-f]{40}$/.test(shellCommit)) return "full";
+  // Shared packages and dependency/build inputs can also change the Electron shell.
+  return changed.every((file) => /^(apps\/(web|server)\/|packages\/provider-[^/]+\/)/.test(file))
+    ? "wsl-only"
+    : "full";
+}
+
+export async function runtimeHealth(home: string, digest: string, environmentId?: string) {
   try {
     const runtime = JSON.parse(
       NodeFS.readFileSync(NodePath.join(home, "userdata/server-runtime.json"), "utf8"),
@@ -135,13 +148,25 @@ async function health(home: string, digest: string) {
     const executable = NodeFS.realpathSync(`/proc/${runtime.pid}/exe`);
     const expected = NodePath.join(home, "wsl-runtime", `sha256-${digest}`, "t3");
     if (executable !== expected) return { healthy: false };
-    const healthy = await fetch(`http://127.0.0.1:${runtime.port}/.well-known/t3/environment`, {
-      signal: AbortSignal.timeout(2000),
-    }).then(
-      (response) => response.ok,
-      () => false,
-    );
-    return { healthy, executable, pid: runtime.pid, port: runtime.port };
+    const identity =
+      environmentId ??
+      NodeFS.readFileSync(NodePath.join(home, "userdata/environment-id"), "utf8").trim();
+    const descriptor = await fetch(`http://127.0.0.1:${runtime.port}/.well-known/t3/environment`, {
+      signal: AbortSignal.timeout(1000),
+    })
+      .then(async (response) => (response.ok ? response.json() : null))
+      .catch(() => null);
+    const descriptorId =
+      descriptor && typeof descriptor === "object" && "environmentId" in descriptor
+        ? descriptor.environmentId
+        : undefined;
+    return {
+      healthy: !!identity && descriptorId === identity,
+      executable,
+      pid: runtime.pid,
+      port: runtime.port,
+      environmentId: descriptorId,
+    };
   } catch {
     return { healthy: false };
   }
@@ -436,8 +461,23 @@ async function worker(mode: string, configFile: string, extra: string[]) {
       NodePath.join(config.windowsBackupRoot, "backup-windows"),
       config.backupTimeoutMs,
     );
+  if (mode === "install-runtime") {
+    await run("bash", [NodePath.join(config.output, "runtime-install.sh")], {
+      stdio: "pipe",
+      timeout: 30_000,
+      env: { ...process.env, HOME: NodePath.dirname(config.wslHome) },
+    });
+    return { installed: true, digest: config.digest };
+  }
+  if (mode === "stop-runtime") {
+    const current = await runtimeHealth(config.wslHome, extra[0]!, config.environmentId);
+    if (!current.executable || !current.pid)
+      throw new Error("Runtime identity changed; refusing to stop it.");
+    process.kill(current.pid, "SIGTERM");
+    return { stopped: true, pid: current.pid };
+  }
   if (mode === "idle") return idle(config.wslHome, config.authorizationFile);
-  if (mode === "health") return health(config.wslHome, extra[0]!);
+  if (mode === "health") return runtimeHealth(config.wslHome, extra[0]!, config.environmentId);
   if (mode === "stopped") {
     try {
       NodeFS.statSync(`/proc/${extra[0]!}`);
@@ -447,7 +487,7 @@ async function worker(mode: string, configFile: string, extra: string[]) {
     }
   }
   if (mode === "notify") {
-    const current = await health(config.wslHome, extra[0]!);
+    const current = await runtimeHealth(config.wslHome, extra[0]!);
     if (!current.healthy || !current.executable)
       throw new Error("No healthy runtime for notification");
     await run(
@@ -496,6 +536,10 @@ async function main() {
       "health-seconds": { type: "string", default: "240" },
       "notify-thread": { type: "string" },
       "mcp-authorization-file": { type: "string" },
+      full: { type: "boolean" },
+      "wsl-only": { type: "boolean" },
+      "plan-only": { type: "boolean" },
+      "installed-receipt": { type: "string" },
       "check-only": { type: "boolean" },
       "dry-run": { type: "boolean" },
       help: { type: "boolean" },
@@ -510,9 +554,12 @@ async function main() {
   --wsl-distro NAME           WSL distribution (or WSL_DISTRO_NAME)
   --wsl-home PATH             Installed T3 home (default ~/.t3)
   --drain-minutes N           Wait for active turns, then proceed (default 5, 0 skips)
-  --health-seconds N          Runtime and linked-environment deadlines (default 240)
+  --health-seconds N          Runtime health deadline (default 240; WSL-only capped at 45)
   --mcp-authorization-file PATH  File containing an MCP Authorization header
   --notify-thread ID          Send the activation result after restart
+  --full / --wsl-only        Force shell replacement / runtime-only update
+  --plan-only                Report selection without building or Windows interop
+  --installed-receipt PATH   Receipt to inspect with --plan-only
   --check-only, --dry-run     Build, verify, stage, drain and back up; leave install running`);
     return;
   }
@@ -521,6 +568,69 @@ async function main() {
     throw new Error("Run this command inside WSL with Windows interop enabled.");
   const repo = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
   const git = (...args: string[]) => run("git", ["-C", repo, ...args], { stdio: "pipe" });
+  if (values.full && values["wsl-only"])
+    throw new Error("Choose only one of --full and --wsl-only.");
+  const force = values.full ? "full" : values["wsl-only"] ? "wsl-only" : undefined;
+  const installedFile =
+    values["installed-receipt"] ??
+    (values["install-dir"] && !values["plan-only"]
+      ? NodePath.join(
+          await run("wslpath", ["-u", values["install-dir"]], { stdio: "pipe" }),
+          ".weavewing-local-update.json",
+        )
+      : undefined);
+  let installed: { shellCommit?: string; digest?: string; exeHash?: string; shellHash?: string } =
+    {};
+  try {
+    const receipt = JSON.parse(NodeFS.readFileSync(installedFile!, "utf8"));
+    if (
+      receipt &&
+      typeof receipt === "object" &&
+      typeof receipt.shellCommit === "string" &&
+      typeof receipt.shellHash === "string"
+    )
+      installed = receipt;
+  } catch {
+    /* Missing provenance requires the full path. */
+  }
+  let changed: string[] = [];
+  if (installed.shellCommit) {
+    try {
+      await git("merge-base", "--is-ancestor", installed.shellCommit, "HEAD");
+      changed = (await git("diff", "--no-renames", "--name-only", installed.shellCommit, "HEAD"))
+        .split("\n")
+        .filter(Boolean);
+    } catch {
+      installed = {};
+    }
+  }
+  if (!values["plan-only"] && installedFile && installed.shellHash) {
+    const installRoot = NodePath.dirname(installedFile);
+    try {
+      const hash = (file: string) =>
+        NodeCrypto.createHash("sha256")
+          .update(NodeFS.readFileSync(NodePath.join(installRoot, file)))
+          .digest("hex");
+      if (
+        hash("resources/app.asar") !== installed.shellHash ||
+        hash("Weavewing.exe") !== installed.exeHash
+      )
+        installed = {};
+    } catch {
+      installed = {};
+    }
+  }
+  const updatePath = selectUpdatePath(
+    installed.shellHash ? installed.shellCommit : undefined,
+    force,
+    changed,
+  );
+  if (values["plan-only"]) {
+    console.log(
+      JSON.stringify({ updatePath, shellCommit: installed.shellCommit, changed }, null, 2),
+    );
+    return;
+  }
   if (await git("status", "--porcelain"))
     throw new Error(
       "Commit or remove worktree changes before updating; the build requires a clean tree.",
@@ -530,11 +640,14 @@ async function main() {
     "output-dir",
     "vp-home",
     "linux-monitor-dir",
-    "windows-monitor",
     "wsl-distro",
   ] as const) {
     if (!values[name]) throw new Error(`Missing --${name}. See --help.`);
   }
+  if (updatePath === "full" && !values["windows-monitor"])
+    throw new Error("Missing --windows-monitor for full update.");
+  if (NodePath.basename(values["wsl-home"]!) !== ".t3")
+    throw new Error("--wsl-home must end in .t3 (the desktop runtime contract).");
   const output = values["output-dir"]!;
   if (!NodePath.isAbsolute(output) || NodeFS.existsSync(output))
     throw new Error(
@@ -570,7 +683,7 @@ async function main() {
   for (const file of [
     vp,
     NodePath.join(values["linux-monitor-dir"]!, "linux-x64/t3-resource-monitor"),
-    values["windows-monitor"]!,
+    ...(updatePath === "full" ? [values["windows-monitor"]!] : []),
   ]) {
     if (!NodeFS.statSync(file, { throwIfNoEntry: false })?.isFile())
       throw new Error(`Required toolchain file is missing: ${file}`);
@@ -614,7 +727,22 @@ async function main() {
       T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
       T3CODE_DESKTOP_UPDATE_REPOSITORY: "koreyGambill/t3code",
     };
-    const build = (command: string, args: string[], cwd = repo) => run(command, args, { cwd, env });
+    const buildTimings: Array<{ command: string; milliseconds: number }> = [];
+    const build = async (command: string, args: string[], cwd = repo) => {
+      const started = Date.now();
+      try {
+        return await run(command, args, { cwd, env });
+      } finally {
+        buildTimings.push({
+          command: [command, ...args].join(" "),
+          milliseconds: Date.now() - started,
+        });
+        NodeFS.writeFileSync(
+          NodePath.join(output, "build-timings.json"),
+          JSON.stringify(buildTimings, null, 2),
+        );
+      }
+    };
     await build("patchelf", ["--version"]);
     await build("vp", ["--version"]);
     const powershell = (args: string[]) =>
@@ -638,13 +766,20 @@ async function main() {
     );
     const config = {
       output,
+      updatePath,
+      shellCommit: updatePath === "full" ? await git("rev-parse", "HEAD") : installed.shellCommit,
+      previousDigest: installed.digest,
+      environmentId: NodeFS.readFileSync(
+        NodePath.join(values["wsl-home"]!, "userdata/environment-id"),
+        "utf8",
+      ).trim(),
       commit: await git("rev-parse", "HEAD"),
       install: values["install-dir"],
       distro: values["wsl-distro"],
       wslHome: values["wsl-home"],
       node: process.execPath,
       drainMinutes,
-      healthSeconds,
+      healthSeconds: updatePath === "wsl-only" ? Math.min(45, healthSeconds) : healthSeconds,
       checkOnly,
       backupRoot,
       backupRootWindows: await windowsPath(backupRoot),
@@ -659,7 +794,9 @@ async function main() {
       authorizationFile: values["mcp-authorization-file"],
       source: await windowsPath(NodePath.join(output, "windows/win-unpacked")),
       digest: "",
-      exeHash: "",
+      exeHash: updatePath === "wsl-only" ? (installed.exeHash ?? "") : "",
+      shellHash: updatePath === "wsl-only" ? (installed.shellHash ?? "") : "",
+      archive: "",
     };
     const configFile = NodePath.join(output, "config.json");
     const saveConfig = () =>
@@ -674,15 +811,17 @@ async function main() {
       "Preflight",
     ]);
     if (!NodeFS.existsSync(NodePath.join(repo, "node_modules"))) await build("vp", ["i"]);
-    const windowsMonitor = NodePath.join(
-      repo,
-      "native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe",
-    );
-    NodeFS.mkdirSync(NodePath.dirname(windowsMonitor), { recursive: true });
-    NodeFS.copyFileSync(values["windows-monitor"]!, windowsMonitor);
     await build("vp", ["run", "--filter", "t3", "build"]);
-    await build("node", ["apps/desktop/scripts/build-preview-annotation-css.mjs"]);
-    await build("vp", ["pack"], NodePath.join(repo, "apps/desktop"));
+    if (updatePath === "full") {
+      const windowsMonitor = NodePath.join(
+        repo,
+        "native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe",
+      );
+      NodeFS.mkdirSync(NodePath.dirname(windowsMonitor), { recursive: true });
+      NodeFS.copyFileSync(values["windows-monitor"]!, windowsMonitor);
+      await build("node", ["apps/desktop/scripts/build-preview-annotation-css.mjs"]);
+      await build("vp", ["pack"], NodePath.join(repo, "apps/desktop"));
+    }
     await build("node", ["apps/server/scripts/cli.ts", "build-exe", "--verbose"]);
     await build("node", [
       "scripts/build-cli-archive.ts",
@@ -705,38 +844,52 @@ async function main() {
       "--expect-version",
       version,
     ]);
-    await build("node", [
-      "scripts/build-desktop-artifact.ts",
-      "--platform",
-      "win",
-      "--target",
-      "dir",
-      "--arch",
-      "x64",
-      "--build-version",
-      version,
-      "--skip-build",
-      "--wsl-runtime",
-      archive,
-      "--output-dir",
-      NodePath.join(output, "windows"),
-      "--verbose",
-    ]);
+    if (updatePath === "full") {
+      await build("node", [
+        "scripts/build-desktop-artifact.ts",
+        "--platform",
+        "win",
+        "--target",
+        "dir",
+        "--arch",
+        "x64",
+        "--build-version",
+        version,
+        "--skip-build",
+        "--wsl-runtime",
+        archive,
+        "--output-dir",
+        NodePath.join(output, "windows"),
+        "--verbose",
+      ]);
+    }
     const hash = (file: string) =>
       NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(file)).digest("hex");
     config.digest = hash(archive);
-    config.exeHash = hash(NodePath.join(output, "windows/win-unpacked/Weavewing.exe"));
+    config.archive = await windowsPath(archive);
+    if (updatePath === "full") {
+      config.exeHash = hash(NodePath.join(output, "windows/win-unpacked/Weavewing.exe"));
+      config.shellHash = hash(NodePath.join(output, "windows/win-unpacked/resources/app.asar"));
+    }
+    const { buildWslRuntimeInstallScript } = await import(
+      new URL("../apps/desktop/src/wsl/DesktopWslEnvironment.ts", import.meta.url).href
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(output, "runtime-install.sh"),
+      buildWslRuntimeInstallScript(archive, `sha256-${config.digest}`, config.digest),
+    );
     saveConfig();
     if ((await git("status", "--porcelain")) || config.commit !== (await git("rev-parse", "HEAD")))
       throw new Error("Source changed during the build; refusing activation.");
-    await powershell([
-      "-File",
-      await windowsPath(activation),
-      "-ConfigPath",
-      await windowsPath(configFile),
-      "-Mode",
-      "Prepare",
-    ]);
+    if (updatePath === "full")
+      await powershell([
+        "-File",
+        await windowsPath(activation),
+        "-ConfigPath",
+        await windowsPath(configFile),
+        "-Mode",
+        "Prepare",
+      ]);
     await powershell([
       "-File",
       await windowsPath(activation),

@@ -53,6 +53,37 @@ function Invoke-LocalUpdateSwap($install, $payload, $rollback, [scriptblock]$Sta
   }
 }
 
+function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$seconds, [scriptblock]$Invoke) {
+  $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
+  try { & $Invoke 'wsl.exe' @('-d', $distro, '--exec', '/bin/true') 'wsl-responsive' ([Math]::Min(3, $seconds)) | Out-Null }
+  catch { throw "WSL distribution '$distro' is unresponsive; refusing runtime operations. $($_.Exception.Message)" }
+  $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
+  if ($remaining -le 0) { throw 'WSL responsiveness probe exhausted the operation deadline.' }
+  return & $Invoke 'wsl.exe' $arguments $label $remaining
+}
+
+function Invoke-LocalRuntimeUpdate($resources, $archive, $digest, $rollback, [scriptblock]$Stop, [scriptblock]$Healthy, [scriptblock]$Recover) {
+  $names = @('wsl-runtime.tar.gz', 'wsl-runtime.tar.gz.sha256')
+  New-Item -ItemType Directory -Path $rollback -ErrorAction Stop | Out-Null
+  foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $resources $name) -Destination (Join-Path $rollback $name) }
+  $stopping = $false
+  try {
+    Copy-Item -LiteralPath $archive -Destination (Join-Path $resources 'wsl-runtime.tar.gz.next')
+    Set-Content -LiteralPath (Join-Path $resources 'wsl-runtime.tar.gz.sha256.next') -Value $digest -Encoding ascii
+    foreach ($name in $names) { Move-Item -LiteralPath (Join-Path $resources ($name + '.next')) -Destination (Join-Path $resources $name) -Force }
+    $stopping = $true
+    & $Stop
+    if (-not (& $Healthy)) { throw 'New WSL runtime did not become healthy before its deadline.' }
+  } catch {
+    $failure = $_
+    foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $rollback $name) -Destination (Join-Path $resources $name) -Force }
+    if ($stopping) { & $Recover }
+    throw "Runtime activation failed; previous archive selection restored. $failure"
+  } finally {
+    foreach ($name in $names) { Remove-Item -LiteralPath (Join-Path $resources ($name + '.next')) -Force -ErrorAction SilentlyContinue }
+  }
+}
+
 function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   $root = Split-Path $ConfigPath
   $receipt = Join-Path $root 'receipt.json'
@@ -68,7 +99,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   }
   function Record-UpdateHelper($processId, $role, [switch]$ReceiptOnly) {
     @{ pid = $processId; platform = 'win32'; role = $role; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $helperReceipts ("win32-$processId.json"))
-    if (-not $ReceiptOnly) { Save-UpdateStatus $details.status }
+
   }
   try {
     $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
@@ -80,7 +111,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     $worker = Join-Path $root 'worker.mjs'
     $empty = Join-Path $root 'empty-stdin'
     New-Item -ItemType Directory -Path $helperReceipts -Force | Out-Null
-    $details = @{ status = $Mode; helperReceipts = $helperReceipts; commit = $config.commit; digest = $config.digest; install = $install; rollback = $rollback; checkOnly = $config.checkOnly; drainSource = $(if ($config.authorizationFile) { 'mcp' } else { 'read-only-sqlite' }) }
+    $details = @{ timings = @(); updatePath = $config.updatePath; shellCommit = $config.shellCommit; previousDigest = $config.previousDigest; environmentId = $config.environmentId; status = $Mode; helperReceipts = $helperReceipts; commit = $config.commit; digest = $config.digest; install = $install; rollback = $rollback; checkOnly = $config.checkOnly; drainSource = $(if ($config.authorizationFile) { 'mcp' } else { 'read-only-sqlite' }) }
     Record-UpdateHelper $PID "powershell:$Mode"
     function Quote-UpdateArgument([string]$value) {
       if ($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")) { throw 'Arguments must not contain quotes or newlines.' }
@@ -88,19 +119,26 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       return '"' + $value + '"'
     }
     function Invoke-UpdateProcess($executable, [string[]]$arguments, $label, [double]$seconds = 60) {
+      $started = [DateTime]::UtcNow
       $stdout = Join-Path $root ($label + '.stdout')
       $stderr = Join-Path $root ($label + '.stderr')
       # Detached wsl.exe waits forever on inherited stdin after its parent exits.
       $process = Start-Process -FilePath $executable -ArgumentList ($arguments | ForEach-Object { Quote-UpdateArgument $_ }) -RedirectStandardInput $empty -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -PassThru
       $null = $process.Handle
       Record-UpdateHelper $process.Id $label
-      if (-not $process.WaitForExit($seconds * 1000)) { throw "$label exceeded ${seconds}s; no process was force-killed. Inspect $stdout and $stderr." }
+      if (-not $process.WaitForExit([Math]::Max(1, $seconds * 1000))) { $process.Kill(); throw "$label exceeded ${seconds}s; captured helper stopped. Inspect $stdout and $stderr." }
       if ($process.ExitCode -ne 0) { throw "$label failed ($($process.ExitCode)). $(Get-Content -LiteralPath $stderr -Raw)" }
+      $details.timings += @{ operation = $label; milliseconds = ([DateTime]::UtcNow - $started).TotalMilliseconds }
+      Add-Content -LiteralPath $log -Value (@{ operation = $label; milliseconds = ([DateTime]::UtcNow - $started).TotalMilliseconds; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)
       return (Get-Content -LiteralPath $stdout -Raw | ConvertFrom-Json)
     }
     function Probe-Update($operation, [string[]]$extra = @(), [double]$seconds = 30) {
-      return Invoke-UpdateProcess 'wsl.exe' (@('-d', $config.distro, '--exec', $config.node, ($config.output + '/worker.mjs'), '--worker', $operation, ($config.output + '/config.json')) + $extra) $operation $seconds
+      return Invoke-LocalUpdateWsl $config.distro (@('-d', $config.distro, '--exec', $config.node, ($config.output + '/worker.mjs'), '--worker', $operation, ($config.output + '/config.json')) + $extra) $operation $seconds {
+        param($executable, $arguments, $label, $remaining)
+        Invoke-UpdateProcess $executable $arguments $label $remaining
+      }
     }
+
     function Windows-UpdateWorker($operation, [string[]]$extra = @(), [double]$seconds = 30) {
       $previous = $env:ELECTRON_RUN_AS_NODE
       $env:ELECTRON_RUN_AS_NODE = '1'
@@ -116,9 +154,9 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       $main = @($all | Where-Object { $_.MainWindowHandle -ne 0 })
       if ($main.Count -ne 1) { throw "Expected one main window at $install, found $($main.Count). Close it manually; no process was force-killed." }
       if (-not $main[0].CloseMainWindow()) { throw 'Desktop refused graceful close.' }
-      $deadline = [DateTime]::UtcNow.AddSeconds(90)
+      $deadline = [DateTime]::UtcNow.AddSeconds(30)
       while (@(Get-UpdateProcesses).Count -gt 0) {
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Desktop did not close in 90s; no process was force-killed.' }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Desktop did not close in 30s; no process was force-killed.' }
         Start-Sleep -Seconds 1
       }
     }
@@ -129,11 +167,25 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     function Wait-UpdateHealthy($digest) {
       $deadline = [DateTime]::UtcNow.AddSeconds($config.healthSeconds)
       do {
-        $health = Probe-Update 'health' @($digest)
+        $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
+        if ($remaining -le 0) { break }
+        $health = Probe-Update 'health' @($digest) ([Math]::Min(5, $remaining))
+        $details.lastHealth = $health
         if ($health.healthy) { $details.health = $health; return $true }
-        Start-Sleep -Seconds 2
+        $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
+        if ($remaining -gt 0) { Start-Sleep -Milliseconds ([Math]::Min(500, $remaining * 1000)) }
       } while ([DateTime]::UtcNow -lt $deadline)
       return $false
+    }
+    function Wait-UpdateStopped($processId) {
+      $deadline = [DateTime]::UtcNow.AddSeconds(30)
+      do {
+        $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
+        if ($remaining -le 0) { throw 'WSL server did not exit within 30s; refusing to move its application.' }
+        if ((Probe-Update 'stopped' @([string]$processId) ([Math]::Min(5, $remaining))).stopped) { return }
+        Start-Sleep -Milliseconds 500
+      } while ([DateTime]::UtcNow -lt $deadline)
+      throw 'WSL server did not exit within 30s; refusing to move its application.'
     }
     function Assert-UpdateRollback {
       if (Test-Path -LiteralPath $rollback) {
@@ -152,7 +204,9 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     if (-not (Test-Path -LiteralPath $empty)) { Set-Content -LiteralPath $empty -Value '' -NoNewline }
     . (Join-Path $root 'stage-windows-desktop.ps1')
     if ($Mode -eq 'Preflight') {
-      Stage-WindowsDesktop $install $install -CheckOnly
+      if ($config.updatePath -ne 'wsl-only') { Stage-WindowsDesktop $install $install -CheckOnly }
+      if ($config.updatePath -eq 'wsl-only' -and $config.shellHash -and (Get-FileHash -LiteralPath (Join-Path $install 'resources/app.asar') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.shellHash) { throw 'Installed shell no longer matches its receipt; use --full.' }
+      if ($config.updatePath -eq 'wsl-only' -and $config.exeHash -and (Get-FileHash -LiteralPath (Join-Path $install 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.exeHash) { throw 'Installed shell no longer matches its receipt; use --full.' }
       if (-not (Test-Path -LiteralPath (Join-Path $install 'Start Weavewing.cmd'))) { throw 'Install must have Start Weavewing.cmd.' }
       Assert-UpdateRollback
       if (-not $config.checkOnly -and (Test-Path -LiteralPath $config.backupRootWindows)) { throw "Interrupted state backup: inspect $($config.backupRootWindows) before updating." }
@@ -178,11 +232,12 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $native -Recurse -Force -ErrorAction SilentlyContinue
       }
+      $details.runtimeInstall = Probe-Update 'install-runtime'
       Save-UpdateStatus 'staged-and-verified'
       return
     }
     if ($Mode -eq 'Launch') {
-      Assert-UpdatePayload
+      if ($config.updatePath -ne 'wsl-only') { Assert-UpdatePayload }
       Save-UpdateStatus 'detached'
       $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Quote-UpdateArgument $PSCommandPath), '-ConfigPath', (Quote-UpdateArgument $ConfigPath), '-Mode', 'Activate') -RedirectStandardInput $empty -RedirectStandardOutput (Join-Path $root 'detached.stdout') -RedirectStandardError (Join-Path $root 'detached.stderr') -WindowStyle Hidden -PassThru
       Record-UpdateHelper $process.Id 'detached-activation' -ReceiptOnly
@@ -192,10 +247,37 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     $mutex = [Threading.Mutex]::new($false, 'Local\WeavewingLocalDesktopUpdate')
     if (-not $mutex.WaitOne(0)) { $mutex.Dispose(); throw 'Another local update is active.' }
     $closed = $false
+    $swapStarted = $false
     $stateCreated = $false
     $windowsScratch = $null
     $oldDigest = ''
     try {
+      if ($config.updatePath -eq 'wsl-only') {
+        $resources = Join-Path $install 'resources'
+        $oldDigest = (Get-FileHash -LiteralPath (Join-Path $resources 'wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
+        $details.previousDigest = $oldDigest
+        $old = Probe-Update 'health' @($oldDigest)
+        if (-not $old.healthy) { throw 'Installed runtime is unhealthy; refusing restart.' }
+        if ((Get-FileHash -LiteralPath $config.archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.digest) { throw 'Candidate archive changed.' }
+        $details.runtimeInstall = Probe-Update 'install-runtime'
+        $details.drain = Wait-LocalUpdateDrain $config.drainMinutes {
+          param($remaining)
+          try { Probe-Update 'idle' @() ([Math]::Min(5, $remaining)) } catch { @{ idle = $false; error = $_.Exception.Message } }
+        }
+        if ($config.checkOnly) { Save-UpdateStatus 'check-only-passed'; return }
+        $runtimeRollback = Join-Path $root 'runtime-rollback'
+        Save-UpdateStatus 'activating-runtime'
+        Invoke-LocalRuntimeUpdate $resources $config.archive $config.digest $runtimeRollback {
+          Probe-Update 'stop-runtime' @($oldDigest) | Out-Null
+        } { Wait-UpdateHealthy $config.digest } {
+          # The supervisor may already have restarted either selection.
+          try { Probe-Update 'stop-runtime' @($config.digest) | Out-Null } catch { Add-Content -LiteralPath $log -Value $_ }
+          $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
+        }
+        @{ shellCommit = $config.shellCommit; commit = $config.commit; digest = $config.digest; previousDigest = $oldDigest; exeHash = $config.exeHash; shellHash = $config.shellHash } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $install '.weavewing-local-update.json')
+        Save-UpdateStatus 'verified'
+        return
+      }
       Assert-UpdatePayload
       Assert-UpdateRollback
       if ($config.checkOnly) {
@@ -232,12 +314,10 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       if ($config.checkOnly) { Save-UpdateStatus 'check-only-passed'; return }
       Assert-UpdatePayload
       $closed = $true
+      Save-UpdateStatus 'closing-desktop'
       Close-UpdateDesktop
-      $deadline = [DateTime]::UtcNow.AddSeconds(90)
-      while (-not (Probe-Update 'stopped' @([string]$old.pid)).stopped) {
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Previous WSL server did not exit; refusing swap.' }
-        Start-Sleep -Seconds 1
-      }
+      Save-UpdateStatus 'waiting-previous-runtime'
+      Wait-UpdateStopped $old.pid
       if (Test-Path -LiteralPath $rollback) { Remove-Item -LiteralPath $rollback -Recurse -Force }
       New-Item -ItemType Directory -Path $rollback | Out-Null
       Set-Content -LiteralPath $marker -Value $install
@@ -245,20 +325,17 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       Remove-Item -LiteralPath $config.backupRootWindows -Recurse -Force
       $details.windowsBackup.path = Join-Path $rollback 'backup-windows'
       Save-UpdateStatus 'activating'
-      Invoke-LocalUpdateSwap $install $payload $rollback { Start-UpdateDesktop } { Wait-UpdateHealthy $config.digest } {
-        $current = Probe-Update 'health' @($config.digest)
+      $swapStarted = $true
+      Invoke-LocalUpdateSwap $install $payload $rollback { Start-UpdateDesktop; Save-UpdateStatus 'waiting-new-runtime' } { Wait-UpdateHealthy $config.digest } {
+        $current = try { Probe-Update 'health' @($config.digest) } catch { @{ } }
         Close-UpdateDesktop
         if ($current.pid) {
-          $deadline = [DateTime]::UtcNow.AddSeconds(90)
-          while (-not (Probe-Update 'stopped' @([string]$current.pid)).stopped) {
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'Candidate WSL server did not exit; refusing rollback swap.' }
-            Start-Sleep -Seconds 1
-          }
+          Wait-UpdateStopped $current.pid
         }
       }
       # Link availability can lag app startup; it must not roll back a healthy app.
       if ($config.linkBaseline) {
-        $details.links = Wait-LocalUpdateLinks $config.healthSeconds {
+        $details.links = Wait-LocalUpdateLinks ([Math]::Min(20, $config.healthSeconds)) {
           param($remaining, $authenticate)
           $budget = $(if ($authenticate) { $remaining / 2 } else { [Math]::Min(10, $remaining / 2) })
           $arguments = @($budget.ToString([Globalization.CultureInfo]::InvariantCulture), $(if ($authenticate) { 'authenticate' } else { 'descriptor-only' }))
@@ -268,11 +345,12 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         }
       }
       if ($details.links.status -ne 'passed') { $details.warning = 'Warning: linked-environment check did not pass. Inspect links in the receipt. The healthy app was kept running.' }
+      @{ shellCommit = $config.shellCommit; commit = $config.commit; digest = $config.digest; previousDigest = $oldDigest; exeHash = $config.exeHash; shellHash = $config.shellHash } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $install '.weavewing-local-update.json')
       Save-UpdateStatus 'verified'
     } catch {
       $details.error = $_.Exception.Message
-      if ($closed -and -not (Test-Path -LiteralPath (Join-Path $rollback 'app'))) {
-        try { Start-UpdateDesktop; $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest } catch { $details.recoveryError = $_.Exception.Message }
+      if ($closed -and (-not $swapStarted -or -not (Test-Path -LiteralPath (Join-Path $rollback 'app')))) {
+        try { if (@(Get-UpdateProcesses).Count -eq 0) { Start-UpdateDesktop }; $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest } catch { $details.recoveryError = $_.Exception.Message }
       }
       Save-UpdateStatus 'failed'
       throw

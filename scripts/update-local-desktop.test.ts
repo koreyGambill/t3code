@@ -1,11 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off - Fixtures exercise the standalone worker without Effect dependencies.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import { expect, it, vi } from "vite-plus/test";
 
-import { captureLocalLinks, checkLocalLink } from "./update-local-desktop.ts";
+import {
+  captureLocalLinks,
+  checkLocalLink,
+  selectUpdatePath,
+  runtimeHealth,
+} from "./update-local-desktop.ts";
 
 function linkFixture(source = "wsl", target = "windows") {
   const userdata = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "update-links-"));
@@ -166,4 +173,61 @@ it.each(["identity", "link"])("warns when the original %s was replaced", async (
     mcp: false,
   });
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  [undefined, undefined, ["apps/web/src/App.tsx"], "full"],
+  ["a".repeat(40), undefined, ["apps/web/src/App.tsx", "apps/server/src/bin.ts"], "wsl-only"],
+  ["a".repeat(40), undefined, ["apps/desktop/src/main.ts"], "full"],
+  ["a".repeat(40), undefined, ["pnpm-lock.yaml"], "full"],
+  ["a".repeat(40), undefined, ["packages/shared/src/Net.ts"], "full"],
+  ["a".repeat(40), "full", [], "full"],
+  [undefined, "wsl-only", [], "wsl-only"],
+] as const)("selects a safe update path (%s, %s, %s)", (commit, force, changed, expected) => {
+  expect(selectUpdatePath(commit, force, changed)).toBe(expected);
+});
+
+it("requires the expected runtime executable and original environment identity", async () => {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "update-runtime-"));
+  const runtime = NodePath.join(home, "wsl-runtime/sha256-fixture/t3");
+  NodeFS.mkdirSync(NodePath.dirname(runtime), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(home, "userdata"));
+  NodeFS.copyFileSync(process.execPath, runtime);
+  const child = NodeChildProcess.spawn(
+    runtime,
+    ["-e", 'process.stdin.resume(); process.stdout.write("ready")'],
+    { stdio: "pipe" },
+  );
+  const exited = NodeEvents.once(child, "exit");
+  try {
+    await NodeEvents.once(child.stdout!, "data");
+    NodeFS.writeFileSync(
+      NodePath.join(home, "userdata/server-runtime.json"),
+      JSON.stringify({ pid: child.pid, port: 3774 }),
+    );
+    NodeFS.writeFileSync(NodePath.join(home, "userdata/environment-id"), "original");
+    using fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ environmentId: "original" }));
+    expect(await runtimeHealth(home, "fixture", "original")).toMatchObject({
+      healthy: true,
+      pid: child.pid,
+      environmentId: "original",
+    });
+    fetch.mockResolvedValue(Response.json({ environmentId: "replacement" }));
+    expect(await runtimeHealth(home, "fixture", "original")).toMatchObject({
+      healthy: false,
+      pid: child.pid,
+    });
+    fetch.mockResolvedValue(new Response("not JSON"));
+    expect(await runtimeHealth(home, "fixture", "original")).toMatchObject({
+      healthy: false,
+      pid: child.pid,
+    });
+    expect(await runtimeHealth(home, "other", "original")).toEqual({ healthy: false });
+  } finally {
+    child.stdin!.end();
+    await exited;
+    NodeFS.rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -98,6 +98,81 @@ try {
       }
     }
   }
+  $calls = @{ operations = @() }
+  $result = Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'health' 5 {
+    param($executable, $arguments, $label, $seconds)
+    $calls.operations += $label
+    Assert ($seconds -gt 0 -and $seconds -le 5) 'Probe exceeded its operation budget'
+    if ($label -eq 'health') { @{ healthy = $true } }
+  }
+  Assert ($result.healthy -and ($calls.operations -join ',') -eq 'wsl-responsive,health') 'WSL operation ran without its responsiveness probe'
+  $calls.operations = @()
+  Must-Fail {
+    Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'health' 5 {
+      param($executable, $arguments, $label, $seconds)
+      $calls.operations += $label
+      throw 'Wsl/Service/WSAETIMEDOUT'
+    }
+  }
+  Assert (($calls.operations -join ',') -eq 'wsl-responsive') 'Unresponsive WSL still received the operation'
+  foreach ($case in @('healthy', 'unhealthy', 'stop-failed', 'promotion-failed')) {
+    $fixture = Join-Path $root ('runtime-' + $case)
+    $resources = Join-Path $fixture 'resources'
+    New-Item -ItemType Directory -Path $resources | Out-Null
+    Set-Content (Join-Path $resources 'wsl-runtime.tar.gz') 'previous-archive'
+    Set-Content (Join-Path $resources 'wsl-runtime.tar.gz.sha256') 'previous-digest'
+    $archive = Join-Path $fixture 'candidate.tar.gz'
+    Set-Content $archive 'new-archive'
+    $calls = @{ stops = 0; recoveries = 0 }
+    $stop = { $calls.stops++; if ($case -eq 'stop-failed') { throw 'WSL went away' } }
+    $healthy = { $case -eq 'healthy' }
+    $recover = { $calls.recoveries++ }
+    if ($case -eq 'promotion-failed') {
+      function Move-Item {
+        param($LiteralPath, $Destination, [switch]$Force)
+        if ($LiteralPath.EndsWith('.sha256.next')) { throw 'Hash promotion failed' }
+        Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+      }
+    }
+    try {
+      if ($case -eq 'healthy') { Invoke-LocalRuntimeUpdate $resources $archive 'new-digest' (Join-Path $fixture 'rollback') $stop $healthy $recover }
+      else { Must-Fail { Invoke-LocalRuntimeUpdate $resources $archive 'new-digest' (Join-Path $fixture 'rollback') $stop $healthy $recover } }
+    } finally { if ($case -eq 'promotion-failed') { Remove-Item Function:Move-Item } }
+    $expected = $(if ($case -eq 'healthy') { 'new' } else { 'previous' })
+    Assert ((Get-Content (Join-Path $resources 'wsl-runtime.tar.gz')) -eq ($expected + '-archive')) 'Runtime archive was not restored with its digest'
+    Assert ((Get-Content (Join-Path $resources 'wsl-runtime.tar.gz.sha256')) -eq ($expected + '-digest')) 'Runtime digest did not match its archive'
+    Assert ((Get-Content (Join-Path $fixture 'rollback/wsl-runtime.tar.gz.sha256')) -eq 'previous-digest') 'Previous runtime selection was lost'
+    Assert ($calls.stops -eq $(if ($case -eq 'promotion-failed') { 0 } else { 1 })) 'Stopped server before promoting both files'
+    Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
+  }
+  $fixture = Join-Path $root 'check-only-runtime'
+  $install = Join-Path $fixture 'installed'
+  $resources = Join-Path $install 'resources'
+  New-Item -ItemType Directory -Path $resources | Out-Null
+  Set-Content (Join-Path $resources 'wsl-runtime.tar.gz') 'old-archive'
+  Set-Content (Join-Path $resources 'wsl-runtime.tar.gz.sha256') 'old-digest'
+  Set-Content (Join-Path $install 'Weavewing.exe') 'fixture-shell'
+  $archive = Join-Path $fixture 'candidate.tar.gz'
+  Set-Content $archive 'new-archive'
+  Copy-Item (Join-Path $PSScriptRoot 'stage-windows-desktop.ps1') (Join-Path $fixture 'stage-windows-desktop.ps1')
+  $configPath = Join-Path $fixture 'config.json'
+  @{ install = $install; updatePath = 'wsl-only'; archive = $archive; digest = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $true; drainMinutes = 0 } | ConvertTo-Json | Set-Content $configPath
+  $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
+  $calls = @{ operations = @() }
+  function Invoke-LocalUpdateWsl {
+    param($distro, $arguments, $label, $seconds, $Invoke)
+    $calls.operations += $label
+    if ($label -eq 'health') { return @{ healthy = $true; pid = 123; environmentId = 'fixture' } }
+    if ($label -eq 'install-runtime') { return @{ installed = $true } }
+    throw "Check-only attempted forbidden operation: $label"
+  }
+  try { Invoke-LocalDesktopUpdate $configPath 'Activate' }
+  finally { Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl }
+  $receipt = Get-Content (Join-Path $fixture 'receipt.json') -Raw | ConvertFrom-Json
+  Assert ($receipt.status -eq 'check-only-passed') 'Runtime check-only did not complete'
+  Assert (($calls.operations -join ',') -eq 'health,install-runtime') 'Check-only attempted a backup or restart'
+  Assert ((Get-Content (Join-Path $resources 'wsl-runtime.tar.gz')) -eq 'old-archive') 'Check-only replaced the installed runtime selection'
+
   $fixtureHome = Join-Path $root 'home'
   $userdata = Join-Path $fixtureHome 'userdata'
   New-Item -ItemType Directory -Path $userdata | Out-Null
@@ -158,5 +233,5 @@ lock.close();
     Assert (-not (Get-Process -Id $record.pid -ErrorAction SilentlyContinue)) 'Snapshot helper remained running after completion or timeout'
   }
   Assert (Test-Path (Join-Path $userdata 'statev2.sqlite')) 'Timeout removed source state'
-  'PASS: early failure receipts, bounded link checks, drain deadline, swap and rollback, refused close, read-only snapshot excluding ownership lock, timeout cleanup and captured helper exit'
+  'PASS: runtime selection rollback, responsiveness guard, runtime check-only, early failure receipts, bounded link checks, drain deadline, swap and rollback, refused close, read-only snapshot excluding ownership lock, timeout cleanup and captured helper exit'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
