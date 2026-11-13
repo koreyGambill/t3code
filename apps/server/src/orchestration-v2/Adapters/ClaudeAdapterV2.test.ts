@@ -16811,6 +16811,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000016109",
         }),
       );
+      // The idle root defers a completion-holding subagent's result to its wake run.
+      yield* Queue.take(harness.continuationReceipts);
+      yield* startTurn(5, true);
       yield* harness.until(() => subagentUpdates().at(-1)?.result === "DONE");
       assert.equal(subagentUpdates().at(-1)?.status, "completed");
     }).pipe(

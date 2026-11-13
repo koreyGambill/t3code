@@ -2027,6 +2027,8 @@ describe("orchestration v2 provider switching", () => {
           branch: `t3/${key}`,
           worktreePath,
           expectedWorktreePath: null,
+          // As t3_worktree_handoff sends it; a client change would be refused mid-run.
+          workspaceChange: "agent-handoff",
         });
         yield* worker.drain();
         yield* Fiber.join(runFailed);
