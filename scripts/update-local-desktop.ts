@@ -135,7 +135,11 @@ export function selectUpdatePath(
   if (force) return force;
   if (!shellCommit || !/^[0-9a-f]{40}$/.test(shellCommit)) return "full";
   // Shared packages and dependency/build inputs can also change the Electron shell.
-  return changed.every((file) => /^(apps\/(web|server)\/|packages\/provider-[^/]+\/)/.test(file))
+  return changed.every(
+    (file) =>
+      /^(apps\/(web|server)\/|packages\/provider-[^/]+\/)/.test(file) &&
+      !/(^|\/)package\.json$|(^|\/)native\/|\.(node|dll|so|dylib)$/.test(file),
+  )
     ? "wsl-only"
     : "full";
 }

@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Fixtures exercise the standalone worker without Effect dependencies.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -180,6 +179,8 @@ it.each([
   ["a".repeat(40), undefined, ["apps/web/src/App.tsx", "apps/server/src/bin.ts"], "wsl-only"],
   ["a".repeat(40), undefined, ["apps/desktop/src/main.ts"], "full"],
   ["a".repeat(40), undefined, ["pnpm-lock.yaml"], "full"],
+  ["a".repeat(40), undefined, ["apps/server/package.json"], "full"],
+  ["a".repeat(40), undefined, ["apps/server/native/module.node"], "full"],
   ["a".repeat(40), undefined, ["packages/shared/src/Net.ts"], "full"],
   ["a".repeat(40), "full", [], "full"],
   [undefined, "wsl-only", [], "wsl-only"],
@@ -198,9 +199,12 @@ it("requires the expected runtime executable and original environment identity",
     ["-e", 'process.stdin.resume(); process.stdout.write("ready")'],
     { stdio: "pipe" },
   );
-  const exited = NodeEvents.once(child, "exit");
+  const exited = new Promise((resolve) => child.once("exit", resolve));
   try {
-    await NodeEvents.once(child.stdout!, "data");
+    await new Promise<void>((resolve, reject) => {
+      child.stdout!.once("data", () => resolve());
+      child.once("error", reject);
+    });
     NodeFS.writeFileSync(
       NodePath.join(home, "userdata/server-runtime.json"),
       JSON.stringify({ pid: child.pid, port: 3774 }),
