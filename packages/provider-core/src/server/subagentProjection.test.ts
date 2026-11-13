@@ -13,13 +13,16 @@ describe("subagentThreadTitle", () => {
 });
 
 it.each([
-  ["[quiet]", "[quiet]"],
-  [" \n[quiet]\n ", " \n[quiet]\n "],
+  ["[react 1:ack]", "[react 1:ack]"],
+  [
+    "[react 1:ack]\nDone.",
+    "Requested model requested; the provider reported running executed.\n\nDone.",
+  ],
   ["Done.", "Requested model requested; the provider reported running executed.\n\nDone."],
   [
-    "Use [quiet] for silence.",
-    "Requested model requested; the provider reported running executed.\n\nUse [quiet] for silence.",
+    "Ordinary result.",
+    "Requested model requested; the provider reported running executed.\n\nOrdinary result.",
   ],
-])("preserves quiet result semantics when the executed model differs: %s", (result, expected) => {
+])("annotates result text when the executed model differs: %s", (result, expected) => {
   expect(withExecutedModelNote(result, "requested", "executed")).toBe(expected);
 });

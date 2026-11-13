@@ -1630,6 +1630,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       });
       const steered = yield* orchestrator.getThreadProjection(threadId);
       assert.lengthOf(steered.runs, 1);
+      assert.deepEqual(steered.runs[0]!.inputMessageIds, [run.userMessageId, steerMessageId]);
       assert.equal(
         steered.messages.find((message) => message.id === steerMessageId)?.runId,
         run.id,

@@ -586,6 +586,11 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
+  replyTo: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+      description: "The current turn's <t3_origin> n you are answering.",
+    }),
+  ),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   freshContext: Schema.optional(
     Schema.Boolean.annotate({
@@ -607,6 +612,7 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
   messageId: MessageId,
+  replyToMessageId: Schema.optional(MessageId),
   runId: RunId,
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,

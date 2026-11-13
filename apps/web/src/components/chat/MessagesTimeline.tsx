@@ -251,7 +251,7 @@ interface MessagesTimelineProps {
   announcedRun?: { readonly runId: RunId; readonly status: TimelineLatestRun["status"] } | null;
   /** See isDetailBehindShell. */
   detailBehindShell?: boolean;
-  announcedRunQuiet?: boolean;
+  announcedRunReactionOnly?: boolean;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
@@ -368,7 +368,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   findNavigationId = 0,
   latestRun,
   announcedRun = null,
-  announcedRunQuiet = false,
+  announcedRunReactionOnly = false,
   detailBehindShell = false,
   runningRunId = null,
   turnDiffSummaries,
@@ -1170,7 +1170,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       requestId={awaitingRequestId}
       runId={announcedRun?.runId ?? null}
       runStatus={announcedRun?.status ?? null}
-      quiet={announcedRunQuiet}
+      reactionOnly={announcedRunReactionOnly}
       detailBehind={detailBehindShell}
       level={screenReaderAnnouncements}
       entries={screenReaderAnnouncements === "status" ? EMPTY_TIMELINE_ENTRIES : timelineEntries}

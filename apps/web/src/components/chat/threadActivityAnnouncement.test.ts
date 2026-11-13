@@ -47,16 +47,16 @@ describe("nextThreadAnnouncement", () => {
     ).toEqual(["Working", "Done"]);
   });
 
-  it("silences quiet completion without replaying it or suppressing later attention", () => {
+  it("silences reactionOnly completion without replaying it or suppressing later attention", () => {
     const thirdRun = RunId.make("run-3");
     expect(
       speak([
         idle(firstRun, "completed"),
         busy(),
-        { ...idle(secondRun, "completed"), quiet: true },
+        { ...idle(secondRun, "completed"), reactionOnly: true },
         idle(secondRun, "completed"),
-        { ...busy("approval", thirdRun), quiet: true },
-        { ...idle(thirdRun, "failed"), quiet: true },
+        { ...busy("approval", thirdRun), reactionOnly: true },
+        { ...idle(thirdRun, "failed"), reactionOnly: true },
       ]),
     ).toEqual(["Working", "Needs approval", "Failed"]);
   });

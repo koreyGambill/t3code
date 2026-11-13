@@ -148,7 +148,7 @@ export function resolveUserMessageGrouping(
   };
 }
 
-export function senderCardDetails(origin: Exclude<TurnOrigin, { kind: "user" }>) {
+function senderOriginDetails(origin: Exclude<TurnOrigin, { kind: "user" }>) {
   switch (origin.kind) {
     case "thread":
       return {
@@ -176,6 +176,31 @@ export function senderCardDetails(origin: Exclude<TurnOrigin, { kind: "user" }>)
     case "system":
       return { title: "T3 Code", relationship: "T3 Code", event: origin.event, noReply: false };
   }
+}
+
+/** The first nonempty line used by collapsed message summaries. */
+export function messageFirstLine(text: string): string {
+  return text.trim().split(/\r?\n/, 1)[0] ?? "";
+}
+
+export function senderCardDetails(origin: Exclude<TurnOrigin, { kind: "user" }>, text = "") {
+  const details = senderOriginDetails(origin);
+  const relationship =
+    details.relationship === "peer thread"
+      ? "peer"
+      : details.relationship === "scheduled task"
+        ? "schedule"
+        : details.relationship;
+  return {
+    ...details,
+    summary: [
+      relationship,
+      details.event === "message" ? "" : details.event,
+      messageFirstLine(text),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  };
 }
 
 export function nonUserMessageOrigin(

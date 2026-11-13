@@ -6,6 +6,7 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_ORCHESTRATION_SECTIONS,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -26,6 +27,9 @@ describe("T3 delegation instructions", () => {
       }),
       t3AcpPromptWithInstructions({ prompt: "Research and fan out.", state }),
     ];
+    for (const section of T3_CODE_ORCHESTRATION_SECTIONS) {
+      assert.isBelow(Buffer.byteLength(section), 4_000);
+    }
     for (const text of instructions) {
       assert.include(text, "Use `delegate_task` for every subagent, parallel or not");
       assert.include(text, "report back together once all finish");
@@ -33,6 +37,9 @@ describe("T3 delegation instructions", () => {
       assert.include(text, "context.runId");
       assert.include(text, "context.mark");
       assert.include(text, "childPreamble");
+      assert.include(text, "[react 1:ack 3:ack]");
+      assert.include(text, "A delegated child's final report must contain its result");
+      assert.notInclude(text, "[quiet]");
       assert.notMatch(
         text!,
         /Ordinary coding tasks need no|run_in_background:false|children start no agents|keep reviews fresh/i,

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./messageReactions": {
+      "types": "./src/messageReactions.ts",
+      "import": "./src/messageReactions.ts"
+    },
     "./workspaceMarks": {
       "types": "./src/workspaceMarks.ts",
       "import": "./src/workspaceMarks.ts"

@@ -1,10 +1,71 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MessageId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, MessageId, type TurnOrigin } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import { deriveTimelineMinimapItems, resolveTimelineMinimapPreview } from "./timelineMinimapItems";
 
 describe("deriveTimelineMinimapItems", () => {
+  it("only marks human input, including explicit user origins", () => {
+    const at = "2026-10-01T00:00:00Z";
+    const origins: Array<TurnOrigin | undefined> = [
+      undefined,
+      { kind: "user" },
+      {
+        kind: "thread",
+        threadId: ThreadId.make("peer"),
+        environmentId: EnvironmentId.make("local"),
+        title: "Peer",
+        event: "message",
+      },
+      {
+        kind: "subagent",
+        threadId: ThreadId.make("child"),
+        environmentId: EnvironmentId.make("local"),
+        title: "Child",
+        event: "completed",
+      },
+      { kind: "system", event: "monitor" },
+    ];
+    const rows = origins.map((origin, index) => ({
+      kind: "message" as const,
+      id: `input-${index}`,
+      createdAt: at,
+      showAssistantMeta: false,
+      showAssistantCopyButton: false,
+      assistantCopyStreaming: false,
+      message: {
+        id: MessageId.make(`input-${index}`),
+        role: "user" as const,
+        text: "Update",
+        runId: null,
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+        ...(origin ? { origin } : {}),
+      },
+    }));
+    expect(
+      deriveTimelineMinimapItems([
+        ...rows,
+        {
+          ...rows[1]!,
+          id: "system-as-user",
+          message: { ...rows[1]!.message, createdBy: "system", creationSource: "server" },
+        },
+        {
+          ...rows[1]!,
+          id: "agent-as-user",
+          message: { ...rows[1]!.message, createdBy: "agent", creationSource: "server" },
+        },
+        {
+          ...rows[0]!,
+          id: "legacy-agent",
+          message: { ...rows[0]!.message, createdBy: "agent", creationSource: "server" },
+        },
+      ]).map(({ id }) => id),
+    ).toEqual(["input-0", "input-1"]);
+  });
+
   it.each(["", "Ultrathink:\n"])(
     "omits bootstrap text from the minimap label and tooltip (%j)",
     (prefix) => {

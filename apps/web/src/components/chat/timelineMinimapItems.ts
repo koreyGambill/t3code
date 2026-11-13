@@ -1,3 +1,4 @@
+import { nonUserMessageOrigin } from "@t3tools/client-runtime/user-message";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import type { Nodes } from "mdast";
@@ -20,7 +21,12 @@ export function deriveTimelineMinimapItems(
   const items: TimelineMinimapItem[] = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    if (row?.kind !== "message" || row.message.role !== "user") {
+    if (
+      row?.kind !== "message" ||
+      row.message.role !== "user" ||
+      (row.message.createdBy !== undefined && row.message.createdBy !== "user") ||
+      nonUserMessageOrigin(row.message) !== null
+    ) {
       continue;
     }
 

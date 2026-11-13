@@ -169,15 +169,20 @@ describe("ThreadReplies", () => {
     [false, true].flatMap((remote) =>
       (
         [
-          { status: "completed", reply: null },
-          { status: "failed", reply: "failed." },
-          { status: "cancelled", reply: "was stopped." },
+          { status: "completed", reply: null, answer: " \n[react 1:ack]\n " },
+          { status: "failed", reply: "failed.", answer: "[react 1:ack]" },
+          { status: "cancelled", reply: "was stopped.", answer: "[react 1:ack]" },
+          {
+            status: "completed",
+            reply: "Decision needed.",
+            answer: "Decision needed.",
+          },
         ] as const
       ).map((outcome) => ({ remote, ...outcome })),
     ),
   )(
-    "closes a quiet reply request and preserves unsuccessful outcomes (remote=$remote, status=$status)",
-    ({ remote, status, reply }) =>
+    "closes reaction-only requests and forwards visible replies or unsuccessful outcomes (remote=$remote, status=$status)",
+    ({ remote, status, reply, answer }) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const finished = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
@@ -189,7 +194,7 @@ describe("ThreadReplies", () => {
           waits: [{ ends: run("run:replies:steered", status) }],
           messageRunId: RunId.make("run:replies:steered"),
           targetDeleted: false,
-          answerText: " \n[quiet]\n ",
+          answerText: answer,
           peerCall: ((call) =>
             Effect.succeed(
               call.tool === "t3_thread_send"

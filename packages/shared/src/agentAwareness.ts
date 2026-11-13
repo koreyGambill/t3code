@@ -76,7 +76,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "lineage"
     | "latestRunBackgroundWake"
     | "latestRunStopRequested"
-    | "latestRunQuiet"
+    | "latestRunReactionOnly"
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
@@ -101,7 +101,7 @@ export function projectThreadAwarenessV2(
   }
   if (
     phase === "completed" &&
-    (thread.latestRunStopRequested === true || thread.latestRunQuiet === true)
+    (thread.latestRunStopRequested === true || thread.latestRunReactionOnly === true)
   )
     return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.

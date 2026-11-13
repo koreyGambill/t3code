@@ -41,6 +41,7 @@ interface CompactToolOutput {
   isError?: true;
   threadId?: string;
   messageId?: string;
+  replyToMessageId?: string;
   taskId?: string;
   scheduledTaskId?: string;
   status?: "rolled_back";
@@ -182,6 +183,13 @@ export function compactT3MessageInput(toolName: string | null, value: unknown) {
     environmentId: boundedId(input.environmentId),
     target: { environmentId: boundedId(target?.environmentId) },
     reply: typeof input.reply === "boolean" ? input.reply : undefined,
+    replyTo:
+      tool === "t3_thread_send" &&
+      typeof input.replyTo === "number" &&
+      Number.isSafeInteger(input.replyTo) &&
+      input.replyTo > 0
+        ? input.replyTo
+        : undefined,
     origin: {
       event: origin?.event === "reply" ? "reply" : undefined,
       reply: origin?.reply === "not expected" ? "not expected" : undefined,
@@ -228,7 +236,13 @@ export function compactDynamicToolOutput(
       output.delivery = delivery;
   }
   if (data !== undefined) {
-    for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {
+    for (const key of [
+      "threadId",
+      "messageId",
+      "replyToMessageId",
+      "taskId",
+      "scheduledTaskId",
+    ] as const) {
       const id = boundedId(data[key]);
       if (id !== undefined) output[key] = id;
     }

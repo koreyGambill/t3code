@@ -74,6 +74,7 @@ export function t3ToolResultIndicatesFailure(output: unknown): boolean {
 }
 
 export interface OutgoingT3Message {
+  readonly replyToMessageId?: string | undefined;
   readonly threadId: string | null;
   readonly environmentId: string | undefined;
   readonly body: string;
@@ -102,6 +103,9 @@ export function outgoingT3Message(
       : null;
   const failed = result.failed || call.outcome === "failed";
   return {
+    ...(tool === "t3_thread_send" && id(output?.replyToMessageId)
+      ? { replyToMessageId: id(output?.replyToMessageId) }
+      : {}),
     threadId:
       id(remote?.threadId) ??
       id(output?.childThreadId) ??

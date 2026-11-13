@@ -1226,7 +1226,12 @@ describe("MessagesTimeline automation prompts", () => {
       activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
     });
     await vi.waitFor(() =>
-      expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true"),
+      expect(
+        screen.container
+          .querySelector("[data-sender-card]")!
+          .closest("[role=button]")!
+          .getAttribute("aria-expanded"),
+      ).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
     const details = screen.container.querySelector("[data-thread-find-text]")!;
@@ -1293,6 +1298,7 @@ describe("MessagesTimeline agent messages", () => {
       { onOpenThread },
     );
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+    await screen.getByRole("button", { name: /^Agent:/ }).click();
     await screen.getByRole("link", { name: "Agent", exact: true }).click();
     expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
   });
@@ -1329,7 +1335,12 @@ describe("MessagesTimeline agent messages", () => {
       },
     );
     await vi.waitFor(() =>
-      expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true"),
+      expect(
+        screen.container
+          .querySelector("[data-sender-card]")!
+          .closest("[role=button]")!
+          .getAttribute("aria-expanded"),
+      ).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
     const body = screen.container.querySelector("[data-user-message-body]")!;

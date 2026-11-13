@@ -1,6 +1,7 @@
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { renderTurnOriginText } from "@t3tools/provider-core/server/turnOriginText";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { numberedTurnOrigins } from "@t3tools/shared/messageReactions";
 import {
   MessageId,
   type ModelSelection,
@@ -405,6 +406,14 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const inputMessageIds = run.inputMessageIds ?? [run.userMessageId];
+          const inputMessages = yield* projections.getMessagesById(input.threadId, inputMessageIds);
+          const originIndex = numberedTurnOrigins(
+            inputMessageIds.flatMap((id) => {
+              const inputMessage = inputMessages.get(id);
+              return inputMessage === undefined ? [] : [inputMessage];
+            }),
+          ).find(({ message: inputMessage }) => inputMessage.id === message.id)?.index;
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -424,6 +433,7 @@ export const layer: Layer.Layer<
                     records: message.context?.records ?? [],
                   }),
                   receivingEnvironmentId,
+                  originIndex,
                 ),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

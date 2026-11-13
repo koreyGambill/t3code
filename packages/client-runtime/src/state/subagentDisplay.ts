@@ -1,4 +1,4 @@
-import { isQuietAssistantText } from "@t3tools/contracts";
+import { parseAssistantReactions } from "@t3tools/shared/messageReactions";
 import type {
   ModelSelection,
   OrchestrationV2TurnItemStatus,
@@ -122,8 +122,9 @@ export function subagentDetailPreview(input: {
   const terminal = isTerminalSubagentStatus(input.status);
   const preferred = terminal ? input.result : input.progress;
   const fallback = terminal ? input.progress : input.result;
-  const detail = preferred?.trimStart() || fallback?.trimStart() || "";
-  if (isQuietAssistantText(detail)) return null;
+  const detail = parseAssistantReactions(
+    preferred?.trimStart() || fallback?.trimStart() || "",
+  ).body;
   if (detail.length <= 280) return detail.trimEnd().replace(/\s+/gu, " ") || null;
   const whitespace = /\s+/uy;
   let compact = "";

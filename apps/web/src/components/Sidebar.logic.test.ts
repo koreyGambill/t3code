@@ -1040,7 +1040,7 @@ describe("unseen completion with background work", () => {
     const isUnread = hasUnseenCompletion(thread);
 
     expect(isUnread).toBe(true);
-    expect(hasUnseenCompletion({ ...thread, latestRunQuiet: true })).toBe(false);
+    expect(hasUnseenCompletion({ ...thread, latestRunReactionOnly: true })).toBe(false);
     expect(status).toBe(expected.status);
     expect(
       shouldRecedeSidebarThread({

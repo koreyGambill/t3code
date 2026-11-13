@@ -413,21 +413,25 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
-  it("hides quiet assistant text when a cached feed changes", () => {
+  it("hides reaction-only assistant text when a cached feed changes", () => {
     const cache = createThreadFeedCache();
-    const user = projected({ ...userMessage(), text: "[quiet]" }, 0);
+    const user = projected({ ...userMessage(), text: "[react 1:ack]" }, 0);
     for (const [text, count] of [
       ["Starting", 2],
-      ["[quiet]", 1],
-      ["A [quiet] marker", 2],
+      ["[react 1:ack]", 1],
+      ["[quiet]", 2],
+      ["Decision needed", 2],
+      ["A [react 1:ack] marker", 2],
     ] as const) {
       const rows = [user, projected({ ...assistantMessage(), text }, 1)];
       const feed = buildThreadFeed(rows, { cache });
       expect(feed).toHaveLength(count);
+      if (text.includes("Decision needed"))
+        expect(feed[1]).toMatchObject({ message: { text: "Decision needed" } });
       expect(feed).toEqual(buildThreadFeed(rows));
       expect(feed[0]).toMatchObject({
         type: "message",
-        message: { role: "user", text: "[quiet]" },
+        message: { role: "user", text: "[react 1:ack]" },
       });
     }
   });
