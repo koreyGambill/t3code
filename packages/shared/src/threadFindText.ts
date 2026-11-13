@@ -237,8 +237,8 @@ export function searchableMessageSegments(
     return markdownThreadFindText(text, true, cwd, skills);
   }
   if (message.role !== "assistant") return null;
-  const { reactions, body } = parseAssistantReactions(message.text);
-  if (reactions.size > 0 && !body) return [];
+  const { body } = parseAssistantReactions(message.text);
+  if (!body && message.text.trim()) return [];
   return markdownThreadFindText(
     body || (message.streaming ? "" : "(empty response)"),
     false,

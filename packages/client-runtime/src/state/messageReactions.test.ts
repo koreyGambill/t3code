@@ -227,6 +227,38 @@ describe("inputMessageReactions", () => {
     ).toBe("Handled");
   });
 
+  it("includes five steers after an agent-API input without inputMessageIds", () => {
+    const start = incoming("first", { kind: "system", event: "agent API" });
+    const steers = [2, 5, 3, 1, 4].map((step, index) => ({
+      ...incoming(`peer-${step}`),
+      ordinal: index + 4,
+      inputIntent: "steer" as const,
+    }));
+    const commentary = { ...final("Counting."), id: TurnItemId.make("commentary"), ordinal: 2 };
+    const reply = final("[react 2:ack 3:ack 4:ack 5:ack 6:ack]");
+    for (const inputs of [undefined, [start.messageId]]) {
+      const reactions = inputMessageReactions(
+        [{ ...run, ...(inputs ? { inputMessageIds: inputs } : {}) }],
+        [start, commentary, ...steers, reply],
+      );
+      expect(reactions.has(start.messageId)).toBe(false);
+      expect(steers.map((message) => reactions.get(message.messageId)?.label)).toEqual(
+        Array(5).fill("Handled"),
+      );
+    }
+  });
+
+  it.each([
+    ["Use staging. [react 1:replied]", "expected", "Replied"],
+    ["Needs approval. [react 1:told]", "not expected", "Told you"],
+    ["[react 1:replied]", "not expected", undefined],
+  ] as const)("derives reactions from the body, not invented kinds: %s", (text, reply, label) => {
+    const message = incoming("first", { ...origin, reply });
+    expect(inputMessageReactions([run], [message, final(text)]).get(message.messageId)?.label).toBe(
+      label,
+    );
+  });
+
   it("uses the root final assistant text and ignores malformed or streaming reactions", () => {
     const message = incoming("first");
     const child: OrchestrationV2TurnItem = {
@@ -242,7 +274,7 @@ describe("inputMessageReactions", () => {
     expect(
       inputMessageReactions([run], [message, final("[react 1:nope]")]).get(message.messageId)
         ?.label,
-    ).toBe("Told you");
+    ).toBeUndefined();
     const streaming = {
       ...final("[react 1:ack]"),
       type: "assistant_message" as const,

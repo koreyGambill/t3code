@@ -60,11 +60,22 @@ export function buildMessageRows(
             roots.get(item.nodeId) === run.rootNodeId),
       )
       .sort((a, b) => b.ordinal - a.ordinal)[0];
-    const inputIds = run.inputMessageIds?.length
+    const initialIds = run.inputMessageIds?.length
       ? run.inputMessageIds
       : run.userMessageId
         ? [run.userMessageId]
         : [];
+    const inputIds = [
+      ...new Set([
+        ...initialIds,
+        ...runItems
+          .flatMap((item) =>
+            item.type === "user_message" && item.inputIntent === "steer" ? [item] : [],
+          )
+          .sort((a, b) => a.ordinal - b.ordinal)
+          .map((item) => item.messageId),
+      ]),
+    ];
     if (inputIds.some((id) => !messages.has(id))) continue;
     const numbered = numberedTurnOrigins(
       inputIds.flatMap((id) => {

@@ -2,48 +2,44 @@ import type { TurnOrigin } from "@t3tools/contracts";
 
 export type MessageReaction = "ack";
 
-/** Reads one boundary reaction line, preserving the original text on malformed input. */
+/** Reads a leading reaction line or trailing tag, ignoring unsupported reaction kinds. */
 export function parseAssistantReactions(text: string, knownIndexes?: ReadonlySet<number>) {
   const unchanged = () => ({ reactions: new Map<number, MessageReaction>(), body: text });
   if (!text.includes("[react")) return unchanged();
-  const lines = text.trim().split(/\r?\n/);
-  const candidates = lines.flatMap((line, index) =>
-    line.trim().startsWith("[react") ? [index] : [],
-  );
-  const position = candidates[0];
-  if (
-    position === undefined ||
-    candidates.length !== 1 ||
-    (position !== 0 && position !== lines.length - 1)
-  )
-    return unchanged();
-  const match = /^\[react[ \t]+([^\r\n]+)\]$/.exec(lines[position]!.trim());
-  if (!match) return unchanged();
+  const matches = [...text.matchAll(/\[react[ \t]+([^\]\r\n]+)\]/g)];
+  const match = matches[0];
+  if (!match || matches.length !== 1) return unchanged();
+  const before = text.slice(0, match.index);
+  const after = text.slice(match.index + match[0].length);
+  const leadingLine = before.trim() === "" && /^[ \t]*(?:\r?\n|$)/.test(after);
+  const trailingTag = after.trim() === "" && (before === "" || /\s$/.test(before));
+  if (!leadingLine && !trailingTag) return unchanged();
   const reactions = new Map<number, MessageReaction>();
   const seen = new Set<number>();
   for (const token of match[1]!.trim().split(/[ \t]+/)) {
-    const entry = /^(\d+):ack$/.exec(token);
+    const entry = /^(\d+):([a-z]+)$/.exec(token);
     if (!entry) return unchanged();
     const index = Number(entry[1]);
     if (!Number.isSafeInteger(index) || seen.has(index)) return unchanged();
     seen.add(index);
-    if (index > 0 && (knownIndexes === undefined || knownIndexes.has(index))) {
+    if (
+      entry[2] === "ack" &&
+      index > 0 &&
+      (knownIndexes === undefined || knownIndexes.has(index))
+    ) {
       reactions.set(index, "ack");
     }
   }
   return {
     reactions,
-    body: lines
-      .filter((_, index) => index !== position)
-      .join("\n")
-      .trim(),
+    body: `${before}${after}`.trim(),
   };
 }
 
 /** Whether a final assistant message contains only reactions and no user-facing body. */
 export function isReactionOnlyAssistantText(text: string): boolean {
   const parsed = parseAssistantReactions(text);
-  return parsed.reactions.size > 0 && parsed.body.length === 0;
+  return text.trim().length > 0 && parsed.body.length === 0;
 }
 
 /** Assigns rendered origins their turn-local indexes in delivery order. */

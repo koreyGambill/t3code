@@ -9,6 +9,7 @@ describe("parseAssistantReactions", () => {
   it.each([
     ["[react 1:ack 3:ack]\nA decision is needed.", "A decision is needed."],
     ["A decision is needed.\n[react 1:ack 3:ack]", "A decision is needed."],
+    ["A decision is needed. [react 1:ack 3:ack]", "A decision is needed."],
     ["[react 1:ack 3:ack]\r\nA decision is needed.", "A decision is needed."],
     [" \n\t[react 1:ack 3:ack]\n \t", ""],
   ])("strips a boundary line from %j", (text, body) => {
@@ -26,10 +27,6 @@ describe("parseAssistantReactions", () => {
     "[quiet]",
     "",
     "[react]",
-    "[react 1:done]",
-    "[react 1:info]\nA decision is needed.",
-    "[react 1:replied]",
-    "[react 1:ack 2:info]\nA decision is needed.",
     "[react 1:ack 1:ack]",
     "[react 1:ack] body",
     "Before\n[react 1:ack]\nAfter",
@@ -40,6 +37,24 @@ describe("parseAssistantReactions", () => {
   ])("preserves malformed or ordinary text verbatim: %j", (text) => {
     expect(parseAssistantReactions(text)).toEqual({ reactions: new Map(), body: text });
     expect(isReactionOnlyAssistantText(text)).toBe(false);
+  });
+
+  it.each([
+    ["[react 1:replied]", ""],
+    ["[react 1:told]\nDecision.", "Decision."],
+    ["Use staging. [react 1:replied]", "Use staging."],
+    ["Decision. [react 1:told]", "Decision."],
+    ["[react 1:done]", ""],
+  ])("strips unknown kinds without deriving them: %j", (text, body) => {
+    expect(parseAssistantReactions(text)).toEqual({ reactions: new Map(), body });
+    expect(isReactionOnlyAssistantText(text)).toBe(body === "");
+  });
+
+  it("retains known acknowledgments alongside unknown kinds", () => {
+    expect(parseAssistantReactions("[react 1:ack 2:info]\nDecision.")).toEqual({
+      reactions: new Map([[1, "ack"]]),
+      body: "Decision.",
+    });
   });
 
   it("ignores indexes outside the delivered origins without losing the body", () => {

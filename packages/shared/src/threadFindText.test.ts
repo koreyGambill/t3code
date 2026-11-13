@@ -47,10 +47,13 @@ it("excludes reaction-only assistant replies while preserving user text and lite
     searchableMessageSegments({ role: "assistant", text: " \n[react 1:ack]\n", streaming: false }),
   ).toEqual([]);
   expect(
+    searchableMessageSegments({ role: "assistant", text: "[react 1:replied]", streaming: false }),
+  ).toEqual([]);
+  expect(
     searchableMessageSegments({ role: "user", text: "[react 1:ack]", streaming: false }),
   ).toEqual(["[react 1:ack]"]);
   expect(
-    searchableMessageSegments({ role: "assistant", text: "Use [react 1:ack]", streaming: false }),
+    searchableMessageSegments({ role: "assistant", text: "Use `[react 1:ack]`", streaming: false }),
   ).toEqual(["Use [react 1:ack]"]);
   expect(
     searchableMessageSegments({
