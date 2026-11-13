@@ -328,7 +328,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     />
                     <View className="min-w-0 flex-1 gap-0.5">
                       {message && nonUserMessageOrigin(message) ? (
-                        <IncomingQueuedCard message={message} />
+                        <IncomingQueuedCard target={target} message={message} />
                       ) : message ? (
                         <QueuedRunSender environmentId={target.environmentId} message={message} />
                       ) : null}
@@ -495,7 +495,12 @@ function QueueAttachmentThumbnail(props: {
   );
 }
 
-function IncomingQueuedCard({ message }: { readonly message: QueuedRunMessage }) {
-  const origin = nonUserMessageOrigin(message);
-  return origin ? <SenderCard origin={origin} text={message.text} queued /> : null;
+function IncomingQueuedCard(props: {
+  readonly target: QueueTarget;
+  readonly message: QueuedRunMessage;
+}) {
+  const origin = nonUserMessageOrigin(props.message);
+  return origin ? (
+    <SenderCard origin={origin} threadRef={props.target} text={props.message.text} queued />
+  ) : null;
 }

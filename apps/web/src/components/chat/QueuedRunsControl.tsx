@@ -278,6 +278,7 @@ export function QueuedRunsControl({
             >
               <QueuedMessage
                 environmentId={props.environmentId}
+                threadId={props.threadId}
                 message={item.message}
                 previewText={previewText}
                 thumbnails={item.thumbnails}
@@ -416,6 +417,7 @@ type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
 /** A queued turn wears its sent form's attribution; only the dashed edge and controls differ. */
 function QueuedMessage(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly message: QueuedRunMessage | undefined;
   readonly previewText: string;
   readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
@@ -460,7 +462,7 @@ function QueuedMessage(props: {
         <SenderCard
           text={props.previewText}
           origin={origin}
-          environmentId={props.environmentId}
+          threadRef={scopeThreadRef(props.environmentId, props.threadId)}
           onOpenThread={props.onOpenThread}
           queued
         >

@@ -1795,6 +1795,7 @@ function renderFeedEntry(
         <View className="mb-2 w-full">
           <SenderCard
             origin={origin}
+            threadRef={scopeThreadRef(props.environmentId, props.threadId)}
             text={presentation.text}
             createdAt={message.createdAt}
             reaction={message.reaction}

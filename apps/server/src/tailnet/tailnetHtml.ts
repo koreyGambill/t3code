@@ -202,12 +202,14 @@ export function renderPairingConfirmPage(input: {
 }
 
 export function renderRefusalPage(input: {
+  readonly heading?: string | undefined;
   readonly message: string;
   readonly listLink: boolean;
 }): string {
+  const heading = input.heading ?? "This device cannot pair here";
   return shell(
-    "Cannot pair",
-    `<h1>This device cannot pair here</h1>
+    heading,
+    `<h1>${escapeHtml(heading)}</h1>
     <p>${escapeHtml(input.message)}</p>${
       input.listLink
         ? `\n    <p class="foot"><a href="${TAILNET_PAGE_PATH}">All environments</a></p>`

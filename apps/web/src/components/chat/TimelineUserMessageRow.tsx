@@ -286,7 +286,7 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
         timestampFormat={ctx.timestampFormat}
         origin={origin}
         reaction={row.message.reaction}
-        environmentId={ctx.activeThreadEnvironmentId}
+        threadRef={ctx.threadRef}
         onOpenThread={ctx.onOpenThread}
       >
         <UserTimelineRow row={row} cardBody />

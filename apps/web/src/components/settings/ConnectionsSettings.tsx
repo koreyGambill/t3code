@@ -1154,6 +1154,8 @@ function ConnectionsSettingsContent({
   );
 
   const accessServerConfig = accessEnvironment?.serverConfig ?? null;
+  const accessEnvironmentLabel =
+    accessEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment");
   const primarySettings = (
     <>
       {accessEnvironmentPicker}
@@ -1161,9 +1163,7 @@ function ConnectionsSettingsContent({
         <>
           <SettingsSection
             {...searchableSetting("connections-environment")}
-            title={
-              accessEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
-            }
+            title={accessEnvironmentLabel}
             icon={
               <EnvironmentMachineIcon
                 aria-hidden
@@ -1259,6 +1259,7 @@ function ConnectionsSettingsContent({
             {canWriteAccess && accessServerConfig ? (
               <TailnetPairingRow
                 environmentId={accessEnvironmentId}
+                environmentLabel={accessEnvironmentLabel}
                 settings={accessServerConfig.settings.tailnetConnect}
                 managed={managedCapabilityDenial(accessServerConfig.managedPolicy, "remoteClients")}
               />

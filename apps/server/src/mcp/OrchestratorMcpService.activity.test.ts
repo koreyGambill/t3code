@@ -905,6 +905,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
 
 it("readThread and sendToThread reach threads in other projects", async () => {
   let parentShell: OrchestrationV2ThreadShell | null = null;
+  const sentOrigins: Array<unknown> = [];
   let parentRuns: ReadonlyArray<unknown> = [
     makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
   ];
@@ -999,11 +1000,13 @@ it("readThread and sendToThread reach threads in other projects", async () => {
                     threadId: input.threadId,
                   }),
                 ),
-          sendToThread: () =>
-            Effect.succeed({
+          sendToThread: (input) => {
+            sentOrigins.push(input.origin);
+            return Effect.succeed({
               run: { id: "run-foreign", status: "queued" },
               delivery: "started",
-            } as unknown as ThreadManagementService.ThreadManagementSendResult),
+            } as unknown as ThreadManagementService.ThreadManagementSendResult);
+          },
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -1045,6 +1048,14 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       message: "hi",
     });
     expect(sent.threadId).toBe(foreignThreadId);
+    expect(sentOrigins[0]).not.toHaveProperty("relationship");
+    // A delegated child's send names the receiver as its parent, which an idle child's missing shell cannot.
+    Object.assign(parentProjection.thread, {
+      delegatedFrom: { environmentId, threadId: foreignThreadId, title: "Foreign" },
+    });
+    yield* service.sendToThread(makeScope(), { threadId: foreignThreadId, message: "done" });
+    expect(sentOrigins[1]).toMatchObject({ kind: "thread", relationship: "child" });
+    Object.assign(parentProjection.thread, { delegatedFrom: undefined });
 
     parentRuns = [];
     yield* service.readThread(makeScope(), { threadId: foreignThreadId });

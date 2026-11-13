@@ -82,7 +82,7 @@ export class TailnetConnectRefusedError extends Schema.TaggedError<TailnetConnec
   override get message(): string {
     switch (this.reason) {
       case "disabled":
-        return "Tailnet pairing is off on this server.";
+        return `Tailnet pairing is off on this server. Turn it on in Settings → Sharing & access for ${this.detail ?? "this environment"}.`;
       case "not_tailnet":
         return "Open this page over the tailnet, at this machine's Tailscale address.";
       case "own_machine":
@@ -257,7 +257,9 @@ const make = Effect.gen(function* () {
       Effect.map((value) => value.tailnetConnect),
       Effect.orElseSucceed(() => null),
     );
-    if (settings === null || !settings.enabled) return yield* refuse("disabled");
+    if (settings === null || !settings.enabled) {
+      return yield* refuse("disabled", (yield* serverEnvironment.getDescriptor).label);
+    }
     const address = tailnetAddress(request.remoteAddress);
     // Tailscale Serve and T3 Connect reach the server over loopback, so they never count.
     if (address === undefined || tailnetAddress(request.localAddress) === undefined) {

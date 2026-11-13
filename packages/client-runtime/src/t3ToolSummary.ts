@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { isChildThread, type ScopedThreadRef } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "./state/shell.ts";
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
 import { resolveT3McpMessageTool } from "@t3tools/shared/t3McpToolPresentation";
@@ -145,12 +145,7 @@ export function outgoingT3MessageLabel(
 ): string {
   const child =
     message.relationship === "delegated task" ||
-    (source !== null &&
-      (((message.environmentId === undefined || message.environmentId === source.environmentId) &&
-        target?.lineage.relationshipToParent === "subagent" &&
-        target.lineage.parentThreadId === source.threadId) ||
-        (target?.delegatedFrom?.environmentId === source.environmentId &&
-          target.delegatedFrom.threadId === source.threadId)));
+    isChildThread(source, message.environmentId, target);
   return `${message.event === "failed" ? "Tried to send to" : "Sent to"} ${child ? "child thread" : "thread"}`;
 }
 

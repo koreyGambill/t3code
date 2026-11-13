@@ -176,11 +176,16 @@ it.effect("admits only the allowed logins' own devices, asking Tailscale who the
   }).pipe(Effect.provide(layerTailnet({}))),
 );
 
-it.effect("refuses everyone while the setting is off", () =>
-  refusalOf(fromPeer("100.64.0.9")).pipe(
-    Effect.map((result) => assert.equal(result, "disabled")),
-    Effect.provide(layerTailnet({ settings: { enabled: false } })),
-  ),
+it.effect(
+  "refuses everyone while the setting is off, naming the environment to turn it on in",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* TailnetConnect.TailnetConnect;
+      const error = yield* Effect.flip(service.listEnvironments(fromPeer("100.64.0.9")));
+      assert.equal(error.reason, "disabled");
+      assert.match(error.message, /\boff\b/);
+      assert.include(error.message, "Desk");
+    }).pipe(Effect.provide(layerTailnet({ settings: { enabled: false } }))),
 );
 
 it.effect("asks for allowed logins on a tagged server, which has no owner", () =>

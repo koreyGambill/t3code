@@ -244,6 +244,8 @@ it.effect(
           getMessageCount: () => Effect.die("unused message count"),
           getTranscriptByteFloor: () => Effect.die("unused transcript byte floor"),
           hasPendingDelegatedCompletion: () => Effect.die("unused hasPendingDelegatedCompletion"),
+          listDelegatedCompletionDeliveryRunIds: () =>
+            Effect.die("unused listDelegatedCompletionDeliveryRunIds"),
           getSubagentCount: () => Effect.die("unused subagent count"),
           listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),

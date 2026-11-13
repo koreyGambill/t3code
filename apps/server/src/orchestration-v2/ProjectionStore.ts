@@ -535,6 +535,10 @@ export interface ProjectionStoreV2Shape {
   readonly hasPendingDelegatedCompletion: (
     childThreadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** The thread's runs holding a reserved completion wake, without decoding its other runs. */
+  readonly listDelegatedCompletionDeliveryRunIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<RunId>, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -6417,6 +6421,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.mapError(controlReadError(childThreadId)),
         ),
       );
+    // Matches the partial index from migration 079 so the scan skips runs without a delivery.
+    const listDelegatedCompletionDeliveryRunIds: ProjectionStoreV2Shape["listDelegatedCompletionDeliveryRunIds"] =
+      (threadId) =>
+        sql<{ run_id: string }>`SELECT run_id FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId}
+          AND CASE WHEN json_valid(payload_json)
+            THEN json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
+            ELSE 0 END
+        ORDER BY ordinal ASC`.pipe(
+          Effect.map((rows) => rows.map((row) => RunId.make(row.run_id))),
+          Effect.mapError(controlReadError(threadId)),
+        );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
       sql<{ ordinal: number | null }>`SELECT MAX(ordinal) AS ordinal
         FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`.pipe(
@@ -9285,6 +9301,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSubagentCount: readOnReader(getSubagentCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
+      listDelegatedCompletionDeliveryRunIds: readOnReader(listDelegatedCompletionDeliveryRunIds),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
       getMessagesById: readOnReader(getMessagesById),

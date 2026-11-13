@@ -71,6 +71,7 @@ import {
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
+  isChildThread,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -3803,6 +3804,13 @@ const make = Effect.gen(function* () {
                   threadId: parent.thread.id,
                   environmentId: scope.environmentId,
                   ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
+                  ...(isChildThread(
+                    { environmentId: scope.environmentId, threadId: input.threadId },
+                    undefined,
+                    parent.thread,
+                  )
+                    ? { relationship: "child" as const }
+                    : {}),
                 },
           projectId: target.thread.projectId,
           commandId: stableCommandId({
