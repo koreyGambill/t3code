@@ -23,7 +23,7 @@ it.each([
     label: "remote environment",
     desktopLocal: false,
     hasTailnet: true,
-    expected: ["lan", "lan", "private-network"],
+    expected: [],
   },
 ] as const)("builds pairing routes for $label", ({ desktopLocal, hasTailnet, expected }) => {
   const directEndpoints = [
@@ -37,13 +37,11 @@ it.each([
   );
   expect(endpoints.map((endpoint) => endpoint.reachability)).toEqual(expected);
   const selected = selectPairingEndpoint(endpoints);
-  if (!hasTailnet) {
+  if (!desktopLocal || !hasTailnet) {
     expect(selected).toBeNull();
   } else {
     expect(resolveAdvertisedEndpointPairingUrl(selected!, "test-token")).toBe(
-      desktopLocal
-        ? "http://100.84.12.7:3774/pair#token=test-token"
-        : "http://172.30.64.1:3774/pair#token=test-token",
+      "http://100.84.12.7:3774/pair#token=test-token",
     );
     expect(selected?.compatibility.hostedHttpsApp).toBe("mixed-content-blocked");
   }

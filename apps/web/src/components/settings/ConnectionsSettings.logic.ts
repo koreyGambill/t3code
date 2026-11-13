@@ -33,8 +33,9 @@ export function serverPairingEndpoints(
   endpoints: ReadonlyArray<ServerDirectEndpoint>,
   desktopLocal: boolean,
 ): ReadonlyArray<AdvertisedEndpoint> {
+  if (!desktopLocal) return [];
   return endpoints
-    .filter((endpoint) => !desktopLocal || endpoint.kind === "tailnet")
+    .filter((endpoint) => endpoint.kind === "tailnet")
     .map((endpoint) => {
       const tailnet = endpoint.kind === "tailnet";
       return createAdvertisedEndpoint({
