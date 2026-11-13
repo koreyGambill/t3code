@@ -16,6 +16,7 @@ import {
   type OrchestrationV2Notification,
   type OrchestrationV2Run,
   ThreadId,
+  isChildThread,
 } from "@t3tools/contracts";
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import * as Context from "effect/Context";
@@ -183,6 +184,13 @@ const make = Effect.gen(function* () {
         title: target.thread.title.trim() || "Untitled",
         threadId: request.targetThreadId,
         environmentId,
+        ...(isChildThread(
+          { environmentId, threadId: request.senderThreadId },
+          undefined,
+          target.thread,
+        )
+          ? { relationship: "child" as const }
+          : {}),
       },
       text: reactionOnly || reply.length === 0 ? `${status}.` : parsed.body,
       notification: {

@@ -72,6 +72,7 @@ const threadsFor = (
           title: threadId === target ? "Builder" : "Lead",
           deletedAt: threadId === target && world.targetDeleted ? "deleted" : null,
           archivedAt: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
         },
         messages:
           threadId === target

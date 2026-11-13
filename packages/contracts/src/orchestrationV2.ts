@@ -111,6 +111,8 @@ export const ThreadTurnOrigin = Schema.Struct({
   threadId: ThreadId,
   environmentId: EnvironmentId,
   replyToMessageId: Schema.optional(MessageId),
+  /** The sender was the receiver's subagent or delegated task when it sent; idle children have no client shell to tell from. */
+  relationship: Schema.optional(Schema.Literal("child")),
 });
 
 export const TurnOrigin = Schema.Union([
@@ -202,6 +204,29 @@ export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLin
 /** Subagents and side chats live inside their parent's view, never in thread lists. */
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
   lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+
+/** Whether `other` is `self`'s subagent or delegated task; `otherEnvironmentId` defaults to `self`'s. */
+export const isChildThread = (
+  self: { readonly environmentId: string; readonly threadId: string } | null,
+  otherEnvironmentId: string | undefined,
+  other: {
+    readonly lineage: Pick<
+      OrchestrationV2AppThreadLineage,
+      "parentThreadId" | "relationshipToParent"
+    >;
+    readonly delegatedFrom?:
+      | Pick<OrchestrationV2DelegatedFrom, "environmentId" | "threadId">
+      | null
+      | undefined;
+  } | null,
+): boolean =>
+  self !== null &&
+  other !== null &&
+  (((otherEnvironmentId === undefined || otherEnvironmentId === self.environmentId) &&
+    other.lineage.relationshipToParent === "subagent" &&
+    other.lineage.parentThreadId === self.threadId) ||
+    (other.delegatedFrom?.environmentId === self.environmentId &&
+      other.delegatedFrom.threadId === self.threadId));
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",

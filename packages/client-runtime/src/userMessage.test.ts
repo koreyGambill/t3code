@@ -4,8 +4,10 @@ import {
   ComposerContextId,
   EnvironmentId,
   GuestMessageId,
+  MessageId,
   ScheduledTaskId,
   ThreadId,
+  type TurnOrigin,
 } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
@@ -290,28 +292,105 @@ describe("resolveUserMessagePresentation", () => {
 });
 
 describe("senderCardDetails", () => {
-  it("keeps the incoming summary on one line with a terse relationship and event", () => {
+  const receiver = { environmentId: EnvironmentId.make("local"), threadId: ThreadId.make("lead") };
+  const fromThread = (fields: Partial<Extract<TurnOrigin, { kind: "thread" }>> = {}) =>
+    ({
+      kind: "thread",
+      title: "Matrix L2",
+      threadId: ThreadId.make("sender"),
+      environmentId: EnvironmentId.make("local"),
+      event: "message",
+      ...fields,
+    }) as const;
+  const subagentOf = (parentThreadId: ThreadId) => ({
+    delegatedFrom: null,
+    lineage: {
+      parentThreadId,
+      rootThreadId: parentThreadId,
+      relationshipToParent: "subagent" as const,
+    },
+  });
+  const delegatedBy = (threadId: ThreadId) => ({
+    delegatedFrom: { environmentId: receiver.environmentId, threadId, title: "Lead" },
+    lineage: {
+      parentThreadId: null,
+      rootThreadId: ThreadId.make("sender"),
+      relationshipToParent: null,
+    },
+  });
+
+  it.each([
+    [
+      "the receiver's subagent",
+      fromThread(),
+      subagentOf(receiver.threadId),
+      "Message from child thread",
+    ],
+    [
+      "the receiver's delegated task",
+      fromThread(),
+      delegatedBy(receiver.threadId),
+      "Message from child thread",
+    ],
+    [
+      "another thread's child",
+      fromThread(),
+      subagentOf(ThreadId.make("other")),
+      "Message from thread",
+    ],
+    [
+      "another thread's delegated task",
+      fromThread(),
+      delegatedBy(ThreadId.make("other")),
+      "Message from thread",
+    ],
+    ["an unloaded peer", fromThread(), null, "Message from thread"],
+    [
+      "a same-id subagent on another environment",
+      fromThread({ environmentId: EnvironmentId.make("remote") }),
+      subagentOf(receiver.threadId),
+      "Message from thread",
+    ],
+    [
+      "a child's reply",
+      fromThread({ event: "reply" }),
+      subagentOf(receiver.threadId),
+      "Reply from child thread",
+    ],
+    [
+      "an idle child whose shell the client never loaded",
+      fromThread({ relationship: "child" }),
+      null,
+      "Message from child thread",
+    ],
+    [
+      "a peer answering a message",
+      fromThread({ replyToMessageId: MessageId.make("question") }),
+      null,
+      "Reply from thread",
+    ],
+  ] as const)("labels a message from %s", (_name, origin, senderShell, label) => {
+    expect(
+      senderCardDetails(origin, "  First line\r\nFull message", receiver, senderShell),
+    ).toEqual({
+      label,
+      name: "Matrix L2",
+      preview: "First line",
+    });
+  });
+
+  it("labels non-thread senders without a thread chip", () => {
     expect(
       senderCardDetails(
-        {
-          kind: "thread",
-          title: "Matrix L2",
-          threadId: ThreadId.make("sender"),
-          environmentId: EnvironmentId.make("local"),
-          event: "message",
-        },
-        "  First line\r\nFull message",
+        { kind: "scheduled-task", title: "Daily audit" },
+        "Check it.\nDetails",
+        receiver,
+        null,
       ),
-    ).toMatchObject({
-      title: "Matrix L2",
-      relationship: "peer thread",
-      event: "message",
-      summary: "peer · First line",
+    ).toEqual({ label: "Scheduled task", name: "Daily audit", preview: "Check it." });
+    expect(senderCardDetails({ kind: "system", event: "agent API" }, " ", receiver, null)).toEqual({
+      label: "T3 Code · agent API",
+      preview: "",
     });
-    expect(
-      senderCardDetails({ kind: "scheduled-task", title: "Daily audit" }, "Check it.\nDetails")
-        .summary,
-    ).toBe("schedule · fired · Check it.");
-    expect(senderCardDetails({ kind: "system", event: "message" }, " ").summary).toBe("T3 Code");
   });
 });

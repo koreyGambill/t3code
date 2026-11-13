@@ -7,7 +7,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   projection: null as unknown,
@@ -26,7 +26,15 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
   useQuietThreadShell: ((target: { readonly environmentId: string } | null) =>
     target === null || target.environmentId === "environment:linked"
       ? null
-      : { title: "Release lead" }) as never,
+      : {
+          title: "Release lead",
+          delegatedFrom: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: "thread:lead",
+          },
+        }) as never,
 }));
 
 vi.mock(import("../../state/environments"), async (importOriginal) => ({
@@ -208,12 +216,16 @@ it("opens the sender thread from a queued incoming card", async () => {
   // Four rows collapse the queue.
   await page.getByRole("button", { name: "Show all 4 queued" }).click();
 
-  await page.getByRole("button", { name: /^Automation:/ }).click();
-  await page.getByRole("button", { name: /^Release lead:/ }).click();
+  await page.getByRole("button", { name: /^Scheduled task Automation:/ }).click();
+  // The row's centre can land on its thread chip, which opens the thread instead of expanding.
+  page
+    .getByRole("button", { name: /^Message from thread Release lead:/ })
+    .element()
+    .focus();
+  await userEvent.keyboard("{Enter}");
   await expect.element(page.getByText(/Follow the runbook/)).toBeVisible();
-  await expect.element(page.getByRole("link", { name: "Release lead", exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Release lead", exact: true }).click();
-  expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead");
+  await page.getByRole("link", { name: "Thread, Release lead", exact: true }).click();
+  expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead", "environment:test");
   await page.getByRole("button", { name: /^T3 Code:/ }).click();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
 });

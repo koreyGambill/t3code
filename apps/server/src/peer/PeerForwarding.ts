@@ -9,6 +9,7 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  isChildThread,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -175,6 +176,10 @@ const make = Effect.gen(function* () {
         environmentId: scope.environmentId,
         reply: args.reply === false ? "not expected" : "expected",
         ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
+        ...(typeof args.threadId === "string" &&
+        isChildThread({ environmentId, threadId: args.threadId }, scope.environmentId, sender)
+          ? { relationship: "child" }
+          : {}),
       };
     }
     if (toolName === "t3_thread_send" && scope.thread !== undefined && args.reply !== false) {

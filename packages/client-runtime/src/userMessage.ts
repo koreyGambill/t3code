@@ -10,7 +10,10 @@ import {
   type OrchestrationV2LinkedSender,
   type OrchestrationV2UserMessageInputIntent,
   type ScheduledTaskId,
+  type ScopedThreadRef,
+  isChildThread,
 } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "./state/shell.ts";
 import {
   isAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
@@ -155,58 +158,51 @@ export function resolveUserMessageGrouping(
   };
 }
 
-function senderOriginDetails(origin: Exclude<TurnOrigin, { kind: "user" }>) {
+function senderOriginLabel(
+  origin: Exclude<TurnOrigin, { kind: "user" }>,
+  receiver: ScopedThreadRef | null,
+  senderShell: Pick<EnvironmentThreadShell, "lineage" | "delegatedFrom"> | null,
+): { readonly label: string; readonly name?: string } {
   switch (origin.kind) {
-    case "thread":
+    case "thread": {
+      const reply = origin.event === "reply" || origin.replyToMessageId !== undefined;
+      const child =
+        origin.relationship === "child" ||
+        isChildThread(receiver, origin.environmentId, senderShell);
       return {
-        title: origin.title || "Thread",
-        relationship: "peer thread",
-        event: origin.event,
-        noReply: origin.reply === "not expected",
+        label: `${reply ? "Reply" : "Message"} from ${child ? "child thread" : "thread"}`,
+        name: origin.title || "Thread",
       };
+    }
     case "subagent":
       return {
-        title: origin.title || "Agent",
-        relationship: "subagent",
-        event: origin.event,
-        noReply: false,
+        label: `${origin.event === "failed" ? "Failure report" : "Report"} from child thread`,
+        name: origin.title || "Agent",
       };
     case "scheduled-task":
-      return {
-        title: origin.title,
-        relationship: "scheduled task",
-        event: "fired",
-        noReply: false,
-      };
+      return { label: "Scheduled task", name: origin.title };
     case "wake":
-      return { title: "Wake", relationship: "T3 Code", event: "fired", noReply: false };
+      return { label: "Wake" };
     case "system":
-      return { title: "T3 Code", relationship: "T3 Code", event: origin.event, noReply: false };
+      return { label: origin.event === "message" ? "T3 Code" : `T3 Code · ${origin.event}` };
   }
 }
 
 /** The first nonempty line used by collapsed message summaries. */
-export function messageFirstLine(text: string): string {
+function messageFirstLine(text: string): string {
   return text.trim().split(/\r?\n/, 1)[0] ?? "";
 }
 
-export function senderCardDetails(origin: Exclude<TurnOrigin, { kind: "user" }>, text = "") {
-  const details = senderOriginDetails(origin);
-  const relationship =
-    details.relationship === "peer thread"
-      ? "peer"
-      : details.relationship === "scheduled task"
-        ? "schedule"
-        : details.relationship;
+/** The collapsed row of a message another thread, task or T3 Code sent to `receiver`. */
+export function senderCardDetails(
+  origin: Exclude<TurnOrigin, { kind: "user" }>,
+  text: string,
+  receiver: ScopedThreadRef | null,
+  senderShell: Pick<EnvironmentThreadShell, "lineage" | "delegatedFrom"> | null,
+) {
   return {
-    ...details,
-    summary: [
-      relationship,
-      details.event === "message" ? "" : details.event,
-      messageFirstLine(text),
-    ]
-      .filter(Boolean)
-      .join(" · "),
+    ...senderOriginLabel(origin, receiver, senderShell),
+    preview: messageFirstLine(text),
   };
 }
 
