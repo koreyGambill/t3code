@@ -62,64 +62,52 @@ function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$s
   return & $Invoke 'wsl.exe' $arguments $label $remaining
 }
 
-function Invoke-LocalRuntimeUpdate($resources, $archive, $digest, $rollback, [scriptblock]$Stop, [scriptblock]$Healthy, [scriptblock]$Recover, $clientSource, [scriptblock]$Reload) {
+function Invoke-LocalRuntimeUpdate($resources, $archive, $digest, $rollback, [scriptblock]$Stop, [scriptblock]$Healthy, [scriptblock]$Recover, $clientSource) {
   $names = @('wsl-runtime.tar.gz', 'wsl-runtime.tar.gz.sha256')
   New-Item -ItemType Directory -Path $rollback -ErrorAction Stop | Out-Null
   foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $resources $name) -Destination (Join-Path $rollback $name) }
+  # Client moves stay inside resources so each is a same-volume rename; the rollback directory may be elsewhere.
   $client = Join-Path $resources 'client'
-  $clientNext = Join-Path $resources ('client-' + [guid]::NewGuid().ToString() + '.next')
+  $suffix = [guid]::NewGuid().ToString()
+  $clientNext = Join-Path $resources "client-$suffix.next"
+  $clientPrevious = Join-Path $resources "client-$suffix.previous"
   $clientMoved = $false
   $stopping = $false
   try {
     if ($clientSource) {
       if (-not (Test-Path -LiteralPath (Join-Path $clientSource 'index.html'))) { throw 'Candidate client is missing index.html.' }
-      Copy-Item -LiteralPath $clientSource -Destination $clientNext -Recurse
+      # Keep the old hashed chunks: an open page lazy-loads them until the user reloads.
+      Copy-Item -LiteralPath $client -Destination $clientNext -Recurse
+      Copy-Item -Path (Join-Path $clientSource '*') -Destination $clientNext -Recurse -Force
     }
     Copy-Item -LiteralPath $archive -Destination (Join-Path $resources 'wsl-runtime.tar.gz.next')
     Set-Content -LiteralPath (Join-Path $resources 'wsl-runtime.tar.gz.sha256.next') -Value $digest -Encoding ascii
     foreach ($name in $names) { Move-Item -LiteralPath (Join-Path $resources ($name + '.next')) -Destination (Join-Path $resources $name) -Force }
     if ($clientSource) {
-      Move-Item -LiteralPath $client -Destination (Join-Path $rollback 'client')
+      Move-Item -LiteralPath $client -Destination $clientPrevious
       $clientMoved = $true
       Move-Item -LiteralPath $clientNext -Destination $client
     }
     $stopping = $true
     & $Stop
     if (-not (& $Healthy)) { throw 'New WSL runtime did not become healthy before its deadline.' }
-    if ($Reload) { & $Reload }
   } catch {
     $failure = $_
     foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $rollback $name) -Destination (Join-Path $resources $name) -Force }
     if ($clientMoved) {
-      if (Test-Path -LiteralPath $client) { Move-Item -LiteralPath $client -Destination (Join-Path $rollback 'failed-client') }
-      Move-Item -LiteralPath (Join-Path $rollback 'client') -Destination $client
+      if (Test-Path -LiteralPath $client) { Move-Item -LiteralPath $client -Destination (Join-Path $resources "client-$suffix.failed") }
+      Move-Item -LiteralPath $clientPrevious -Destination $client
+      $clientMoved = $false
+      Remove-Item -LiteralPath (Join-Path $resources "client-$suffix.failed") -Recurse -Force -ErrorAction SilentlyContinue
     }
     if ($stopping) { & $Recover }
     throw "Runtime activation failed; previous archive selection restored. $failure"
   } finally {
     foreach ($name in $names) { Remove-Item -LiteralPath (Join-Path $resources ($name + '.next')) -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $clientNext -Recurse -Force -ErrorAction SilentlyContinue
+    # The overlay holds every old file, so dropping the previous copy cannot break an open page.
+    if ($clientMoved) { Remove-Item -LiteralPath $clientPrevious -Recurse -Force -ErrorAction SilentlyContinue }
   }
-}
-
-function Reload-LocalUpdateDesktop($windows) {
-  if (@($windows).Count -ne 1) { throw 'Expected one desktop window for client reload.' }
-  if (-not ('LocalUpdateWindow' -as [type])) {
-    Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public static class LocalUpdateWindow {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-}
-'@
-  }
-  $window = $windows[0]
-  $shell = New-Object -ComObject WScript.Shell
-  try {
-    if (-not $shell.AppActivate([int]$window.Id) -or [LocalUpdateWindow]::GetForegroundWindow() -ne $window.MainWindowHandle) { throw 'Could not focus the desktop window for Force Reload.' }
-    # The app menu routes this accelerator to the main client even when a browser guest had focus.
-    $shell.SendKeys('^+r')
-  } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
 }
 
 function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
@@ -191,11 +179,17 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       $main = @($all | Where-Object { $_.MainWindowHandle -ne 0 })
       if ($main.Count -ne 1) { throw "Expected one main window at $install, found $($main.Count). Close it manually; no process was force-killed." }
       if (-not $main[0].CloseMainWindow()) { throw 'Desktop refused graceful close.' }
-      $deadline = [DateTime]::UtcNow.AddSeconds(90)
+      $details.closeRequested = $true
+      $closeSeconds = $(if ($null -ne $config.closeSeconds) { [double]$config.closeSeconds } else { 90 })
+      if (-not (Wait-UpdateDesktopExit $closeSeconds)) { throw "Desktop did not close in ${closeSeconds}s; no process was force-killed." }
+    }
+    function Wait-UpdateDesktopExit([double]$seconds) {
+      $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
       while (@(Get-UpdateProcesses).Count -gt 0) {
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Desktop did not close in 90s; no process was force-killed.' }
+        if ([DateTime]::UtcNow -ge $deadline) { return $false }
         Start-Sleep -Seconds 1
       }
+      return $true
     }
     function Start-UpdateDesktop {
       $launcher = Start-Process -FilePath (Join-Path $install 'Start Weavewing.cmd') -WorkingDirectory $install -WindowStyle Hidden -PassThru
@@ -322,7 +316,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
             $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
             if (-not $details.rollbackHealthy) { throw 'Previous runtime remains unhealthy after relaunching desktop.' }
           }
-        } $config.clientSource { Reload-LocalUpdateDesktop @(Get-UpdateProcesses | Where-Object { $_.MainWindowHandle -ne 0 }) }
+        } $config.clientSource
+        if ($config.clientSource) { $details.reloadPending = $true; $details.reloadHint = 'UI updated - press Ctrl+Shift+R in Weavewing to load it.' }
         @{ shellCommit = $config.shellCommit; clientCommit = $config.clientCommit; clientAssetsDirectory = $config.clientAssetsDirectory; commit = $config.commit; digest = $config.digest; previousDigest = $oldDigest; exeHash = $config.exeHash; shellHash = $config.shellHash } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $install '.weavewing-local-update.json')
         Save-UpdateStatus 'verified'
         return
@@ -399,7 +394,12 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     } catch {
       $details.error = $_.Exception.Message
       if ($closed -and (-not $swapStarted -or -not (Test-Path -LiteralPath (Join-Path $rollback 'app')))) {
-        try { if (@(Get-UpdateProcesses).Count -eq 0) { Start-UpdateDesktop }; $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest } catch { $details.recoveryError = $_.Exception.Message }
+        try {
+          # A close that timed out may still finish; deciding on the first look would leave no desktop.
+          if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
+          if (@(Get-UpdateProcesses).Count -eq 0) { Start-UpdateDesktop }
+          $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
+        } catch { $details.recoveryError = $_.Exception.Message }
       }
       Save-UpdateStatus 'failed'
       throw
@@ -419,7 +419,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         } catch { $details.backupRecoveryError = $_.Exception.Message; Save-UpdateStatus $details.status }
       }
       if ($config.notifyThread -and -not $config.checkOnly) {
-        try { Probe-Update 'notify' @($(if ($details.status -eq 'verified') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit). Receipt: $($config.output)/receipt.json. $($details.warning)") | Out-Null } catch { Add-Content -LiteralPath $log -Value "Notification failed: $_" }
+        try { Probe-Update 'notify' @($(if ($details.status -eq 'verified') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit). Receipt: $($config.output)/receipt.json. $($details.warning) $($details.reloadHint)") | Out-Null } catch { Add-Content -LiteralPath $log -Value "Notification failed: $_" }
       }
       $mutex.ReleaseMutex()
       $mutex.Dispose()

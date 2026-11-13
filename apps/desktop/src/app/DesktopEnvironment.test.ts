@@ -62,7 +62,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("serves the local updater client outside the Windows sidecar", () =>
+  it.effect("serves the local updater client only while its marker matches the shell", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -70,16 +70,22 @@ describe("DesktopEnvironment", () => {
       const client = path.join(resourcesPath, "client");
       yield* fs.makeDirectory(client);
       yield* fs.writeFileString(path.join(client, "index.html"), "new client");
-      const environment = yield* makeEnvironment({
-        platform: "win32",
-        isPackaged: true,
-        resourcesPath,
-      });
-      assert.equal(environment.clientAssetsDir, client);
+      const input = { platform: "win32", isPackaged: true, resourcesPath } as const;
+      const sidecar = path.join(resourcesPath, "server.asar/apps/server/dist/client");
+
+      yield* fs.writeFileString(path.join(client, ".shell-version"), "0.0.22\n");
+      const matching = yield* makeEnvironment(input);
+      assert.equal(matching.clientAssetsDir, client);
       assert.equal(
-        environment.backendEntryPath,
+        matching.backendEntryPath,
         path.join(resourcesPath, "server.asar/apps/server/dist/bin.mjs"),
       );
+
+      yield* fs.writeFileString(path.join(client, ".shell-version"), "0.0.21");
+      assert.equal((yield* makeEnvironment(input)).clientAssetsDir, sidecar);
+
+      yield* fs.remove(path.join(client, ".shell-version"));
+      assert.equal((yield* makeEnvironment(input)).clientAssetsDir, sidecar);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

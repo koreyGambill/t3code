@@ -133,9 +133,7 @@ export function selectUpdatePath(
   changed: readonly string[],
 ) {
   const incompatible = changed.some((file) =>
-    /^(packages\/(contracts|client-runtime|shared)\/|apps\/server\/src\/persistence\/.*[Mm]igrat)/.test(
-      file,
-    ),
+    /^packages\/(contracts|client-runtime|shared)\/|migrat/i.test(file),
   );
   if (force === "wsl-only" && incompatible)
     throw new Error("Shared wire contracts or migrations changed; use --full.");
@@ -903,6 +901,8 @@ async function main() {
     NodeFS.cpSync(NodePath.join(repo, "apps/server/dist/client"), NodePath.join(output, "client"), {
       recursive: true,
     });
+    // DesktopEnvironment serves the loose client only while this matches the running shell.
+    NodeFS.writeFileSync(NodePath.join(output, "client/.shell-version"), version);
     if (updatePath === "full")
       NodeFS.cpSync(
         NodePath.join(output, "client"),

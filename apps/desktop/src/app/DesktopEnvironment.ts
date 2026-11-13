@@ -189,6 +189,17 @@ const make = Effect.fn("desktop.environment.make")(function* (
     "applications",
   );
   const resourcesPath = input.resourcesPath;
+  const looseClientDir = path.join(resourcesPath, "client");
+  const looseClientCurrent =
+    input.isPackaged &&
+    input.platform === "win32" &&
+    (yield* Effect.all([
+      fs.exists(path.join(looseClientDir, "index.html")),
+      fs.readFileString(path.join(looseClientDir, ".shell-version")),
+    ]).pipe(
+      Effect.map(([hasIndex, version]) => hasIndex && version.trim() === input.appVersion),
+      Effect.orElseSucceed(() => false),
+    ));
 
   return DesktopEnvironment.of({
     path,
@@ -214,15 +225,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appRoot,
     serverRoot,
     backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
-    // Local updates can swap this directory while Electron keeps its ASAR headers cached.
-    clientAssetsDir:
-      input.isPackaged &&
-      input.platform === "win32" &&
-      (yield* fs
-        .exists(path.join(resourcesPath, "client/index.html"))
-        .pipe(Effect.orElseSucceed(() => false)))
-        ? path.join(resourcesPath, "client")
-        : path.join(serverRoot, "apps/server/dist/client"),
+    // Local updates swap this directory while Electron keeps ASAR headers cached. Its marker ties
+    // it to the installed shell so a stale directory never outlives a replaced shell.
+    clientAssetsDir: looseClientCurrent
+      ? looseClientDir
+      : path.join(serverRoot, "apps/server/dist/client"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),

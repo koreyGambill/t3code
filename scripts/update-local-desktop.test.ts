@@ -183,6 +183,8 @@ it.each([
   ["a".repeat(40), undefined, ["packages/client-runtime/src/rpc.ts"], "full"],
   ["a".repeat(40), undefined, ["apps/server/src/persistence/Migrations/100_New.ts"], "full"],
   ["a".repeat(40), undefined, ["apps/server/src/persistence/databaseMigrationHead.ts"], "full"],
+  ["a".repeat(40), undefined, ["apps/server/src/threadWorkspace/workspaceMigration.ts"], "full"],
+  ["a".repeat(40), undefined, ["apps/server/src/db/migrations/1.sql"], "full"],
   ["a".repeat(40), undefined, ["apps/desktop/src/main.ts"], "full"],
   ["a".repeat(40), undefined, ["pnpm-lock.yaml"], "full"],
   ["a".repeat(40), undefined, ["apps/server/package.json"], "full"],
@@ -246,6 +248,7 @@ it.each([
   "packages/contracts/src/environment.ts",
   "packages/client-runtime/src/rpc.ts",
   "apps/server/src/persistence/Migrations/100_New.ts",
+  "apps/server/src/threadWorkspace/workspaceMigration.ts",
 ])("refuses a forced runtime update across an incompatible change: %s", (file) => {
   expect(() => selectUpdatePath("a".repeat(40), "wsl-only", [file])).toThrow("--full");
 });

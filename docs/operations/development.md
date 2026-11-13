@@ -389,11 +389,14 @@ release, and their source must be unchanged since that tag. The command targets 
 The installed receipt selects the update path. Missing provenance, shell or dependency changes,
 shared packages, and migrations require a full update. `--full` forces that path. One full update
 installs a shell that can serve loose `resources/client` assets; older shells cannot use the fast path.
-After that, web/server-only changes build the Linux runtime and client, swap the Windows client assets,
-restart WSL and invoke the desktop's Force Reload shortcut without restarting Electron. The desktop
-must be running and available to focus for that shortcut. `--wsl-only` requests this path, but refuses
-shared wire or migration changes and shells without loose-client support. The Windows primary server
-keeps its previous code until the next full update. Receipts record shell and client commits separately.
+After that, web/server-only changes build the Linux runtime and client, overlay the new client files
+on the installed `resources/client` (old hashed chunks stay so an open page keeps working) and restart
+WSL without restarting Electron. The desktop serves that directory only while its `.shell-version`
+marker matches the running shell version. The desktop must already be running. Press Ctrl+Shift+R in
+Weavewing to load the new UI; the receipt records `reloadPending` and the notification says so.
+The next full update drops stale chunks. `--wsl-only` requests this path, but refuses shared wire or
+any migration-named change and shells without loose-client support. The Windows primary server keeps
+its previous code until the next full update. Receipts record shell and client commits separately.
 Use `--plan-only --installed-receipt /absolute/path/to/receipt.json` to inspect selection without a build.
 
 `--check-only` (also `--dry-run`) runs the selected build, archive smoke test, drain and state backups
