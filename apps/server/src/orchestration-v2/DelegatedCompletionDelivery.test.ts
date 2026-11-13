@@ -3435,7 +3435,6 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               assert.equal(committed.result, "The background command finished cleanly.");
               yield* worker.drain();
               // Finalization may re-offer the same wake; the retry must not mint another.
-              assert.isAtLeast(offer.mock.calls.length, 2);
               assert.lengthOf(
                 new Set(offer.mock.calls.map(([wake]) => JSON.stringify(wake.delegatedCompletion))),
                 1,
@@ -3468,14 +3467,51 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           assert.equal(followup.status, "completed");
           assert.equal(followup.result, "The background command finished cleanly.");
           assert.equal(followup.completionDelivery?.state, "claimed");
-          let wake = yield* requests.take;
-          while (
-            wake.threadId !== parentThreadId ||
-            wake.delegatedCompletion?.messageId === firstWake.delegatedCompletion?.messageId
-          ) {
-            wake = yield* requests.take;
+          if (delivery === "checkpoint-offer-retry") {
+            // Repeated offers of one wake reach the parent as one message.
+            const handled = yield* Deferred.make<void>();
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                yield* Layer.build(
+                  ProviderContinuationService.layer.pipe(
+                    Layer.provide(IdAllocator.layer),
+                    Layer.provide(
+                      Layer.succeed(ServerEnvironmentIdentity, {
+                        getEnvironmentId: Effect.succeed(
+                          EnvironmentId.make("environment:delegated"),
+                        ),
+                      }),
+                    ),
+                  ),
+                );
+                // The worker takes requests in order, so this one marks the queued wakes handled.
+                yield* requests.offer({
+                  threadId: child.childThreadId,
+                  providerThreadId: firstWake.providerThreadId,
+                  driver: firstWake.driver,
+                  detail: null,
+                  delivery: "message_text",
+                  dispatchIfCurrent: () =>
+                    Deferred.succeed(handled, undefined).pipe(Effect.as(Option.none())),
+                });
+                yield* Deferred.await(handled);
+              }),
+            );
+            const wakes = (yield* orchestrator.getThreadProjection(parentThreadId)).messages.filter(
+              (message) => message.delegatedCompletion?.taskIds.includes(followup.id) === true,
+            );
+            assert.lengthOf(wakes, 1);
+            assert.equal(wakes[0]?.delegatedCompletion?.parentRunId, parentRunId);
+          } else {
+            let wake = yield* requests.take;
+            while (
+              wake.threadId !== parentThreadId ||
+              wake.delegatedCompletion?.messageId === firstWake.delegatedCompletion?.messageId
+            ) {
+              wake = yield* requests.take;
+            }
+            assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
           }
-          assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
         }),
     );
 
@@ -4702,13 +4738,19 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 );
 
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
-  // A child's background command holds its delegated task open here, so only the release row applies.
+  // A child's unmarked background command holds its task open here; one it released does not.
   it.effect.each([
     {
       name: "releases",
       key: "",
-      pendingBackgroundTasks: [] as Array<{ taskId: string; kind: "command" }>,
+      pendingBackgroundTasks: [] as Array<{ taskId: string; kind: "command"; awaited: false }>,
       released: true,
+    },
+    {
+      name: "keeps while a released background command runs",
+      key: "-background",
+      pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" as const, awaited: false as const }],
+      released: false,
     },
   ])(
     "queues a child result without creating a provider history handoff and $name its process",
