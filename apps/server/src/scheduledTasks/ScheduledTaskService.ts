@@ -1277,7 +1277,12 @@ export const layer = Layer.effect(
         const peeked =
           eventSchedule === null
             ? null
-            : yield* EventTriggers.peekDueEvent(active.id, eventSchedule, startedAtIso).pipe(
+            : yield* EventTriggers.peekDueEvent(
+                active.id,
+                eventSchedule,
+                startedAtIso,
+                active.disabledThreadIds ?? [],
+              ).pipe(
                 withSql,
                 Effect.mapError((cause) =>
                   taskError("Could not read the triggering event.", { taskId: active.id, cause }),
@@ -2312,31 +2317,38 @@ export const layer = Layer.effect(
     const setThreadEnabled: ScheduledTaskService["Service"]["setThreadEnabled"] = Effect.fn(
       "ScheduledTaskService.setThreadEnabled",
     )(function* (input) {
-      const existing = yield* loadTask(input.id);
-      const current = existing.disabledThreadIds ?? [];
-      if (current.includes(input.threadId) !== input.enabled) return { task: existing };
-      const disabledThreadIds = input.enabled
-        ? current.filter((threadId) => threadId !== input.threadId)
-        : [...current, input.threadId];
-      if (disabledThreadIds.length > MAX_DISABLED_THREADS) {
-        return yield* taskError(
-          `An automation can be off for at most ${MAX_DISABLED_THREADS} threads.`,
-          { taskId: input.id },
-        );
-      }
       const now = iso(yield* localNow);
-      const updated = yield* sql
+      // Read and write in one transaction so two toggles cannot drop each other's thread.
+      const outcome = yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            const [row] = yield* sql<{ disabled_thread_ids_json: string }>`
+              SELECT disabled_thread_ids_json FROM scheduled_tasks WHERE task_id = ${input.id}`;
+            if (row === undefined) return "missing" as const;
+            const current = Option.getOrElse(
+              decodeDisabledThreadsJson(row.disabled_thread_ids_json),
+              (): ReadonlyArray<ThreadId> => [],
+            );
+            if (current.includes(input.threadId) !== input.enabled) return "unchanged" as const;
+            let next = input.enabled
+              ? current.filter((threadId) => threadId !== input.threadId)
+              : [...current, input.threadId];
+            if (next.length > MAX_DISABLED_THREADS) {
+              // Deleted threads no longer need switching off, so they do not count toward the cap.
+              const live = yield* sql<{ thread_id: string }>`
+                SELECT thread_id FROM orchestration_v2_projection_threads
+                WHERE deleted_at IS NULL AND thread_id IN ${sql.in(next)}`;
+              const kept = new Set<string>([input.threadId, ...live.map((t) => t.thread_id)]);
+              next = next.filter((threadId) => kept.has(threadId));
+              if (next.length > MAX_DISABLED_THREADS) return "full" as const;
+            }
             if (!input.enabled) {
               yield* EventTriggers.clearPendingThreadEvents(input.id, input.threadId);
             }
-            return yield* sql<{ task_id: string }>`
-            UPDATE scheduled_tasks
-            SET disabled_thread_ids_json = ${encodeDisabledThreadsJson(disabledThreadIds)},
-                updated_at = ${now}
-            WHERE task_id = ${input.id}
-            RETURNING task_id`;
+            yield* sql`UPDATE scheduled_tasks
+              SET disabled_thread_ids_json = ${encodeDisabledThreadsJson(next)}, updated_at = ${now}
+              WHERE task_id = ${input.id}`;
+            return "updated" as const;
           }),
         )
         .pipe(
@@ -2345,18 +2357,17 @@ export const layer = Layer.effect(
             taskError("Could not update schedule task.", { taskId: input.id, cause }),
           ),
         );
-      if (updated.length === 0) {
+      if (outcome === "missing") {
         return yield* taskError("Schedule task not found.", { taskId: input.id });
       }
-      yield* notifyChanged;
-      const { disabledThreadIds: _previous, ...rest } = existing;
-      return {
-        task: {
-          ...rest,
-          ...(disabledThreadIds.length === 0 ? {} : { disabledThreadIds }),
-          updatedAt: now,
-        },
-      };
+      if (outcome === "full") {
+        return yield* taskError(
+          `An automation can be off for at most ${MAX_DISABLED_THREADS} threads.`,
+          { taskId: input.id },
+        );
+      }
+      if (outcome === "updated") yield* notifyChanged;
+      return { task: yield* loadTask(input.id) };
     });
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(

@@ -307,10 +307,18 @@ export const peekDueEvent = Effect.fn("ScheduledTaskEventTriggers.peekDueEvent")
   taskId: ScheduledTaskId,
   schedule: ScheduledTaskEventSchedule,
   nowIso: string,
+  disabledThreadIds: ReadonlyArray<ThreadId>,
 ) {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
+      // An event queued just before its thread was switched off must not run there.
+      if (disabledThreadIds.length > 0) {
+        yield* sql`UPDATE scheduled_task_event_subjects
+          SET due_at = NULL, event_key = NULL, event_json = NULL, event_count = 0
+          WHERE task_id = ${taskId} AND due_at IS NOT NULL
+            AND subject IN ${sql.in(disabledThreadIds)}`;
+      }
       const hourAgo = isoAfter(nowIso, -HOUR_MS);
       yield* sql`DELETE FROM scheduled_task_event_fires
         WHERE task_id = ${taskId} AND fired_at <= ${hourAgo}`;

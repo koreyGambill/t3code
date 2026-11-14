@@ -358,6 +358,67 @@ it.effect("a thread switched off for a task queues no runs there until it is bac
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("an event queued just before its thread was switched off does not run there", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const sql = yield* SqlClient.SqlClient;
+    yield* insertThread("thread:a");
+    yield* withService(f, (service) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* decode({ ...input, schedule: { type: "event", event: "run_ended" } }),
+        );
+        yield* service.setThreadEnabled({
+          id: task.id,
+          threadId: ThreadId.make("thread:a"),
+          enabled: false,
+        });
+        // A fact read before the switch can still queue its event afterwards.
+        yield* sql`INSERT INTO scheduled_task_event_subjects
+            (task_id, subject, due_at, event_key, event_json, event_count)
+          VALUES (${task.id}, 'thread:a', '1970-01-01T00:00:00.000Z', 'run:late', NULL, 1)`;
+        yield* sql`UPDATE scheduled_tasks SET next_run_at = '1970-01-01T00:00:00.000Z'
+          WHERE task_id = ${task.id}`;
+        yield* f.tick;
+        expect(yield* Ref.get(f.launches)).toHaveLength(0);
+        const pending = yield* sql`SELECT 1 FROM scheduled_task_event_subjects
+          WHERE task_id = ${task.id} AND due_at IS NOT NULL`;
+        expect(pending).toHaveLength(0);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an automation is off for at most 200 live threads", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const sql = yield* SqlClient.SqlClient;
+    const full = Array.from({ length: 200 }, (_, index) => `thread:off-${index}`);
+    for (const threadId of [...full, "thread:new"]) yield* insertThread(threadId);
+    yield* withService(f, (service) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* decode({ ...input, schedule: { type: "event", event: "run_ended" } }),
+        );
+        yield* sql`UPDATE scheduled_tasks SET disabled_thread_ids_json = ${JSON.stringify(full)}
+          WHERE task_id = ${task.id}`;
+        const switchOff = service.setThreadEnabled({
+          id: task.id,
+          threadId: ThreadId.make("thread:new"),
+          enabled: false,
+        });
+        const refused = yield* Effect.flip(switchOff);
+        expect(refused.message).toContain("at most 200 threads");
+        // Deleted threads stop counting, and leave the list.
+        yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '1970-01-02T00:00:00.000Z'
+          WHERE thread_id <> 'thread:off-0' AND thread_id <> 'thread:new'`;
+        const { task: saved } = yield* switchOff;
+        expect(saved.disabledThreadIds).toEqual(["thread:off-0", "thread:new"]);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a task's own turns and threads never retrigger it", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
