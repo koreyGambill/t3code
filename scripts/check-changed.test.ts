@@ -46,6 +46,7 @@ describe("check:changed", () => {
       "apps/server/src/cloud/ConnectReachability.test.ts",
     ]);
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
+    assert.deepStrictEqual(decide([".sparkwing/jobs/gate.ts"], packages, false).affected, []);
   });
 
   it("runs the upstream wire check for any shared contract change", () => {

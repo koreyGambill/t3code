@@ -179,6 +179,8 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       ".repos/**",
+      // Fork-only Sparkwing pipelines: own npm project, checked by its own tsc.
+      ".sparkwing/**",
       "infra/task-cache/vendor/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
@@ -217,6 +219,7 @@ export default defineConfig({
     ignorePatterns: [
       ".repos",
       ".repos/**",
+      ".sparkwing/**",
       "infra/task-cache/vendor/**",
       "dist",
       "dist-electron",

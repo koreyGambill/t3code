@@ -1,0 +1,32 @@
+{
+  "$comment": "Each upstream .github/workflows file and where the fork runs it. upstream-merge reports changed or unlisted workflows against this map. disposition: pipeline | github-only | later.",
+  "workflows": {
+    "ci.yml": { "disposition": "pipeline", "pipeline": "ci", "notes": "rust, the xvfb desktop launch smoke and mobile_native_static_analysis are not ported: no cargo or xvfb-run here, macOS needed" },
+    "agent-context-budget.yml": { "disposition": "pipeline", "pipeline": "ci", "notes": "ci job context-budget; --allow-context-increase stands in for the label" },
+    "windows-tests.yml": { "disposition": "later", "notes": "needs a Windows runner" },
+    "mobile-fingerprint-check.yml": { "disposition": "later", "notes": "needs the mobile toolchain on this host" },
+    "mobile-fingerprint-label.yml": { "disposition": "github-only", "notes": "PR labelling" },
+    "mobile-dev-client.yml": { "disposition": "later", "notes": "Android needs Java and Gradle; iOS needs macOS" },
+    "mobile-eas-preview.yml": { "disposition": "later", "notes": "EAS secrets, PR-shaped" },
+    "mobile-eas-preview-fork.yml": { "disposition": "later", "notes": "EAS secrets, PR-shaped" },
+    "mobile-eas-production.yml": { "disposition": "later", "notes": "store signing, Apple hardware, upstream-only" },
+    "mobile-android-apk.yml": { "disposition": "github-only", "notes": "upstream-only Play mirror" },
+    "mobile-showcase-screenshots.yml": { "disposition": "later", "notes": "simulator or KVM emulator" },
+    "release.yml": { "disposition": "later", "notes": "signing, store, npm and Vercel secrets; mac and Windows hardware. desktop-install covers local installs" },
+    "release-desktop.yml": { "disposition": "later", "notes": "Linux x64 artifact is a candidate release-fork pipeline" },
+    "publish-aur.yml": { "disposition": "github-only", "notes": "upstream-only AUR key" },
+    "desktop-macos-preview.yml": { "disposition": "later", "notes": "macOS signing, PR-shaped" },
+    "desktop-macos-preview-publish.yml": { "disposition": "later", "notes": "macOS signing, PR-shaped" },
+    "deploy-relay.yml": { "disposition": "github-only", "notes": "upstream-only relay deploy" },
+    "relay-preview.yml": { "disposition": "github-only", "notes": "PR previews on upstream infrastructure" },
+    "relay-preview-cleanup.yml": { "disposition": "github-only", "notes": "PR previews on upstream infrastructure" },
+    "web-preview.yml": { "disposition": "github-only", "notes": "Vercel PR previews" },
+    "issue-labels.yml": { "disposition": "github-only", "notes": "issue label sync" },
+    "issue-vouch.yml": { "disposition": "github-only", "notes": "vouch labelling" },
+    "pr-vouch.yml": { "disposition": "github-only", "notes": "vouch labelling" },
+    "pr-limits.yml": { "disposition": "github-only", "notes": "open PR limit" },
+    "pr-size.yml": { "disposition": "github-only", "notes": "PR size labels" },
+    "stale-needs-more-info.yml": { "disposition": "github-only", "notes": "stale issue bot" },
+    "thread-transfer-report.yml": { "disposition": "github-only", "notes": "PR comment; its node --test self-test runs in ci test (release-checks)" }
+  }
+}
