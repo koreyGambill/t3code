@@ -1,15 +1,19 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  NotificationId,
   ScheduledTaskId,
   ThreadId,
   type NotificationSource,
   type NotificationStreamEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -220,3 +224,94 @@ it.effect("limits each thread or automation to ten raises an hour and dedupes wi
     );
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
+
+it.effect("skips a row that no longer decodes and refuses an invalid raise before writing", () =>
+  Effect.gen(function* () {
+    const service = yield* Service.NotificationService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO notifications (id, created_at, updated_at, severity, title, source_json, dedupe_key, repeat_count)
+      VALUES ('notification:legacy', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z', 'info', 'Old', '{"kind":"legacy"}', 'legacy', 0)`;
+    const good = yield* service.raise(raiseInput(agent("t1"), "Lands ran from bash"));
+    const events = yield* subscribe;
+    const snapshot = yield* Queue.take(events);
+    assert.deepStrictEqual(
+      snapshot.items.map((item) => item.id),
+      [good.notification.id],
+    );
+    const read = yield* service.update({
+      ids: [NotificationId.make("notification:legacy"), good.notification.id],
+      action: { type: "read" },
+    });
+    assert.deepStrictEqual(
+      read.items.map((item) => item.id),
+      [good.notification.id],
+    );
+    yield* Queue.take(events);
+    yield* service.update({ ids: [good.notification.id], action: { type: "unread" } });
+    yield* Queue.take(events);
+    assert.deepStrictEqual(yield* service.markAllRead(), { count: 1 });
+    assert.strictEqual((yield* Queue.take(events)).unreadCount, 0);
+
+    const refused = yield* Effect.flip(service.raise(raiseInput(agent("t1"), "x".repeat(121))));
+    assert.strictEqual(refused._tag, "NotificationInvalidError");
+    const rows = yield* sql<{ count: number }>`SELECT count(*) AS count FROM notifications`;
+    assert.strictEqual(rows[0]?.count, 2);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("keeps waking snoozes after a bad row and after a failed pass", () => {
+  const wakeFailed = Deferred.makeUnsafe<void>();
+  const logger = Logger.make(({ message }) => {
+    if (Array.isArray(message) && message[0] === "Notification snooze wake failed; retrying")
+      Deferred.doneUnsafe(wakeFailed, Effect.void);
+  });
+  return Effect.gen(function* () {
+    const service = yield* Service.NotificationService;
+    const sql = yield* SqlClient.SqlClient;
+    const inHours = (hours: number) =>
+      DateTime.now.pipe(Effect.map((now) => DateTime.formatIso(DateTime.add(now, { hours }))));
+    const events = yield* subscribe;
+    yield* Queue.take(events);
+    const first = yield* service.raise(raiseInput(agent("t1"), "first"));
+    const second = yield* service.raise(raiseInput(agent("t1"), "second"));
+    yield* Queue.take(events);
+    yield* Queue.take(events);
+    yield* sql`INSERT INTO notifications (id, created_at, updated_at, severity, title, source_json, snoozed_until, dedupe_key, repeat_count)
+      VALUES ('notification:legacy', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z', 'info', 'Old', '{"kind":"legacy"}', ${yield* inHours(1)}, 'legacy', 0)`;
+    yield* service.update({
+      ids: [first.notification.id],
+      action: { type: "snooze", until: yield* inHours(2) },
+    });
+    yield* Queue.take(events);
+
+    // The bad row wakes first: counts still publish and the same loop wakes the next one.
+    yield* TestClock.adjust("1 hour");
+    assert.deepInclude(yield* Queue.take(events), { type: "upsert", items: [] });
+    yield* TestClock.adjust("1 hour");
+    const woke = yield* Queue.take(events);
+    assert.deepStrictEqual(
+      woke.items.map((item) => item.id),
+      [first.notification.id],
+    );
+
+    // A failed pass keeps its place and retries, so the wake it missed still publishes.
+    yield* service.update({
+      ids: [second.notification.id],
+      action: { type: "snooze", until: yield* inHours(1) },
+    });
+    yield* Queue.take(events);
+    yield* sql`ALTER TABLE notifications RENAME TO notifications_away`;
+    yield* TestClock.adjust("1 hour");
+    yield* Deferred.await(wakeFailed);
+    yield* sql`ALTER TABLE notifications_away RENAME TO notifications`;
+    yield* TestClock.adjust("1 minute");
+    const retried = yield* Queue.take(events);
+    assert.deepStrictEqual(
+      retried.items.map((item) => item.id),
+      [second.notification.id],
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(testLayer.pipe(Layer.provideMerge(Logger.layer([logger])))),
+  );
+});

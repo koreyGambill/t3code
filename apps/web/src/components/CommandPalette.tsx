@@ -1,3 +1,4 @@
+import { useInboxEnvironments } from "../state/inbox";
 import { useThreadContextSidebarStore } from "../threadContextSidebarStore";
 import { openChangeThreadFolder } from "./chat/changeThreadFolderDialogState";
 import { changeThreadFolder } from "../state/xwingEnvironments";
@@ -61,9 +62,11 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  BellIcon,
   BoxesIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  CheckCheckIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -84,6 +87,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  CalendarClockIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -482,6 +486,8 @@ function OpenCommandPaletteDialog(props: {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const markAllNotificationsRead = useAtomCommand(serverEnvironment.markAllNotificationsRead);
+  const inboxes = useInboxEnvironments();
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1858,6 +1864,49 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:inbox",
+    title: "Open inbox",
+    searchTerms: ["inbox", "notifications", "alerts", "status", "snoozed", "dismissed"],
+    icon: <BellIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      useThreadContextSidebarStore.getState().show("inbox");
+    },
+  });
+  if (inboxes.some((group) => group.inbox?.unreadCount)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:inbox-mark-all-read",
+      title: "Mark all notifications read",
+      searchTerms: ["inbox", "notifications", "read", "clear"],
+      icon: <CheckCheckIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await Promise.all(
+          inboxes
+            .filter((group) => group.inbox?.unreadCount)
+            .map((group) =>
+              markAllNotificationsRead({
+                environmentId: group.environment.environmentId,
+                input: {},
+              }),
+            ),
+        );
+      },
+    });
+  }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:automations",
+    title: "Open automations",
+    searchTerms: ["automations", "scheduled tasks", "schedules", "runs", "webhooks", "triggers"],
+    icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      useThreadContextSidebarStore.getState().show("automations");
+    },
+  });
 
   actionItems.push({
     kind: "action",

@@ -102,6 +102,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.statusSourcesSnooze]: AuthOrchestrationOperateScope,
   [WS_METHODS.statusSourcesRotateWebhookSecret]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
+  [WS_METHODS.scheduledTasksSetThreadEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,

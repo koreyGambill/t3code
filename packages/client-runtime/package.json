@@ -91,6 +91,10 @@
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"
     },
+    "./automations": {
+      "types": "./src/automations.ts",
+      "default": "./src/automations.ts"
+    },
     "./scheduled-task-time-zone": {
       "types": "./src/scheduledTaskTimeZone.ts",
       "default": "./src/scheduledTaskTimeZone.ts"
@@ -162,6 +166,10 @@
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
+    },
+    "./state/notifications": {
+      "types": "./src/state/notifications.ts",
+      "default": "./src/state/notifications.ts"
     },
     "./state/auth": {
       "types": "./src/state/auth.ts",

@@ -379,8 +379,8 @@ it.effect.each([
             payload: { threadId: ThreadId.make(input.threadId), status: "completed" },
           } as unknown as OrchestrationV2DomainEvent);
         }
-        let tasks = yield* Queue.take(updates);
-        while (tasks[0]?.nextRunAt !== nowIso) tasks = yield* Queue.take(updates);
+        // Buffered emissions can predate the event, so check stored state after each change.
+        while ((yield* service.list()).tasks[0]?.nextRunAt !== nowIso) yield* Queue.take(updates);
         // No clock advance: the event made the wake due now.
         yield* f.tick;
         const sent = yield* Ref.get(f.sends);

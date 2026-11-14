@@ -161,6 +161,7 @@ export const responseForClient = {
         },
   [WS_METHODS.scheduledTasksUpsert]: scheduledTaskResultForClient,
   [WS_METHODS.scheduledTasksSetEnabled]: scheduledTaskResultForClient,
+  [WS_METHODS.scheduledTasksSetThreadEnabled]: scheduledTaskResultForClient,
   [WS_METHODS.scheduledTasksRunNow]: scheduledTaskResultForClient,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: scheduledTaskResultForClient,
   // An unauthorized link must be linked again, as an expired one must.
@@ -248,6 +249,8 @@ export function scheduledTasksForClient(
         ? service.upsert(input)
         : Effect.andThen(refuseHidden(input.id), service.upsert(input)),
     setEnabled: (input) => Effect.andThen(refuseHidden(input.id), service.setEnabled(input)),
+    setThreadEnabled: (input) =>
+      Effect.andThen(refuseHidden(input.id), service.setThreadEnabled(input)),
     runNow: (input) => Effect.andThen(refuseHidden(input.id), service.runNow(input)),
     delete: (input) => Effect.andThen(refuseHidden(input.id), service.delete(input)),
     rotateWebhookToken: (input) =>

@@ -462,6 +462,7 @@ import {
   ScheduledTaskGetWebhookDeliveryInput,
   ScheduledTaskGetWebhookDeliveryResult,
   ScheduledTaskListRunsInput,
+  ScheduledTaskSetThreadEnabledInput,
   ScheduledTaskListRunsResult,
   ScheduledTaskRunNowResult,
   ScheduledTaskSetEnabledInput,
@@ -754,6 +755,7 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
   scheduledTasksListRuns: "scheduledTasks.listRuns",
+  scheduledTasksSetThreadEnabled: "scheduledTasks.setThreadEnabled",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2617,6 +2619,12 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
   },
 );
 
+const WsScheduledTasksSetThreadEnabledRpc = Rpc.make(WS_METHODS.scheduledTasksSetThreadEnabled, {
+  payload: ScheduledTaskSetThreadEnabledInput,
+  success: ScheduledTaskMutationResult,
+  error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksListRunsRpc = Rpc.make(WS_METHODS.scheduledTasksListRuns, {
   payload: ScheduledTaskListRunsInput,
   success: ScheduledTaskListRunsResult,
@@ -2728,6 +2736,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsScheduledTasksListRunsRpc,
+  WsScheduledTasksSetThreadEnabledRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

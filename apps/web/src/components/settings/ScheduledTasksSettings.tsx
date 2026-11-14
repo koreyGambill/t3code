@@ -704,6 +704,8 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
+  /** Opens the editor for a new task once, as the Automations view's New button asks. */
+  readonly new?: true | undefined;
 }) {
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
   const [editor, setEditor] = useState<{
@@ -748,10 +750,10 @@ export function ScheduledTasksSettings(target: {
   const navigate = useNavigate({ from: "/settings/scheduled-tasks" });
   const closeEditor = () => {
     setEditor(null);
-    if (target.taskId === undefined) return;
+    if (target.taskId === undefined && target.new === undefined) return;
     void navigate({
       to: "/settings/scheduled-tasks",
-      search: ({ taskId: _closed, ...rest }) => rest,
+      search: ({ taskId: _closed, new: _created, ...rest }) => rest,
       replace: true,
     });
   };
@@ -767,6 +769,15 @@ export function ScheduledTasksSettings(target: {
     permittedEnvironments.find(
       (entry) => entry.environmentId === defaultEnvironment?.environmentId,
     ) ?? permittedEnvironments[0];
+  const [openedNew, setOpenedNew] = useState(false);
+  if (target.new === undefined && openedNew) setOpenedNew(false);
+  const newEnvironment =
+    permittedEnvironments.find((entry) => entry.environmentId === target.environmentId) ??
+    creationEnvironment;
+  if (target.new && !openedNew && editor === null && newEnvironment) {
+    setOpenedNew(true);
+    setEditor({ environmentId: newEnvironment.environmentId, task: null });
+  }
   return (
     <SettingsPageContainer>
       <SettingsSection

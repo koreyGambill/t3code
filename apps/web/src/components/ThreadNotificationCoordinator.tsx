@@ -3,15 +3,23 @@ import {
   type PendingSubagentRequest,
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { createNotificationAlertGate } from "@t3tools/client-runtime/state/notifications";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  Notification as InboxNotification,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
 import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
-import type { AtomRegistry } from "effect/reactivity";
+import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import {
+  BellIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   MessageCircleQuestionIcon,
@@ -21,6 +29,8 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
+import { serverEnvironment } from "../state/server";
+import { useThreadContextSidebarStore } from "../threadContextSidebarStore";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import { isThreadVisible, showThreadAttention } from "../threadAttention";
@@ -254,6 +264,76 @@ export function startThreadNotifications(
     }
   };
 
+  // Critical alerts whatever the focus; warnings alert only away from the app, toasting inside it.
+  const presentInbox = (environmentId: EnvironmentId, item: InboxNotification) => {
+    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const critical = item.severity === "critical";
+    const looking = document.visibilityState === "visible" && document.hasFocus();
+    const openInbox = () => {
+      useThreadContextSidebarStore
+        .getState()
+        .show("inbox", { notification: { environmentId, id: item.id } });
+      void runAtomCommand(
+        registry,
+        serverEnvironment.updateNotifications,
+        { environmentId, input: { ids: [item.id], action: { type: "read" } } },
+        { reportFailure: false },
+      );
+    };
+    if (critical && hasNotificationSound(mode)) {
+      void playNotificationSound("input", () =>
+        hasNotificationSound(getClientSettings().notificationMode),
+      );
+    }
+    if (looking && inAppNotificationsEnabled) {
+      const toastId: ToastId = toastManager.add({
+        type: critical ? "error" : "warning",
+        title: item.title,
+        description: critical ? "Critical notification" : "Warning",
+        data: {
+          hideCopyButton: true,
+          leadingIcon: (
+            <BellIcon
+              aria-hidden
+              className={
+                critical ? "size-4 text-destructive-foreground" : "size-4 text-warning-foreground"
+              }
+            />
+          ),
+        },
+        actionProps: {
+          children: "Open inbox",
+          onClick: () => {
+            toastManager.close(toastId);
+            openInbox();
+          },
+        },
+      });
+    }
+    if (
+      !hasDesktopNotifications(mode) ||
+      (looking && !critical) ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    )
+      return;
+    try {
+      const notification = new Notification(`${critical ? "Critical" : "Warning"}: ${item.title}`, {
+        body: item.body?.slice(0, 200) ?? "",
+        tag: `inbox:${environmentId}:${item.id}`,
+        silent: true,
+      });
+      notification.addEventListener("click", () => {
+        notification.close();
+        window.focus();
+        void window.desktopBridge?.revealWindow().catch(() => undefined);
+        openInbox();
+      });
+    } catch {
+      // Some browsers expose Notification but reject desktop presentation.
+    }
+  };
+
   const observeThreads = (
     environmentId: EnvironmentId,
     entry: WatchedEnvironment,
@@ -372,7 +452,34 @@ export function startThreadNotifications(
       environmentThreadShells.delegatedUnderParentAtom,
       reobserve,
     );
+    // The inbox stream exists only on servers that announce it.
+    let stopInbox: (() => void) | null = null;
+    const unsubscribeConfig = registry.subscribe(
+      serverEnvironment.configValueAtom(environmentId),
+      (config) => {
+        const supported = config?.environment.capabilities.notifications === true;
+        if (supported && stopInbox === null) {
+          const gate = createNotificationAlertGate();
+          stopInbox = registry.subscribe(
+            serverEnvironment.notificationsLive({ environmentId, input: {} }),
+            (result) => {
+              const inbox = AsyncResult.getOrElse(result, () => null);
+              if (!inbox) return;
+              for (const item of gate.observe(inbox.items, Date.now()))
+                presentInbox(environmentId, item);
+            },
+            { immediate: true },
+          );
+        } else if (!supported && stopInbox !== null) {
+          stopInbox();
+          stopInbox = null;
+        }
+      },
+      { immediate: true },
+    );
     entry.unsubscribe = () => {
+      unsubscribeConfig();
+      stopInbox?.();
       unsubscribeShell();
       unsubscribeRequests();
       unsubscribeDelegated();

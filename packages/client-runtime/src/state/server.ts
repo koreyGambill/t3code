@@ -13,6 +13,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Deferred from "effect/Deferred";
@@ -43,6 +44,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
+import { applyNotificationEvent, EMPTY_NOTIFICATION_INBOX } from "./notifications.ts";
 import {
   currentSession,
   isRpcClientError,
@@ -1497,6 +1499,21 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:runs",
       tag: WS_METHODS.scheduledTasksListRuns,
     }),
+    notificationsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:notifications:live",
+      tag: WS_METHODS.notificationsSubscribe,
+      idleTtlMs: 0,
+      // `scan` emits its seed first; skipping it keeps the inbox loading until the snapshot.
+      transform: (events) =>
+        events.pipe(
+          Stream.mapEffect((event) => Effect.map(Clock.currentTimeMillis, (at) => ({ event, at }))),
+          Stream.scan(
+            () => EMPTY_NOTIFICATION_INBOX,
+            (inbox, { event, at }) => applyNotificationEvent(inbox, event, at),
+          ),
+          Stream.filter((inbox) => inbox !== EMPTY_NOTIFICATION_INBOX),
+        ),
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1768,6 +1785,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    setScheduledTaskThreadEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:set-thread-enabled",
+      tag: WS_METHODS.scheduledTasksSetThreadEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     deleteScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:delete",
       tag: WS_METHODS.scheduledTasksDelete,
@@ -1786,6 +1809,15 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    updateNotifications: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:notifications:update",
+      tag: WS_METHODS.notificationsUpdate,
+    }),
+    markAllNotificationsRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:notifications:mark-all-read",
+      tag: WS_METHODS.notificationsMarkAllRead,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",

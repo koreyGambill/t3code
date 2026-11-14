@@ -202,6 +202,11 @@ it.effect("t3_notify raises from the calling thread and links the thread it name
       "thread was not found",
     );
     expect((yield* notify({ title: "x" }, false)).isError).toBe(true);
+    const tooLong = yield* Effect.flip(notify({ title: "x".repeat(121) }));
+    expect(tooLong.message).toContain("at most 120");
+    expect(
+      Option.getOrThrow(yield* notifications.subscribe().pipe(Stream.runHead)).items,
+    ).toHaveLength(2);
     for (let index = 0; index < NotificationService.RATE_LIMIT_PER_HOUR - 3; index++)
       yield* notify({ title: `finding ${index}` });
     expect(JSON.stringify((yield* notify({ title: "one too many" })).content)).toContain(
