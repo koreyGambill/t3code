@@ -153,7 +153,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         })
         .pipe(
           Effect.mapError((error) =>
-            error._tag === "NotificationRateLimitedError"
+            error._tag === "NotificationRateLimitedError" ||
+            error._tag === "NotificationInvalidError"
               ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
               : unavailable(),
           ),
