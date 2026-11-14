@@ -2050,6 +2050,7 @@ export default function ChatView(props: ChatViewProps) {
     closeOtherSurfaces: closeOtherRightPanelSurfacesStable,
     closeSurfacesToRight: closeRightPanelSurfacesToRightStable,
     closeAllSurfaces: closeAllRightPanelSurfacesStable,
+    closeSurfacesWithoutTerminalPrompt: closeTileSurfacesStable,
   } = useRightPanelSurfaceClose({
     threadRef: activeThreadRef,
     terminalLabelsById: activeTerminalLabelsById,
@@ -3222,6 +3223,7 @@ export default function ChatView(props: ChatViewProps) {
           splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
           newShortcutLabel: newTerminalShortcutLabel ?? undefined,
           closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
+          hideSessionActions: tiledWorkspace,
         }}
         pullRequest={{
           capabilityKnown: pullRequestsCapabilityKnown,
@@ -4006,14 +4008,6 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread && activeThreadRef && reviewsSupported
         ? () => useRightPanelStore.getState().add(activeThreadRef, "notes")
         : undefined,
-    onAddInspect:
-      isServerThread && activeThreadRef
-        ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
-        : undefined,
-    onAddReviews:
-      isServerThread && activeThreadRef && reviewsSupported
-        ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
-        : undefined,
     onAddPullRequest: addPullRequestSurfaceStable,
     onAddPullRequests: addPullRequestsSurfaceStable,
     onAddDevice: addDeviceSurfaceStable,
@@ -4050,6 +4044,8 @@ export default function ChatView(props: ChatViewProps) {
             header={conversationHeader}
             conversation={conversationColumn}
             panels={tiledPanels}
+            runningTerminalIds={runningTerminalIds}
+            onCloseTileSurfaces={closeTileSurfacesStable}
             renderSurface={renderPanelSurface}
           />
         </>
@@ -4106,16 +4102,6 @@ export default function ChatView(props: ChatViewProps) {
           onAddNotes={
             isServerThread && activeThreadRef && reviewsSupported
               ? () => useRightPanelStore.getState().add(activeThreadRef, "notes")
-              : undefined
-          }
-          onAddInspect={
-            isServerThread && activeThreadRef
-              ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
-              : undefined
-          }
-          onAddReviews={
-            isServerThread && activeThreadRef && reviewsSupported
-              ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
               : undefined
           }
           onAddPullRequest={addPullRequestSurfaceStable}

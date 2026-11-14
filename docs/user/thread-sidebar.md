@@ -55,12 +55,27 @@ Pick a recent folder, a project, or a linked Xwing environment, or enter a path.
 The thread keeps its history. Its next turn starts a new agent session in that
 folder with the conversation carried over. Finish or stop any work before moving.
 
-Open the right thread sidebar with `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows
-and Linux. It follows the focused tile. Pin it to keep one thread while you move
-between tiles or conversations. The last view, open state and width stay on this
-device. Choose a view from the right rail. Selecting the active view collapses the
-panel to the rail. Maximize the panel for more room and press Escape to restore it.
-Artifacts can also open in a tile.
+The left sidebar also holds tools for the current thread: Todos, Artifacts,
+Links, Related, Details, Environments and Inspect, plus status and watcher
+alerts. Pick a tool from the strip beside the thread list; pick it again, or the
+Weavewing mark, to return to your threads. `Cmd+Alt+I` on macOS or `Ctrl+Alt+I`
+on Windows and Linux switches between your threads and the last tool, and opens
+a hidden sidebar on that tool. While the sidebar is hidden, its toggle shows when
+something needs you, such as an unanswered question or a status alert. The tools
+follow the focused tile; pin them to keep one thread while you move between
+tiles. Hide tools you don't use from the bottom of the strip. Opening a hidden
+tool from elsewhere, such as an artifact reminder, shows it again.
+
+Links, Artifacts and Related have a filter box, and each row can copy its link,
+ticket ID or thread link. Links also filters by service, sorts, and copies every
+shown link at once.
+
+**Todos** holds the commitments you and agents track for a thread. New items are
+yours; give one to the agent before adding it, or change who is responsible from
+the item's menu. Items nest up to three levels: indent and outdent from the item's
+menu, or press Tab and Shift+Tab while editing its text. Select an item's text to
+edit it and its note. Filter the list to your items or the agent's, and show done
+and dropped items when you need them. These choices stay on this device.
 
 The sidebar's **Environments** view shows Xwing environments used by the thread
 and its delegated children. Open an environment to see its repositories and apps,

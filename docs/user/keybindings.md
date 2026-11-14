@@ -217,7 +217,6 @@ Change **Settings → General → Confirmations → Quit shortcut** to **Direct*
 single press or **Double press** for two presses only. Choosing **Quit** from the
 application menu always quits immediately.
 
-Toggle the thread sidebar with `mod+alt+i` (`threadContext.toggle`). It follows the
-focused tile. Pin it to keep one thread while you switch tiles or conversations.
-The sidebar remembers its last view, open state and width on this device. Press
-Escape to restore a maximized sidebar. Artifacts also open from the tile menu.
+Switch the left sidebar between the thread list and your last thread tool with
+`mod+alt+i` (`threadContext.toggle`). If the sidebar is hidden, it opens on
+that tool.

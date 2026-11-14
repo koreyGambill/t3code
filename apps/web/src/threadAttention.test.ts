@@ -36,19 +36,17 @@ it("recognizes only displayed conversations across tiles, Focus, floating panes 
   const maximized = applyTileAction(floating, { type: "maximize", groupId: "panels-group" });
   expect(visible(child, maximized)).toBe(true);
   expect(visible(host, maximized)).toBe(false);
-  const focus = applyTileAction(split, { type: "focus-pair", groupId: "panels-group" });
-  expect(visible(host, focus)).toBe(true);
-  expect(visible(child, focus)).toBe(true);
-  const focusLeft = applyTileAction(focus, { type: "focus-left", tabId: "files" });
-  expect(visible(host, focusLeft)).toBe(false);
-  expect(visible(child, focusLeft)).toBe(true);
-  const selectedLeft = applyTileAction(focus, { type: "focus-left", tabId: "conversation" });
-  const selectedMax = applyTileAction(selectedLeft, {
+  const underFloating = applyTileAction(floating, {
     type: "maximize",
-    groupId: "focus-left-group",
+    groupId: "conversation-group",
   });
-  expect(visible(host, selectedMax)).toBe(true);
-  expect(visible(child, selectedMax)).toBe(false);
+  expect(visible(child, underFloating)).toBe(true);
+  const paired = applyTileAction(
+    applyTileAction(split, { type: "maximize", groupId: "conversation-group" }),
+    { type: "show-beside", groupId: "panels-group" },
+  );
+  expect(visible(host, paired)).toBe(true);
+  expect(visible(child, paired)).toBe(true);
 });
 
 it("expires after one second and replaces a burst without an older timer clearing the new glyph", () => {

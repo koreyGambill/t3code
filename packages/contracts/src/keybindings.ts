@@ -67,6 +67,11 @@ export const WORKSPACE_TILE_KEYBINDING_COMMANDS = [
   "workspace.tile.maximize",
   "workspace.tile.resize",
   "workspace.tile.focusPair",
+  "workspace.tile.swap",
+  "workspace.tile.float",
+  "workspace.tile.newTab",
+  "workspace.tile.closeTab",
+  "workspace.tile.actions",
   "workspace.tile.previousTab",
   "workspace.tile.nextTab",
 ] as const;

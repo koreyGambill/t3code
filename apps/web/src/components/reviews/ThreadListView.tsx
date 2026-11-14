@@ -11,30 +11,73 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  LoaderCircleIcon,
-  PlusIcon,
+  BotIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
+  ListChecksIcon,
+  LoaderCircleIcon,
   MoreHorizontalIcon,
+  NotebookTextIcon,
+  PlusIcon,
+  UserIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
+import { cn } from "../../lib/utils";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadArtifactList, threadListRead, threadListUpdate } from "../../state/threadWorkspace";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useRightPanelStore } from "../../rightPanelStore";
 import { useThreadContextSidebarStore } from "../../threadContextSidebarStore";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
+import { Empty, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import {
+  todoIndentMove,
+  todoTabUpdate,
+  todoTree,
+  visibleTodoIds,
+  type TodoFilter,
+  type TodoNode,
+} from "./todoList.logic";
+
+type Owner = ListItem["owner"];
+type Change = ThreadListUpdateInput["changes"][number];
+
+const filterLabels: Record<TodoFilter, string> = { all: "All", mine: "Mine", agents: "Agents" };
+
+/** A radio item's label with its check on the right, which the menu's radio items omit. */
+export function CheckedLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="flex items-center justify-between gap-4">
+      {children}
+      <MenuRadioItemIndicator />
+    </span>
+  );
+}
+
+const ownerLabel = (owner: Owner) =>
+  owner === "agent" ? "Agent is responsible" : "You're responsible";
 
 export function ThreadListView({
   threadRef,
@@ -64,13 +107,19 @@ export function ThreadListView({
   );
   const canWrite = useAtomValue(threadListUpdate.permissionAtom(threadRef.environmentId));
   const update = useAtomCommand(threadListUpdate, { reportFailure: false });
+  const filter = useThreadContextSidebarStore((state) => state.todoFilter);
+  const showClosed = useThreadContextSidebarStore((state) => state.todoShowClosed);
   const newItemRef = useRef<HTMLInputElement>(null);
   const [saved, setSaved] = useState<ThreadListEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
-  const [history, setHistory] = useState(false);
+  const [owner, setOwner] = useState<Owner>("you");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [parent, setParent] = useState<ListItem | null>(null);
+  const [notesOpen, setNotesOpen] = useState(true);
+  // Kept here so an item's editor stays open when indenting moves its row to a new parent.
+  const [editing, setEditing] = useState<string | null>(null);
+  const focusTextRef = useRef<string | null>(null);
   const [error, setError] = useState("");
   const remote = supplied ?? query.data?.[0];
   const entry = saved && (!remote || saved.revision > remote.revision) ? saved : remote;
@@ -79,115 +128,169 @@ export function ThreadListView({
     setBusy(true);
     setError("");
     let ok = false;
-    {
-      const result = await update({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId, expectedRevision: entry.revision, ...change },
+    const result = await update({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, expectedRevision: entry.revision, ...change },
+    });
+    if (result._tag === "Success") {
+      ok = true;
+      setSaved({
+        ...entry,
+        ...result.value,
+        items: supplied ? result.value.items.filter((item) => item.needsQa) : result.value.items,
       });
-      if (result._tag === "Success") {
-        ok = true;
-        setSaved({
-          ...entry,
-          ...result.value,
-          items: supplied ? result.value.items.filter((item) => item.needsQa) : result.value.items,
-        });
-        query.refresh();
-        artifacts.refresh();
-        onRefresh?.();
-      } else {
-        const cause = squashAtomCommandFailure(result);
-        setError(cause instanceof Error ? cause.message : String(cause));
-        query.refresh();
-      }
+      query.refresh();
+      artifacts.refresh();
+      onRefresh?.();
+    } else {
+      const cause = squashAtomCommandFailure(result);
+      setError(cause instanceof Error ? cause.message : String(cause));
+      query.refresh();
     }
     setBusy(false);
     return ok;
   };
   if (!readable)
-    return (
-      <p className="p-3 text-xs text-muted-foreground">This connection cannot read the list.</p>
-    );
+    return <p className="text-xs text-muted-foreground">This connection cannot read todos.</p>;
   if (!entry)
-    return <p className="p-3 text-xs text-muted-foreground">{query.error ?? "Loading list…"}</p>;
-  const shown = entry.items.filter(
-    (item) => supplied || history || item.state === "open" || item.state === "handed_off",
-  );
-  const children = (id: string): ListItem[] =>
-    entry.items
-      .filter((item) => item.parentId === id)
-      .flatMap((item) => [item, ...children(item.id)]);
-  const rows = (parentId: string | null, depth: number): { item: ListItem; depth: number }[] =>
-    shown
-      .filter((item) =>
-        parentId === null
-          ? !item.parentId || !shown.some((parent) => parent.id === item.parentId)
-          : item.parentId === parentId,
-      )
-      .flatMap((item) => [
-        { item, depth },
-        ...(collapsed.has(item.id) || depth >= LIST_MAX_DEPTH - 1 ? [] : rows(item.id, depth + 1)),
-      ]);
-  const ordered = rows(null, 0);
+    return <p className="text-xs text-muted-foreground">{query.error ?? "Loading todos…"}</p>;
+  const tree = supplied
+    ? todoTree(entry.items, { filter: "all", showClosed: true })
+    : todoTree(entry.items, { filter, showClosed });
+  const done = entry.items.filter((item) => item.state === "done").length;
   const move = (id: string, direction: number) => {
     const order = entry.items.map((item) => item.id);
-    const from = order.indexOf(id),
-      to = from + direction;
+    const from = order.indexOf(id);
+    const to = from + direction;
     if (to < 0 || to >= order.length) return;
     [order[from], order[to]] = [order[to]!, order[from]!];
     void mutate({ changes: [], order });
   };
+  const visible = visibleTodoIds(tree);
+  /** `draftText` is undefined from the menu, and the editor's draft (or null) from Tab. */
+  const indent = (id: string, direction: "in" | "out", draftText?: string | null) => {
+    const update = todoTabUpdate(entry.items, id, draftText ?? null, direction, visible);
+    if (!update) return false;
+    focusTextRef.current = draftText === undefined ? null : id;
+    void mutate(update);
+    return true;
+  };
+  const artifactCounts = new Map(
+    artifacts.data?.map((artifact) => [artifact.id, artifact.unansweredQuestions]),
+  );
+  const artifactTitles = new Map(artifacts.data?.map((artifact) => [artifact.id, artifact.title]));
+  const renderBranch = (node: TodoNode, depth: number) => (
+    <div key={node.item.id} role="listitem">
+      <TodoRow
+        crossThread={Boolean(supplied)}
+        node={node}
+        expanded={editing === node.item.id}
+        onExpandedChange={(open) => setEditing(open ? node.item.id : null)}
+        takeTextFocus={() => {
+          if (focusTextRef.current !== node.item.id) return false;
+          focusTextRef.current = null;
+          return true;
+        }}
+        collapsed={collapsed.has(node.item.id)}
+        onToggle={() =>
+          setCollapsed((current) => {
+            const next = new Set(current);
+            if (next.has(node.item.id)) next.delete(node.item.id);
+            else next.add(node.item.id);
+            return next;
+          })
+        }
+        onAddChild={depth < LIST_MAX_DEPTH - 1 ? () => setParent(node.item) : undefined}
+        newItemRef={newItemRef}
+        disabled={!canWrite || busy}
+        onChange={(change) => void mutate({ changes: [{ id: node.item.id, ...change }] })}
+        onMove={supplied ? undefined : (direction) => move(node.item.id, direction)}
+        canIndent={
+          !supplied && todoIndentMove(entry.items, node.item.id, "in", visible) !== undefined
+        }
+        canOutdent={
+          !supplied && todoIndentMove(entry.items, node.item.id, "out", visible) !== undefined
+        }
+        onIndent={(direction, draftText) => indent(node.item.id, direction, draftText)}
+        artifactCounts={artifactCounts}
+        artifactTitles={artifactTitles}
+        threadRef={threadRef}
+      />
+      {node.children.length && !collapsed.has(node.item.id) ? (
+        <div role="list" className="ml-[7px] border-l border-border/60 pl-2">
+          {node.children.map((child) => renderBranch(child, depth + 1))}
+        </div>
+      ) : null}
+    </div>
+  );
   return (
-    <div className="@container mx-auto w-full max-w-4xl space-y-3 text-xs">
-      <div className="flex items-center justify-between">
-        <span>
-          {entry.items.filter((item) => item.state === "done").length}/{entry.items.length} done
-        </span>
-        {!supplied ? (
-          <Button variant="ghost" size="xs" onClick={() => setHistory(!history)}>
-            {history ? "Hide history" : "Show history"}
-          </Button>
-        ) : null}
+    <div className="@container mx-auto w-full max-w-4xl space-y-2 text-xs">
+      {!supplied ? (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <Menu>
+            <MenuTrigger render={<Button variant="outline" size="xs" aria-label="Filter todos" />}>
+              {filterLabels[filter]}
+              {showClosed ? " · with done" : ""}
+              <ChevronDownIcon />
+            </MenuTrigger>
+            <MenuPopup align="start">
+              <MenuGroup>
+                <MenuGroupLabel>Responsible</MenuGroupLabel>
+                <MenuRadioGroup
+                  value={filter}
+                  onValueChange={(next) => {
+                    if (next === "all" || next === "mine" || next === "agents")
+                      useThreadContextSidebarStore.getState().setTodoFilter(next);
+                  }}
+                >
+                  {(["all", "mine", "agents"] as const).map((value) => (
+                    <MenuRadioItem key={value} value={value}>
+                      <CheckedLabel>{filterLabels[value]}</CheckedLabel>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuGroup>
+              <MenuSeparator />
+              <MenuCheckboxItem
+                variant="switch"
+                checked={showClosed}
+                onCheckedChange={(checked) =>
+                  useThreadContextSidebarStore.getState().setTodoShowClosed(checked)
+                }
+              >
+                Show done and dropped
+              </MenuCheckboxItem>
+            </MenuPopup>
+          </Menu>
+          {entry.items.length ? (
+            <span
+              className="ml-auto shrink-0 tabular-nums text-muted-foreground"
+              aria-label={`${done} of ${entry.items.length} done`}
+            >
+              {done}/{entry.items.length}
+              <span className="hidden @min-[22rem]:inline"> done</span>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      <div role="list" aria-label="Todos">
+        {tree.map((node) => renderBranch(node, 0))}
       </div>
-      <div className="space-y-1" aria-label="Thread list">
-        {ordered.map(({ item, depth }) => (
-          <div key={item.id} className={depth === 2 ? "ml-4" : depth === 1 ? "ml-2" : ""}>
-            <ListRow
-              item={item}
-              progress={
-                children(item.id).length
-                  ? `${children(item.id).filter((child) => child.state === "done").length}/${children(item.id).length}`
-                  : null
-              }
-              collapsed={collapsed.has(item.id)}
-              onToggle={() =>
-                setCollapsed((current) => {
-                  const next = new Set(current);
-                  if (next.has(item.id)) next.delete(item.id);
-                  else next.add(item.id);
-                  return next;
-                })
-              }
-              onAddChild={depth < LIST_MAX_DEPTH - 1 ? () => setParent(item) : undefined}
-              newItemRef={newItemRef}
-              disabled={!canWrite || busy}
-              onChange={(changes) => void mutate({ changes: [{ id: item.id, ...changes }] })}
-              onMove={supplied ? undefined : (direction) => move(item.id, direction)}
-              artifactCounts={
-                new Map(
-                  artifacts.data?.map((artifact) => [artifact.id, artifact.unansweredQuestions]),
-                )
-              }
-              artifactTitles={
-                new Map(artifacts.data?.map((artifact) => [artifact.id, artifact.title]))
-              }
-              threadRef={threadRef}
-            />
-          </div>
-        ))}
-        {!ordered.length ? <p className="text-muted-foreground">No open items.</p> : null}
-      </div>
-      {entry.summaryNotes ? (
-        <p className="whitespace-pre-wrap text-muted-foreground">{entry.summaryNotes}</p>
+      {!tree.length ? (
+        entry.items.length ? (
+          <p className="px-1 py-2 text-muted-foreground">
+            Nothing here. {filter === "all" ? "Show done and dropped to see the rest." : "Try All."}
+          </p>
+        ) : (
+          <Empty size="compact">
+            <EmptyMedia variant="icon">
+              <ListChecksIcon />
+            </EmptyMedia>
+            <EmptyDescription>
+              No todos yet. Add one below, or ask an agent to track its work here.
+            </EmptyDescription>
+          </Empty>
+        )
       ) : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive">
@@ -196,12 +299,12 @@ export function ThreadListView({
       ) : null}
       {!supplied ? (
         <form
-          className="space-y-2"
+          className="space-y-1.5"
           onSubmit={(event) => {
             event.preventDefault();
             if (text.trim())
               void mutate({
-                changes: [{ text: text.trim(), owner: "you", parentId: parent?.id ?? null }],
+                changes: [{ text: text.trim(), owner, parentId: parent?.id ?? null }],
               }).then((ok) => {
                 if (ok) {
                   setText("");
@@ -211,27 +314,47 @@ export function ThreadListView({
           }}
         >
           {parent ? (
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
               <span className="min-w-0 flex-1 truncate">Under: {parent.text}</span>
               <Button size="xs" variant="ghost" onClick={() => setParent(null)}>
                 Cancel
               </Button>
             </div>
           ) : null}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`New todo owner: ${owner === "you" ? "you" : "agent"}`}
+                    disabled={!canWrite || busy}
+                    onClick={() => setOwner(owner === "you" ? "agent" : "you")}
+                  />
+                }
+              >
+                {owner === "agent" ? <BotIcon /> : <UserIcon />}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {owner === "agent" ? "For the agent" : "For you"} · click to switch
+              </TooltipPopup>
+            </Tooltip>
             <Input
               ref={newItemRef}
-              aria-label="New list item"
-              placeholder="Add an item…"
+              size="compact"
+              aria-label="New todo"
+              placeholder="Add a todo…"
               value={text}
               disabled={!canWrite || busy}
               onChange={(event) => setText(event.target.value)}
             />
             <Button
               type="submit"
-              size="icon"
-              variant="outline"
-              aria-label="Add list item"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Add todo"
               disabled={!canWrite || busy || !text.trim()}
             >
               <PlusIcon />
@@ -239,13 +362,28 @@ export function ThreadListView({
           </div>
         </form>
       ) : null}
+      {entry.summaryNotes ? (
+        <section>
+          <CollapsibleSectionHeader expanded={notesOpen} onClick={() => setNotesOpen(!notesOpen)}>
+            Notes
+          </CollapsibleSectionHeader>
+          {notesOpen ? (
+            <p className="whitespace-pre-wrap px-2 pb-1 leading-5 text-muted-foreground">
+              {entry.summaryNotes}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
 
-function ListRow({
-  item,
-  progress,
+function TodoRow({
+  crossThread,
+  node,
+  expanded,
+  onExpandedChange,
+  takeTextFocus,
   collapsed,
   onToggle,
   onAddChild,
@@ -253,114 +391,63 @@ function ListRow({
   disabled,
   onChange,
   onMove,
+  canIndent,
+  canOutdent,
+  onIndent,
   artifactCounts,
   artifactTitles,
   threadRef,
 }: {
-  item: ListItem;
-  progress: string | null;
+  crossThread: boolean;
+  node: TodoNode;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  /** True once, for the row whose text keeps focus after Tab moved it. */
+  takeTextFocus: () => boolean;
   collapsed: boolean;
   onToggle: () => void;
   onAddChild: (() => void) | undefined;
   newItemRef: React.RefObject<HTMLInputElement | null>;
   disabled: boolean;
-  onChange: (change: ThreadListUpdateInput["changes"][number]) => void;
+  onChange: (change: Omit<Change, "id">) => void;
   onMove?: ((direction: number) => void) | undefined;
+  canIndent: boolean;
+  canOutdent: boolean;
+  onIndent: (direction: "in" | "out", draftText?: string | null) => boolean;
   artifactCounts: Map<string, number>;
   artifactTitles: Map<string, string>;
   threadRef: ScopedThreadRef;
 }) {
+  const { item, progress } = node;
   const focusNewItem = useRef(false);
-  const [expanded, setExpanded] = useState(false);
+  // Tab already wrote the text with the move, so the blur that follows must not write it again.
+  const skipBlurSave = useRef(false);
+  const [textRef] = useState(() => (input: HTMLInputElement | null) => {
+    if (input && takeTextFocus()) input.focus();
+  });
   const [details, setDetails] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
   const terminal = item.state === "done" || item.state === "dropped";
   const openLink = listItemNeedsHandoff(item);
-  const links = item.links.map((link) => {
-    const state = item.linkStates?.find(
-      (live) => live.type === link.type && live.target === link.target,
-    );
-    const label =
-      (link.type === "artifact" ? artifactTitles.get(link.target) : undefined) ??
-      (link.type === "ticket" ? link.target : state?.title) ??
-      link.target;
-    const count = link.type === "artifact" ? artifactCounts.get(link.target) : undefined;
-    const content = (
-      <>
-        {link.type === "thread" && state?.state === "open" ? (
-          <LoaderCircleIcon className="size-3" aria-label="Lane running" />
-        ) : null}
-        <span className="min-w-0 truncate">
-          {label}
-          {state && link.type !== "artifact" ? ` · ${state.label}` : ""}
-        </span>
-        {count ? <span className="shrink-0">· {count}</span> : null}
-      </>
-    );
-    const description = `${label}${state && link.type !== "artifact" ? ` · ${state.label}` : ""}${count ? ` · ${count} unanswered` : ""}`;
-    const chip =
-      link.type === "artifact" ? (
-        <Badge
-          variant="outline"
-          size="sm"
-          render={
-            <button
-              type="button"
-              aria-label={`Open artifact: ${description}`}
-              onClick={() => useRightPanelStore.getState().openReviews(threadRef, link.target)}
-            />
-          }
-        >
-          <span className="flex min-w-0 max-w-48 items-center gap-1">{content}</span>
-        </Badge>
-      ) : link.type === "thread" ? (
-        <Badge
-          variant="outline"
-          size="sm"
-          render={
-            <Link
-              to="/$environmentId/$threadId"
-              params={{
-                environmentId: threadRef.environmentId,
-                threadId: ThreadId.make(link.target),
-              }}
-            />
-          }
-        >
-          <span className="flex min-w-0 max-w-48 items-center gap-1">{content}</span>
-        </Badge>
-      ) : (
-        <Badge
-          variant="outline"
-          size="sm"
-          render={<a href={state?.url ?? link.target} target="_blank" rel="noreferrer" />}
-        >
-          <span className="flex min-w-0 max-w-48 items-center gap-1">{content}</span>
-        </Badge>
-      );
-    return (
-      <Tooltip key={`${link.type}:${link.target}`}>
-        <TooltipTrigger render={<span className="min-w-0 truncate" />}>{chip}</TooltipTrigger>
-        <TooltipPopup>{description}</TooltipPopup>
-      </Tooltip>
-    );
-  });
+  const saveText = () => {
+    if (skipBlurSave.current) skipBlurSave.current = false;
+    else if (text?.trim() && text.trim() !== item.text) onChange({ text: text.trim() });
+    setText(null);
+  };
+  const onTextKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") event.currentTarget.blur();
+    if (event.key !== "Tab") return;
+    if (onIndent(event.shiftKey ? "out" : "in", text ?? null)) {
+      event.preventDefault();
+      skipBlurSave.current = true;
+      setText(null);
+    }
+  };
   return (
-    <div className="rounded-lg border border-border/60 hover:bg-muted/30">
-      <div className="flex min-h-10 min-w-0 items-center gap-1 px-2 py-1.5">
-        {progress ? (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.text}`}
-            onClick={onToggle}
-          >
-            <ChevronRightIcon className={collapsed ? "" : "rotate-90"} />
-          </Button>
-        ) : (
-          <span className="size-7 shrink-0 sm:size-6" aria-hidden />
-        )}
+    <div className={cn("rounded-md hover:bg-muted/40", node.context && "opacity-60")}>
+      <div className="flex min-w-0 items-start gap-1.5 py-1 pr-0.5">
         <Checkbox
+          className="mt-0.5"
           aria-label={terminal ? `Reopen ${item.text}` : `Complete ${item.text}`}
           checked={terminal}
           disabled={disabled}
@@ -368,39 +455,82 @@ function ListRow({
             onChange({ state: terminal ? "open" : openLink ? "handed_off" : "done" })
           }
         />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left hover:underline"
-                aria-expanded={expanded}
-                onClick={() => setExpanded(!expanded)}
-              />
-            }
+        <div className="min-w-0 flex-1 leading-5">
+          <button
+            type="button"
+            className={cn(
+              "text-left break-words hover:underline",
+              terminal && "text-muted-foreground line-through",
+            )}
+            aria-expanded={expanded}
+            onClick={() => onExpandedChange(!expanded)}
           >
-            <span className="line-clamp-2 break-words leading-5">{item.text}</span>
-          </TooltipTrigger>
-          <TooltipPopup>
-            {item.text} · Assigned to {item.owner === "you" ? "you" : "the agent"}
-          </TooltipPopup>
-        </Tooltip>
-        {progress ? (
-          <Badge size="sm" variant="secondary">
-            {progress}
-          </Badge>
-        ) : null}
-        {item.state === "dropped" ? <span className="text-muted-foreground">dropped</span> : null}
+            <OwnerIcon owner={item.owner} />
+            {item.text}
+          </button>
+          {item.state === "dropped" ? (
+            <span className="ml-1 text-3xs text-muted-foreground">dropped</span>
+          ) : item.state === "handed_off" ? (
+            <span className="ml-1 text-3xs text-muted-foreground">handed off</span>
+          ) : null}
+          {progress ? (
+            <>
+              <span className="ml-1 text-3xs tabular-nums text-muted-foreground">
+                {progress.done}/{progress.total}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-tiny"
+                className="align-middle"
+                aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.text}`}
+                aria-expanded={!collapsed}
+                onClick={onToggle}
+              >
+                {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+              </Button>
+            </>
+          ) : null}
+          {item.details && !expanded ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-tiny"
+                    className="ml-0.5 align-middle"
+                    aria-label={`Show note for ${item.text}`}
+                    onClick={() => onExpandedChange(true)}
+                  />
+                }
+              >
+                <NotebookTextIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Has a note</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {item.links.map((link) => (
+            <TodoLinkChip
+              crossThread={crossThread}
+              key={`${link.type}:${link.target}`}
+              link={link}
+              item={item}
+              artifactCounts={artifactCounts}
+              artifactTitles={artifactTitles}
+              threadRef={threadRef}
+            />
+          ))}
+        </div>
         <ItemTimestamp item={item} />
         <Menu>
           <MenuTrigger
             render={
-              <Button variant="ghost" size="icon-xs" aria-label={`Actions for ${item.text}`} />
+              <Button variant="ghost" size="icon-tiny" aria-label={`Actions for ${item.text}`} />
             }
           >
             <MoreHorizontalIcon />
           </MenuTrigger>
           <MenuPopup
+            align="end"
             finalFocus={() => {
               if (!focusNewItem.current) return true;
               focusNewItem.current = false;
@@ -408,6 +538,9 @@ function ListRow({
               return newItemRef.current;
             }}
           >
+            <MenuItem onClick={() => onExpandedChange(true)}>
+              {item.details ? "Edit note" : "Add note"}
+            </MenuItem>
             <MenuItem
               disabled={disabled || !onAddChild}
               onClick={() => {
@@ -417,35 +550,71 @@ function ListRow({
             >
               Add sub-item
             </MenuItem>
-            <MenuItem onClick={() => setExpanded(!expanded)}>
-              {expanded ? "Hide details" : "Edit details"}
+            <MenuItem disabled={disabled || !canIndent} onClick={() => onIndent("in")}>
+              Indent
+            </MenuItem>
+            <MenuItem disabled={disabled || !canOutdent} onClick={() => onIndent("out")}>
+              Outdent
+            </MenuItem>
+            <MenuItem disabled={disabled || !onMove} onClick={() => onMove?.(-1)}>
+              Move up
+            </MenuItem>
+            <MenuItem disabled={disabled || !onMove} onClick={() => onMove?.(1)}>
+              Move down
+            </MenuItem>
+            <MenuSeparator />
+            <MenuGroup>
+              <MenuGroupLabel>Responsible</MenuGroupLabel>
+              <MenuRadioGroup
+                value={item.owner}
+                onValueChange={(next) => {
+                  if ((next === "you" || next === "agent") && next !== item.owner)
+                    onChange({ owner: next });
+                }}
+              >
+                <MenuRadioItem value="you" disabled={disabled}>
+                  <CheckedLabel>You</CheckedLabel>
+                </MenuRadioItem>
+                <MenuRadioItem value="agent" disabled={disabled}>
+                  <CheckedLabel>Agent</CheckedLabel>
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuGroup>
+            <MenuSeparator />
+            <MenuCheckboxItem
+              variant="switch"
+              checked={item.needsQa}
+              disabled={disabled}
+              onCheckedChange={(needsQa) => onChange({ needsQa })}
+            >
+              Needs QA
+            </MenuCheckboxItem>
+            <MenuItem
+              disabled={disabled}
+              onClick={() => onChange({ state: terminal ? "open" : "dropped" })}
+            >
+              {terminal ? "Reopen" : "Drop"}
             </MenuItem>
           </MenuPopup>
         </Menu>
       </div>
-      {links.length ? (
-        <div className="hidden flex-wrap items-center gap-1 px-2 pb-2 @md:flex">{links}</div>
-      ) : null}
       {expanded ? (
-        <div className="space-y-2 border-t border-border/60 p-2">
-          <div className="flex flex-wrap gap-2">{links}</div>
-          <p className="text-muted-foreground">
-            {item.doneAt ? "Completed" : "Added"}{" "}
-            {new Date(item.doneAt ?? item.createdAt).toLocaleString()}
-          </p>
-          <Textarea
-            size="sm"
+        <div className="space-y-1.5 pb-2 pl-5.5 pr-1">
+          <Input
+            ref={textRef}
+            size="compact"
             aria-label={`Text for ${item.text}`}
             value={text ?? item.text}
             disabled={disabled}
             onChange={(event) => setText(event.target.value.replace(/[\r\n]+/g, " "))}
-            onBlur={() => {
-              if (text?.trim() && text.trim() !== item.text) onChange({ text: text.trim() });
-              setText(null);
-            }}
+            onKeyDown={onTextKeyDown}
+            onBlur={saveText}
           />
           <Textarea
-            aria-label={`Details for ${item.text}`}
+            size="sm"
+            rows={2}
+            aria-label={`Note for ${item.text}`}
+            placeholder="Add a note…"
             value={details ?? item.details}
             disabled={disabled}
             onChange={(event) => setDetails(event.target.value)}
@@ -454,53 +623,126 @@ function ListRow({
               setDetails(null);
             }}
           />
-          <div className="flex flex-wrap items-center gap-1">
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              onClick={() => onChange({ state: terminal ? "open" : "dropped" })}
-            >
-              {terminal ? "Reopen" : "Drop"}
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              onClick={() => onChange({ owner: item.owner === "you" ? "agent" : "you" })}
-            >
-              {item.owner === "you" ? "Assign agent" : "Assign you"}
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              onClick={() => onChange({ needsQa: !item.needsQa })}
-            >
-              {item.needsQa ? "Clear QA" : "Needs QA"}
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={`Move ${item.text} up`}
-              disabled={disabled || !onMove}
-              onClick={() => onMove?.(-1)}
-            >
-              <ArrowUpIcon />
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={`Move ${item.text} down`}
-              disabled={disabled || !onMove}
-              onClick={() => onMove?.(1)}
-            >
-              <ArrowDownIcon />
-            </Button>
-          </div>
+          <p className="text-3xs text-muted-foreground">
+            {item.doneAt ? "Completed" : "Added"}{" "}
+            {new Date(item.doneAt ?? item.createdAt).toLocaleString()} · Tab indents, Shift+Tab
+            outdents
+          </p>
         </div>
       ) : null}
     </div>
+  );
+}
+
+function OwnerIcon({ owner }: { owner: Owner }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className="mr-1 inline-flex size-3.5 align-[-2px] text-muted-foreground [&_svg]:size-3.5"
+            aria-label={ownerLabel(owner)}
+            role="img"
+          />
+        }
+      >
+        {owner === "agent" ? <BotIcon /> : <UserIcon />}
+      </TooltipTrigger>
+      <TooltipPopup>{ownerLabel(owner)}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function TodoLinkChip({
+  crossThread,
+  link,
+  item,
+  artifactCounts,
+  artifactTitles,
+  threadRef,
+}: {
+  crossThread: boolean;
+  link: ListItem["links"][number];
+  item: ListItem;
+  artifactCounts: Map<string, number>;
+  artifactTitles: Map<string, string>;
+  threadRef: ScopedThreadRef;
+}) {
+  const state = item.linkStates?.find(
+    (live) => live.type === link.type && live.target === link.target,
+  );
+  const label =
+    (link.type === "artifact" ? artifactTitles.get(link.target) : undefined) ??
+    (link.type === "ticket" ? link.target : state?.title) ??
+    link.target;
+  const count = link.type === "artifact" ? artifactCounts.get(link.target) : undefined;
+  const status = state && link.type !== "artifact" ? state.label : null;
+  const description = `${label}${status ? ` · ${status}` : ""}${count ? ` · ${count} unanswered` : ""}`;
+  const content = (
+    <span className="flex min-w-0 max-w-32 items-center gap-1">
+      {link.type === "thread" && state?.state === "open" ? (
+        <LoaderCircleIcon className="size-3" aria-label="Lane running" />
+      ) : null}
+      <span className="min-w-0 truncate">
+        {label}
+        {status ? ` · ${status}` : ""}
+      </span>
+      {count ? <span className="shrink-0">· {count}</span> : null}
+    </span>
+  );
+  const chip =
+    link.type === "artifact" ? (
+      <Badge
+        variant="outline"
+        size="sm"
+        render={
+          <button
+            type="button"
+            aria-label={`Open artifact: ${description}`}
+            onClick={() =>
+              useThreadContextSidebarStore.getState().show("artifacts", {
+                artifactId: link.target,
+                // The QA view lists other threads, so their artifacts pin the sidebar to them.
+                ...(crossThread ? { thread: threadRef } : { artifactThread: threadRef }),
+              })
+            }
+          />
+        }
+      >
+        {content}
+      </Badge>
+    ) : link.type === "thread" ? (
+      <Badge
+        variant="outline"
+        size="sm"
+        render={
+          <Link
+            to="/$environmentId/$threadId"
+            params={{
+              environmentId: threadRef.environmentId,
+              threadId: ThreadId.make(link.target),
+            }}
+          />
+        }
+      >
+        {content}
+      </Badge>
+    ) : (
+      <Badge
+        variant="outline"
+        size="sm"
+        render={<a href={state?.url ?? link.target} target="_blank" rel="noreferrer" />}
+      >
+        {content}
+      </Badge>
+    );
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="ml-1 inline-flex align-middle" />}>
+        {chip}
+      </TooltipTrigger>
+      <TooltipPopup>{description}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -515,15 +757,15 @@ export function ThreadListSummary({ threadRef }: { threadRef: ScopedThreadRef })
       : null,
   );
   const entry = query.data?.[0];
-  if (!entry) return null;
+  if (!entry?.items.length) return null;
   const next = entry.items.find((item) => item.state === "open")?.text ?? entry.summaryNotes;
   return (
     <button
       className="flex w-full min-w-0 gap-2 px-3 py-2 text-left text-xs hover:bg-muted"
-      onClick={() => useThreadContextSidebarStore.getState().openList(threadRef)}
+      onClick={() => useThreadContextSidebarStore.getState().show("todos", { thread: threadRef })}
     >
       <span className="shrink-0">
-        List · {entry.items.filter((item) => item.state === "done").length}/{entry.items.length}
+        Todos · {entry.items.filter((item) => item.state === "done").length}/{entry.items.length}
       </span>
       <span className="truncate text-muted-foreground">· next: {next}</span>
     </button>

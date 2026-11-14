@@ -159,7 +159,7 @@ cannot receive the advisory.
 
 ## Context reviews
 
-Open **Inspect → Context** in a thread to see each turn's instruction sizes,
+Open **Inspect → Context** from the sidebar's strip to see each turn's instruction sizes,
 injected tools, file and knowledge reads, repeated reads and reported token usage.
 Read counts from shell commands are inferred. Missing provider telemetry stays
 unknown. Use **Older turns** to page through the history.

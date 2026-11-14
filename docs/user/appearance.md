@@ -31,7 +31,7 @@ works, two contrasting embers follow a tilted orbit around the glyph.
 ## Tiled workspace
 
 On wider web and desktop windows, each thread remembers its own tiles and tab groups. Use a tile's
-**Add area** menu for a browser, terminal, files, Notes, Workspace, or Inspect. Drag a tab into another
+**Add area** menu for a browser, terminal, files, Notes, or Workspace. Drag a tab into another
 tile’s tab bar to group it, or to an edge to split it. Drag the empty title bar to move a whole
 tile group; drop on a tab bar to join groups, in the center to swap them, or at an edge to dock.
 New tiles start with an area chooser. Middle-click an area tab to close it. Each group keeps its color.

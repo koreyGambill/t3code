@@ -154,7 +154,6 @@ export async function reopenClosedView(
     case "side-chat":
       panels.openSideChat(ref, surface.threadId);
       break;
-    case "inspect":
     case "reviews":
     default:
       panels.restoreSurface(ref, surface);

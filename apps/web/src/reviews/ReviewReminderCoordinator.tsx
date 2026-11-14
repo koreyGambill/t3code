@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
@@ -11,7 +11,8 @@ import { useEffect, useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
-import { useRightPanelStore } from "../rightPanelStore";
+import { useShallow } from "zustand/react/shallow";
+import { useThreadContextSidebarStore } from "../threadContextSidebarStore";
 import { useEnvironments } from "../state/environments";
 import { reviewArtifactsDue } from "../state/reviews";
 import { useEnvironmentsWithScope } from "../state/session";
@@ -54,22 +55,20 @@ function EnvironmentReviewReminders({
   const settings = useClientSettings();
   const navigate = useNavigate();
   const active = useParams({ strict: false });
-  const panels = useRightPanelStore((state) => state.byThreadKey);
+  const tools = useThreadContextSidebarStore(
+    useShallow(({ view, artifactSelection, pinned }) => ({ view, artifactSelection, pinned })),
+  );
   const [gate] = useState(() => createReviewReminderGate(environmentId, seen));
-  const shownReviewId = due.find((review) => {
-    if (active.environmentId !== environmentId || active.threadId !== review.threadId) return false;
-    const panel = panels[scopedThreadKey(scopeThreadRef(environmentId, review.threadId))];
-    return (
-      panel?.isOpen &&
-      panel.surfaces.some(
-        (surface) =>
-          surface.id === panel.activeSurfaceId &&
-          surface.kind === "reviews" &&
-          surface.reviewId === review.id &&
-          surface.workspaceSection === undefined,
-      )
-    );
-  })?.id;
+  const shownReviewId = due.find(
+    (review) =>
+      active.environmentId === environmentId &&
+      active.threadId === review.threadId &&
+      tools.view === "artifacts" &&
+      tools.artifactSelection?.id === review.id &&
+      (tools.artifactSelection.thread === null ||
+        tools.artifactSelection.thread.threadId === review.threadId) &&
+      (tools.pinned === null || tools.pinned.threadId === review.threadId),
+  )?.id;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes and closes imperative notification surfaces as persisted reminders become due or change
   useEffect(() => {
@@ -84,9 +83,10 @@ function EnvironmentReviewReminders({
             to: "/$environmentId/$threadId",
             params: { environmentId, threadId: review.threadId },
           });
-          useRightPanelStore
-            .getState()
-            .openReviews(scopeThreadRef(environmentId, review.threadId), review.id);
+          useThreadContextSidebarStore.getState().show("artifacts", {
+            thread: scopeThreadRef(environmentId, review.threadId),
+            artifactId: review.id,
+          });
         };
         let dismiss: (() => void) | undefined;
         if (looking && inAppNotificationsEnabled) {

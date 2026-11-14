@@ -269,6 +269,7 @@ import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog"
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
+import { tilePaletteItems } from "./chat/tilePaletteItems";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -1749,6 +1750,8 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
+  if (activeThread) actionItems.push(...tilePaletteItems(ITEM_ICON_CLASS));
+
   for (const direction of [1, -1] as const) {
     const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";
     actionItems.push({
@@ -1796,21 +1799,11 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:reviews",
-      title: "Open workspace",
-      searchTerms: [
-        "workspace",
-        "reviews",
-        "questions",
-        "action items",
-        "design notes",
-        "summary",
-        "reminders",
-      ],
+      title: "Open artifacts",
+      searchTerms: ["artifacts", "workspace", "reviews", "questions", "reminders"],
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useRightPanelStore
-          .getState()
-          .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "reviews");
+        useThreadContextSidebarStore.getState().show("artifacts");
       },
     });
     actionItems.push({
@@ -1831,11 +1824,12 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:thread-context",
-      title: "Toggle thread sidebar",
-      searchTerms: ["marks", "related threads", "details", "context", "pin"],
+      title: "Show thread tools",
+      searchTerms: ["list", "artifacts", "marks", "related threads", "details", "context", "pin"],
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useThreadContextSidebarStore.getState().toggle();
+        const store = useThreadContextSidebarStore.getState();
+        store.show(store.lastTool);
       },
     });
   }
@@ -1851,7 +1845,7 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["xwing", "environments", "development environments", "checkouts", "apps"],
       icon: <BoxesIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useThreadContextSidebarStore.getState().openEnvironments();
+        useThreadContextSidebarStore.getState().show("environments");
       },
     });
   }

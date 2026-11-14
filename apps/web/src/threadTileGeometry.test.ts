@@ -161,53 +161,28 @@ describe("tile geometry", () => {
     expect(resizeTileRatio(leftEdges[0]!, { x: -1, y: 0 })).toBe(0.1);
     expect(resizeTileRatio(leftEdges[0]!, { x: NaN, y: 0 })).toBe(0.5);
   });
-  it("projects any two tabs from one group while preserving the real root and active tabs", () => {
-    const initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
-    const paired = applyTileAction(initial, { type: "focus-pair", groupId: "panels-group" });
-    const chooser = displayTileRoot(paired);
-    expect(
-      getTileGroups(chooser).map((group) => [group.id, group.tabs, group.activeTabId]),
-    ).toEqual([
-      ["focus-overview:conversation-group", ["conversation"], "conversation"],
-      ["focus-overview:panels-group", ["notes"], "notes"],
-      ["panels-group", ["files"], "files"],
-    ]);
-    expect(paired.root).toBe(initial.root);
-    const chooserGeometry = tileGeometry(chooser);
-    expect(chooserGeometry.groups.at(-1)?.rect).toEqual({
-      x: 0.55,
-      y: 0,
-      width: 0.44999999999999996,
-      height: 1,
+  it("projects a maximized tile beside its pair, docked, without touching the real root", () => {
+    let initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
+    initial = applyTileAction(initial, {
+      type: "float-group",
+      groupId: "panels-group",
+      rect: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
     });
-    expect(
-      chooserGeometry.groups
-        .filter((entry) => entry.id.startsWith("focus-overview:"))
-        .every((entry) => entry.rect.x + entry.rect.width <= 0.55),
-    ).toBe(true);
-    expect(
-      resizeTileSplits(chooser, "focus-overview:panels-group", { x: 0.3, y: 0.5 }).map(
-        (split) => split.id,
-      ),
-    ).toEqual(["focus-pair-split"]);
-    const selected = applyTileAction(paired, { type: "focus-left", tabId: "notes" });
-    const root = displayTileRoot(selected);
-    expect(root).toMatchObject({
-      kind: "split",
-      id: "focus-pair-split",
-      axis: "horizontal",
-      ratio: 0.55,
-    });
-    expect(getTileGroups(root).map((group) => [group.id, group.tabs, group.activeTabId])).toEqual([
-      ["focus-left-group", ["notes"], "notes"],
-      ["panels-group", ["files"], "files"],
+    const maximized = applyTileAction(initial, { type: "maximize", groupId: "conversation-group" });
+    expect(displayTileRoot(maximized)).toEqual(getTileGroups(initial)[0]);
+    const paired = applyTileAction(maximized, { type: "show-beside", groupId: "panels-group" });
+    const root = displayTileRoot(paired);
+    expect(root).toMatchObject({ kind: "split", id: "focus-pair-split", ratio: 0.5 });
+    expect(getTileGroups(root).map((group) => [group.id, group.floating])).toEqual([
+      ["conversation-group", undefined],
+      ["panels-group", undefined],
     ]);
-    expect(getTileGroups(root)[0]?.colorIndex).toBe(getTileGroups(initial)[1]?.colorIndex);
-    expect(selected.root).toBe(initial.root);
-    expect(getTileGroups(initial)[1]?.activeTabId).toBe("files");
+    expect(paired.root).toBe(maximized.root);
     expect(
-      resizeTileSplits(root, "focus-left-group", { x: 0.3, y: 0.5 }).map((split) => split.id),
+      resizeTileSplits(root, "conversation-group", { x: 0.45, y: 0.5 }).map((split) => split.id),
     ).toEqual(["focus-pair-split"]);
-    expect(displayTileRoot({ ...selected, focusPairGroupId: null })).toBe(initial.root);
+    expect(displayTileRoot(applyTileAction(paired, { type: "maximize", groupId: null }))).toEqual(
+      initial.root,
+    );
   });
 });
