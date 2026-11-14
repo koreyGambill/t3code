@@ -786,7 +786,7 @@ export const OrchestratorMcpScheduleTarget = Schema.Struct({
   model: OrchestratorMcpTarget.fields.model,
 }).annotate({
   description:
-    "Model for threads this task creates, from `orchestrator_capabilities`. Omitted: new tasks use yours, updates keep it. A bound thread keeps its own.",
+    "Model for threads this task creates, from `orchestrator_capabilities`. Needs bindToCurrentThread=false: a bound thread keeps its own. Omitted: new tasks use yours, updates keep it.",
 });
 export type OrchestratorMcpScheduleTarget = typeof OrchestratorMcpScheduleTarget.Type;
 

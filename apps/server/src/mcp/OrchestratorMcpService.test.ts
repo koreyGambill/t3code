@@ -3455,11 +3455,19 @@ describe("OrchestratorMcpService provider resolution", () => {
     const run = <A, E>(
       program: (
         mcp: OrchestratorMcpService.OrchestratorMcpService["Service"],
+        disable: (instanceId: ProviderInstanceId) => Effect.Effect<void>,
       ) => Effect.Effect<A, E>,
-      options: { readonly disabledInstanceIds?: ReadonlyArray<ProviderInstanceId> } = {},
+      options: {
+        readonly disabledInstanceIds?: ReadonlyArray<ProviderInstanceId>;
+        readonly task?: ScheduledTask;
+      } = {},
     ) =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const base = options.task ?? existing;
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+        const disabled = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>(
+          options.disabledInstanceIds ?? [],
+        );
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             OrchestratorMcpService.layer.pipe(
@@ -3480,7 +3488,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(ThreadManagementService.ThreadManagementService)({
                     getThreadShell: () => Effect.succeed(null),
                     isProviderInstanceEnabledForProject: ({ instanceId }) =>
-                      Effect.succeed(!options.disabledInstanceIds?.includes(instanceId)),
+                      Ref.get(disabled).pipe(Effect.map((ids) => !ids.includes(instanceId))),
                   }),
                   ServerSettings.layerTest(),
                   providerRegistryLayer(catalog),
@@ -3496,21 +3504,26 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-                    list: () => Effect.succeed({ tasks: [existing] }),
-                    upsert: (input) =>
-                      Ref.update(saved, (all) => [...all, input.modelSelection]).pipe(
-                        Effect.as({
-                          task: { ...existing, modelSelection: input.modelSelection },
-                        }),
-                      ),
+                    list: () =>
+                      Ref.get(saved).pipe(Effect.map((all) => ({ tasks: [base, ...all] }))),
+                    upsert: (input) => {
+                      const task = {
+                        ...base,
+                        id: input.id ?? ScheduledTaskId.make(`scheduled-task:${input.commandId}`),
+                        modelSelection: input.modelSelection,
+                      };
+                      return Ref.update(saved, (all) => [...all, task]).pipe(Effect.as({ task }));
+                    },
                   }),
                 ),
               ),
             ),
           ),
         );
-        const result = yield* Effect.exit(program(mcp));
-        return { result, saved: yield* Ref.get(saved) };
+        const result = yield* Effect.exit(
+          program(mcp, (instanceId) => Ref.update(disabled, (ids) => [...ids, instanceId])),
+        );
+        return { result, saved: (yield* Ref.get(saved)).map((task) => task.modelSelection) };
       });
 
     it.effect("creates a task on the requested model and shows it back", () =>
@@ -3573,6 +3586,53 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         assert.deepEqual(disabled.saved, []);
         assert.deepEqual(failureCode(disabled.result), "provider_unavailable");
+      }),
+    );
+
+    it.effect(
+      "refuses a target for a bound task, but not once it is unbound in the same call",
+      () =>
+        Effect.gen(function* () {
+          const bound = { ...existing, threadId: ThreadId.make("thread:scheduled-model") };
+          const target = { model: "gpt-5-mini" };
+          const refused = yield* run(
+            (mcp) => mcp.updateScheduledTask(client, { scheduledTaskId: existing.id, target }),
+            { task: bound },
+          );
+          assert.deepEqual(refused.saved, []);
+          assert.deepEqual(failureCode(refused.result), "invalid_request");
+          const unbound = yield* run(
+            (mcp) =>
+              mcp.updateScheduledTask(client, {
+                scheduledTaskId: existing.id,
+                bindToCurrentThread: false,
+                target,
+              }),
+            { task: bound },
+          );
+          assert.deepEqual(unbound.saved, [{ instanceId: codexInstanceId, model: "gpt-5-mini" }]);
+        }),
+    );
+
+    it.effect("replays a retried create without resolving its target again", () =>
+      Effect.gen(function* () {
+        const input = {
+          projectId,
+          prompt: "Check exposure",
+          schedule: existing.schedule,
+          clientRequestId: "retry-1",
+          target: { providerInstanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+        };
+        const { result, saved } = yield* run((mcp, disable) =>
+          Effect.gen(function* () {
+            yield* mcp.scheduleTask(client, input);
+            yield* disable(claudeInstanceId);
+            return yield* mcp.scheduleTask(client, input);
+          }),
+        );
+        const haiku = { instanceId: claudeInstanceId, model: "claude-haiku-5-5" };
+        assert.isTrue(Exit.isSuccess(result));
+        assert.deepEqual(saved, [haiku, haiku]);
       }),
     );
   });

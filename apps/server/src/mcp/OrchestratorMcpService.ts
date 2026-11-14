@@ -1685,6 +1685,8 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    /** What the provider must be able to run, in the refusal text. */
+    readonly runs?: string;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -1756,7 +1758,7 @@ const make = Effect.gen(function* () {
     if (constraints.length > 0) {
       return yield* failure(
         "provider_unavailable",
-        `Provider ${instanceId} cannot run a child task: ${constraints.join(" ")}`,
+        `Provider ${instanceId} cannot run ${input.runs ?? "a child task"}: ${constraints.join(" ")}`,
       );
     }
 
@@ -2495,6 +2497,9 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  const targetNeedsNewThreads =
+    "target only applies to tasks that create threads; set bindToCurrentThread=false.";
+
   /** The model a task's new threads start on: `target` applied over `inherited`, as a delegated child's is. */
   const resolveScheduledTaskModel = Effect.fn("OrchestratorMcpService.resolveScheduledTaskModel")(
     function* (
@@ -2507,6 +2512,7 @@ const make = Effect.gen(function* () {
         parent: { thread: { modelSelection: inherited, projectId } },
         target,
         providers: yield* loadProviders,
+        runs: "scheduled tasks",
       });
       const { instanceId } = resolved.modelSelection;
       if (
@@ -2538,11 +2544,35 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
-      const modelSelection = yield* resolveScheduledTaskModel(
-        projectId,
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)),
-        input.target,
-      );
+      if (input.target !== undefined && bindToCurrentThread) {
+        return yield* failure("invalid_request", targetNeedsNewThreads);
+      }
+      const commandId =
+        input.clientRequestId === undefined
+          ? undefined
+          : stableCommandId({
+              scope,
+              requestKey: input.clientRequestId,
+              operation: "schedule-task",
+            });
+      // A retry replays the saved task, so a provider disabled since must not fail it.
+      const replayed =
+        commandId === undefined
+          ? undefined
+          : (yield* scheduledTasks
+              .list()
+              .pipe(
+                Effect.mapError((error) =>
+                  failure("orchestration_error", `Could not schedule task: ${error.message}`),
+                ),
+              )).tasks.find((task) => task.id === `scheduled-task:${commandId}`);
+      const modelSelection =
+        replayed?.modelSelection ??
+        (yield* resolveScheduledTaskModel(
+          projectId,
+          parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)),
+          input.target,
+        ));
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2566,15 +2596,7 @@ const make = Effect.gen(function* () {
         creationSource: "mcp",
         // Scope the idempotency key by provider session so two callers
         // reusing the same clientRequestId cannot collide on one task row.
-        ...(input.clientRequestId === undefined
-          ? {}
-          : {
-              commandId: stableCommandId({
-                scope,
-                requestKey: input.clientRequestId,
-                operation: "schedule-task",
-              }),
-            }),
+        ...(commandId === undefined ? {} : { commandId }),
       };
       const { task } = yield* scheduledTasks
         .upsert(upsertInput)
@@ -2638,6 +2660,9 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
+        if (input.target !== undefined && threadId !== null) {
+          return yield* failure("invalid_request", targetNeedsNewThreads);
+        }
         // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
         const workspaceStrategy =
           (threadId === null) === (existing.threadId === null)
