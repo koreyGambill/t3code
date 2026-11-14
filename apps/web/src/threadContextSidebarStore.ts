@@ -2,6 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
+import type { TodoFilter } from "./components/reviews/todoList.logic";
 import {
   firstVisibleThreadTool,
   migrateThreadToolsView,
@@ -28,6 +29,8 @@ interface ThreadContextSidebarState {
   lastTool: ThreadContextSection;
   pinned: ScopedThreadRef | null;
   hidden: ReadonlyArray<StripItem>;
+  todoFilter: TodoFilter;
+  todoShowClosed: boolean;
   environmentSelection: { thread: ScopedThreadRef; id: string } | null;
   /** Set when a tool view was requested while the sidebar may be hidden; the sidebar clears it. */
   revealPending: boolean;
@@ -41,6 +44,8 @@ interface ThreadContextSidebarState {
   consumeReveal: () => void;
   pin: (thread: ScopedThreadRef | null) => void;
   setHidden: (item: StripItem, hidden: boolean) => void;
+  setTodoFilter: (filter: TodoFilter) => void;
+  setTodoShowClosed: (show: boolean) => void;
   openTodos: (thread: ScopedThreadRef) => void;
   openEnvironments: (thread?: ScopedThreadRef, id?: string) => void;
   selectEnvironment: (thread: ScopedThreadRef, id: string | null) => void;
@@ -53,6 +58,8 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       lastTool: "todos",
       pinned: null,
       hidden: [],
+      todoFilter: "all",
+      todoShowClosed: false,
       environmentSelection: null,
       revealPending: false,
       detailsElement: null,
@@ -73,6 +80,8 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
             ? { lastTool: firstVisibleThreadTool([...state.hidden, item]) }
             : {}),
         })),
+      setTodoFilter: (todoFilter) => set({ todoFilter }),
+      setTodoShowClosed: (todoShowClosed) => set({ todoShowClosed }),
       openTodos: (thread) =>
         set({ view: "todos", lastTool: "todos", pinned: thread, revealPending: true }),
       openEnvironments: (thread, id) =>
@@ -91,7 +100,13 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window === "undefined" ? undefined : window.localStorage),
       ),
-      partialize: ({ view, lastTool, hidden }) => ({ view, lastTool, hidden }),
+      partialize: ({ view, lastTool, hidden, todoFilter, todoShowClosed }) => ({
+        view,
+        lastTool,
+        hidden,
+        todoFilter,
+        todoShowClosed,
+      }),
       // v0 stored the right panel's { open, view }; its view becomes the last tool.
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as { view?: string };

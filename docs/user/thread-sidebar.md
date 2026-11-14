@@ -67,6 +67,15 @@ focused tile. Pin one to keep its thread while you move between tiles or
 conversations. Use the button at the bottom of the strip to hide tools you don't
 use. The last view and hidden tools stay on this device.
 
+**Todos** holds the commitments you and agents track for a thread. Each item shows
+who is responsible: a person for you, a robot for the agent. New items are yours
+unless you switch the owner button beside the input; change an owner from an
+item's ⋯ menu. Items nest up to three levels. Use ⋯ to add a sub-item, indent or
+outdent, or press Tab and Shift+Tab while editing an item's text. Select an item's
+text to edit it and its note. **All**, **Mine** and **Agents** filter the list,
+and the check button shows done and dropped items. Both choices stay on this
+device.
+
 The sidebar's **Environments** view shows Xwing environments used by the thread
 and its delegated children. Open an environment to see its repositories and apps,
 open a terminal, or review an archive or deletion. **Unlink** removes a link to a
