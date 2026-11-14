@@ -12,10 +12,10 @@ import {
   workingTree,
 } from "../lib/checkout.ts";
 
-// Two gates fit beside the daemon's machine reserve on 16 cores; check-changed spreads its
-// steps over CHECK_CHANGED_CONCURRENCY workers within that.
+// Two gates fit beside the daemon's machine reserve on 16 cores. check-changed weighs typecheck
+// by its worker count, so a budget below 6 queued typecheck behind knip (+25 s measured).
 const GATE_CORES = 6;
-const CHECK_CHANGED_CONCURRENCY = "4";
+const CHECK_CHANGED_CONCURRENCY = String(GATE_CORES);
 
 definePipeline({
   name: "Gate",
