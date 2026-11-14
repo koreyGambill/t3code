@@ -47,7 +47,7 @@ export function notificationTab(item: Notification, nowMs: number): Notification
   return "inbox";
 }
 
-export const NOTIFICATION_SEVERITY_RANK: Record<NotificationSeverity, number> = {
+const NOTIFICATION_SEVERITY_RANK: Record<NotificationSeverity, number> = {
   info: 0,
   warning: 1,
   critical: 2,
