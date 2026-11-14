@@ -95,7 +95,16 @@ const make = Effect.gen(function* () {
       /** Under a fixed root, and in no repository below it other than this workspace's. */
       const writableAt = Effect.fnUntraced(function* (documented: string, roots: string[]) {
         const root = roots.find((candidate) => within(candidate, documented));
-        if (root === undefined || CREDENTIAL_CONFIG.test(documented)) return false;
+        if (
+          root === undefined ||
+          CREDENTIAL_CONFIG.test(documented) ||
+          CREDENTIAL_CONFIG.test(realPath)
+        )
+          return false;
+        // Only the file itself may be a symlink: a linked folder could lead into another repository.
+        const folder = path.dirname(documented);
+        if ((yield* real(folder)) !== path.join(yield* real(root), path.relative(root, folder)))
+          return false;
         for (let dir = path.dirname(documented); dir !== root; dir = path.dirname(dir)) {
           if (yield* isRepo(dir))
             return workspaceRepo !== null && (yield* real(dir)) === workspaceRepo;

@@ -874,14 +874,23 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       yield* writeTextFile(cwd, ".git/HEAD", "ref");
       yield* writeTextFile(cwd, "CLAUDE.md", "[outside](../../notes.md)");
       // A client that can edit the global file links whatever it wants written next.
+      // Dotfiles keep the real file in a repository and link it into ~/.claude.
       yield* writeTextFile(
         home,
-        ".claude/CLAUDE.md",
+        "dotfiles/CLAUDE.md",
         [
           "@~/.config/wing/BOOT.md",
           "[env](~/.env.md) [vault](~/vault/target.md) [rc](~/.bashrc.md)",
-          "[gh](~/.config/gh/notes.md) [repo](~/code/other/docs/a.md)",
+          // An alias listed first is the path the walk records for gh's file.
+          "[file alias](~/.config/ghnotes.md) [folder alias](~/.config/ghalias/notes.md)",
+          "[gh](~/.config/gh/notes.md)",
+          "[repo](~/code/other/docs/a.md) [folder link](~/.config/dirlink/x.md)",
         ].join("\n"),
+      );
+      yield* fileSystem.makeDirectory(path.join(home, ".claude"), { recursive: true });
+      yield* fileSystem.symlink(
+        path.join(home, "dotfiles", "CLAUDE.md"),
+        path.join(home, ".claude", "CLAUDE.md"),
       );
       yield* writeTextFile(
         wing,
@@ -904,6 +913,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       yield* writeTextFile(home, ".config/clone/notes.md", "cloned");
       yield* writeTextFile(home, ".config/clone/sub/README", "");
       yield* writeTextFile(home, ".config/gh/notes.md", "gh");
+      yield* fileSystem.symlink(
+        path.join(home, ".config", "gh"),
+        path.join(home, ".config", "ghalias"),
+      );
+      yield* fileSystem.symlink(
+        path.join(home, ".config", "gh", "notes.md"),
+        path.join(home, ".config", "ghnotes.md"),
+      );
+      yield* writeTextFile(home, "code/other/sub/x.md", "other repo subfolder");
+      yield* fileSystem.symlink(
+        path.join(home, "code", "other", "sub"),
+        path.join(home, ".config", "dirlink"),
+      );
       yield* writeTextFile(home, "code/other/.git/HEAD", "ref");
       yield* writeTextFile(home, "code/other/docs/a.md", "other repo");
       yield* writeTextFile(home, "vault/target.md", "vault");
@@ -955,7 +977,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             "~/vault/target.md",
             "~/.bashrc.md",
             "~/.config/gh/notes.md",
+            "~/.config/ghalias/notes.md",
+            "~/.config/ghnotes.md",
             "~/code/other/docs/a.md",
+            "~/.config/dirlink/x.md",
             "~/.config/clone/notes.md",
           ];
           for (const relativePath of refused) {
@@ -992,6 +1017,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expect(yield* fileSystem.readLink(path.join(wing, "MEMORY.md"))).toBe(
             path.join(home, "dotfiles", "MEMORY.md"),
           );
+          expect(yield* fileSystem.readLink(path.join(home, ".claude", "CLAUDE.md"))).toBe(
+            path.join(home, "dotfiles", "CLAUDE.md"),
+          );
 
           expect(yield* fileSystem.readFileString(path.join(home, "notes.md"))).toBe("private");
           expect(yield* fileSystem.readFileString(path.join(home, ".ssh", "keys.md"))).toBe(
@@ -1006,6 +1034,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             [".bashrc.md", "rc"],
             [".config/gh/notes.md", "gh"],
             ["code/other/docs/a.md", "other repo"],
+            ["code/other/sub/x.md", "other repo subfolder"],
           ] as const) {
             expect(yield* fileSystem.readFileString(path.join(home, file))).toBe(text);
           }
@@ -1145,6 +1174,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               name.endsWith(".t3-save"),
             ),
           ).toEqual([]);
+          vi.mocked(NodeFSP.open).mockImplementation(native.open);
+
+          // A folder that takes no new entries still saves, in place.
+          const wing = path.join(home, ".config", "wing");
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(wing, 0o555)),
+            () => Effect.promise(() => NodeFSP.chmod(wing, 0o755)),
+          );
+          yield* asHome(home)(
+            workspaceFileSystem.writeFile({
+              cwd,
+              relativePath: "~/.config/wing/LINKED.md",
+              contents: "in place",
+            }),
+          );
+          expect(yield* fileSystem.readFileString(path.join(wing, "LINKED.md"))).toBe("in place");
         }).pipe(Effect.provide(layerInstructionWrites)),
     );
   });

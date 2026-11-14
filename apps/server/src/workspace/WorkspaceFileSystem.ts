@@ -169,7 +169,7 @@ export const make = Effect.gen(function* () {
 
   /**
    * Replaces an existing host file through a temp file in its folder, so a failed save
-   * leaves the old text. The check opens without creating, following a final symlink, or
+   * leaves the old text; a folder that takes no new entries gets an in-place write. The check opens without creating, following a final symlink, or
    * blocking on a FIFO; the file must stay the single-link regular file at `realPath`
    * until the rename, so a swapped path component or hard-linked alias is refused.
    */
@@ -205,18 +205,45 @@ export const make = Effect.gen(function* () {
           };
           await unchanged();
           const mode = opened.mode & 0o7777;
-          temp = path.join(
-            path.dirname(realPath),
+          const folder = path.dirname(realPath);
+          const name = path.join(
+            folder,
             `.${path.basename(realPath)}.${NodeCrypto.randomUUID()}.t3-save`,
           );
           const output = await NodeFSP.open(
-            temp,
+            name,
             NodeFS.constants.O_WRONLY |
               NodeFS.constants.O_CREAT |
               NodeFS.constants.O_EXCL |
               (NodeFS.constants.O_NOFOLLOW ?? 0),
             mode,
-          );
+          ).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "EACCES" || error.code === "EPERM") return null;
+            throw error;
+          });
+          if (output === null) {
+            // The folder takes no new entries, so rewrite the checked file in place.
+            const inPlace = await NodeFSP.open(
+              realPath,
+              NodeFS.constants.O_WRONLY |
+                (NodeFS.constants.O_NONBLOCK ?? 0) |
+                (NodeFS.constants.O_NOFOLLOW ?? 0),
+            );
+            try {
+              const target = await inPlace.stat();
+              if (target.dev !== opened.dev || target.ino !== opened.ino) {
+                throw new Error("The file changed or is not a single regular file.");
+              }
+              await unchanged();
+              await inPlace.truncate(0);
+              await inPlace.writeFile(input.contents);
+              await inPlace.sync();
+            } finally {
+              await inPlace.close();
+            }
+            return;
+          }
+          temp = name;
           try {
             await output.writeFile(input.contents);
             // The umask may have narrowed the mode the open asked for.
@@ -228,6 +255,10 @@ export const make = Effect.gen(function* () {
           await unchanged();
           await NodeFSP.rename(temp, realPath);
           temp = null;
+          // Best effort: the rename already replaced the file; this only makes it durable sooner.
+          await NodeFSP.open(folder, NodeFS.constants.O_RDONLY)
+            .then((directory) => directory.sync().finally(() => directory.close()))
+            .catch(() => undefined);
         } finally {
           await handle.close();
           if (temp !== null) await NodeFSP.rm(temp, { force: true });
