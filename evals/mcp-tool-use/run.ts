@@ -8,6 +8,7 @@
 import { monitoringAdvisory } from "../../apps/server/src/monitoring/MonitoringDelivery.ts";
 import { MonitoringProfile, MonitoringFinding } from "@t3tools/contracts";
 import { idleCheckinPrompt } from "../../apps/server/src/scheduledTasks/IdleCheckin.ts";
+import { automationRunPreface } from "../../apps/server/src/scheduledTasks/AutomationPrompt.ts";
 import { ScheduledTaskId } from "@t3tools/contracts";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -344,6 +345,16 @@ export const McpToolUseCase = Schema.Struct({
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
   idleCheckinTaskId: Schema.optional(Schema.String),
+  /** The thread is an automation run: T3 puts its run preface ahead of `prompt`. */
+  automationRun: Schema.optional(
+    Schema.Struct({
+      title: Schema.String,
+      trigger: Schema.Struct({
+        type: Schema.Literals(["schedule", "webhook", "event", "manual", "agent"]),
+        summary: Schema.String,
+      }),
+    }),
+  ),
   monitoringAdvisory: Schema.optional(
     Schema.Struct({ profile: MonitoringProfile, finding: MonitoringFinding }),
   ),
@@ -2567,6 +2578,16 @@ const main = Effect.gen(function* () {
       item.idleCheckinTaskId === undefined
         ? item
         : { ...item, prompt: idleCheckinPrompt(ScheduledTaskId.make(item.idleCheckinTaskId)) },
+    )
+    .map((item) =>
+      item.automationRun === undefined
+        ? item
+        : {
+            ...item,
+            prompt:
+              automationRunPreface(item.automationRun.title, item.automationRun.trigger) +
+              item.prompt,
+          },
     );
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);

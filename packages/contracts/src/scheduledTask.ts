@@ -345,6 +345,8 @@ export const ScheduledTask = Schema.Struct({
   lastRunStatus: ScheduledTaskRunStatus,
   lastRunError: Schema.NullOr(Schema.String),
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** When the latest recorded run ended, so clients know to refetch its history. */
+  lastRunEndedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
@@ -513,9 +515,18 @@ export const ScheduledTaskRun = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   /** The run's prompt message inside that thread. */
   messageId: Schema.NullOr(MessageId),
-  costUsd: Schema.optional(Schema.Number.check(Schema.isFinite())),
+  /** The main agent's tokens and list price, from the provider's per-turn ledger. */
   tokens: Schema.optional(NonNegativeInt),
+  costUsd: Schema.optional(Schema.Number.check(Schema.isFinite())),
+  /**
+   * Native subagents' and compaction's tokens, and an estimated price: the ledger gives no cache
+   * split or model for them, so the main agent's cache share and the run's subagent model apply.
+   */
+  otherTokens: Schema.optional(NonNegativeInt),
+  otherCostUsdEstimate: Schema.optional(Schema.Number.check(Schema.isFinite())),
   subagents: Schema.optional(NonNegativeInt),
+  /** Consecutive skipped check-ins this row stands for, from `startedAt` to `endedAt`. */
+  skipCount: Schema.optional(NonNegativeInt),
   notifications: Schema.Array(TrimmedNonEmptyString),
   error: Schema.NullOr(Schema.String),
 });

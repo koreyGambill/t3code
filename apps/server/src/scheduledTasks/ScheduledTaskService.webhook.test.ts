@@ -33,6 +33,9 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import { renderWebhookPrompt } from "./webhookTemplate.ts";
+import { automationRunPreface } from "./AutomationPrompt.ts";
+
+const PREFACE = automationRunPreface("Review PRs", { type: "webhook", summary: "" });
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
@@ -292,7 +295,9 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       const launched = yield* Queue.take(launches);
       const framed =
         /^Review this PR: <(webhook-data-[0-9a-f]{12})>https:\/\/github\.com\/org\/repo\/pull\/45<\/\1>\n\nText between <\1> and <\/\1> was copied from the webhook request\./;
-      const frame = framed.exec(launched.initialMessage?.text ?? "")?.[1];
+      const text = launched.initialMessage?.text ?? "";
+      assert.isTrue(text.startsWith(PREFACE));
+      const frame = framed.exec(text.slice(PREFACE.length))?.[1];
       assert.isDefined(frame);
       assert.equal(
         launched.commandId,
@@ -310,10 +315,12 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
         deliveryId: deliveries[0]!.id,
       });
       assert.equal(delivery.body, new TextDecoder().decode(pullRequestBody));
-      assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
+      assert.equal(`${PREFACE}${delivery.renderedPrompt}`, launched.initialMessage?.text);
 
       yield* service.triggerWebhook(requestFor(task));
-      const next = framed.exec((yield* Queue.take(launches)).initialMessage?.text ?? "")?.[1];
+      const next = framed.exec(
+        ((yield* Queue.take(launches)).initialMessage?.text ?? "").slice(PREFACE.length),
+      )?.[1];
       assert.isDefined(next);
       assert.notEqual(next, frame);
     }),
@@ -1060,7 +1067,7 @@ it.effect("a coalesced window dispatches the prompt saved after it opened", () =
         yield* TestClock.adjust("10 seconds");
         yield* workers.get("webhook-coalescing")!;
         const launched = yield* Queue.take(launches);
-        assert.equal(launched.initialMessage?.text, "Use the updated instructions.");
+        assert.equal(launched.initialMessage?.text, `${PREFACE}Use the updated instructions.`);
         const owner = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries[0]!;
         const { delivery } = yield* service.getWebhookDelivery({
           id: task.id,
@@ -1091,7 +1098,7 @@ it.effect("retrying a running window keeps the prompt it was dispatched with", (
         yield* TestClock.adjust("10 seconds");
         yield* drainPendingDispatch(workers);
         const launched = yield* Queue.take(launches);
-        assert.equal(launched.initialMessage?.text, "Prompt at dispatch");
+        assert.equal(launched.initialMessage?.text, `${PREFACE}Prompt at dispatch`);
         yield* save("Prompt saved after dispatch");
         yield* sql`DROP TRIGGER fail_completion`;
         yield* drainPendingDispatch(workers);

@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ScheduledTaskError,
   ScheduledTaskId,
+  ScheduledTaskRunId,
   type ScheduledTaskUpsertInput,
   SecretRef,
   ThreadId,
@@ -562,6 +563,7 @@ it.effect("a completed run closes its history as quiet with its tokens and cost"
     const threadId = ThreadId.make("thread:usage");
     const ended = yield* Deferred.make<void>();
     const launchedMessage = yield* Ref.make("");
+    const launchedText = yield* Ref.make("");
     // The run's turn, and a later run's turn in the same thread that it must not count.
     yield* sql`INSERT INTO orchestration_v2_projection_run_attempts
       (attempt_id, thread_id, run_id, attempt_ordinal, root_node_id, provider, provider_thread_id, status, payload_json)
@@ -591,6 +593,7 @@ it.effect("a completed run closes its history as quiet with its tokens and cost"
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
             launch: (input) =>
               Ref.set(launchedMessage, input.initialMessage?.messageId ?? "").pipe(
+                Effect.andThen(Ref.set(launchedText, input.initialMessage?.text ?? "")),
                 Effect.as({ threadId, resumed: false } as never),
               ),
           }),
@@ -660,11 +663,147 @@ it.effect("a completed run closes its history as quiet with its tokens and cost"
         status: "quiet",
         trigger: { type: "agent", summary: "Run by an agent" },
         threadId,
-        tokens: 1000 + 200 + 300 + 100,
-        costUsd: 0.3,
+        tokens: 1000 + 200,
+        costUsd: 0.2,
+        otherTokens: 300 + 100,
+        otherCostUsdEstimate: 0.1,
         error: null,
       });
       assert.isNotNull(runs[0]?.endedAt);
+      const [listed] = (yield* service.list()).tasks;
+      assert.equal(listed?.lastRunEndedAt, runs[0]?.endedAt);
+      assert.equal(
+        yield* Ref.get(launchedText),
+        '[Automated run of "Exposure check" (Run by an agent). Nobody is watching live; use t3_notify for anything the user must see.]\n\nCheck exposure',
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const followerLayer = (input: {
+  readonly ended: Deferred.Deferred<void>;
+  readonly sentMessage: Ref.Ref<string>;
+  readonly launch?: ThreadLaunchService.ThreadLaunchService["Service"]["launch"];
+}) =>
+  ScheduledTaskService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ManagedPolicy.layerTest(),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)(
+          input.launch === undefined ? {} : { launch: input.launch },
+        ),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
+          getProjectThreadRecords: () =>
+            Effect.map(
+              Ref.get(input.sentMessage),
+              (userMessageId) =>
+                ({ runs: [{ id: "run:followed", status: "running", userMessageId }] }) as never,
+            ),
+          waitForThread: (wait) =>
+            Deferred.await(input.ended).pipe(
+              Effect.as({
+                threadId: wait.threadId,
+                run: { id: wait.runId, status: "completed", completedAt: null },
+                timedOut: false,
+              } as never),
+            ),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        NodeCrypto.layer,
+        Scheduler.layer,
+      ),
+    ),
+  );
+
+const awaitRunStatus = (taskId: ScheduledTaskId, status: string) =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    // Each list emission re-reads the runs, so the first read already sees a close that won.
+    return yield* service.subscribeList().pipe(
+      Stream.mapEffect(() => service.listRuns({ id: taskId })),
+      Stream.filter(({ runs }) => runs[0]?.status === status),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+      Effect.forkChild,
+    );
+  });
+
+it.effect("a sent run left open by a previous process is followed to its outcome", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    yield* insertRow(sql, { id: "task:followed", next: null, enabled: 1, status: "failed" }, now);
+    yield* sql`INSERT INTO scheduled_task_runs
+      (id, task_id, started_at, status, trigger_json, thread_id, message_id)
+      VALUES ('run:open', 'task:followed', ${now}, 'running', '{"type":"schedule","summary":""}',
+        'thread:followed', 'message:followed')`;
+    const ended = yield* Deferred.make<void>();
+    const sentMessage = yield* Ref.make("message:followed");
+    yield* Effect.gen(function* () {
+      const closed = yield* awaitRunStatus(ScheduledTaskId.make("task:followed"), "quiet");
+      yield* Deferred.succeed(ended, undefined);
+      const { runs } = yield* Fiber.join(closed);
+      assert.deepInclude(runs[0], {
+        id: ScheduledTaskRunId.make("run:open"),
+        status: "quiet",
+        threadId: ThreadId.make("thread:followed"),
+        error: null,
+      });
+      const [bound] = yield* sql<{
+        orchestration_run_id: string;
+      }>`SELECT orchestration_run_id FROM scheduled_task_runs`;
+      assert.equal(bound?.orchestration_run_id, "run:followed");
+    }).pipe(Effect.provide(followerLayer({ ended, sentMessage })));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a sent run stays open for its follower when only the completion record fails", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const ended = yield* Deferred.make<void>();
+    const taskId = ScheduledTaskId.make("task:record-fails");
+    const sentMessage = yield* Ref.make("");
+    const layer = followerLayer({
+      ended,
+      sentMessage,
+      // Corrupt the row while the turn is sent, so recording the completion fails.
+      launch: (launch) =>
+        sql`UPDATE scheduled_tasks SET schedule_json = 'broken' WHERE task_id = ${taskId}`.pipe(
+          Effect.orDie,
+          Effect.andThen(Ref.set(sentMessage, launch.initialMessage?.messageId ?? "")),
+          Effect.as({ threadId: ThreadId.make("thread:followed"), resumed: false } as never),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert({
+        id: taskId,
+        title: "Check",
+        prompt: "Check",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* Effect.flip(service.runNow({ id: taskId }));
+      const [open] = yield* sql<{
+        ended_at: string | null;
+        thread_id: string | null;
+      }>`SELECT ended_at, thread_id FROM scheduled_task_runs`;
+      assert.isNull(open?.ended_at);
+      assert.equal(open?.thread_id, "thread:followed");
+      yield* sql`UPDATE scheduled_tasks SET schedule_json = '{"type":"interval","everyMs":60000}'`;
+      const closed = yield* awaitRunStatus(taskId, "quiet");
+      yield* Deferred.succeed(ended, undefined);
+      yield* Fiber.join(closed);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

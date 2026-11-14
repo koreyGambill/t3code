@@ -686,6 +686,11 @@ describe("upstream client wire compatibility", () => {
           runNow: record("runNow"),
           rotateWebhookToken: record("rotateWebhookToken"),
           delete: record("delete"),
+          listRuns: (input: { readonly id: ScheduledTask["id"] }) =>
+            Effect.sync(() => {
+              ran.push(`listRuns ${input.id}`);
+              return { runs: [], hasMore: false };
+            }),
         } as Partial<
           ScheduledTasks.ScheduledTaskService["Service"]
         > as ScheduledTasks.ScheduledTaskService["Service"];
@@ -699,6 +704,7 @@ describe("upstream client wire compatibility", () => {
           forUpstream.runNow({ id }),
           forUpstream.rotateWebhookToken({ id }),
           forUpstream.delete({ id }),
+          forUpstream.listRuns({ id }),
         ];
 
         const runNowRpc = upstreamRpcs.get(WS_METHODS.scheduledTasksRunNow);
@@ -719,6 +725,7 @@ describe("upstream client wire compatibility", () => {
           `runNow ${shown.id}`,
           `rotateWebhookToken ${shown.id}`,
           `delete ${shown.id}`,
+          `listRuns ${shown.id}`,
           "upsert new",
         ]);
         const forFork = readClientWireCapabilities(SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY);

@@ -37,6 +37,9 @@ interface RunRow {
   readonly orchestration_run_id: string | null;
   readonly cost_usd: number | null;
   readonly tokens: number | null;
+  readonly other_tokens: number | null;
+  readonly other_cost_usd_estimate: number | null;
+  readonly skip_count: number;
   readonly subagent_count: number;
   readonly notification_ids_json: string;
   readonly error: string | null;
@@ -52,29 +55,63 @@ const decodeNotificationIds = Schema.decodeUnknownOption(
 );
 const decodeUsage = Schema.decodeUnknownOption(Schema.fromJsonString(TurnTokenUsage));
 
-/** Inserts a run and prunes the task's history beyond the retention limit. */
+/** Inserts an open run. Callers prune once they decide to keep it. */
 export const startRun = Effect.fn("ScheduledTaskRunHistory.startRun")(function* (input: {
   readonly id: ScheduledTaskRunId;
   readonly taskId: ScheduledTaskId;
   readonly startedAt: string;
   readonly trigger: RunTrigger;
-  readonly status?: "running" | "skipped";
 }) {
   const sql = yield* SqlClient.SqlClient;
-  const status = input.status ?? "running";
+  yield* sql`INSERT INTO scheduled_task_runs ${sql.insert({
+    id: input.id,
+    task_id: input.taskId,
+    started_at: input.startedAt,
+    status: "running",
+    trigger_json: encodeTrigger(input.trigger),
+  })}`;
+});
+
+/**
+ * Keeps the task's newest runs that were not skipped. Skip rows never count toward the limit and
+ * go once they are older than every kept run.
+ */
+export const prune = Effect.fn("ScheduledTaskRunHistory.prune")(function* (
+  taskId: ScheduledTaskId,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`DELETE FROM scheduled_task_runs WHERE task_id = ${taskId}
+    AND (started_at, rowid) < (SELECT started_at, rowid FROM scheduled_task_runs
+      WHERE task_id = ${taskId} AND status != 'skipped'
+      ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET ${RUN_RETENTION_PER_TASK - 1})`;
+});
+
+/** A skipped check-in extends the newest row when that is a skip too, so idle tasks add one row. */
+export const recordSkip = Effect.fn("ScheduledTaskRunHistory.recordSkip")(function* (input: {
+  readonly id: ScheduledTaskRunId;
+  readonly taskId: ScheduledTaskId;
+  readonly at: string;
+  readonly trigger: RunTrigger;
+}) {
+  const sql = yield* SqlClient.SqlClient;
   yield* sql.withTransaction(
     Effect.gen(function* () {
+      const extended = yield* sql`UPDATE scheduled_task_runs
+        SET ended_at = ${input.at}, skip_count = skip_count + 1
+        WHERE id = (SELECT id FROM scheduled_task_runs WHERE task_id = ${input.taskId}
+          ORDER BY started_at DESC, rowid DESC LIMIT 1) AND status = 'skipped'
+        RETURNING id`;
+      if (extended.length > 0) return;
       yield* sql`INSERT INTO scheduled_task_runs ${sql.insert({
         id: input.id,
         task_id: input.taskId,
-        started_at: input.startedAt,
-        ended_at: status === "running" ? null : input.startedAt,
-        status,
+        started_at: input.at,
+        ended_at: input.at,
+        status: "skipped",
         trigger_json: encodeTrigger(input.trigger),
+        skip_count: 1,
       })}`;
-      yield* sql`DELETE FROM scheduled_task_runs WHERE task_id = ${input.taskId} AND id NOT IN (
-        SELECT id FROM scheduled_task_runs WHERE task_id = ${input.taskId}
-        ORDER BY started_at DESC, rowid DESC LIMIT ${RUN_RETENTION_PER_TASK})`;
+      yield* prune(input.taskId);
     }),
   );
 });
@@ -96,22 +133,43 @@ export const bindOrchestrationRun = Effect.fn("ScheduledTaskRunHistory.bindOrche
   },
 );
 
-/** Closes a run once; a run already closed keeps its first outcome. */
+export interface RunCost {
+  readonly tokens: number | null;
+  readonly costUsd: number | null;
+  readonly otherTokens: number | null;
+  readonly otherCostUsdEstimate: number | null;
+}
+
+/**
+ * Closes a run once, so a run already closed keeps its first outcome, and stamps its task's
+ * `last_run_ended_at`. Returns whether this call closed it.
+ */
 export const finishRun = Effect.fn("ScheduledTaskRunHistory.finishRun")(function* (
   id: ScheduledTaskRunId,
   outcome: {
     readonly status: Exclude<ScheduledTaskRunOutcome, "running">;
     readonly endedAt: string;
     readonly error: string | null;
-    readonly costUsd?: number | null;
-    readonly tokens?: number | null;
+    readonly cost?: RunCost | undefined;
   },
 ) {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`UPDATE scheduled_task_runs
-    SET status = ${outcome.status}, ended_at = ${outcome.endedAt}, error = ${outcome.error},
-        cost_usd = ${outcome.costUsd ?? null}, tokens = ${outcome.tokens ?? null}
-    WHERE id = ${id} AND ended_at IS NULL`;
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const closed = yield* sql<{ task_id: string }>`UPDATE scheduled_task_runs
+        SET status = ${outcome.status}, ended_at = ${outcome.endedAt}, error = ${outcome.error},
+          tokens = ${outcome.cost?.tokens ?? null}, cost_usd = ${outcome.cost?.costUsd ?? null},
+          other_tokens = ${outcome.cost?.otherTokens ?? null},
+          other_cost_usd_estimate = ${outcome.cost?.otherCostUsdEstimate ?? null}
+        WHERE id = ${id} AND ended_at IS NULL
+        RETURNING task_id`;
+      const [row] = closed;
+      if (row === undefined) return false;
+      yield* sql`UPDATE scheduled_tasks SET last_run_ended_at = ${outcome.endedAt}
+        WHERE task_id = ${row.task_id}`;
+      return true;
+    }),
+  );
 });
 
 export const deleteRun = Effect.fn("ScheduledTaskRunHistory.deleteRun")(function* (
@@ -141,9 +199,20 @@ export const openRuns = Effect.fn("ScheduledTaskRunHistory.openRuns")(function* 
   }));
 });
 
+export interface RunUsage {
+  readonly tokens: number | null;
+  readonly records: ReadonlyArray<PricedRecord>;
+  readonly otherTokens: number | null;
+  readonly otherRecords: ReadonlyArray<PricedRecord>;
+}
+
+const sum = (total: number | null, add: number) => (total ?? 0) + add;
+
 /**
- * Token totals and priceable records for one orchestration run's provider turns. `otherUsage`
- * (native subagents, compaction) is priced at the main agent's model, an approximation.
+ * The main agent's tokens and priceable records for one orchestration run, kept apart from
+ * `otherUsage` (native subagents, compaction). The ledger gives `otherUsage` neither a cache
+ * split nor a model, so its records take the turn's main cache shares and the run's most used
+ * native subagent model, else the main model: an estimate.
  */
 export const runUsage = Effect.fn("ScheduledTaskRunHistory.runUsage")(function* (
   threadId: ThreadId,
@@ -156,37 +225,65 @@ export const runUsage = Effect.fn("ScheduledTaskRunHistory.runUsage")(function* 
     FROM orchestration_v2_projection_provider_turns t
     JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id = t.run_attempt_id
     WHERE t.thread_id = ${threadId} AND a.run_id = ${runId}`.pipe(NodeSqliteClient.readOnly);
+  const [subagentModel] = yield* sql<{ model: string }>`
+    SELECT json_extract(payload_json, '$.model') AS model
+    FROM orchestration_v2_projection_subagents
+    WHERE thread_id = ${threadId} AND origin = 'provider_native'
+      AND json_extract(payload_json, '$.runId') = ${runId}
+      AND json_extract(payload_json, '$.model') IS NOT NULL
+    GROUP BY model ORDER BY COUNT(*) DESC, model LIMIT 1`.pipe(NodeSqliteClient.readOnly);
   let tokens: number | null = null;
+  let otherTokens: number | null = null;
   const records: Array<PricedRecord> = [];
+  const otherRecords: Array<PricedRecord> = [];
   for (const turn of turns) {
-    const usage = turn.usage_json === null ? Option.none() : decodeUsage(turn.usage_json);
-    if (Option.isNone(usage)) continue;
-    const { inputTokens = 0, outputTokens = 0, otherUsage } = usage.value;
-    const cached = usage.value.cachedInputTokens ?? 0;
-    const cacheCreation = usage.value.cacheCreationTokens ?? 0;
-    tokens =
-      (tokens ?? 0) +
-      inputTokens +
-      outputTokens +
-      (otherUsage?.inputTokens ?? 0) +
-      (otherUsage?.outputTokens ?? 0);
-    const model = usage.value.models?.[0] ?? turn.model;
-    if (model === null) continue;
-    records.push({
-      model,
+    const decoded = turn.usage_json === null ? Option.none() : decodeUsage(turn.usage_json);
+    // Local commands' counters describe the command's result, not model work.
+    if (Option.isNone(decoded) || decoded.value.localCommand === true) continue;
+    const usage = decoded.value;
+    const input = usage.inputTokens ?? 0;
+    const output = usage.outputTokens ?? 0;
+    const cached = usage.cachedInputTokens ?? 0;
+    const cacheCreation = usage.cacheCreationTokens ?? 0;
+    tokens = sum(tokens, input + output);
+    const model = usage.models?.[0] ?? turn.model;
+    if (model !== null) {
+      records.push({
+        model,
+        totals: {
+          uncachedInputTokens: Math.max(0, input - cached - cacheCreation),
+          cachedInputTokens: cached,
+          cacheCreationTokens: cacheCreation,
+          outputTokens: output,
+          reasoningTokens: usage.reasoningTokens ?? 0,
+        },
+        speed: "standard",
+        reportedCostUsd: null,
+      });
+    }
+    const other = usage.otherUsage;
+    if (other === undefined) continue;
+    otherTokens = sum(otherTokens, other.inputTokens + other.outputTokens);
+    const otherModel = subagentModel?.model ?? model;
+    if (otherModel === null) continue;
+    const otherCached = input === 0 ? 0 : Math.round((other.inputTokens * cached) / input);
+    const otherCacheCreation =
+      input === 0 ? 0 : Math.round((other.inputTokens * cacheCreation) / input);
+    otherRecords.push({
+      model: otherModel,
       totals: {
-        uncachedInputTokens:
-          Math.max(0, inputTokens - cached - cacheCreation) + (otherUsage?.inputTokens ?? 0),
-        cachedInputTokens: cached,
-        cacheCreationTokens: cacheCreation,
-        outputTokens: outputTokens + (otherUsage?.outputTokens ?? 0),
-        reasoningTokens: usage.value.reasoningTokens ?? 0,
+        uncachedInputTokens: Math.max(0, other.inputTokens - otherCached - otherCacheCreation),
+        cachedInputTokens: otherCached,
+        cacheCreationTokens: otherCacheCreation,
+        outputTokens: other.outputTokens,
+        reasoningTokens: 0,
       },
       speed: "standard",
       reportedCostUsd: null,
     });
   }
-  return { tokens, records };
+  const result: RunUsage = { tokens, records, otherTokens, otherRecords };
+  return result;
 });
 
 const decodeRun = (row: RunRow): ScheduledTaskRun => {
@@ -203,9 +300,14 @@ const decodeRun = (row: RunRow): ScheduledTaskRun => {
     trigger,
     threadId: row.thread_id === null ? null : ThreadId.make(row.thread_id),
     messageId: row.message_id === null ? null : MessageId.make(row.message_id),
-    ...(row.cost_usd === null ? {} : { costUsd: row.cost_usd }),
     ...(row.tokens === null ? {} : { tokens: row.tokens }),
+    ...(row.cost_usd === null ? {} : { costUsd: row.cost_usd }),
+    ...(row.other_tokens === null ? {} : { otherTokens: row.other_tokens }),
+    ...(row.other_cost_usd_estimate === null
+      ? {}
+      : { otherCostUsdEstimate: row.other_cost_usd_estimate }),
     ...(row.subagent_count > 0 ? { subagents: row.subagent_count } : {}),
+    ...(row.skip_count > 0 ? { skipCount: row.skip_count } : {}),
     notifications: Option.getOrElse(decodeNotificationIds(row.notification_ids_json), () => []),
     error: row.error,
   };
