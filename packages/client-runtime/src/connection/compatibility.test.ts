@@ -32,7 +32,7 @@ describe("orchestration protocol compatibility", () => {
       String(ORCHESTRATION_PROTOCOL_VERSION),
     );
     expect(socketUrl.searchParams.get("clientCapabilities")).toBe(
-      "settingsSecretReferences,scheduledTaskSkippedStatus,peerLinkUnauthorizedStatus,terminalWorkspaceChangedError,scheduledTaskEventSchedule",
+      "settingsSecretReferences,scheduledTaskSkippedStatus,peerLinkUnauthorizedStatus,terminalWorkspaceChangedError,scheduledTaskEventSchedule,assistantTextParts",
     );
     expect(socketUrl.searchParams.get("wsTicket")).toBe("secret");
     expect(socketUrl.searchParams.get("connectionMethod")).toBe("relay");

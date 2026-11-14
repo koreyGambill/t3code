@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import { CLIENT_WIRE_CAPABILITIES } from "../connection/compatibility.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
@@ -29,6 +30,7 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
     query: {
       cursor: input.cursor,
       compactIds: "1",
+      clientCapabilities: CLIENT_WIRE_CAPABILITIES,
       ...(input.throughEntryId === undefined ? { deferWork: "1" } : {}),
       ...(input.view === undefined ? {} : { view: input.view }),
       ...(input.throughEntryId === undefined ? {} : { throughEntryId: input.throughEntryId }),

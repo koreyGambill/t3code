@@ -6,6 +6,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ASSISTANT_TEXT_PARTS_CAPABILITY,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   AuthSessionId,
@@ -103,7 +104,11 @@ const CLIENT_BOUNDED_OPT_INS = {
   compactIds: "1",
   deferWork: "1",
 } satisfies Required<typeof EnvironmentOrchestrationThreadBoundedSnapshotQuery.Type>;
-const CLIENT_HISTORY_OPT_INS = { compactIds: "1", deferWork: "1" } satisfies Required<
+const CLIENT_HISTORY_OPT_INS = {
+  compactIds: "1",
+  deferWork: "1",
+  clientCapabilities: ASSISTANT_TEXT_PARTS_CAPABILITY,
+} satisfies Required<
   Omit<typeof EnvironmentOrchestrationThreadHistoryQuery.Type, "cursor" | "throughEntryId" | "view">
 >;
 const CLIENT_SHELL_OPT_INS = {

@@ -2041,6 +2041,9 @@ export const layerWsRpc = (
           nativeChildWork.getNativeChildWork(input),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
+            Effect.map((result) =>
+              forClient[ORCHESTRATION_V2_WS_METHODS.getTurnItem](result, client),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetThreadProjectionError({
@@ -2155,12 +2158,14 @@ export const layerWsRpc = (
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
                 })
                 .pipe(
-                  Effect.map(
-                    (snapshot) =>
+                  Effect.map((snapshot) =>
+                    forClient[ORCHESTRATION_V2_WS_METHODS.getThreadProjection](
                       buildBoundedThreadProjection({
                         projection: projectThreadProjectionForWire(snapshot.projection),
                         snapshotSequence: snapshot.snapshotSequence,
                       }).projection,
+                      client,
+                    ),
                   ),
                   Effect.mapError(
                     (cause) =>
@@ -2324,6 +2329,10 @@ export const layerWsRpc = (
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            ),
+          ).pipe(
+            Stream.map((item) =>
+              forClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread](item, client),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>

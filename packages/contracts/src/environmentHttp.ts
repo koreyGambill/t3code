@@ -706,6 +706,8 @@ export const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
   deferWork: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
+  /** The same list a client sends as the WebSocket's `clientCapabilities`. */
+  clientCapabilities: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryErrors = [
