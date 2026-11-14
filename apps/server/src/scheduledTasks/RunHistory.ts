@@ -86,7 +86,10 @@ export const prune = Effect.fn("ScheduledTaskRunHistory.prune")(function* (
       ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET ${RUN_RETENTION_PER_TASK - 1})`;
 });
 
-/** A skipped check-in extends the newest row when that is a skip too, so idle tasks add one row. */
+/**
+ * A skipped check-in extends the newest row when that is a skip too, so idle tasks add one row.
+ * It stamps the task's `last_run_ended_at`, so clients refetch the history.
+ */
 export const recordSkip = Effect.fn("ScheduledTaskRunHistory.recordSkip")(function* (input: {
   readonly id: ScheduledTaskRunId;
   readonly taskId: ScheduledTaskId;
@@ -101,6 +104,8 @@ export const recordSkip = Effect.fn("ScheduledTaskRunHistory.recordSkip")(functi
         WHERE id = (SELECT id FROM scheduled_task_runs WHERE task_id = ${input.taskId}
           ORDER BY started_at DESC, rowid DESC LIMIT 1) AND status = 'skipped'
         RETURNING id`;
+      yield* sql`UPDATE scheduled_tasks SET last_run_ended_at = ${input.at}
+        WHERE task_id = ${input.taskId}`;
       if (extended.length > 0) return;
       yield* sql`INSERT INTO scheduled_task_runs ${sql.insert({
         id: input.id,

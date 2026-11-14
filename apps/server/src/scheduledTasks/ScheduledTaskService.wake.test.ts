@@ -158,6 +158,8 @@ it.effect.each([
       const sent = yield* Ref.get(f.sends);
       expect(sent).toHaveLength(1);
       expect(sent[0]?.origin).toMatchObject({ kind: "wake" });
+      // The wake lands in the user's own conversation, so it carries no automation preface.
+      expect(sent[0]?.text).toBe(input.prompt);
       expect((yield* service.list()).tasks[0]?.enabled).toBe(false);
       yield* TestClock.adjust("2 minutes");
       yield* f.tick;

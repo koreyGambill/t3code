@@ -1468,8 +1468,12 @@ export const layer = Layer.effect(
             ? { kind: "wake" as const, detail: reason }
             : { kind: "scheduled-task" as const, title: active.title };
         const body = webhook?.prompt ?? active.prompt + (eventFire?.prompt ?? "");
-        const preface = automationRunPreface(active.title, runTrigger);
-        // A prompt already at the send limit goes without the preface rather than failing.
+        // Only a run that starts its own thread gets the preface: a bound thread is a conversation
+        // the user is in. A prompt already at the send limit goes without it rather than failing.
+        const preface =
+          active.threadId === null && keepsHistory
+            ? automationRunPreface(active.title, runTrigger)
+            : "";
         const prompt = idleCheckin
           ? idleCheckinPrompt(active.id)
           : (preface + body).trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
@@ -1777,7 +1781,7 @@ export const layer = Layer.effect(
                             endedAt: iso(endedAt),
                             error: errorMessage(cause),
                           }),
-                        ),
+                        ).pipe(Effect.andThen(notifyChanged)),
                       ),
                     )
                   : // The turn was sent and may still finish; only its bookkeeping failed.

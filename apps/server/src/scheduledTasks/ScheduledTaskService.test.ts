@@ -552,11 +552,8 @@ it.effect.each([
         messageId: MessageId.make(yield* Ref.get(sent)),
       });
       assert.isNotNull(runs[0]?.endedAt);
-      // A person pressed Run now, so the preface does not claim nobody is watching.
-      assert.equal(
-        yield* Ref.get(sentText),
-        '[Automated run of "Quota bookkeeping" (Run now). Use t3_notify for anything the user must see.]\n\nUpdate the notes',
-      );
+      // A bound thread is a conversation the user is in, so it gets no preface.
+      assert.equal(yield* Ref.get(sentText), "Update the notes");
       const sql = yield* SqlClient.SqlClient;
       const [bound] = yield* sql<{
         orchestration_run_id: string;
@@ -820,12 +817,16 @@ it.effect("a sent run stays open for its follower when only the completion recor
 
 it.effect("a run whose dispatch fails is recorded as failed without a thread", () =>
   Effect.gen(function* () {
+    const launchedText = yield* Ref.make("");
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: () => Effect.die(new Error("provider unavailable")),
+            launch: (input) =>
+              Ref.set(launchedText, input.initialMessage?.text ?? "").pipe(
+                Effect.andThen(Effect.die(new Error("provider unavailable"))),
+              ),
           }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
@@ -860,6 +861,11 @@ it.effect("a run whose dispatch fails is recorded as failed without a thread", (
       assert.isNull(runs[0]?.threadId);
       assert.isNotNull(runs[0]?.endedAt);
       assert.isTrue(runs[0]?.error?.includes("provider unavailable") === true);
+      // A new thread gets the preface; a person pressed Run now, so it does not say nobody watches.
+      assert.equal(
+        yield* Ref.get(launchedText),
+        '[Automated run of "Check" (Run now). Use t3_notify for anything the user must see.]\n\nCheck',
+      );
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

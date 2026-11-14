@@ -99,6 +99,10 @@ it.effect("keeps the newest runs per task and pages through them newest first", 
     assert.equal(seen.at(-1), "run:5");
     assert.equal(new Set(seen).size, seen.length);
 
+    const [skipped] = yield* sql<{
+      last_run_ended_at: string | null;
+    }>`SELECT last_run_ended_at FROM scheduled_tasks WHERE task_id = ${taskId}`;
+    assert.equal(skipped?.last_run_ended_at, at(total - 1));
     const closedNow = yield* RunHistory.finishRun(ScheduledTaskRunId.make(`run:${total - 1}`), {
       status: "quiet",
       endedAt: now,
