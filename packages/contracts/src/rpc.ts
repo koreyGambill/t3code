@@ -16,6 +16,13 @@ import {
   MonitoringRespondResult,
 } from "./monitoring.ts";
 import {
+  NotificationError,
+  NotificationMarkAllReadResult,
+  NotificationStreamEvent,
+  NotificationUpdateInput,
+  NotificationUpdateResult,
+} from "./notification.ts";
+import {
   ThreadMark,
   ThreadMarksGetInput,
   ThreadMarksAnnotateInput,
@@ -732,6 +739,9 @@ export const WS_METHODS = {
   monitoringRunNow: "monitoring.runNow",
   monitoringSetDisposition: "monitoring.setDisposition",
   monitoringRespond: "monitoring.respond",
+  notificationsSubscribe: "notifications.subscribe",
+  notificationsUpdate: "notifications.update",
+  notificationsMarkAllRead: "notifications.markAllRead",
 
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
   scheduledTasksDelete: "scheduledTasks.delete",
@@ -2488,6 +2498,23 @@ const WsMonitoringRespondRpc = Rpc.make(WS_METHODS.monitoringRespond, {
   error: Schema.Union([MonitoringError, EnvironmentAuthorizationError]),
 });
 
+const WsNotificationsSubscribeRpc = Rpc.make(WS_METHODS.notificationsSubscribe, {
+  payload: Schema.Struct({}),
+  success: NotificationStreamEvent,
+  error: Schema.Union([NotificationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+const WsNotificationsUpdateRpc = Rpc.make(WS_METHODS.notificationsUpdate, {
+  payload: NotificationUpdateInput,
+  success: NotificationUpdateResult,
+  error: Schema.Union([NotificationError, EnvironmentAuthorizationError]),
+});
+const WsNotificationsMarkAllReadRpc = Rpc.make(WS_METHODS.notificationsMarkAllRead, {
+  payload: Schema.Struct({}),
+  success: NotificationMarkAllReadResult,
+  error: Schema.Union([NotificationError, EnvironmentAuthorizationError]),
+});
+
 const WsStatusSourcesSubscribeRpc = Rpc.make(WS_METHODS.statusSourcesSubscribe, {
   payload: Schema.Struct({}),
   success: StatusSourceList,
@@ -2674,6 +2701,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsMonitoringRunNowRpc,
   WsMonitoringSetDispositionRpc,
   WsMonitoringRespondRpc,
+  WsNotificationsSubscribeRpc,
+  WsNotificationsUpdateRpc,
+  WsNotificationsMarkAllReadRpc,
   WsScheduledTasksSubscribeRpc,
   WsStatusSourcesSubscribeRpc,
   WsStatusSourcesUpsertRpc,

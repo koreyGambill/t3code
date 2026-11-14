@@ -1,5 +1,6 @@
 import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
+import * as NotificationService from "../notifications/NotificationService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -212,7 +213,11 @@ const layerTools = Layer.mergeAll(
     ),
   ),
   Layer.provide(
-    Layer.merge(NodeServices.layer, Layer.mock(MonitoringDialogue.MonitoringDialogue)({})),
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(MonitoringDialogue.MonitoringDialogue)({}),
+      Layer.mock(NotificationService.NotificationService)({}),
+    ),
   ),
 );
 
