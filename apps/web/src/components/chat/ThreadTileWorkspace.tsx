@@ -388,14 +388,26 @@ export function ThreadTileWorkspace(props: {
   };
   const closeTab = (tabId: string) => {
     const owner = getTileGroups(currentLayout()).find((group) => group.tabs.includes(tabId));
-    if (owner) parkFocus(owner.id);
+    // Only a close that removes the focused element moves focus; middle-clicking a background
+    // tab leaves the user's caret where it is.
+    const escaped = CSS.escape(tabId);
+    const active = document.activeElement;
+    const holdsFocus =
+      active instanceof Element &&
+      (active.closest(`[data-tile-content="${escaped}"]`) !== null ||
+        active.closest(".workspace-tile-tab")?.querySelector(`[data-tab-id="${escaped}"]`) !=
+          null ||
+        (owner?.tabs.length === 1 &&
+          active.closest(`[data-tile-group="${CSS.escape(owner.id)}"]`) !== null));
+    if (owner && holdsFocus) parkFocus(owner.id);
     const surface = props.panels.surfaces.find((entry) => entry.id === tabId);
     if (surface) props.panels.onCloseSurface(surface);
     else apply({ type: "close-tab", tabId });
+    if (!holdsFocus) return;
     const after = currentLayout();
     focus(
-      getTileGroups(after).some((group) => group.id === owner?.id)
-        ? owner!.id
+      owner && getTileGroups(after).some((group) => group.id === owner.id)
+        ? owner.id
         : after.focusedGroupId,
     );
   };

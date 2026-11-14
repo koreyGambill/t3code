@@ -277,12 +277,17 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
     "conversation",
   );
   expect(getTileGroups(layout()).some((group) => group.id === movedGroup.id)).toBe(false);
+  // Middle-clicking a tab that doesn't hold focus leaves the caret where the user was typing.
+  const elsewhere = document.body.appendChild(document.createElement("input"));
+  elsewhere.focus();
   await userEvent.click(screen.getByRole("tab", { name: "files", exact: true }), {
     button: "middle",
   });
   await expect
     .element(screen.getByRole("tab", { name: "files", exact: true }))
     .not.toBeInTheDocument();
+  expect(document.activeElement).toBe(elsewhere);
+  elsewhere.remove();
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces.some(
       (surface) => surface.id === "files",
