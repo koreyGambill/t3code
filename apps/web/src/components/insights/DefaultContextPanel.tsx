@@ -341,7 +341,10 @@ function FileRow({
     <>
       <span className="flex min-w-0 flex-1 flex-col">
         <span
-          className={cn("flex min-w-0", linkable && "underline-offset-2 group-hover/file:underline")}
+          className={cn(
+            "flex min-w-0",
+            linkable && "underline-offset-2 group-hover/file:underline",
+          )}
         >
           <MiddleTruncate value={name} showTitle={false} tail={6} />
         </span>
