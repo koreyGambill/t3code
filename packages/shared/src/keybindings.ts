@@ -78,7 +78,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "ctrl+alt+f", command: "workspace.tile.focusPair" },
   { key: "ctrl+alt+s", command: "workspace.tile.swap" },
   { key: "ctrl+alt+p", command: "workspace.tile.float" },
-  { key: "ctrl+alt+t", command: "workspace.tile.newTab" },
+  // Ctrl+Alt+T opens a terminal on GNOME, and mod+alt+n starts a new chat on Linux and Windows.
+  { key: "ctrl+alt+o", command: "workspace.tile.newTab" },
   { key: "ctrl+alt+w", command: "workspace.tile.closeTab" },
   { key: "ctrl+alt+.", command: "workspace.tile.actions" },
   { key: "ctrl+shift+tab", command: "workspace.tile.previousTab" },

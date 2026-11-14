@@ -663,7 +663,7 @@ describe("resolveShortcutCommand", () => {
         ["f", false, "workspace.tile.focusPair"],
         ["s", false, "workspace.tile.swap"],
         ["p", false, "workspace.tile.float"],
-        ["t", false, "workspace.tile.newTab"],
+        ["o", false, "workspace.tile.newTab"],
         ["w", false, "workspace.tile.closeTab"],
         [".", false, "workspace.tile.actions"],
       ] as const;
@@ -679,19 +679,19 @@ describe("resolveShortcutCommand", () => {
           );
         }
       }
-      assert.isNull(
-        resolveShortcutCommand(
-          event({
-            key: "[",
-            code: "Digit8",
-            ctrlKey: true,
-            altKey: true,
-            getModifierState: () => true,
-          }),
-          DEFAULT_RESOLVED_KEYBINDINGS,
-          { platform: "Win32" },
-        ),
-      );
+      // AltGr text (German AltGr+8 types "[", Polish AltGr+S and AltGr+L type "ś" and "ł").
+      for (const [key, code] of [
+        ["[", "Digit8"],
+        ["ś", "KeyS"],
+        ["ł", "KeyL"],
+      ] as const)
+        assert.isNull(
+          resolveShortcutCommand(
+            event({ key, code, ctrlKey: true, altKey: true, getModifierState: () => true }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            { platform: "Win32" },
+          ),
+        );
     },
   );
 
