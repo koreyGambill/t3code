@@ -57,6 +57,8 @@ definePipeline({
   ],
   plan(p, run) {
     const mode = (run.args.mode || "plan") as Mode;
+    // Install modes end at Launch, which hands activation and its drain to a detached PowerShell, so
+    // the cores cover the build. check runs Activate in the foreground and holds them through the drain.
     const job = p
       .job("desktop-install")
       .inline()

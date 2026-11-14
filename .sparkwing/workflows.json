@@ -27,6 +27,6 @@
     "pr-limits.yml": { "disposition": "github-only", "notes": "open PR limit" },
     "pr-size.yml": { "disposition": "github-only", "notes": "PR size labels" },
     "stale-needs-more-info.yml": { "disposition": "github-only", "notes": "stale issue bot" },
-    "thread-transfer-report.yml": { "disposition": "github-only", "notes": "PR comment; its node --test self-test is not ported" }
+    "thread-transfer-report.yml": { "disposition": "github-only", "notes": "PR comment; its node --test self-test runs in ci test (release-checks)" }
   }
 }

@@ -24,6 +24,8 @@ const NODE_SCRIPT_TESTS = [
   ".github/scripts/vercel-deployment-output.test.cjs",
   ".github/scripts/mobile-preview-comment.test.cjs",
   ".github/scripts/test-delta.test.cjs",
+  // thread-transfer-report.yml's self-test; that workflow's PR comment stays on GitHub.
+  ".github/scripts/thread-transfer-report.test.cjs",
 ];
 
 interface ChangesOutput extends Changes {
