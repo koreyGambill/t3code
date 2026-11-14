@@ -2805,6 +2805,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     modelSelection: run.modelSelection,
                     remoteChild,
                     completionWake: "settled_only",
+                    ...(input.group === undefined ? {} : { completionGroup: input.group }),
                   });
                   const parent = yield* orchestrator.getThreadProjection(parentThreadId);
                   return { taskId: parent.subagents[0]!.id };
@@ -2865,6 +2866,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 ? { target: { environmentId: remoteChild.environmentId } }
                 : {}),
               mode: "wait",
+              group: "review",
               clientRequestId: "delegate-wait-cancelled",
             })
             .pipe(Effect.forkChild);
@@ -2879,6 +2881,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             "always",
             "a cancelled blocking delegation left the task settled_only, so its result never reaches the still-live parent run",
           );
+          assert.equal(task?.completionGroup, "review");
         }).pipe(Effect.provide(layerTest));
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );

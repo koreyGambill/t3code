@@ -21,6 +21,14 @@ The rule for changes to `packages/contracts` that cross the wire:
   list, and the server refuses to change, run or delete one for them with a `ScheduledTaskError`.
   A fork client built before a flag existed gets upstream's shape for it until it updates. That is
   accepted, because a missing flag has to mean an upstream client.
+- **Behavior upstream clients cannot change can be steered with values they already know.**
+  Upstream clients fold every assistant text of a settled turn except its last into "Worked for"
+  unless its `phase` is `final_answer`, so answers written between tool calls were hidden on the
+  App Store app. Without `assistantTextParts`, every assistant text turn item goes out as
+  `final_answer` on the thread stream, `getThreadProjection`, `getTurnItem` and the history page,
+  which takes the same `clientCapabilities` list as a query parameter. Their zen mode then shows
+  those texts too, and so do their superseded attempts, because the mapping sees one item at a time
+  and not its attempt's status.
 - **Methods upstream clients call stay served** under the same names and request shapes. A feature
   the fork dropped answers with a typed error upstream clients show: `projects.createFromThread`
   points to Change folder, and `threadProjectFromScratch` stays unadvertised so they hide the action.

@@ -4,7 +4,16 @@
 // The rule, the checks and how to fix a failure: docs/internals/fork-wire-compatibility.md.
 import { describe, expect, it } from "@effect/vitest";
 import {
+  ASSISTANT_TEXT_PARTS_CAPABILITY,
   EnvironmentHttpApi,
+  MessageId,
+  ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  RunId,
+  ThreadId,
+  TurnItemId,
   ExecutionEnvironmentDescriptor,
   PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
   PeerLinkSummary,
@@ -20,6 +29,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Arbitrary from "effect/Arbitrary";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as RpcSchema from "effect/rpc/RpcSchema";
@@ -34,6 +44,7 @@ import {
   readClientWireCapabilities,
   responseForClient,
   scheduledTasksForClient,
+  threadHistoryPageForClient,
   type ClientWireCapabilities,
 } from "./upstreamClientCompat.ts";
 
@@ -659,6 +670,116 @@ describe("upstream client wire compatibility", () => {
       expect(mapped.message).toBe(`Failed to access terminal cwd: ${moved.message}`);
     }),
   );
+
+  it("sends upstream clients every assistant text part as a final answer", () => {
+    const at = DateTime.makeUnsafe("2026-11-13T10:00:00Z");
+    const base = (id: string, ordinal: number) => ({
+      id: TurnItemId.make(id),
+      threadId: ThreadId.make("thread"),
+      runId: RunId.make("run"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+    });
+    const text = (
+      id: string,
+      ordinal: number,
+      fields: { readonly text: string; readonly phase?: "commentary" | "final_answer" },
+    ): OrchestrationV2TurnItem => ({
+      ...base(id, ordinal),
+      type: "assistant_message",
+      messageId: MessageId.make(id),
+      streaming: false,
+      ...fields,
+    });
+    const items: ReadonlyArray<OrchestrationV2TurnItem> = [
+      text("commentary", 1, { text: "Found it, fixing.", phase: "commentary" }),
+      text("unphased", 2, { text: "Tests pass." }),
+      text("empty", 3, { text: "" }),
+      { ...base("tool", 4), type: "reasoning", text: "Hmm", streaming: false },
+      text("final", 5, { text: "Done.", phase: "final_answer" }),
+    ];
+    const projected = items.map((item): OrchestrationV2ProjectedTurnItem => ({
+      position: item.ordinal,
+      visibility: "local",
+      sourceThreadId: item.threadId,
+      sourceItemId: item.id,
+      item,
+    }));
+    const phases = (sent: ReadonlyArray<OrchestrationV2TurnItem>) =>
+      sent.map((item) => (item.type === "assistant_message" ? (item.phase ?? null) : item.type));
+    const upstreamPhases = ["final_answer", "final_answer", null, "reasoning", "final_answer"];
+    const forkClient = readClientWireCapabilities(ASSISTANT_TEXT_PARTS_CAPABILITY);
+    const projection = {
+      turnItems: items,
+      visibleTurnItems: projected,
+    } as Partial<OrchestrationV2ThreadProjection> as OrchestrationV2ThreadProjection;
+
+    const getProjection = responseForClient[ORCHESTRATION_V2_WS_METHODS.getThreadProjection];
+    expect(getProjection(projection, forkClient)).toBe(projection);
+    const sentProjection = getProjection(projection, upstreamClient);
+    expect(phases(sentProjection.turnItems)).toEqual(upstreamPhases);
+    expect(phases(sentProjection.visibleTurnItems.map(({ item }) => item))).toEqual(upstreamPhases);
+    expect(sentProjection.turnItems[4]).toBe(items[4]);
+
+    const subscribe = responseForClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread];
+    const snapshot = {
+      kind: "snapshot" as const,
+      snapshotSequence: 1,
+      projection,
+      idTable: true as const,
+    };
+    expect(subscribe(snapshot, forkClient)).toBe(snapshot);
+    const sentSnapshot = subscribe(snapshot, upstreamClient);
+    expect(
+      sentSnapshot.kind === "snapshot" ? phases(sentSnapshot.projection.turnItems) : null,
+    ).toEqual(upstreamPhases);
+    // A live update whose text the deduper blanked is still a text part.
+    const omitted = { ...items[0]!, text: "", textOmitted: true as const };
+    const event = (payload: OrchestrationV2TurnItem) => ({
+      kind: "event" as const,
+      sequence: 2,
+      event: {
+        id: "event" as never,
+        threadId: payload.threadId,
+        type: "turn-item.updated" as const,
+        payload,
+        createdAt: at,
+      } as never,
+    });
+    for (const payload of [items[0]!, omitted]) {
+      const sent = subscribe(event(payload), upstreamClient);
+      expect(sent.kind === "event" && sent.event.type === "turn-item.updated").toBe(true);
+      if (sent.kind === "event" && sent.event.type === "turn-item.updated") {
+        expect(phases([sent.event.payload])).toEqual(["final_answer"]);
+      }
+      expect(subscribe(event(payload), forkClient)).toEqual(event(payload));
+    }
+
+    const getItem = responseForClient[ORCHESTRATION_V2_WS_METHODS.getTurnItem];
+    expect(phases([getItem({ item: items[1]! }, upstreamClient).item!])).toEqual(["final_answer"]);
+    expect(getItem({ item: items[1]! }, forkClient).item).toBe(items[1]);
+
+    const page = {
+      snapshotSequence: 1,
+      items: projected,
+      nextCursor: null,
+      hasMoreHistory: false,
+      idTable: true as const,
+    };
+    expect(threadHistoryPageForClient(page, forkClient)).toBe(page);
+    expect(
+      phases(threadHistoryPageForClient(page, upstreamClient).items.map(({ item }) => item)),
+    ).toEqual(upstreamPhases);
+  });
 
   it.effect(
     "refuses upstream clients' changes to a task they cannot show before running them",

@@ -200,6 +200,8 @@ const McpToolUseExpect = Schema.Struct({
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Every call of `tool` passes the same present value at the dotted path `arg`. */
+  sharedArg: Schema.optional(Schema.Struct({ tool: Schema.String, arg: Schema.String })),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
@@ -1779,8 +1781,8 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
 
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
 /**
- * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
- * matches a missing or null value.
+ * Partial match: `~text` is a case-insensitive substring, a bare `~` any present value, `<=N` /
+ * `>=N` bound a number, and `null` matches a missing or null value.
  */
 const matches = (expected: unknown, actual: unknown): boolean => {
   if (expected === null) return actual === undefined || actual === null;
@@ -1789,6 +1791,7 @@ const matches = (expected: unknown, actual: unknown): boolean => {
     const limit = Number(bound[2]);
     return typeof actual === "number" && (bound[1] === "<=" ? actual <= limit : actual >= limit);
   }
+  if (expected === "~") return actual !== undefined && actual !== null;
   if (typeof expected === "string" && expected.startsWith("~")) {
     return valueText(actual).toLowerCase().includes(expected.slice(1).toLowerCase());
   }
@@ -1920,6 +1923,22 @@ export const gradeSample = (
           expected,
           calls.map((request) => ({ request, brief: "" })),
         ),
+    );
+  }
+  if (expect.sharedArg !== undefined) {
+    const { tool, arg } = expect.sharedArg;
+    const values = calls
+      .filter((call) => call.tool === tool)
+      .map((call) =>
+        arg
+          .split(".")
+          .reduce<unknown>((value, key) => (isRecord(value) ? value[key] : undefined), call.input),
+      );
+    add(
+      `sharedArg ${tool} ${arg}`,
+      values.length > 0 &&
+        values.every((value) => value !== undefined && value !== null) &&
+        new Set(values.map(valueText)).size === 1,
     );
   }
   for (const call of expect.callsMustNot ?? [])

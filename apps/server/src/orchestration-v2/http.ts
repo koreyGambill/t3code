@@ -38,6 +38,7 @@ import {
 } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import * as UpstreamClientCompat from "../upstreamClientCompat.ts";
 
 const isInvalidThreadHistoryCursorError = Schema.is(InvalidThreadHistoryCursorError);
 
@@ -287,7 +288,12 @@ export const layer = HttpApiBuilder.group(
             )
             .pipe(
               Effect.map((page) =>
-                args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
+                UpstreamClientCompat.threadHistoryPageForClient(
+                  args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
+                  UpstreamClientCompat.readClientWireCapabilities(
+                    args.query.clientCapabilities ?? null,
+                  ),
+                ),
               ),
               traceLocalHandlerWork,
               Effect.catch(

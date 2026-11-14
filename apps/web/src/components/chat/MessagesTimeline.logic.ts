@@ -598,6 +598,8 @@ type MessagesTimelineRowContent =
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
       showAssistantMeta: boolean;
+      /** Assistant text that more of its turn follows, set apart from the turn's answer. */
+      whileWorking?: true;
       suppressEmptyResponse?: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
@@ -724,6 +726,21 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   }
 
   return new Set(lastAssistantMessageIdByResponseKey.values());
+}
+
+// Only a later text proves an earlier one was not the turn's answer.
+function deriveWhileWorkingEntryIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
+  const ids = new Set<string>();
+  const laterTextRunIds = new Set<RunId>();
+  for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
+    const entry = timelineEntries[index]!;
+    if (!timelineEntryIsTextPart(entry)) continue;
+    const runId = timelineEntryRunId(entry);
+    if (runId === null) continue;
+    if (laterTextRunIds.has(runId)) ids.add(entry.id);
+    laterTextRunIds.add(runId);
+  }
+  return ids;
 }
 
 interface TurnFold {
@@ -916,6 +933,14 @@ function timelineEntryFoldRunId(entry: TimelineEntry, runlessKey: RunId | null):
     return entry.projectedItem.item.runId ?? runlessKey;
   }
   return null;
+}
+
+function timelineEntryIsTextPart(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "message" &&
+    entry.message.role === "assistant" &&
+    (entry.message.text.trim() !== "" || (entry.message.attachments?.length ?? 0) > 0)
+  );
 }
 
 function timelineEntryIsSteer(entry: TimelineEntry): boolean {
@@ -1150,7 +1175,7 @@ function deriveTurnFolds(input: {
     // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (entry.id === group.terminalEntry?.id || timelineEntryIsTextPart(entry)) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);
@@ -1189,59 +1214,97 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const isLatestInterruptedTurn =
-      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
+    const latestRun = input.latestRun?.runId === runId ? input.latestRun : null;
+    const isLatestInterruptedTurn = latestRun?.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd = timelineEntryEnd(lastEntry);
-    const elapsedMs =
-      input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
-              lastEntryEnd,
-          );
-    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestInterruptedTurn
-      ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
-      : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+    const runTimes =
+      latestRun?.startedAt && latestRun.completedAt
+        ? { start: latestRun.startedAt, end: latestRun.completedAt }
+        : null;
 
-    // The top row keeps the whole turn's time, steers included. Work after a
-    // steer folds under its own row below that steer, keyed apart from the run
-    // so each segment opens on its own.
-    const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
-      new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
-    const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
-    foldsByAnchorEntryId.set(group.anchorEntryId, {
-      runId,
-      anchorEntryId: group.anchorEntryId,
-      createdAt: group.startBoundary ?? firstEntry.createdAt,
-      hiddenEntryIds: segmentHiddenIds(firstSegment),
-      entryIds: new Set(firstSegment.map((entry) => entry.id)),
-      label,
-    });
-    for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
-      const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
-      const anchorEntry = entries[0];
-      if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
-      const segmentMs = computeElapsedMs(
-        steer.createdAt,
-        entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
-          steer.createdAt,
-      );
-      foldsByAnchorEntryId.set(anchorEntry.id, {
-        runId: RunId.make(`${runId}:steer:${steer.id}`),
-        anchorEntryId: anchorEntry.id,
-        createdAt: steer.createdAt,
-        hiddenEntryIds: segmentHiddenIds(entries),
-        entryIds: new Set(entries.map((entry) => entry.id)),
-        label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
-      });
+    // The work after a steer folds below that steer, keyed apart from the run so each segment
+    // opens on its own. The top segment ends where the whole turn ends, steers included.
+    const segments = [
+      {
+        key: runId,
+        entries: group.entries.slice(0, group.steerSegments[0]?.startIndex),
+        start: runTimes?.start ?? group.startBoundary ?? firstEntry.createdAt,
+        end:
+          runTimes?.end ??
+          maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
+          lastEntryEnd,
+        verb: "Worked",
+        anchorEntryId: group.anchorEntryId,
+        createdAt: group.startBoundary ?? firstEntry.createdAt,
+      },
+      ...group.steerSegments.map(({ startIndex, steer }, index) => {
+        const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
+        return {
+          key: RunId.make(`${runId}:steer:${steer.id}`),
+          entries,
+          start: steer.createdAt,
+          end:
+            entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
+            steer.createdAt,
+          verb: "Continued",
+          anchorEntryId: entries[0]?.id,
+          createdAt: steer.createdAt,
+        };
+      }),
+    ];
+    for (const [segmentIndex, segment] of segments.entries()) {
+      // Text parts stay visible, so each run of work between two of them folds on its own.
+      const parts: Array<Array<TimelineEntry>> = [];
+      let part: Array<TimelineEntry> = [];
+      for (const entry of segment.entries) {
+        if (timelineEntryIsTextPart(entry)) {
+          if (part.length > 0) parts.push(part);
+          part = [];
+        } else {
+          part.push(entry);
+        }
+      }
+      if (part.length > 0) parts.push(part);
+      const foldedParts = parts.filter(hidesNonCompactionWork);
+      // Each fold times the turn up to the next fold, so the folds add up to the whole turn.
+      let foldStart = segment.start;
+      for (const [index, entries] of foldedParts.entries()) {
+        const nextFoldStart = foldedParts[index + 1]?.[0];
+        const end =
+          nextFoldStart === undefined
+            ? segment.end
+            : (segment.entries
+                .slice(segment.entries.indexOf(entries[0]!), segment.entries.indexOf(nextFoldStart))
+                .map(timelineEntryEnd)
+                .reduce<string | null>(maxIsoTimestamp, null) ?? foldStart);
+        const elapsedMs = computeElapsedMs(foldStart, end);
+        const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+        const isTurnStop =
+          isLatestInterruptedTurn && segmentIndex === 0 && index === foldedParts.length - 1;
+        const turnMs = isTurnStop ? computeElapsedMs(segment.start, segment.end) : null;
+        const startsSegment = entries[0] === segment.entries[0];
+        const anchorEntryId = (startsSegment ? segment.anchorEntryId : undefined) ?? entries[0]!.id;
+        const key = index === 0 ? segment.key : RunId.make(`${segment.key}:part:${anchorEntryId}`);
+        foldsByAnchorEntryId.set(anchorEntryId, {
+          runId: key,
+          anchorEntryId,
+          createdAt: startsSegment ? segment.createdAt : entries[0]!.createdAt,
+          hiddenEntryIds: new Set(
+            entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])),
+          ),
+          entryIds: new Set(entries.map((entry) => entry.id)),
+          label: isTurnStop
+            ? turnMs !== null
+              ? `You stopped after ${formatDuration(turnMs)}`
+              : "You stopped this response"
+            : duration
+              ? `${segment.verb} for ${duration}`
+              : segment.verb,
+        });
+        foldStart = end;
+      }
     }
   }
   return foldsByAnchorEntryId;
@@ -1580,6 +1643,7 @@ export function deriveMessagesTimelineRows(input: {
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
+  const whileWorkingEntryIds = deriveWhileWorkingEntryIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
@@ -1613,14 +1677,15 @@ export function deriveMessagesTimelineRows(input: {
         });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
-  const collapsedFoldMemberIds = new Set<string>();
+  const openFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedRunIds?.has(fold.runId)) {
+    if (input.expandedRunIds?.has(fold.runId)) {
+      for (const entryId of fold.entryIds) {
+        openFoldMemberIds.add(entryId);
+      }
+    } else {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
-      }
-      for (const entryId of fold.entryIds) {
-        collapsedFoldMemberIds.add(entryId);
       }
     }
   }
@@ -2220,6 +2285,7 @@ export function deriveMessagesTimelineRows(input: {
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
       showAssistantMeta,
+      ...(whileWorkingEntryIds.has(timelineEntry.id) ? { whileWorking: true as const } : {}),
       suppressEmptyResponse:
         timelineEntry.message.role === "assistant" &&
         timelineEntry.message.runId != null &&
@@ -2318,7 +2384,7 @@ export function deriveMessagesTimelineRows(input: {
   }
 
   const result = attachTrailingToolGroupsToAssistant(
-    attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+    attachCreatedThreadSummaries(nextRows, timelineEntries, openFoldMemberIds),
   );
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
@@ -2362,7 +2428,7 @@ function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
 function attachCreatedThreadSummaries(
   rows: MessagesTimelineRow[],
   timelineEntries: ReadonlyArray<TimelineEntry>,
-  collapsedFoldMemberIds: ReadonlySet<string>,
+  openFoldMemberIds: ReadonlySet<string>,
 ): MessagesTimelineRow[] {
   const terminalIndexes = new Map<RunId, number>();
   const createdByRun = new Map<RunId, Array<Extract<MessagesTimelineRow, { kind: "event" }>>>();
@@ -2389,10 +2455,7 @@ function attachCreatedThreadSummaries(
     if (row.kind === "event" && row.projectedItem.item.type === "thread_created") {
       const runId = row.projectedItem.item.runId;
       const terminalIndex = runId === null ? undefined : terminalIndexes.get(runId);
-      if (
-        terminalIndex !== undefined &&
-        (collapsedFoldMemberIds.has(row.id) || index > terminalIndex)
-      )
+      if (terminalIndex !== undefined && (!openFoldMemberIds.has(row.id) || index > terminalIndex))
         return [];
     }
     if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
@@ -2494,6 +2557,7 @@ function replaceStreamingMessageRows(
     return null;
   }
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
+  let textPartChanges = false;
   const thoughts = new Map<string, WorkLogEntry>();
   const plans = new Map<string, ProposedPlan>();
   for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -2535,6 +2599,9 @@ function replaceStreamingMessageRows(
     )
       continue;
     if (!isStreamingMessageTextUpdate(previousEntry.message, entry.message)) return null;
+    if (timelineEntryIsTextPart(entry) !== timelineEntryIsTextPart(previousEntry)) {
+      textPartChanges = true;
+    }
     replacements.set(previousEntry.message, entry);
   }
   if (replacements.size === 0 && thoughts.size === 0 && plans.size === 0) return previous.rows;
@@ -2563,6 +2630,7 @@ function replaceStreamingMessageRows(
     return patched;
   };
   const patchedLiveThoughtIds = new Set<string>();
+  let whileWorkingIds: ReadonlySet<string> | undefined;
   const rows = previous.rows.map((row): MessagesTimelineRow => {
     if (row.kind === "proposed-plan") {
       const proposedPlan = plans.get(row.id);
@@ -2587,13 +2655,20 @@ function replaceStreamingMessageRows(
     }
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
-    return entry
+    const patched = entry
       ? {
           ...row,
           message: entry.message,
           ...(entry.projectedItem === undefined ? {} : { projectedItem: entry.projectedItem }),
         }
       : row;
+    if (patched.kind !== "message" || !textPartChanges) return patched;
+    // A message gaining or losing its text changes which earlier texts a later one follows.
+    whileWorkingIds ??= deriveWhileWorkingEntryIds(timelineEntries);
+    const whileWorking = whileWorkingIds.has(patched.id);
+    if (whileWorking === (patched.whileWorking === true)) return patched;
+    const { whileWorking: _previous, ...rest } = patched;
+    return whileWorking ? { ...rest, whileWorking: true } : rest;
   });
   // Only a live row holds thinking without deriving a label from its text. Settled
   // groups, folded turns, and work toggles summarize it, so they need the full rebuild.
@@ -2791,6 +2866,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
         a.showAssistantMeta === bm.showAssistantMeta &&
+        a.whileWorking === bm.whileWorking &&
         a.suppressEmptyResponse === bm.suppressEmptyResponse &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&

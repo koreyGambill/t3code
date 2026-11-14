@@ -27,6 +27,8 @@ export const PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY = "peerLinkUnauthorizedSta
 export const TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY = "terminalWorkspaceChangedError";
 /** Scheduled tasks may have an `event` schedule; others never see or change such a task. */
 export const SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY = "scheduledTaskEventSchedule";
+/** The client shows every assistant text part on its own; others get each one as a final answer. */
+export const ASSISTANT_TEXT_PARTS_CAPABILITY = "assistantTextParts";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",

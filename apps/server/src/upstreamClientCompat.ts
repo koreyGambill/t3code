@@ -1,4 +1,6 @@
 import {
+  ASSISTANT_TEXT_PARTS_CAPABILITY,
+  ORCHESTRATION_V2_WS_METHODS,
   OrchestrationDispatchCommandError,
   PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
   SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY,
@@ -9,6 +11,12 @@ import {
   TerminalCwdStatError,
   TerminalWorkspaceChangedError,
   WS_METHODS,
+  type OrchestrationV2GetTurnItemResult,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadHistoryPage,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2TurnItem,
   type TerminalError,
   type PeerLinkSummary,
   type ScheduledTask,
@@ -35,6 +43,7 @@ export interface ClientWireCapabilities {
   readonly peerLinkUnauthorizedStatus: boolean;
   readonly terminalWorkspaceChangedError: boolean;
   readonly scheduledTaskEventSchedule: boolean;
+  readonly assistantTextParts: boolean;
 }
 
 export function readClientWireCapabilities(param: string | null): ClientWireCapabilities {
@@ -45,8 +54,68 @@ export function readClientWireCapabilities(param: string | null): ClientWireCapa
     peerLinkUnauthorizedStatus: declared.has(PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY),
     terminalWorkspaceChangedError: declared.has(TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY),
     scheduledTaskEventSchedule: declared.has(SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY),
+    assistantTextParts: declared.has(ASSISTANT_TEXT_PARTS_CAPABILITY),
   };
 }
+
+// Upstream clients fold every assistant text of a settled turn but its last into "Worked for",
+// unless the text is a final answer. Answers written between tool calls must stay readable there.
+function turnItemForClient(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  return item.type === "assistant_message" &&
+    item.phase !== "final_answer" &&
+    (item.text.trim() !== "" || item.textOmitted === true || (item.attachments?.length ?? 0) > 0)
+    ? { ...item, phase: "final_answer" }
+    : item;
+}
+
+function mapChanged<T>(values: ReadonlyArray<T>, map: (value: T) => T): ReadonlyArray<T> {
+  let changed = false;
+  const mapped = values.map((value) => {
+    const next = map(value);
+    changed ||= next !== value;
+    return next;
+  });
+  return changed ? mapped : values;
+}
+
+function projectedTurnItemForClient(
+  projected: OrchestrationV2ProjectedTurnItem,
+): OrchestrationV2ProjectedTurnItem {
+  const item = turnItemForClient(projected.item);
+  return item === projected.item ? projected : { ...projected, item };
+}
+
+function projectionForClient(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  const turnItems = mapChanged(projection.turnItems, turnItemForClient);
+  const visibleTurnItems = mapChanged(projection.visibleTurnItems, projectedTurnItemForClient);
+  return turnItems === projection.turnItems && visibleTurnItems === projection.visibleTurnItems
+    ? projection
+    : { ...projection, turnItems, visibleTurnItems };
+}
+
+function threadStreamItemForClient(
+  item: OrchestrationV2ThreadStreamItem,
+  client: ClientWireCapabilities,
+): OrchestrationV2ThreadStreamItem {
+  if (client.assistantTextParts) return item;
+  if (item.kind === "snapshot") {
+    const projection = projectionForClient(item.projection);
+    return projection === item.projection ? item : { ...item, projection };
+  }
+  if (item.kind !== "event" || item.event.type !== "turn-item.updated") return item;
+  const payload = turnItemForClient(item.event.payload);
+  return payload === item.event.payload ? item : { ...item, event: { ...item.event, payload } };
+}
+
+export const threadHistoryPageForClient = (
+  page: OrchestrationV2ThreadHistoryPage,
+  client: ClientWireCapabilities,
+): OrchestrationV2ThreadHistoryPage =>
+  client.assistantTextParts
+    ? page
+    : { ...page, items: mapChanged(page.items, projectedTurnItemForClient) };
 
 // A skipped check-in ran its check and found nothing to do.
 function scheduledTaskForClient(task: ScheduledTask, client: ClientWireCapabilities) {
@@ -66,6 +135,18 @@ const scheduledTaskResultForClient = <Result extends { readonly task: ScheduledT
 
 /** Response mappers by RPC method; ws.ts applies each to its method's results. */
 export const responseForClient = {
+  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: threadStreamItemForClient,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (
+    projection: OrchestrationV2ThreadProjection,
+    client: ClientWireCapabilities,
+  ) => (client.assistantTextParts ? projection : projectionForClient(projection)),
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (
+    result: OrchestrationV2GetTurnItemResult,
+    client: ClientWireCapabilities,
+  ): OrchestrationV2GetTurnItemResult =>
+    client.assistantTextParts || result.item === null
+      ? result
+      : { item: turnItemForClient(result.item) },
   [WS_METHODS.scheduledTasksSubscribe]: (
     result: ScheduledTaskListResult,
     client: ClientWireCapabilities,
