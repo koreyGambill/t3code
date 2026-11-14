@@ -12,7 +12,6 @@ import {
 import { Link } from "@tanstack/react-router";
 import {
   BotIcon,
-  CheckCheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ListChecksIcon,
@@ -22,7 +21,7 @@ import {
   PlusIcon,
   UserIcon,
 } from "lucide-react";
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -36,6 +35,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuRadioItemIndicator,
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
@@ -51,14 +51,30 @@ import { Empty, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Badge } from "../ui/badge";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { todoIndentTarget, todoTree, type TodoFilter, type TodoNode } from "./todoList.logic";
+import {
+  todoIndentMove,
+  todoTabUpdate,
+  todoTree,
+  visibleTodoIds,
+  type TodoFilter,
+  type TodoNode,
+} from "./todoList.logic";
 
 type Owner = ListItem["owner"];
 type Change = ThreadListUpdateInput["changes"][number];
 
 const filterLabels: Record<TodoFilter, string> = { all: "All", mine: "Mine", agents: "Agents" };
+
+/** A radio item's label with its check on the right, which the menu's radio items omit. */
+function CheckedLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="flex items-center justify-between gap-4">
+      {children}
+      <MenuRadioItemIndicator />
+    </span>
+  );
+}
 
 const ownerLabel = (owner: Owner) =>
   owner === "agent" ? "Agent is responsible" : "You're responsible";
@@ -101,6 +117,9 @@ export function ThreadListView({
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [parent, setParent] = useState<ListItem | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
+  // Kept here so an item's editor stays open when indenting moves its row to a new parent.
+  const [editing, setEditing] = useState<string | null>(null);
+  const focusTextRef = useRef<string | null>(null);
   const [error, setError] = useState("");
   const remote = supplied ?? query.data?.[0];
   const entry = saved && (!remote || saved.revision > remote.revision) ? saved : remote;
@@ -147,10 +166,12 @@ export function ThreadListView({
     [order[from], order[to]] = [order[to]!, order[from]!];
     void mutate({ changes: [], order });
   };
-  const indent = (id: string, direction: "in" | "out") => {
-    const parentId = todoIndentTarget(entry.items, id, direction);
-    if (parentId === undefined) return false;
-    void mutate({ changes: [{ id, parentId }] });
+  const visible = visibleTodoIds(tree);
+  const indent = (id: string, direction: "in" | "out", draftText: string | null = null) => {
+    const update = todoTabUpdate(entry.items, id, draftText, direction, visible);
+    if (!update) return false;
+    focusTextRef.current = draftText === null ? null : id;
+    void mutate(update);
     return true;
   };
   const artifactCounts = new Map(
@@ -162,6 +183,13 @@ export function ThreadListView({
       <TodoRow
         crossThread={Boolean(supplied)}
         node={node}
+        expanded={editing === node.item.id}
+        onExpandedChange={(open) => setEditing(open ? node.item.id : null)}
+        takeTextFocus={() => {
+          if (focusTextRef.current !== node.item.id) return false;
+          focusTextRef.current = null;
+          return true;
+        }}
         collapsed={collapsed.has(node.item.id)}
         onToggle={() =>
           setCollapsed((current) => {
@@ -176,15 +204,19 @@ export function ThreadListView({
         disabled={!canWrite || busy}
         onChange={(change) => void mutate({ changes: [{ id: node.item.id, ...change }] })}
         onMove={supplied ? undefined : (direction) => move(node.item.id, direction)}
-        canIndent={!supplied && todoIndentTarget(entry.items, node.item.id, "in") !== undefined}
-        canOutdent={!supplied && todoIndentTarget(entry.items, node.item.id, "out") !== undefined}
-        onIndent={(direction) => indent(node.item.id, direction)}
+        canIndent={
+          !supplied && todoIndentMove(entry.items, node.item.id, "in", visible) !== undefined
+        }
+        canOutdent={
+          !supplied && todoIndentMove(entry.items, node.item.id, "out", visible) !== undefined
+        }
+        onIndent={(direction, draftText) => indent(node.item.id, direction, draftText)}
         artifactCounts={artifactCounts}
         artifactTitles={artifactTitles}
         threadRef={threadRef}
       />
       {node.children.length && !collapsed.has(node.item.id) ? (
-        <div role="list" className="ml-2 border-l border-border/60 pl-2">
+        <div role="list" className="ml-[7px] border-l border-border/60 pl-2">
           {node.children.map((child) => renderBranch(child, depth + 1))}
         </div>
       ) : null}
@@ -195,36 +227,31 @@ export function ThreadListView({
       {!supplied ? (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="@min-[12rem]:hidden"
-                  aria-label="Filter todos"
-                />
-              }
-            >
+            <MenuTrigger render={<Button variant="outline" size="xs" aria-label="Filter todos" />}>
               {filterLabels[filter]}
-              {showClosed ? " · all states" : ""}
+              {showClosed ? " · with done" : ""}
               <ChevronDownIcon />
             </MenuTrigger>
             <MenuPopup align="start">
-              <MenuRadioGroup
-                value={filter}
-                onValueChange={(next) => {
-                  if (next === "all" || next === "mine" || next === "agents")
-                    useThreadContextSidebarStore.getState().setTodoFilter(next);
-                }}
-              >
-                {(["all", "mine", "agents"] as const).map((value) => (
-                  <MenuRadioItem key={value} value={value}>
-                    {filterLabels[value]}
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
+              <MenuGroup>
+                <MenuGroupLabel>Responsible</MenuGroupLabel>
+                <MenuRadioGroup
+                  value={filter}
+                  onValueChange={(next) => {
+                    if (next === "all" || next === "mine" || next === "agents")
+                      useThreadContextSidebarStore.getState().setTodoFilter(next);
+                  }}
+                >
+                  {(["all", "mine", "agents"] as const).map((value) => (
+                    <MenuRadioItem key={value} value={value}>
+                      <CheckedLabel>{filterLabels[value]}</CheckedLabel>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuGroup>
               <MenuSeparator />
               <MenuCheckboxItem
+                variant="switch"
                 checked={showClosed}
                 onCheckedChange={(checked) =>
                   useThreadContextSidebarStore.getState().setTodoShowClosed(checked)
@@ -234,41 +261,6 @@ export function ThreadListView({
               </MenuCheckboxItem>
             </MenuPopup>
           </Menu>
-          <ToggleGroup
-            className="hidden @min-[12rem]:flex"
-            aria-label="Whose todos"
-            value={[filter]}
-            onValueChange={(next) => {
-              const value = next[0];
-              if (value === "all" || value === "mine" || value === "agents")
-                useThreadContextSidebarStore.getState().setTodoFilter(value);
-            }}
-          >
-            {(["all", "mine", "agents"] as const).map((value) => (
-              <Toggle key={value} value={value}>
-                {filterLabels[value]}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  size="xs"
-                  variant="ghost"
-                  className="hidden @min-[12rem]:inline-flex"
-                  aria-label="Show done and dropped"
-                  pressed={showClosed}
-                  onPressedChange={(pressed) =>
-                    useThreadContextSidebarStore.getState().setTodoShowClosed(pressed)
-                  }
-                />
-              }
-            >
-              <CheckCheckIcon />
-            </TooltipTrigger>
-            <TooltipPopup>{showClosed ? "Hide" : "Show"} done and dropped</TooltipPopup>
-          </Tooltip>
           {entry.items.length ? (
             <span
               className="ml-auto shrink-0 tabular-nums text-muted-foreground"
@@ -388,6 +380,9 @@ export function ThreadListView({
 function TodoRow({
   crossThread,
   node,
+  expanded,
+  onExpandedChange,
+  takeTextFocus,
   collapsed,
   onToggle,
   onAddChild,
@@ -404,6 +399,10 @@ function TodoRow({
 }: {
   crossThread: boolean;
   node: TodoNode;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  /** True once, for the row whose text keeps focus after Tab moved it. */
+  takeTextFocus: () => boolean;
   collapsed: boolean;
   onToggle: () => void;
   onAddChild: (() => void) | undefined;
@@ -413,45 +412,39 @@ function TodoRow({
   onMove?: ((direction: number) => void) | undefined;
   canIndent: boolean;
   canOutdent: boolean;
-  onIndent: (direction: "in" | "out") => boolean;
+  onIndent: (direction: "in" | "out", draftText?: string | null) => boolean;
   artifactCounts: Map<string, number>;
   artifactTitles: Map<string, string>;
   threadRef: ScopedThreadRef;
 }) {
   const { item, progress } = node;
   const focusNewItem = useRef(false);
-  const [expanded, setExpanded] = useState(false);
+  // Tab already wrote the text with the move, so the blur that follows must not write it again.
+  const skipBlurSave = useRef(false);
+  const [textRef] = useState(() => (input: HTMLInputElement | null) => {
+    if (input && takeTextFocus()) input.focus();
+  });
   const [details, setDetails] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
   const terminal = item.state === "done" || item.state === "dropped";
   const openLink = listItemNeedsHandoff(item);
   const saveText = () => {
-    if (text?.trim() && text.trim() !== item.text) onChange({ text: text.trim() });
+    if (skipBlurSave.current) skipBlurSave.current = false;
+    else if (text?.trim() && text.trim() !== item.text) onChange({ text: text.trim() });
     setText(null);
   };
   const onTextKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") event.currentTarget.blur();
     if (event.key !== "Tab") return;
-    saveText();
-    if (onIndent(event.shiftKey ? "out" : "in")) event.preventDefault();
+    if (onIndent(event.shiftKey ? "out" : "in", text)) {
+      event.preventDefault();
+      skipBlurSave.current = true;
+      setText(null);
+    }
   };
   return (
     <div className={cn("rounded-md hover:bg-muted/40", node.context && "opacity-60")}>
-      <div className="flex min-w-0 items-start gap-1 py-1 pr-0.5">
-        {progress ? (
-          <Button
-            variant="ghost"
-            size="icon-tiny"
-            className="mt-0.5"
-            aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.text}`}
-            aria-expanded={!collapsed}
-            onClick={onToggle}
-          >
-            <ChevronRightIcon className={collapsed ? "" : "rotate-90"} />
-          </Button>
-        ) : (
-          <span className="size-4 shrink-0" aria-hidden />
-        )}
+      <div className="flex min-w-0 items-start gap-1.5 py-1 pr-0.5">
         <Checkbox
           className="mt-0.5"
           aria-label={terminal ? `Reopen ${item.text}` : `Complete ${item.text}`}
@@ -462,6 +455,7 @@ function TodoRow({
           }
         />
         <div className="min-w-0 flex-1 leading-5">
+          <OwnerIcon owner={item.owner} />
           <button
             type="button"
             className={cn(
@@ -469,7 +463,7 @@ function TodoRow({
               terminal && "text-muted-foreground line-through",
             )}
             aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => onExpandedChange(!expanded)}
           >
             {item.text}
           </button>
@@ -479,9 +473,21 @@ function TodoRow({
             <span className="ml-1 text-3xs text-muted-foreground">handed off</span>
           ) : null}
           {progress ? (
-            <span className="ml-1 text-3xs tabular-nums text-muted-foreground">
-              {progress.done}/{progress.total}
-            </span>
+            <>
+              <span className="ml-1 text-3xs tabular-nums text-muted-foreground">
+                {progress.done}/{progress.total}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-tiny"
+                className="align-middle"
+                aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.text}`}
+                aria-expanded={!collapsed}
+                onClick={onToggle}
+              >
+                {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+              </Button>
+            </>
           ) : null}
           {item.details && !expanded ? (
             <Tooltip>
@@ -492,7 +498,7 @@ function TodoRow({
                     size="icon-tiny"
                     className="ml-0.5 align-middle"
                     aria-label={`Show note for ${item.text}`}
-                    onClick={() => setExpanded(true)}
+                    onClick={() => onExpandedChange(true)}
                   />
                 }
               >
@@ -501,10 +507,6 @@ function TodoRow({
               <TooltipPopup>Has a note</TooltipPopup>
             </Tooltip>
           ) : null}
-          <OwnerIcon
-            owner={item.owner}
-            className="ml-1 inline-flex align-middle @min-[12rem]:hidden"
-          />
           {item.links.map((link) => (
             <TodoLinkChip
               crossThread={crossThread}
@@ -517,7 +519,6 @@ function TodoRow({
             />
           ))}
         </div>
-        <OwnerIcon owner={item.owner} className="mt-0.5 hidden @min-[12rem]:flex" />
         <ItemTimestamp item={item} />
         <Menu>
           <MenuTrigger
@@ -536,7 +537,7 @@ function TodoRow({
               return newItemRef.current;
             }}
           >
-            <MenuItem onClick={() => setExpanded(true)}>
+            <MenuItem onClick={() => onExpandedChange(true)}>
               {item.details ? "Edit note" : "Add note"}
             </MenuItem>
             <MenuItem
@@ -571,15 +572,16 @@ function TodoRow({
                 }}
               >
                 <MenuRadioItem value="you" disabled={disabled}>
-                  You
+                  <CheckedLabel>You</CheckedLabel>
                 </MenuRadioItem>
                 <MenuRadioItem value="agent" disabled={disabled}>
-                  Agent
+                  <CheckedLabel>Agent</CheckedLabel>
                 </MenuRadioItem>
               </MenuRadioGroup>
             </MenuGroup>
             <MenuSeparator />
             <MenuCheckboxItem
+              variant="switch"
               checked={item.needsQa}
               disabled={disabled}
               onCheckedChange={(needsQa) => onChange({ needsQa })}
@@ -596,8 +598,9 @@ function TodoRow({
         </Menu>
       </div>
       {expanded ? (
-        <div className="space-y-1.5 pb-2 pl-10 pr-1">
+        <div className="space-y-1.5 pb-2 pl-5.5 pr-1">
           <Input
+            ref={textRef}
             size="compact"
             aria-label={`Text for ${item.text}`}
             value={text ?? item.text}
@@ -607,7 +610,8 @@ function TodoRow({
             onBlur={saveText}
           />
           <Textarea
-            size="compact"
+            size="sm"
+            rows={2}
             aria-label={`Note for ${item.text}`}
             placeholder="Add a note…"
             value={details ?? item.details}
@@ -629,16 +633,13 @@ function TodoRow({
   );
 }
 
-function OwnerIcon({ owner, className }: { owner: Owner; className: string }) {
+function OwnerIcon({ owner }: { owner: Owner }) {
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
-            className={cn(
-              "size-4 shrink-0 items-center justify-center text-muted-foreground [&_svg]:size-3.5",
-              className,
-            )}
+            className="mr-1 inline-flex size-3.5 align-[-2px] text-muted-foreground [&_svg]:size-3.5"
             aria-label={ownerLabel(owner)}
             role="img"
           />

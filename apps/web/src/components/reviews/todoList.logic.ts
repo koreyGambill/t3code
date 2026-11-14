@@ -14,9 +14,9 @@ export interface TodoNode {
 const closed = (item: ListItem) => item.state === "done" || item.state === "dropped";
 
 function descendants(items: ReadonlyArray<ListItem>, id: string): ListItem[] {
-  return items
-    .filter((item) => item.parentId === id)
-    .flatMap((item) => [item, ...descendants(items, item.id)]);
+  return items.flatMap((item) =>
+    item.parentId === id ? [item, ...descendants(items, item.id)] : [],
+  );
 }
 
 /** Items as a tree in list order; filtered-out parents stay as context for matching children. */
@@ -68,25 +68,73 @@ function subtreeHeight(items: ReadonlyArray<ListItem>, id: string): number {
     : 0;
 }
 
+export function visibleTodoIds(nodes: ReadonlyArray<TodoNode>): Set<string> {
+  const ids = new Set<string>();
+  const walk = (list: ReadonlyArray<TodoNode>) => {
+    for (const node of list) {
+      ids.add(node.item.id);
+      walk(node.children);
+    }
+  };
+  walk(nodes);
+  return ids;
+}
+
+export interface TodoIndentMove {
+  readonly parentId: string | null;
+  /** The whole list's order, with the item last among its new siblings. */
+  readonly order: ReadonlyArray<string>;
+}
+
 /**
- * The parent an item moves to when indented under its previous sibling or outdented to its
- * grandparent; undefined when the move is impossible or would nest deeper than the list allows.
+ * Indents under the previous visible sibling or outdents to the grandparent; undefined when there
+ * is no such parent or the subtree would nest deeper than the list allows.
  */
-export function todoIndentTarget(
+export function todoIndentMove(
   items: ReadonlyArray<ListItem>,
   id: string,
   direction: "in" | "out",
-): string | null | undefined {
+  visible: ReadonlySet<string>,
+): TodoIndentMove | undefined {
   const item = items.find((entry) => entry.id === id);
   if (!item) return undefined;
+  const rest = items.filter((entry) => entry.id !== id).map((entry) => entry.id);
+  const insertAfter = (anchor: string) => {
+    const order = [...rest];
+    order.splice(order.indexOf(anchor) + 1, 0, id);
+    return order;
+  };
   if (direction === "out") {
     if (!item.parentId) return undefined;
-    return items.find((entry) => entry.id === item.parentId)?.parentId ?? null;
+    const parentId = items.find((entry) => entry.id === item.parentId)?.parentId ?? null;
+    return { parentId, order: insertAfter(item.parentId) };
   }
-  const siblings = items.filter((entry) => (entry.parentId ?? null) === (item.parentId ?? null));
+  const siblings = items.filter(
+    (entry) =>
+      (entry.parentId ?? null) === (item.parentId ?? null) &&
+      (entry.id === id || visible.has(entry.id)),
+  );
   const previous = siblings[siblings.indexOf(item) - 1];
-  if (!previous) return undefined;
-  return depthOf(items, previous) + 1 + subtreeHeight(items, item.id) < LIST_MAX_DEPTH
-    ? previous.id
-    : undefined;
+  if (!previous || depthOf(items, previous) + 1 + subtreeHeight(items, id) >= LIST_MAX_DEPTH)
+    return undefined;
+  const lastChild = items.findLast((entry) => entry.parentId === previous.id && entry.id !== id);
+  return { parentId: previous.id, order: insertAfter(lastChild?.id ?? previous.id) };
+}
+
+/** Tab while editing saves the text and moves the item in one write, so neither is lost. */
+export function todoTabUpdate(
+  items: ReadonlyArray<ListItem>,
+  id: string,
+  draftText: string | null,
+  direction: "in" | "out",
+  visible: ReadonlySet<string>,
+) {
+  const move = todoIndentMove(items, id, direction, visible);
+  if (!move) return undefined;
+  const text = draftText?.trim();
+  const current = items.find((entry) => entry.id === id)?.text;
+  return {
+    changes: [{ id, parentId: move.parentId, ...(text && text !== current ? { text } : {}) }],
+    order: move.order,
+  };
 }
