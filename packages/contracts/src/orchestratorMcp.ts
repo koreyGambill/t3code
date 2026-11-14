@@ -786,6 +786,16 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
+/** Model fields of `OrchestratorMcpTarget`. Options stay out: ~190 tool-list bytes, and a model switch resets them. */
+export const OrchestratorMcpScheduleTarget = Schema.Struct({
+  providerInstanceId: OrchestratorMcpTarget.fields.providerInstanceId,
+  model: OrchestratorMcpTarget.fields.model,
+}).annotate({
+  description:
+    "Model for threads this task creates, from `orchestrator_capabilities`. Needs bindToCurrentThread=false: a bound thread keeps its own. Omitted: new tasks use yours, updates keep it.",
+});
+export type OrchestratorMcpScheduleTarget = typeof OrchestratorMcpScheduleTarget.Type;
+
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
@@ -805,6 +815,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "Runs share one thread but each starts a fresh session. Unbound: the first run makes the thread.",
     }),
   ),
+  target: Schema.optional(OrchestratorMcpScheduleTarget),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -828,6 +839,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   boundThreadId: Schema.NullOr(ThreadId),
   freshSession: Schema.Boolean,
   schedule: ScheduledTaskSchedule,
+  model: Schema.Struct({
+    providerInstanceId: ProviderInstanceId,
+    model: Schema.String,
+  }),
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
   webhookUrl: Schema.optional(Schema.String).annotate({
@@ -870,6 +885,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
   freshSession: Schema.optional(Schema.Boolean),
+  target: Schema.optional(OrchestratorMcpScheduleTarget),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

@@ -35,6 +35,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -3388,6 +3389,253 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(yield* Ref.get(upserted), 1);
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
+      }),
+    );
+  });
+
+  describe("the model of a scheduled task", () => {
+    const projectId = ProjectId.make("project:scheduled-model");
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const codexSelection = { instanceId: codexInstanceId, model: "gpt-5" };
+    const catalog = [
+      {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+        }),
+        models: ["gpt-5", "gpt-5-mini"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: null,
+        })),
+      },
+      {
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+        }),
+        models: [{ slug: "claude-haiku-5-5", name: "Haiku", isCustom: false, capabilities: null }],
+      },
+    ];
+    const existing: ScheduledTask = {
+      id: ScheduledTaskId.make("scheduled-task:model"),
+      title: "Exposure check",
+      prompt: "Check exposure",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 3_600_000 },
+      projectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: codexSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    };
+    const client: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:scheduled-model"),
+      requestNamespace: "client:scheduled-model",
+      thread: undefined,
+      client: { sessionId: "scheduled-model", label: "Claude Code", access: "approval-required" },
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    const failureCode = (result: Exit.Exit<unknown, unknown>) =>
+      Exit.isFailure(result) &&
+      result.cause.reasons.flatMap((reason) =>
+        reason._tag === "Fail" && typeof reason.error === "object" && reason.error !== null
+          ? [(reason.error as { readonly code?: string }).code]
+          : [],
+      )[0];
+    const run = <A, E>(
+      program: (
+        mcp: OrchestratorMcpService.OrchestratorMcpService["Service"],
+        disable: (instanceId: ProviderInstanceId) => Effect.Effect<void>,
+      ) => Effect.Effect<A, E>,
+      options: {
+        readonly disabledInstanceIds?: ReadonlyArray<ProviderInstanceId>;
+        readonly task?: ScheduledTask;
+      } = {},
+    ) =>
+      Effect.gen(function* () {
+        const base = options.task ?? existing;
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+        const disabled = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>(
+          options.disabledInstanceIds ?? [],
+        );
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            OrchestratorMcpService.layer.pipe(
+              Layer.provide(ThreadMarks.layerTest),
+              Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+              Layer.provide(Layer.merge(ThreadWorkspace.layerTest, ThreadMarks.layerTest)),
+              Layer.provide(
+                Layer.mock(GitVcsDriver.GitVcsDriver)({
+                  resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+                  resolveDefaultBranchName: () => Effect.succeed("main"),
+                  resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+                }),
+              ),
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  NodeCrypto.layer,
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    getThreadShell: () => Effect.succeed(null),
+                    isProviderInstanceEnabledForProject: ({ instanceId }) =>
+                      Ref.get(disabled).pipe(Effect.map((ids) => !ids.includes(instanceId))),
+                  }),
+                  ServerSettings.layerTest(),
+                  providerRegistryLayer(catalog),
+                  adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: () =>
+                      Effect.succeedSome({
+                        id: projectId,
+                        workspaceRoot: "/repo/scheduled-model",
+                        defaultModelSelection: codexSelection,
+                      } as never),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    list: () =>
+                      Ref.get(saved).pipe(Effect.map((all) => ({ tasks: [base, ...all] }))),
+                    upsert: (input) => {
+                      const task = {
+                        ...base,
+                        id: input.id ?? ScheduledTaskId.make(`scheduled-task:${input.commandId}`),
+                        modelSelection: input.modelSelection,
+                      };
+                      return Ref.update(saved, (all) => [...all, task]).pipe(Effect.as({ task }));
+                    },
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        const result = yield* Effect.exit(
+          program(mcp, (instanceId) => Ref.update(disabled, (ids) => [...ids, instanceId])),
+        );
+        return { result, saved: (yield* Ref.get(saved)).map((task) => task.modelSelection) };
+      });
+
+    it.effect("creates a task on the requested model and shows it back", () =>
+      Effect.gen(function* () {
+        const { result, saved } = yield* run((mcp) =>
+          mcp.scheduleTask(client, {
+            projectId,
+            prompt: "Check exposure",
+            schedule: existing.schedule,
+            target: { providerInstanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+          }),
+        );
+        const haiku = { instanceId: claudeInstanceId, model: "claude-haiku-5-5" };
+        assert.deepEqual(saved, [haiku]);
+        assert.deepEqual(Exit.isSuccess(result) && result.value.model, {
+          providerInstanceId: claudeInstanceId,
+          model: "claude-haiku-5-5",
+        });
+      }),
+    );
+
+    it.effect("changes a task's model on update, and keeps it when no target is given", () =>
+      Effect.gen(function* () {
+        const { saved } = yield* run((mcp) =>
+          Effect.gen(function* () {
+            yield* mcp.updateScheduledTask(client, {
+              scheduledTaskId: existing.id,
+              target: { model: "gpt-5-mini" },
+            });
+            yield* mcp.updateScheduledTask(client, {
+              scheduledTaskId: existing.id,
+              enabled: false,
+            });
+          }),
+        );
+        assert.deepEqual(saved, [
+          { instanceId: codexInstanceId, model: "gpt-5-mini" },
+          codexSelection,
+        ]);
+      }),
+    );
+
+    it.effect("refuses a model no provider offers or a provider the project disabled", () =>
+      Effect.gen(function* () {
+        const unknown = yield* run((mcp) =>
+          mcp.updateScheduledTask(client, {
+            scheduledTaskId: existing.id,
+            target: { model: "gpt-nope" },
+          }),
+        );
+        assert.deepEqual(unknown.saved, []);
+        assert.deepEqual(failureCode(unknown.result), "model_unavailable");
+        const disabled = yield* run(
+          (mcp) =>
+            mcp.updateScheduledTask(client, {
+              scheduledTaskId: existing.id,
+              target: { providerInstanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+            }),
+          { disabledInstanceIds: [claudeInstanceId] },
+        );
+        assert.deepEqual(disabled.saved, []);
+        assert.deepEqual(failureCode(disabled.result), "provider_unavailable");
+      }),
+    );
+
+    it.effect(
+      "refuses a target for a bound task, but not once it is unbound in the same call",
+      () =>
+        Effect.gen(function* () {
+          const bound = { ...existing, threadId: ThreadId.make("thread:scheduled-model") };
+          const target = { model: "gpt-5-mini" };
+          const refused = yield* run(
+            (mcp) => mcp.updateScheduledTask(client, { scheduledTaskId: existing.id, target }),
+            { task: bound },
+          );
+          assert.deepEqual(refused.saved, []);
+          assert.deepEqual(failureCode(refused.result), "invalid_request");
+          const unbound = yield* run(
+            (mcp) =>
+              mcp.updateScheduledTask(client, {
+                scheduledTaskId: existing.id,
+                bindToCurrentThread: false,
+                target,
+              }),
+            { task: bound },
+          );
+          assert.deepEqual(unbound.saved, [{ instanceId: codexInstanceId, model: "gpt-5-mini" }]);
+        }),
+    );
+
+    it.effect("replays a retried create without resolving its target again", () =>
+      Effect.gen(function* () {
+        const input = {
+          projectId,
+          prompt: "Check exposure",
+          schedule: existing.schedule,
+          clientRequestId: "retry-1",
+          target: { providerInstanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+        };
+        const { result, saved } = yield* run((mcp, disable) =>
+          Effect.gen(function* () {
+            yield* mcp.scheduleTask(client, input);
+            yield* disable(claudeInstanceId);
+            return yield* mcp.scheduleTask(client, input);
+          }),
+        );
+        const haiku = { instanceId: claudeInstanceId, model: "claude-haiku-5-5" };
+        assert.isTrue(Exit.isSuccess(result));
+        assert.deepEqual(saved, [haiku, haiku]);
       }),
     );
   });
