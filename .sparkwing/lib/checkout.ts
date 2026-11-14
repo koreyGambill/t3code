@@ -126,15 +126,23 @@ export function changedFiles(root: string, base: string): string[] {
   ].sort();
 }
 
+export interface CheckChangedInputs {
+  /** Sources and install state: anything an edit during a gate can change. */
+  readonly sources: string;
+  /** Ignored outputs the checks regenerate themselves (astro check, mobile generators). */
+  readonly generated: string;
+}
+
 /**
  * The inputs check:changed reads, hashed as scripts/check-changed.ts keys its own replay: the
  * binary diff against base, raw bytes of changed, untracked and ignored generated files, and
  * install state. Includes the checkout path because ignored caches differ per worktree.
  */
-export function checkChangedInputs(root: string, base: string): string {
-  const hash = NodeCrypto.createHash("sha256");
-  hash.update(`${root}\0${base}\0${process.env.CI ?? ""}\0`);
-  hash.update(
+export function checkChangedInputs(root: string, base: string): CheckChangedInputs {
+  const sources = NodeCrypto.createHash("sha256");
+  const generated = NodeCrypto.createHash("sha256");
+  sources.update(`${root}\0${base}\0${process.env.CI ?? ""}\0`);
+  sources.update(
     NodeChildProcess.execFileSync(
       "git",
       ["-C", root, "diff", "--binary", "--no-renames", "--no-ext-diff", "--no-textconv", base, "--"],
@@ -152,17 +160,15 @@ export function checkChangedInputs(root: string, base: string): string {
   )
     .split("\n")
     .filter(Boolean);
-  for (const file of [
-    ...changedFiles(root, base),
-    ...ignored,
-    "node_modules/.modules.yaml",
-    "node_modules/.pnpm/lock.yaml",
-  ]) {
+  const add = (hash: NodeCrypto.Hash, file: string) => {
     hash.update(`\0${file}\0`);
     const path = NodePath.join(root, file);
     if (NodeFS.statSync(path, { throwIfNoEntry: false })?.isFile()) hash.update(NodeFS.readFileSync(path));
-  }
-  return hash.digest("hex");
+  };
+  for (const file of [...changedFiles(root, base), "node_modules/.modules.yaml", "node_modules/.pnpm/lock.yaml"])
+    add(sources, file);
+  for (const file of ignored) add(/(^|\/)\.env[^/]*$/.test(file) ? sources : generated, file);
+  return { sources: sources.digest("hex"), generated: generated.digest("hex") };
 }
 
 interface WorkspacePackage {
