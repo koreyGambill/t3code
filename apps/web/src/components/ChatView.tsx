@@ -3223,6 +3223,7 @@ export default function ChatView(props: ChatViewProps) {
           splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
           newShortcutLabel: newTerminalShortcutLabel ?? undefined,
           closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
+          hideSessionActions: tiledWorkspace,
         }}
         pullRequest={{
           capabilityKnown: pullRequestsCapabilityKnown,

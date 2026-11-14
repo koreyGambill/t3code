@@ -1133,6 +1133,8 @@ function TerminalSessionViewport({
 
 interface ThreadTerminalDrawerProps {
   mode?: "drawer" | "panel";
+  /** Hides the single-terminal new and close buttons where the host already offers them. */
+  hideSessionActions?: boolean | undefined;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   cwd: string;
@@ -1390,6 +1392,7 @@ function TerminalSidebarGroup({
 
 export default function ThreadTerminalDrawer({
   mode = "drawer",
+  hideSessionActions = false,
   threadRef,
   threadId,
   cwd,
@@ -1730,7 +1733,7 @@ export default function ThreadTerminalDrawer({
     >
       {resizeHandle}
 
-      {!hasTerminalSidebar && (
+      {!hasTerminalSidebar && !hideSessionActions && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
             <TerminalActionButton

@@ -299,6 +299,8 @@ export interface PersistentThreadTerminalPanelProps {
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
+  /** A tile already offers new-tab and close controls for its terminal. */
+  hideSessionActions?: boolean | undefined;
 }
 
 export const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
@@ -317,6 +319,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
+  hideSessionActions,
 }: PersistentThreadTerminalPanelProps) {
   const serverThread = useQuietThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
@@ -380,6 +383,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   return (
     <ThreadTerminalDrawer
       mode="panel"
+      hideSessionActions={hideSessionActions}
       visible={visible}
       threadRef={threadRef}
       threadId={threadRef.threadId}
