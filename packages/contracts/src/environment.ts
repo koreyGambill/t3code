@@ -206,6 +206,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   scheduledTaskThreadModes: Schema.optionalKey(Schema.Boolean),
   monitoring: Schema.optionalKey(Schema.Boolean),
   idleWorkCheckins: Schema.optionalKey(Schema.Boolean),
+  /** Server records automation runs and answers scheduledTasks.listRuns. */
+  automations: Schema.optionalKey(Schema.Boolean),
   /** Server saves and runs scheduled tasks with an `event` schedule. */
   eventTriggers: Schema.optionalKey(Schema.Boolean),
   /**

@@ -5,6 +5,7 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
@@ -35,6 +36,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as UsageService from "../usage/UsageService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -190,6 +192,9 @@ it.effect(
         yield* insertRow(sql, { ...row, enabled: 1 }, now);
       }
 
+      // A run the previous process marked running but never dispatched.
+      yield* sql`INSERT INTO scheduled_task_runs (id, task_id, started_at, status, trigger_json)
+        VALUES ('run:stuck', 'stuck-valid', ${now}, 'running', '{"type":"schedule","summary":""}')`;
       yield* TestClock.setTime(Date.parse(now) + 1_000);
       const dispatched = yield* Ref.make(0);
       const lastDispatched = yield* Deferred.make<void>();
@@ -271,6 +276,22 @@ it.effect(
       assert.isNull(byId.get("due-huge")?.next_run_at);
       assert.equal(byId.get("due-bad-date")?.last_run_status, "never");
       assert.equal(byId.get("due-bad-date")?.run_count, 0);
+      const history = yield* sql<{
+        task_id: string;
+        status: string;
+        ended_at: string | null;
+        error: string | null;
+      }>`SELECT task_id, status, ended_at, error FROM scheduled_task_runs ORDER BY task_id`;
+      const stuckRun = history.find((run) => run.task_id === "stuck-valid");
+      assert.equal(stuckRun?.status, "failed");
+      assert.equal(stuckRun?.error, "Run was interrupted by a server restart.");
+      assert.isNotNull(stuckRun?.ended_at);
+      // Each dispatch that failed closed its own history row.
+      for (const id of ["due-healthy", "due-huge", "due-second"]) {
+        const run = history.find((candidate) => candidate.task_id === id);
+        assert.equal(run?.status, "failed");
+        assert.isTrue(run?.error?.includes("test launch failure") === true);
+      }
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
@@ -515,6 +536,181 @@ it.effect.each([
       const recorded = Option.getOrUndefined(yield* Fiber.join(failed));
       assert.equal(recorded?.lastRunError, outcome.error);
       assert.equal(recorded?.runCount, 1);
+      const { runs } = yield* service.listRuns({ id: task.id });
+      assert.lengthOf(runs, 1);
+      assert.deepInclude(runs[0], {
+        status: "failed",
+        error: outcome.error,
+        trigger: { type: "manual", summary: "Run now" },
+        threadId: ThreadId.make("thread:quota"),
+        messageId: MessageId.make(yield* Ref.get(sent)),
+      });
+      assert.isNotNull(runs[0]?.endedAt);
+      const sql = yield* SqlClient.SqlClient;
+      const [bound] = yield* sql<{
+        orchestration_run_id: string;
+      }>`SELECT orchestration_run_id FROM scheduled_task_runs`;
+      assert.equal(bound?.orchestration_run_id, "run:2");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a completed run closes its history as quiet with its tokens and cost", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:test");
+    const threadId = ThreadId.make("thread:usage");
+    const ended = yield* Deferred.make<void>();
+    const launchedMessage = yield* Ref.make("");
+    // The run's turn, and a later run's turn in the same thread that it must not count.
+    yield* sql`INSERT INTO orchestration_v2_projection_run_attempts
+      (attempt_id, thread_id, run_id, attempt_ordinal, root_node_id, provider, provider_thread_id, status, payload_json)
+      VALUES ('attempt:1', ${threadId}, 'run:usage', 1, 'node:root', 'claude', 'pt:1', 'completed', '{}'),
+             ('attempt:2', ${threadId}, 'run:later', 1, 'node:root', 'claude', 'pt:1', 'completed', '{}')`;
+    const usage = (input: number, output: number) =>
+      JSON.stringify({
+        model: "claude-haiku-4-5",
+        turnTokenUsage: {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: true,
+          inputTokens: input,
+          cachedInputTokens: 400,
+          outputTokens: output,
+          otherUsage: { inputTokens: 300, outputTokens: 100 },
+        },
+      });
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns
+      (provider_turn_id, thread_id, provider_thread_id, node_id, run_attempt_id, ordinal, status, payload_json)
+      VALUES ('turn:1', ${threadId}, 'pt:1', 'node:root', 'attempt:1', 1, 'completed', ${usage(1000, 200)}),
+             ('turn:2', ${threadId}, 'pt:1', 'node:root', 'attempt:2', 2, 'completed', ${usage(9000, 9000)})`;
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.set(launchedMessage, input.initialMessage?.messageId ?? "").pipe(
+                Effect.as({ threadId, resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            getProjectThreadRecords: () =>
+              Effect.map(
+                Ref.get(launchedMessage),
+                (userMessageId) =>
+                  ({ runs: [{ id: "run:usage", status: "running", userMessageId }] }) as never,
+              ),
+            waitForThread: (input) =>
+              Deferred.await(ended).pipe(
+                Effect.as({
+                  threadId: input.threadId,
+                  run: { id: input.runId, status: "completed", completedAt: null },
+                  timedOut: false,
+                } as never),
+              ),
+          }),
+          Layer.mock(UsageService.UsageService)({
+            priceRecords: (records) =>
+              Effect.succeed(
+                records.reduce((sum, record) => sum + record.totals.outputTokens / 1000, 0),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:usage"),
+        title: "Exposure check",
+        prompt: "Check exposure",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "haiku" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.runNow({ id: task.id }, { byAgent: true });
+      const running = yield* service.listRuns({ id: task.id });
+      assert.equal(running.runs[0]?.status, "running");
+      assert.equal(running.runs[0]?.threadId, threadId);
+      // Each list emission re-reads the runs, so the first read already sees a close that won.
+      const closed = yield* service.subscribeList().pipe(
+        Stream.mapEffect(() => service.listRuns({ id: task.id })),
+        Stream.filter(({ runs }) => runs[0]?.status === "quiet"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Deferred.succeed(ended, undefined);
+      const { runs, hasMore } = Option.getOrThrow(yield* Fiber.join(closed));
+      assert.isFalse(hasMore);
+      assert.lengthOf(runs, 1);
+      assert.deepInclude(runs[0], {
+        status: "quiet",
+        trigger: { type: "agent", summary: "Run by an agent" },
+        threadId,
+        tokens: 1000 + 200 + 300 + 100,
+        costUsd: 0.3,
+        error: null,
+      });
+      assert.isNotNull(runs[0]?.endedAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run whose dispatch fails is recorded as failed without a thread", () =>
+  Effect.gen(function* () {
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: () => Effect.die(new Error("provider unavailable")),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:dispatch-fails"),
+        title: "Check",
+        prompt: "Check",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const result = yield* service.runNow({ id: task.id });
+      assert.isNull(result.threadId);
+      const { runs } = yield* service.listRuns({ id: task.id });
+      assert.lengthOf(runs, 1);
+      assert.equal(runs[0]?.status, "failed");
+      assert.isNull(runs[0]?.threadId);
+      assert.isNotNull(runs[0]?.endedAt);
+      assert.isTrue(runs[0]?.error?.includes("provider unavailable") === true);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

@@ -186,6 +186,10 @@ it.effect.each([false, true])("check-ins skip unchanged state unless alwaysRun=%
       expect((yield* service.list()).tasks[0]?.lastRunStatus).toBe(
         alwaysRun ? "succeeded" : "skipped",
       );
+      const { runs } = yield* service.listRuns({ id: task.id });
+      expect(runs).toHaveLength(2);
+      expect(runs[0]?.status).toBe(alwaysRun ? "running" : "skipped");
+      expect(runs[0]?.trigger.type).toBe("schedule");
       // Changing a wake condition is new work, even when no child changed.
       yield* service.upsert(
         yield* decode({

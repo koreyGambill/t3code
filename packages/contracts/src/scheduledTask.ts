@@ -4,6 +4,8 @@ import {
   CommandId,
   ForwardCompatibleArray,
   IsoDateTime,
+  MessageId,
+  NonNegativeInt,
   ProjectId,
   ScheduledTaskId,
   SecretRef,
@@ -477,6 +479,60 @@ export const ScheduledTaskGetWebhookDeliveryResult = Schema.Struct({
 });
 export type ScheduledTaskGetWebhookDeliveryResult =
   typeof ScheduledTaskGetWebhookDeliveryResult.Type;
+
+export const ScheduledTaskRunId = TrimmedNonEmptyString.pipe(Schema.brand("ScheduledTaskRunId"));
+export type ScheduledTaskRunId = typeof ScheduledTaskRunId.Type;
+
+export const ScheduledTaskRunOutcome = Schema.Literals([
+  "running",
+  "quiet",
+  "notified",
+  "suppressed",
+  "failed",
+  "skipped",
+  "budget_stopped",
+  "capped",
+]);
+export type ScheduledTaskRunOutcome = typeof ScheduledTaskRunOutcome.Type;
+
+/** One firing of an automation. Open string unions so later outcomes and triggers decode. */
+export const ScheduledTaskRun = Schema.Struct({
+  id: ScheduledTaskRunId,
+  taskId: ScheduledTaskId,
+  startedAt: IsoDateTime,
+  endedAt: Schema.NullOr(IsoDateTime),
+  status: Schema.Union([ScheduledTaskRunOutcome, Schema.String]),
+  trigger: Schema.Struct({
+    type: Schema.Union([
+      Schema.Literals(["schedule", "webhook", "event", "manual", "agent"]),
+      Schema.String,
+    ]),
+    summary: Schema.String,
+  }),
+  /** The thread to open: the run's own thread, or the bound thread. */
+  threadId: Schema.NullOr(ThreadId),
+  /** The run's prompt message inside that thread. */
+  messageId: Schema.NullOr(MessageId),
+  costUsd: Schema.optional(Schema.Number.check(Schema.isFinite())),
+  tokens: Schema.optional(NonNegativeInt),
+  subagents: Schema.optional(NonNegativeInt),
+  notifications: Schema.Array(TrimmedNonEmptyString),
+  error: Schema.NullOr(Schema.String),
+});
+export type ScheduledTaskRun = typeof ScheduledTaskRun.Type;
+
+export const ScheduledTaskListRunsInput = Schema.Struct({
+  id: ScheduledTaskId,
+  /** A run id from the previous page; returns the runs that started before it. */
+  before: Schema.optional(ScheduledTaskRunId),
+});
+export type ScheduledTaskListRunsInput = typeof ScheduledTaskListRunsInput.Type;
+
+export const ScheduledTaskListRunsResult = Schema.Struct({
+  runs: ForwardCompatibleArray(ScheduledTaskRun),
+  hasMore: Schema.Boolean,
+});
+export type ScheduledTaskListRunsResult = typeof ScheduledTaskListRunsResult.Type;
 
 export const ScheduledTaskMutationResult = Schema.Struct({
   task: ScheduledTask,

@@ -40,7 +40,13 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  priceUsage,
+  type PricedRecord,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -148,6 +154,8 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    /** List price in USD, or null when no record's model has a known rate. */
+    readonly priceRecords: (records: ReadonlyArray<PricedRecord>) => Effect.Effect<number | null>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -1140,7 +1148,21 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  const priceRecords = Effect.fn("UsageService.priceRecords")(function* (
+    records: ReadonlyArray<PricedRecord>,
+  ) {
+    yield* ensureRates(false);
+    const settings = yield* settingsService.getSettings.pipe(Effect.option);
+    const overrides = Option.isSome(settings)
+      ? createOverrideRateTable(settings.value.usagePriceOverrides)
+      : undefined;
+    const priced = records
+      .map((record) => priceUsage(rates, record, overrides))
+      .filter((usage) => usage.costSource !== "unpriced");
+    return priced.length === 0 ? null : priced.reduce((sum, usage) => sum + usage.costUsd, 0);
+  });
+
+  return { readSummary, refreshRates, priceRecords, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

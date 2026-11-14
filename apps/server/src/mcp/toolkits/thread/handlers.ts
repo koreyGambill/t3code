@@ -138,7 +138,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           message: "The scheduled task was not found.",
         });
       const { task, threadId } = yield* scheduler
-        .runNow({ id: input.taskId })
+        .runNow({ id: input.taskId }, { byAgent: true })
         .pipe(
           Effect.mapError(
             (error) =>

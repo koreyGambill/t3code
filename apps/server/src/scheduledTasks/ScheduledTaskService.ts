@@ -3,6 +3,8 @@ import { checkinFingerprint, pinGitWake, wakeReason } from "./WakeState.ts";
 import * as EventTriggers from "./EventTriggers.ts";
 import * as StatusSources from "../statusSources/StatusSources.ts";
 import * as MonitoringRunner from "../monitoring/MonitoringRunner.ts";
+import * as RunHistory from "./RunHistory.ts";
+import * as UsageService from "../usage/UsageService.ts";
 import { idleCheckinPrompt } from "./IdleCheckin.ts";
 import {
   CommandId,
@@ -22,6 +24,10 @@ import {
   type ScheduledTaskGetWebhookDeliveryResult,
   type ScheduledTaskListWebhookDeliveriesInput,
   type ScheduledTaskListWebhookDeliveriesResult,
+  type ScheduledTaskListRunsInput,
+  type ScheduledTaskListRunsResult,
+  ScheduledTaskRunId,
+  type RunId,
   type ScheduledTaskRotateWebhookTokenInput,
   type ScheduledTaskWebhookDeliveryOutcome,
   type ScheduledTaskWebhookFilter,
@@ -35,6 +41,7 @@ import {
   isEventDrivenWake,
   managedPolicyDeniedMessage,
   scheduledTaskThreadMode,
+  scheduledTaskEventLabel,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -289,9 +296,13 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
-    /** The dispatched thread, or null if dispatch failed; leaves the task's binding unchanged. */
+    /**
+     * The dispatched thread, or null if dispatch failed; leaves the task's binding unchanged.
+     * `byAgent` records the run as started by an agent rather than the user.
+     */
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
+      options?: { readonly byAgent?: boolean },
     ) => Effect.Effect<
       ScheduledTaskRunNowResult & { readonly threadId: ThreadId | null },
       ScheduledTaskError
@@ -299,6 +310,9 @@ export class ScheduledTaskService extends Context.Service<
     readonly rotateWebhookToken: (
       input: ScheduledTaskRotateWebhookTokenInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    readonly listRuns: (
+      input: ScheduledTaskListRunsInput,
+    ) => Effect.Effect<ScheduledTaskListRunsResult, ScheduledTaskError>;
     readonly listWebhookDeliveries: (
       input: ScheduledTaskListWebhookDeliveriesInput,
     ) => Effect.Effect<ScheduledTaskListWebhookDeliveriesResult, ScheduledTaskError>;
@@ -495,6 +509,7 @@ export const layer = Layer.effect(
     const digest = yield* Digest.Digest;
     const mac = yield* Mac.Mac;
     const monitor = yield* Effect.serviceOption(MonitoringRunner.MonitoringRunner);
+    const usage = yield* Effect.serviceOption(UsageService.UsageService);
     const statusSources = yield* Effect.serviceOption(StatusSources.StatusSources);
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -576,6 +591,19 @@ export const layer = Layer.effect(
     );
 
     const withSql = Effect.provideService(SqlClient.SqlClient, sql);
+    // History records runs; a failed write is logged and never fails the run itself.
+    const recordHistory = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+      effect.pipe(
+        withSql,
+        Effect.asVoid,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not record automation run history", { cause }),
+        ),
+      );
+    const newRunId = random.uuidV4().pipe(
+      Effect.map((id) => ScheduledTaskRunId.make(`run:${id}`)),
+      Effect.option,
+    );
 
     const eventCandidates = Effect.fn("ScheduledTaskService.eventCandidates")(function* (
       kind: EventTriggers.EventFact["kind"],
@@ -1032,31 +1060,73 @@ export const layer = Layer.effect(
       ),
     );
 
+    const runCost = Effect.fn("ScheduledTaskService.runCost")(function* (
+      threadId: ThreadId,
+      runId: RunId,
+    ) {
+      const { tokens, records } = yield* RunHistory.runUsage(threadId, runId).pipe(withSql);
+      const costUsd =
+        Option.isSome(usage) && records.length > 0
+          ? yield* usage.value.priceRecords(records)
+          : null;
+      return { tokens, costUsd };
+    });
+
     // A dispatch is recorded once the message is accepted; the provider can still
-    // reject the turn after that, so follow the run and record its failure.
-    const recordRunFailure = Effect.fn("ScheduledTaskService.recordRunFailure")(function* (
+    // reject the turn after that, so follow the run, close its history row, and
+    // record a failure on the task.
+    const followRunOutcome = Effect.fn("ScheduledTaskService.followRunOutcome")(function* (
       taskId: ScheduledTaskId,
       startedAtIso: string,
       threadId: ThreadId,
       messageId: MessageId,
+      historyId: ScheduledTaskRunId | null,
     ) {
+      const finish = (outcome: Parameters<typeof RunHistory.finishRun>[1]) =>
+        historyId === null
+          ? Effect.void
+          : recordHistory(RunHistory.finishRun(historyId, outcome)).pipe(
+              Effect.andThen(notifyChanged),
+            );
       const shell = yield* threadManagement.getThreadShell(threadId);
-      if (shell === null) return;
+      if (shell === null) {
+        return yield* finish({
+          status: "failed",
+          endedAt: iso(yield* localNow),
+          error: "The run's thread was deleted.",
+        });
+      }
       const thread = { projectId: shell.projectId, threadId };
       const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
       const dispatched = runs.find((run) => run.userMessageId === messageId);
-      if (dispatched === undefined) return;
+      if (dispatched === undefined) {
+        return yield* finish({
+          status: "failed",
+          endedAt: iso(yield* localNow),
+          error: "The run's turn could not be found.",
+        });
+      }
+      if (historyId !== null) {
+        yield* recordHistory(RunHistory.bindOrchestrationRun(historyId, dispatched.id));
+      }
       const { run } = yield* threadManagement.waitForThread({
         ...thread,
         runId: dispatched.id,
         timeoutMs: RUN_OUTCOME_WAIT_MS,
       });
-      if (
-        run === null ||
-        run.status === "completed" ||
-        !ThreadManagementService.isTerminalRunStatus(run.status)
-      )
-        return;
+      // Still running after the wait: the row stays open until the next restart re-follows it.
+      if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+      const endedAt = iso(run.completedAt ?? (yield* localNow));
+      const cost = yield* runCost(threadId, run.id).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not price automation run", { taskId, cause }).pipe(
+            Effect.as({ tokens: null, costUsd: null }),
+          ),
+        ),
+      );
+      if (run.status === "completed") {
+        return yield* finish({ status: "quiet", endedAt, error: null, ...cost });
+      }
       const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
         "turnItems",
         "messages",
@@ -1065,10 +1135,12 @@ export const layer = Layer.effect(
       if (
         run.status === "cancelled" &&
         messages.find((message) => message.id === messageId)?.runId !== run.id
-      )
-        return;
+      ) {
+        return yield* finish({ status: "quiet", endedAt, error: null });
+      }
       const error =
         latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
+      yield* finish({ status: "failed", endedAt, error, ...cost });
       const updated = yield* sql`
         UPDATE scheduled_tasks
         SET last_run_status = 'failed', last_run_error = ${error}
@@ -1080,7 +1152,7 @@ export const layer = Layer.effect(
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
-      trigger: "scheduled" | "manual" | "webhook",
+      trigger: "scheduled" | "manual" | "agent" | "webhook",
       webhook?: {
         readonly deliveryId: string;
         readonly prompt: string;
@@ -1090,6 +1162,7 @@ export const layer = Layer.effect(
       // Read before reserving: nothing between the reservation and its release may fail.
       const startedAt = yield* localNow;
       const startedAtIso = iso(startedAt);
+      const historyRef = yield* Ref.make<ScheduledTaskRunId | null>(null);
       const run = Effect.gen(function* () {
         // Re-read stale poll snapshots so deleted, paused or postponed tasks cannot fire.
         const active = yield* findTask(task.id);
@@ -1260,6 +1333,21 @@ export const layer = Layer.effect(
             return { task: current ?? active, threadId: null, dispatchFailed: false };
           }
         }
+        // Watcher runs keep their own history until they fold into automations.
+        const keepsHistory = !active.id.startsWith("monitoring:");
+        const runTrigger: RunHistory.RunTrigger =
+          webhook !== undefined
+            ? { type: "webhook", summary: webhook.deliveryId }
+            : trigger === "manual"
+              ? { type: "manual", summary: "Run now" }
+              : trigger === "agent"
+                ? { type: "agent", summary: "Run by an agent" }
+                : eventFire !== null && eventSchedule !== null
+                  ? {
+                      type: "event",
+                      summary: `${scheduledTaskEventLabel(eventSchedule)}: ${eventFire.subject}`,
+                    }
+                  : { type: "schedule", summary: reason ?? "On schedule" };
         const skipUnchanged =
           trigger === "scheduled" &&
           active.threadId !== null &&
@@ -1291,6 +1379,20 @@ export const layer = Layer.effect(
                 taskError("Could not record skipped check-in.", { taskId: active.id, cause }),
               ),
             );
+            if (keepsHistory) {
+              const skippedId = yield* newRunId;
+              if (Option.isSome(skippedId)) {
+                yield* recordHistory(
+                  RunHistory.startRun({
+                    id: skippedId.value,
+                    taskId: active.id,
+                    startedAt: startedAtIso,
+                    trigger: runTrigger,
+                    status: "skipped",
+                  }),
+                );
+              }
+            }
             yield* notifyChanged;
             return {
               task: {
@@ -1322,6 +1424,18 @@ export const layer = Layer.effect(
               ),
             );
 
+        const historyId = keepsHistory ? Option.getOrNull(yield* newRunId) : null;
+        if (historyId !== null) {
+          yield* Ref.set(historyRef, historyId);
+          yield* recordHistory(
+            RunHistory.startRun({
+              id: historyId,
+              taskId: active.id,
+              startedAt: startedAtIso,
+              trigger: runTrigger,
+            }),
+          );
+        }
         yield* notifyChanged;
 
         const fireKey =
@@ -1463,6 +1577,8 @@ export const layer = Layer.effect(
               reason.error._tag === "OrchestratorIdleCheckinSkippedError",
           )
         ) {
+          // The check-in did not happen, so it leaves no history.
+          if (historyId !== null) yield* recordHistory(RunHistory.deleteRun(historyId));
           const skippedAt = yield* localNow;
           const skippedOrigin = yield* readWebhookOrigin;
           const skipped = yield* sql
@@ -1500,6 +1616,23 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
+        if (historyId !== null) {
+          yield* recordHistory(
+            threadId !== null
+              ? RunHistory.bindDispatch(historyId, threadId, messageId)
+              : runSucceeded
+                ? RunHistory.finishRun(historyId, {
+                    status: "quiet",
+                    endedAt: iso(completedAt),
+                    error: null,
+                  })
+                : RunHistory.finishRun(historyId, {
+                    status: "failed",
+                    endedAt: iso(completedAt),
+                    error: lastRunError,
+                  }),
+          );
+        }
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
@@ -1591,8 +1724,8 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
-        if (written && threadId !== null) {
-          yield* recordRunFailure(active.id, startedAtIso, threadId, messageId).pipe(
+        if (threadId !== null) {
+          yield* followRunOutcome(active.id, startedAtIso, threadId, messageId, historyId).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not record scheduled run outcome", {
                 taskId: active.id,
@@ -1606,7 +1739,24 @@ export const layer = Layer.effect(
         return { task: recorded, threadId, dispatchFailed: !runSucceeded };
       }).pipe(
         Effect.onError((cause) =>
-          releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
+          releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId).pipe(
+            Effect.andThen(Ref.get(historyRef)),
+            Effect.flatMap((historyId) =>
+              historyId === null
+                ? Effect.void
+                : localNow.pipe(
+                    Effect.flatMap((endedAt) =>
+                      recordHistory(
+                        RunHistory.finishRun(historyId, {
+                          status: "failed",
+                          endedAt: iso(endedAt),
+                          error: errorMessage(cause),
+                        }),
+                      ),
+                    ),
+                  ),
+            ),
+          ),
         ),
       );
 
@@ -1767,6 +1917,38 @@ export const layer = Layer.effect(
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Could not reset interrupted schedule task runs", { cause }),
+      ),
+    );
+
+    // Follow dispatched runs a previous process was still watching; close the ones it never sent.
+    yield* Effect.gen(function* () {
+      const open = yield* RunHistory.openRuns().pipe(withSql);
+      const now = iso(yield* localNow);
+      yield* Effect.forEach(
+        open,
+        (run) =>
+          run.threadId === null || run.messageId === null
+            ? recordHistory(
+                RunHistory.finishRun(run.id, {
+                  status: "failed",
+                  endedAt: now,
+                  error: "Run was interrupted by a server restart.",
+                }),
+              )
+            : followRunOutcome(run.taskId, run.startedAt, run.threadId, run.messageId, run.id).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not record scheduled run outcome", {
+                    taskId: run.taskId,
+                    cause,
+                  }),
+                ),
+                Effect.forkIn(serviceScope),
+              ),
+        { discard: true },
+      );
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not resume automation run history", { cause }),
       ),
     );
 
@@ -2186,14 +2368,14 @@ export const layer = Layer.effect(
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
-    )(function* (input: ScheduledTaskRunNowInput) {
+    )(function* (input: ScheduledTaskRunNowInput, options?: { readonly byAgent?: boolean }) {
       const task = yield* loadTask(input.id);
       if (task.schedule.type === "webhook") {
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
           taskId: input.id,
         });
       }
-      return yield* runTask(task, "manual").pipe(
+      return yield* runTask(task, options?.byAgent === true ? "agent" : "manual").pipe(
         Effect.mapError((cause) =>
           isScheduledTaskError(cause)
             ? cause
@@ -2245,6 +2427,14 @@ export const layer = Layer.effect(
       missingFields: Option.getOrElse(decodeMissingFieldsJson(row.missing_fields_json), () => []),
       error: row.error,
     });
+
+    const listRuns: ScheduledTaskService["Service"]["listRuns"] = (input) =>
+      RunHistory.listRuns(input.id, input.before).pipe(
+        withSql,
+        Effect.mapError((cause) =>
+          taskError("Could not list automation runs.", { taskId: input.id, cause }),
+        ),
+      );
 
     const listWebhookDeliveries: ScheduledTaskService["Service"]["listWebhookDeliveries"] = (
       input,
@@ -3117,6 +3307,7 @@ export const layer = Layer.effect(
       deleteForThread,
       runNow,
       rotateWebhookToken,
+      listRuns,
       listWebhookDeliveries,
       getWebhookDelivery,
       triggerWebhook,
