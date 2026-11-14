@@ -27,8 +27,10 @@ The rule for changes to `packages/contracts` that cross the wire:
 
 `apps/server/src/upstreamClientCompat.test.ts` enforces the rule against a pinned bundle of
 upstream's contracts. It decodes sampled upstream requests with the fork's schemas. It also decodes
-the fork's mapped responses, stream items and errors with upstream's schemas, and forces each new enum
-member into a sample. `check:changed` runs it for any change to `packages/contracts/src`, `ws.ts` or
+the fork's mapped RPC responses, stream items and errors, and every HTTP endpoint's responses, with
+upstream's schemas. Each value the fork adds is forced into samples: an enum member in place of a
+sibling, and a new union member, such as a schedule type or an error, sampled whole where its union
+sits. `check:changed` runs it for any change to `packages/contracts/src`, `ws.ts` or
 the compatibility module. After each upstream merge, refresh the bundle with
 `git fetch upstream && vp run upstream-contracts:refresh`, then run the test. Its `KNOWN_GAPS` list
 names accepted exceptions. Each entry is asserted to still fail, so it is removed once fixed.

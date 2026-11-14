@@ -46,6 +46,7 @@ const KNOWN_GAPS: ReadonlyMap<string, string> = new Map([
 const TOLERATED_DROPS: ReadonlyMap<string, string> = new Map([
   ["server.getConfig success $.keybindings", "bindings for the fork's own commands"],
   ["subscribeServerConfig success $.payload.keybindings", "bindings for the fork's own commands"],
+  ["subscribeServerConfig success $.config.keybindings", "bindings for the fork's own commands"],
   ["server.upsertKeybinding success $.keybindings", "bindings for the fork's own commands"],
   ["server.removeKeybinding success $.keybindings", "bindings for the fork's own commands"],
 ]);
@@ -169,7 +170,22 @@ interface Position {
   readonly literals: Set<string>;
   /** Members of a literal union, which other members can stand in for in a sample. */
   readonly enumMembers: Set<string>;
+  /** Union members this literal tags, by literal; the union sits one property up. */
+  readonly memberTags: Map<string, Set<AST.AST>>;
   anyString: boolean;
+}
+
+/** The string literal properties that tell a union member apart, through class declarations. */
+function tagsOf(node: AST.AST): ReadonlyArray<readonly [string, string]> {
+  const type = AST.toType(node);
+  if (type._tag === "Declaration") return type.typeParameters.flatMap(tagsOf);
+  if (type._tag !== "Objects") return [];
+  return type.propertySignatures.flatMap((property) => {
+    const value = AST.toType(property.type);
+    return value._tag === "Literal" && typeof value.literal === "string"
+      ? [[String(property.name), value.literal] as const]
+      : [];
+  });
 }
 
 /** The string literals a schema accepts at each property path, through unions and suspensions. */
@@ -182,6 +198,7 @@ function literalPositions(ast: AST.AST): ReadonlyMap<string, Position> {
     const position = positions.get(path) ?? {
       literals: new Set<string>(),
       enumMembers: new Set<string>(),
+      memberTags: new Map<string, Set<AST.AST>>(),
       anyString: false,
     };
     positions.set(path, position);
@@ -195,6 +212,12 @@ function literalPositions(ast: AST.AST): ReadonlyMap<string, Position> {
     visited.set(type, paths.add(visitedKey));
     switch (type._tag) {
       case "Union":
+        for (const member of type.types) {
+          for (const [key, literal] of tagsOf(member)) {
+            const { memberTags } = at(`${path}.${key}`);
+            memberTags.set(literal, (memberTags.get(literal) ?? new Set()).add(member));
+          }
+        }
         return type.types.forEach((member) => visit(member, path, true));
       case "Suspend": {
         const target = type.thunk();
@@ -239,9 +262,16 @@ function literalPositions(ast: AST.AST): ReadonlyMap<string, Position> {
   return positions;
 }
 
+interface UnionMember {
+  readonly unionPath: string;
+  readonly member: AST.AST;
+}
+
 interface AddedLiteral {
   readonly siblings: ReadonlySet<string>;
   readonly enumMember: boolean;
+  /** Union members the literal tags, which a sample can carry only whole. */
+  readonly members: ReadonlyArray<UnionMember>;
 }
 
 /**
@@ -249,7 +279,10 @@ interface AddedLiteral {
  * Paths only the fork has are skipped: upstream ignores fields it does not know.
  */
 function addedLiterals(fork: AST.AST, upstream: AST.AST): ReadonlyMap<string, AddedLiteral> {
-  const added = new Map<string, { siblings: Set<string>; enumMember: boolean }>();
+  const added = new Map<
+    string,
+    { siblings: Set<string>; enumMember: boolean; members: Array<UnionMember> }
+  >();
   const upstreamPositions = literalPositions(upstream);
   for (const [path, forkPosition] of literalPositions(fork)) {
     const upstreamPosition = upstreamPositions.get(path);
@@ -257,9 +290,17 @@ function addedLiterals(fork: AST.AST, upstream: AST.AST): ReadonlyMap<string, Ad
     if (upstreamPosition.literals.size === 0) continue;
     for (const literal of forkPosition.literals) {
       if (upstreamPosition.literals.has(literal)) continue;
-      const entry = added.get(literal) ?? { siblings: new Set<string>(), enumMember: false };
+      const entry = added.get(literal) ?? {
+        siblings: new Set<string>(),
+        enumMember: false,
+        members: [],
+      };
       forkPosition.literals.forEach((sibling) => entry.siblings.add(sibling));
       entry.enumMember ||= forkPosition.enumMembers.has(literal);
+      const unionPath = path.slice(0, path.lastIndexOf("."));
+      for (const member of forkPosition.memberTags.get(literal) ?? []) {
+        entry.members.push({ unionPath, member });
+      }
       added.set(literal, entry);
     }
   }
@@ -282,6 +323,44 @@ function* withLeafReplaced(wire: Wire, from: ReadonlySet<string>, to: string): G
   }
 }
 
+const pathSegments = (path: string) =>
+  (path.match(/\.[^.[{]+|\[\]|\{\}/g) ?? []).map((segment) =>
+    segment.startsWith(".") ? segment.slice(1) : segment,
+  );
+
+/** Copies of the wire with one value at `path` replaced; declared arrays carry no `[]` segment. */
+function* withValueAt(wire: Wire, path: ReadonlyArray<string>, value: Wire): Generator<Wire> {
+  const [segment, ...rest] = path;
+  if (segment === undefined) {
+    yield value;
+    return;
+  }
+  const inArray = segment === "[]" ? rest : path;
+  if (Array.isArray(wire)) {
+    for (const [index, item] of wire.entries()) {
+      for (const replaced of withValueAt(item, inArray, value)) {
+        yield wire.map((original, at) => (at === index ? replaced : original));
+      }
+    }
+  } else if (isRecord(wire)) {
+    const entries = segment === "{}" ? Object.entries(wire) : [[segment, wire[segment]] as const];
+    for (const [key, item] of entries) {
+      for (const replaced of withValueAt(item, rest, value)) yield { ...wire, [key]: replaced };
+    }
+  }
+}
+
+const memberWires = new Map<AST.AST, ReadonlyArray<Wire>>();
+const memberSamples = Effect.fn("upstreamClientCompatTest.memberSamples")(function* (
+  member: AST.AST,
+) {
+  const cached = memberWires.get(member);
+  if (cached !== undefined) return cached;
+  const wires = yield* wireSamples(Schema.make(member));
+  memberWires.set(member, wires);
+  return wires;
+});
+
 interface Pair {
   readonly name: string;
   readonly fork: Schema.Top;
@@ -299,16 +378,28 @@ interface Failure {
 /** At most one failure per pair. */
 const serverToUpstreamFailure = Effect.fn("upstreamClientCompatTest.serverToUpstreamFailure")(
   function* (pair: Pair) {
-    return firstFailure(pair, yield* wireSamples(pair.fork));
+    const added = addedLiterals(pair.fork.ast, pair.upstream.ast);
+    const memberWires = new Map<AST.AST, ReadonlyArray<Wire>>();
+    for (const { members } of added.values()) {
+      for (const { member } of members) memberWires.set(member, yield* memberSamples(member));
+    }
+    return firstFailure(pair, yield* wireSamples(pair.fork), added, memberWires);
   },
 );
 
-function firstFailure(pair: Pair, samples: ReadonlyArray<Wire>): Failure | undefined {
+function firstFailure(
+  pair: Pair,
+  samples: ReadonlyArray<Wire>,
+  added: ReadonlyMap<string, AddedLiteral>,
+  memberWires: ReadonlyMap<AST.AST, ReadonlyArray<Wire>>,
+): Failure | undefined {
   const fail = (issue: string) => ({ name: pair.name, issue });
-  // Undefined when the fork's server could not have sent this wire; null when upstream decodes it.
+  // Undefined when the fork's server could not have sent this wire; null when upstream decodes it
+  // or never receives it.
   const check = (forkWire: Wire): string | null | undefined => {
     const decoded = fromWire(pair.fork, forkWire);
-    if (Exit.isFailure(decoded) || pair.refused?.(decoded.value as never)) return undefined;
+    if (Exit.isFailure(decoded)) return undefined;
+    if (pair.refused?.(decoded.value as never)) return null;
     const mapped = pair.map ? pair.map(decoded.value as never, upstreamClient) : decoded.value;
     const sent = toWire(pair.fork, mapped);
     if (sent === undefined) return undefined;
@@ -327,10 +418,24 @@ function firstFailure(pair: Pair, samples: ReadonlyArray<Wire>): Failure | undef
     const issue = check(wire);
     if (issue) return fail(issue);
   }
-  for (const [literal, { siblings, enumMember }] of addedLiterals(
-    pair.fork.ast,
-    pair.upstream.ast,
-  )) {
+  for (const [literal, { siblings, enumMember, members }] of added) {
+    // A member the literal tags, sampled on its own and put where its union sits in each sample.
+    let spliced = 0;
+    members: for (const { unionPath, member } of members) {
+      const replacements = memberWires.get(member) ?? [];
+      for (const [index, wire] of samples.entries()) {
+        const replacement = replacements[index % replacements.length];
+        if (replacement === undefined) break;
+        const [candidate] = withValueAt(wire, pathSegments(unionPath), replacement);
+        if (candidate === undefined) continue;
+        const issue = check(candidate);
+        if (issue) return fail(`with "${literal}": ${issue}`);
+        if (issue === null && ++spliced >= FORCED_SAMPLES_PER_LITERAL) break members;
+      }
+    }
+    if (members.length > 0 && spliced === 0) {
+      return fail(`no sample takes a member tagged "${literal}"; adjust COUNT or SIZES`);
+    }
     let forced = 0;
     for (const wire of samples) {
       for (const candidate of withLeafReplaced(wire, siblings, literal)) {
