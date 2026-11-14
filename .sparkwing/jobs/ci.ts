@@ -1,7 +1,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { type Context, definePipeline } from "@sparkwing/sdk";
+import { type Context, definePipeline, type Job } from "@sparkwing/sdk";
 
 import {
   type Changes,
@@ -16,6 +16,8 @@ import {
 
 // Mirrors .github/workflows/ci.yml. Not ported: rust (no cargo on this host), the xvfb desktop
 // launch smoke and mobile_native_static_analysis (macOS). .sparkwing/workflows.json tracks them.
+// Change-dependent jobs use skipIf, which runs only after the job's cores are admitted; generating
+// them from the changes output failed with plan_drift on replay (run-81dbc6536cf86825653d8b03).
 const BUDGET = "apps/server/src/provider/agentContextBudget.json";
 const NODE_SCRIPT_TESTS = [
   ".github/scripts/check-nightly-release.test.cjs",
@@ -28,15 +30,12 @@ interface ChangesOutput extends Changes {
   readonly base: string;
 }
 
-const run = (ctx: Context, name: string, argv: readonly [string, ...string[]]) =>
-  logged(ctx, checkout(ctx), name, argv);
-
 definePipeline({
   name: "Ci",
   short: "The jobs of ci.yml that run on this host, admitted by cores",
   help:
     "Repo-wide: for the lead's batch and upstream-merge gates, not per-change checks. Jobs a change cannot " +
-    "affect are never created, as in CI; --full runs all of them.",
+    "affect skip, as in CI; --full runs all of them.",
   args: [
     ...checkoutArgs,
     { name: "ref", type: "string", description: "Compare against the merge base with this ref" },
@@ -59,11 +58,20 @@ definePipeline({
       })
       .inline()
       .cores(0.25);
+    const decided = async (ctx: Context) => {
+      const out = await ctx.output(changes);
+      if (!out) throw new Error("changes output is unavailable");
+      return out;
+    };
+    const unless =
+      (key: keyof Changes["outputs"]) =>
+      async (ctx: Context): Promise<boolean> =>
+        !(await decided(ctx)).outputs[key];
+    const run = (ctx: Context, name: string, argv: readonly [string, ...string[]]) =>
+      logged(ctx, checkout(ctx), name, argv);
 
     const electron = p
-      .job("electron", (ctx) =>
-        run(ctx, "electron", ["vp", "run", "--filter", "@t3tools/desktop", "ensure:electron"]),
-      )
+      .job("electron", (ctx) => run(ctx, "electron", ["vp", "run", "--filter", "@t3tools/desktop", "ensure:electron"]))
       .inline()
       .cores(1);
 
@@ -81,13 +89,18 @@ definePipeline({
     );
     lint.step("check", (ctx) => run(ctx, "check", ["vp", "check"]));
 
+    p.job("typecheck", (ctx) => run(ctx, "typecheck", ["vp", "run", "typecheck"]))
+      .inline()
+      .cores(4)
+      .needs(changes, electron)
+      .skipIf(unless("typecheck"));
+
     p.job("context-budget", async (ctx) => {
       const co = checkout(ctx);
-      const out = await ctx.output(changes);
-      if (!out) throw new Error("changes output is unavailable");
+      const { base } = await decided(ctx);
       let before: Record<string, number>;
       try {
-        before = JSON.parse(git(co.root, "show", `${out.base}:${BUDGET}`));
+        before = JSON.parse(git(co.root, "show", `${base}:${BUDGET}`));
       } catch {
         ctx.log.info("The base has no agent context budget yet.");
         return;
@@ -97,7 +110,7 @@ definePipeline({
         .filter(([key, value]) => before[key] !== undefined && value > before[key]!)
         .map(([key, value]) => `${key}: ${before[key]} -> ${value} (+${value - before[key]!})`);
       if (grown.length === 0) return;
-      const report = `Agent context grew compared to ${out.base}:\n${grown.join("\n")}`;
+      const report = `Agent context grew compared to ${base}:\n${grown.join("\n")}`;
       if (ctx.args["allow-context-increase"] === "true") {
         ctx.log.warn(`${report}\nAccepted by --allow-context-increase.`);
         return;
@@ -109,6 +122,57 @@ definePipeline({
       .inline()
       .cores(0.25)
       .needs(changes);
+
+    const test = p
+      .job("test")
+      .inline()
+      .cores(4)
+      .needs(changes, electron)
+      .failurePolicy("collect_all")
+      .skipIf(unless("test"));
+    test.step("preview-bundle", (ctx) =>
+      run(ctx, "preview-bundle", ["python3", "-B", ".github/scripts/stage-preview-bundle.test.py"]),
+    );
+    test.step("release-checks", (ctx) => run(ctx, "release-checks", ["node", "--test", ...NODE_SCRIPT_TESTS]));
+    test.step("packages", async (ctx) => {
+      const packages = (await decided(ctx)).outputs.test_packages.split(" ").filter(Boolean);
+      const filters =
+        packages.length > 0
+          ? packages.flatMap((name) => ["--filter", name])
+          : ["--filter", "!t3", "--filter", "!@t3tools/monorepo", "--filter", "!@t3tools/web"];
+      await run(ctx, "packages", ["vp", "run", "--parallel", "--concurrency-limit", "4", ...filters, "test"]);
+    });
+
+    p.job("test-web", (ctx) => run(ctx, "test-web", ["vp", "run", "--filter", "@t3tools/web", "test"]))
+      .inline()
+      .cores(6)
+      .needs(changes)
+      .skipIf(unless("test_web"));
+
+    p.job("test-server", (ctx) =>
+      run(ctx, "test-server", [
+        "vp", "run", "test:cached", "--",
+        "--concurrency", "4",
+        "--uncached", "apps/server/integration/transferBudgetV2.integration.test.ts",
+        "apps/server",
+      ]),
+    )
+      .inline()
+      .cores(6)
+      .needs(changes)
+      .skipIf(unless("test_server"));
+
+    const build: Job = p.job("build").inline().cores(6).needs(changes, electron).skipIf(unless("build"));
+    const desktop = build.step("desktop", (ctx) => run(ctx, "build-desktop", ["vp", "run", "build:desktop"]));
+    build
+      .step("preload-bundle", (ctx) =>
+        run(ctx, "preload-bundle", ["node", "apps/desktop/scripts/verify-preload-bundle.mjs"]),
+      )
+      .needs(desktop);
+    build
+      .step("web-boot", (ctx) => run(ctx, "web-boot", ["node", "apps/web/scripts/verify-built-boot.ts"]))
+      .needs(desktop)
+      .skipIf(unless("test_web"));
 
     p.job("workflow-map", (ctx) => {
       const co = checkout(ctx);
@@ -127,66 +191,10 @@ definePipeline({
       .inline()
       .cores(0.25);
 
-    // Generated from the decision so a job the change cannot affect never queues for cores.
-    changes.generate((g, out) => {
-      const { outputs } = out;
-      if (outputs.typecheck)
-        g.job("typecheck", (ctx) => run(ctx, "typecheck", ["vp", "run", "typecheck"]))
-          .inline()
-          .cores(4)
-          .needs(electron);
-
-      if (outputs.test) {
-        const test = g.job("test").inline().cores(4).needs(electron).failurePolicy("collect_all");
-        test.step("preview-bundle", (ctx) =>
-          run(ctx, "preview-bundle", ["python3", "-B", ".github/scripts/stage-preview-bundle.test.py"]),
-        );
-        test.step("release-checks", (ctx) => run(ctx, "release-checks", ["node", "--test", ...NODE_SCRIPT_TESTS]));
-        const packages = outputs.test_packages.split(" ").filter(Boolean);
-        const filters =
-          packages.length > 0
-            ? packages.flatMap((name) => ["--filter", name])
-            : ["--filter", "!t3", "--filter", "!@t3tools/monorepo", "--filter", "!@t3tools/web"];
-        test.step("packages", (ctx) =>
-          run(ctx, "packages", ["vp", "run", "--parallel", "--concurrency-limit", "4", ...filters, "test"]),
-        );
-      }
-
-      if (outputs.test_web)
-        g.job("test-web", (ctx) => run(ctx, "test-web", ["vp", "run", "--filter", "@t3tools/web", "test"]))
-          .inline()
-          .cores(6);
-
-      if (outputs.test_server)
-        g.job("test-server", (ctx) =>
-          run(ctx, "test-server", [
-            "vp", "run", "test:cached", "--",
-            "--concurrency", "4",
-            "--uncached", "apps/server/integration/transferBudgetV2.integration.test.ts",
-            "apps/server",
-          ]),
-        )
-          .inline()
-          .cores(6);
-
-      if (outputs.build) {
-        const build = g.job("build").inline().cores(6).needs(electron);
-        const desktop = build.step("desktop", (ctx) => run(ctx, "build-desktop", ["vp", "run", "build:desktop"]));
-        build
-          .step("preload-bundle", (ctx) =>
-            run(ctx, "preload-bundle", ["node", "apps/desktop/scripts/verify-preload-bundle.mjs"]),
-          )
-          .needs(desktop);
-        if (outputs.test_web)
-          build
-            .step("web-boot", (ctx) => run(ctx, "web-boot", ["node", "apps/web/scripts/verify-built-boot.ts"]))
-            .needs(desktop);
-      }
-
-      if (outputs.release_smoke)
-        g.job("release-smoke", (ctx) => run(ctx, "release-smoke", ["node", "scripts/release-smoke.ts"]))
-          .inline()
-          .cores(2);
-    });
+    p.job("release-smoke", (ctx) => run(ctx, "release-smoke", ["node", "scripts/release-smoke.ts"]))
+      .inline()
+      .cores(2)
+      .needs(changes)
+      .skipIf(unless("release_smoke"));
   },
 });
