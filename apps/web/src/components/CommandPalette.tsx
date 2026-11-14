@@ -1825,7 +1825,16 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:thread-context",
       title: "Show thread tools",
-      searchTerms: ["list", "artifacts", "marks", "related threads", "details", "context", "pin"],
+      searchTerms: [
+        "list",
+        "artifacts",
+        "marks",
+        "related threads",
+        "timeline",
+        "details",
+        "context",
+        "pin",
+      ],
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         const store = useThreadContextSidebarStore.getState();

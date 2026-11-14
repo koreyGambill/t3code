@@ -25,6 +25,8 @@ import {
   ThreadInsights,
   ThreadInsightsGetInput,
   ThreadInsightsError,
+  ThreadTimeline,
+  ThreadTimelineGetInput,
   ThreadContextGetInput,
   ThreadContextResult,
 } from "./threadInsights.ts";
@@ -551,6 +553,7 @@ export const WS_METHODS = {
   threadMarksAnnotate: "threadMarks.annotate",
   threadInsightsGet: "threadInsights.get",
   threadContextGet: "threadInsights.context",
+  threadTimelineGet: "threadInsights.timeline",
   threadNotesGet: "threadNotes.get",
   threadNotesSave: "threadNotes.save",
   threadNotesSettings: "threadNotes.settings",
@@ -1642,6 +1645,12 @@ const WsThreadInsightsGetRpc = Rpc.make(WS_METHODS.threadInsightsGet, {
   error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadTimelineGetRpc = Rpc.make(WS_METHODS.threadTimelineGet, {
+  payload: ThreadTimelineGetInput,
+  success: ThreadTimeline,
+  error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
+});
+
 const WsThreadNotesGetRpc = Rpc.make(WS_METHODS.threadNotesGet, {
   payload: ThreadNotesGetInput,
   success: ThreadNote,
@@ -2730,6 +2739,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadMarksAnnotateRpc,
   WsThreadInsightsGetRpc,
   WsThreadContextGetRpc,
+  WsThreadTimelineGetRpc,
   WsThreadNotesGetRpc,
   WsThreadNotesSaveRpc,
   WsThreadNotesSettingsRpc,

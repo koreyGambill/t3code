@@ -54,6 +54,7 @@ import {
 } from "../threadContextSidebarStore";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { ThreadInspectPanel, type ThreadInspectSection } from "./insights/ThreadInspectPanel";
+import { ThreadTimelineView } from "./ThreadTimelineView";
 import { ToolHeaderButton } from "./threadToolsHost";
 import { CheckedLabel, ThreadListView } from "./reviews/ThreadListView";
 import { ArtifactsPanel } from "./reviews/ThreadWorkspacePanel";
@@ -116,6 +117,8 @@ export function ThreadToolSection({
       return <ThreadLinks threadRef={threadRef} actions={actions} />;
     case "related":
       return <ThreadRelated threadRef={threadRef} />;
+    case "timeline":
+      return <ThreadTimelineView threadRef={threadRef} actions={actions} />;
     case "details":
       return (
         <div

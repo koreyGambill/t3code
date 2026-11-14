@@ -233,6 +233,7 @@ describe("thread tool views", () => {
     expect(migrateThreadToolsView("ticket")).toBe("links");
     expect(migrateThreadToolsView("context")).toBe("inspect");
     expect(migrateThreadToolsView("environments")).toBe("environments");
+    expect(migrateThreadToolsView("timeline")).toBe("timeline");
     expect(migrateThreadToolsView(undefined)).toBe("todos");
     expect(firstVisibleThreadTool(["todos", "artifacts"])).toBe("links");
   });
@@ -309,6 +310,7 @@ describe("thread tools store", () => {
       "artifacts",
       "links",
       "related",
+      "timeline",
       "details",
       "environments",
       "inspect",

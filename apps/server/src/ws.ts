@@ -3,6 +3,7 @@ import * as MonitoringService from "./monitoring/MonitoringService.ts";
 import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
+import * as ThreadTimeline from "./threadInsights/ThreadTimeline.ts";
 import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
@@ -1529,6 +1530,7 @@ export const layerWsRpc = (
       const threadMarks = yield* ThreadMarks.ThreadMarks;
       const contextRecords = yield* ContextRecords.ContextRecords;
       const threadInsights = yield* ThreadInsights.ThreadInsights;
+      const threadTimeline = yield* ThreadTimeline.ThreadTimeline;
       const threadNotes = yield* ThreadNotes.ThreadNotes;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
@@ -3087,6 +3089,7 @@ export const layerWsRpc = (
         [WS_METHODS.threadMarksAnnotate]: (input) => threadMarks.annotate(input),
         [WS_METHODS.threadInsightsGet]: (input) => threadInsights.get(input),
         [WS_METHODS.threadContextGet]: (input) => contextRecords.get(input),
+        [WS_METHODS.threadTimelineGet]: (input) => threadTimeline.get(input),
         [WS_METHODS.threadNotesGet]: (input) => threadNotes.get(input),
         [WS_METHODS.threadNotesSave]: (input) => threadNotes.save(input),
         [WS_METHODS.threadNotesSettings]: () => threadNotes.settings(),

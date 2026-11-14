@@ -3,6 +3,7 @@ import * as MonitoringService from "./monitoring/MonitoringService.ts";
 import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
+import * as ThreadTimeline from "./threadInsights/ThreadTimeline.ts";
 import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
@@ -838,6 +839,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ThreadMarks.ThreadMarks)({}),
   Layer.mock(ThreadInsights.ThreadInsights)({}),
   Layer.mock(ContextRecords.ContextRecords)({}),
+  Layer.mock(ThreadTimeline.ThreadTimeline)({}),
   Layer.mock(ThreadNotes.ThreadNotes)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),

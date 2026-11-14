@@ -9,6 +9,7 @@ import * as MonitoringDelivery from "../monitoring/MonitoringDelivery.ts";
 import * as MonitoringFollowup from "../monitoring/MonitoringFollowup.ts";
 import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "../threadInsights/ThreadInsights.ts";
+import * as ThreadTimeline from "../threadInsights/ThreadTimeline.ts";
 import * as InstructionFootprints from "../threadInsights/InstructionFootprints.ts";
 import * as ThreadNotes from "../threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
@@ -500,6 +501,7 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.merge(layerOrchestratorProvided, ProjectionStore.layer)),
   ),
   layerContextRecordsProvided,
+  ThreadTimeline.layer,
   ThreadInsights.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, InstructionFootprints.layer)),
   ),
