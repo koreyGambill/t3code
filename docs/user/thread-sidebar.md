@@ -56,7 +56,7 @@ The thread keeps its history. Its next turn starts a new agent session in that
 folder with the conversation carried over. Finish or stop any work before moving.
 
 The left sidebar also holds tools for the current thread: Todos, Artifacts,
-Links, Related, Details, Environments and Inspect, plus status and watcher
+Links, Related, Timeline, Details, Environments and Inspect, plus status and watcher
 alerts. Pick a tool from the strip beside the thread list; pick it again, or the
 Weavewing mark, to return to your threads. `Cmd+Alt+I` on macOS or `Ctrl+Alt+I`
 on Windows and Linux switches between your threads and the last tool, and opens
@@ -76,6 +76,13 @@ the item's menu. Items nest up to three levels: indent and outdent from the item
 menu, or press Tab and Shift+Tab while editing its text. Select an item's text to
 edit it and its note. Filter the list to your items or the agent's, and show done
 and dropped items when you need them. These choices stay on this device.
+
+**Timeline** shows when the thread and everything it delegated ran: one row per
+thread, with its delegates and side chats indented beneath it, on a shared clock.
+Use it to see where a long task spent its time and which work ran in parallel.
+Hover a bar for its model, duration and how long it waited to start; click it to
+open that thread. On a thread that ran for days, pick a shorter window from the
+view's header. Delegates in a linked environment and plain forks are not shown.
 
 The sidebar's **Environments** view shows Xwing environments used by the thread
 and its delegated children. Open an environment to see its repositories and apps,
