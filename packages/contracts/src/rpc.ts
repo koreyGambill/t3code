@@ -25,6 +25,8 @@ import {
   ThreadInsights,
   ThreadInsightsGetInput,
   ThreadInsightsError,
+  ThreadTimeline,
+  ThreadTimelineGetInput,
   ThreadContextGetInput,
   ThreadContextResult,
   DefaultContextGetInput,
@@ -309,6 +311,8 @@ import {
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
+  ProjectCreateFromThreadInput,
+  ProjectCreateFromThreadResult,
   ProjectCreateNewInput,
   ProjectCreateNewResult,
   ProjectEnsureScratchResult,
@@ -542,6 +546,7 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+  projectsCreateFromThread: "projects.createFromThread",
   threadsChangeFolder: "threads.changeFolder",
 
   shellOpenInEditor: "shell.openInEditor",
@@ -554,6 +559,7 @@ export const WS_METHODS = {
   threadContextGet: "threadInsights.context",
   threadDefaultContextGet: "threadInsights.defaultContext",
   threadDefaultContextItem: "threadInsights.defaultContextItem",
+  threadTimelineGet: "threadInsights.timeline",
   threadNotesGet: "threadNotes.get",
   threadNotesSave: "threadNotes.save",
   threadNotesSettings: "threadNotes.settings",
@@ -1592,6 +1598,12 @@ const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsCreateFromThreadRpc = Rpc.make(WS_METHODS.projectsCreateFromThread, {
+  payload: ProjectCreateFromThreadInput,
+  success: ProjectCreateFromThreadResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsThreadsChangeFolderRpc = Rpc.make(WS_METHODS.threadsChangeFolder, {
   payload: ThreadChangeFolderInput,
   success: DevelopmentEnvironmentSelectCheckoutResult,
@@ -1648,6 +1660,12 @@ const WsThreadDefaultContextItemRpc = Rpc.make(WS_METHODS.threadDefaultContextIt
 const WsThreadInsightsGetRpc = Rpc.make(WS_METHODS.threadInsightsGet, {
   payload: ThreadInsightsGetInput,
   success: ThreadInsights,
+  error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadTimelineGetRpc = Rpc.make(WS_METHODS.threadTimelineGet, {
+  payload: ThreadTimelineGetInput,
+  success: ThreadTimeline,
   error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
 });
 
@@ -2728,6 +2746,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
+  WsProjectsCreateFromThreadRpc,
   WsThreadsChangeFolderRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
@@ -2740,6 +2759,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadDefaultContextGetRpc,
   WsThreadDefaultContextItemRpc,
   WsThreadContextGetRpc,
+  WsThreadTimelineGetRpc,
   WsThreadNotesGetRpc,
   WsThreadNotesSaveRpc,
   WsThreadNotesSettingsRpc,

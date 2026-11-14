@@ -7,3 +7,5 @@
 packages/source-control-github/schema/** linguist-generated
 apps/server/schema/** linguist-generated
 **/*.graphql.ts linguist-generated
+# Upstream's contracts, bundled by scripts/refresh-upstream-contracts.ts.
+apps/server/src/upstreamClientCompat.snapshot.js linguist-generated

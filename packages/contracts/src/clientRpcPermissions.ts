@@ -33,6 +33,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Moving a thread closes its idle terminals and provider sessions in the old checkout.
   [WS_METHODS.developmentEnvironmentsSelectCheckout]: AuthOrchestrationOperateScope,
   [WS_METHODS.developmentEnvironmentsUnlink]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
   // Creating and repairing make worktrees and branches and run the repository's installs.
   [WS_METHODS.developmentEnvironmentsCreate]: AuthSourceControlWriteScope,
   [WS_METHODS.developmentEnvironmentsAttach]: AuthSourceControlWriteScope,

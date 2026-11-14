@@ -90,6 +90,7 @@ export const THREAD_TOOL_ORDER: ReadonlyArray<ThreadContextSection> = [
   "artifacts",
   "links",
   "related",
+  "timeline",
   "details",
   "environments",
   "inspect",
@@ -109,6 +110,7 @@ export function migrateThreadToolsView(view: string | undefined): ThreadContextS
       return "inspect";
     case "artifacts":
     case "related":
+    case "timeline":
     case "details":
     case "environments":
       return view;

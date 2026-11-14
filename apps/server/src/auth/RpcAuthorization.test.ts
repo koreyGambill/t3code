@@ -41,6 +41,7 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.threadDefaultContextGet,
       WS_METHODS.threadWorkspaceGet,
+      WS_METHODS.threadTimelineGet,
       WS_METHODS.threadListRead,
       WS_METHODS.threadArtifactRead,
       WS_METHODS.threadArtifactList,

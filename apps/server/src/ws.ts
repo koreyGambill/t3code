@@ -4,6 +4,7 @@ import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
 import * as DefaultContext from "./threadInsights/DefaultContext.ts";
+import * as ThreadTimeline from "./threadInsights/ThreadTimeline.ts";
 import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
@@ -65,7 +66,6 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   CLIENT_CAPABILITIES_QUERY_PARAM,
-  SETTINGS_SECRET_REFERENCES_CAPABILITY,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
@@ -132,6 +132,7 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as UpstreamClientCompat from "./upstreamClientCompat.ts";
 import * as StatusSources from "./statusSources/StatusSources.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -298,6 +299,7 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const forClient = UpstreamClientCompat.responseForClient;
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
@@ -796,11 +798,6 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
     url.searchParams.get(ORCHESTRATION_PROTOCOL_QUERY_PARAM) ===
     String(ORCHESTRATION_PROTOCOL_VERSION)
   );
-}
-
-function readSettingsClient(url: URL) {
-  const capabilities = url.searchParams.get(CLIENT_CAPABILITIES_QUERY_PARAM)?.split(",") ?? [];
-  return { secretReferences: capabilities.includes(SETTINGS_SECRET_REFERENCES_CAPABILITY) };
 }
 
 function shouldUseBoundedThreadSnapshot(input: {
@@ -1433,7 +1430,7 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
-  settingsClient: { readonly secretReferences: boolean },
+  client: UpstreamClientCompat.ClientWireCapabilities,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1480,7 +1477,10 @@ export const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const scheduledTasks = UpstreamClientCompat.scheduledTasksForClient(
+        yield* ScheduledTasks.ScheduledTaskService,
+        client,
+      );
       const statusSources = yield* StatusSources.StatusSources;
       const monitoring = yield* MonitoringService.MonitoringService;
       const monitoringDialogue = yield* MonitoringDialogue.MonitoringDialogue;
@@ -1532,6 +1532,7 @@ export const layerWsRpc = (
       const contextRecords = yield* ContextRecords.ContextRecords;
       const threadInsights = yield* ThreadInsights.ThreadInsights;
       const defaultContext = yield* DefaultContext.DefaultContext;
+      const threadTimeline = yield* ThreadTimeline.ThreadTimeline;
       const threadNotes = yield* ThreadNotes.ThreadNotes;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
@@ -1544,7 +1545,10 @@ export const layerWsRpc = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const terminalManager = yield* TerminalManager.TerminalManager;
+      const terminalManager = UpstreamClientCompat.terminalManagerForClient(
+        yield* TerminalManager.TerminalManager,
+        client,
+      );
       const prepareTerminalLaunch = yield* makePrepareTerminalLaunch(
         threadManagement.getThreadShell,
       );
@@ -1841,7 +1845,7 @@ export const layerWsRpc = (
           : commandProviders;
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
-          settingsClient,
+          client,
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
@@ -2337,7 +2341,16 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
+          scheduledTasks
+            .subscribeList()
+            .pipe(
+              Stream.map((result) =>
+                forClient[WS_METHODS.scheduledTasksSubscribe](
+                  withVisibleWebhookUrls(result),
+                  client,
+                ),
+              ),
+            ),
         [WS_METHODS.monitoringStatus]: () => monitoring.status(),
         [WS_METHODS.monitoringList]: () => monitoring.list(),
         [WS_METHODS.monitoringUpsert]: (input) => monitoring.upsert(input),
@@ -2346,10 +2359,16 @@ export const layerWsRpc = (
         [WS_METHODS.monitoringSetDisposition]: (input) => monitoring.setDisposition(input),
         [WS_METHODS.monitoringRespond]: (input) =>
           monitoringDialogue.respond({ ...input, role: "user" }),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          scheduledTasks
+            .upsert(input)
+            .pipe(
+              Effect.map((result) => forClient[WS_METHODS.scheduledTasksUpsert](result, client)),
+            ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
+            Effect.map((result) => forClient[WS_METHODS.scheduledTasksSetEnabled](result, client)),
           ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
@@ -2358,10 +2377,14 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
+            Effect.map((result) => forClient[WS_METHODS.scheduledTasksRunNow](result, client)),
           ),
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+            Effect.map((result) =>
+              forClient[WS_METHODS.scheduledTasksRotateWebhookToken](result, client),
+            ),
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -2711,7 +2734,9 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
         [WS_METHODS.peerLinksList]: (_input) =>
-          peerLinks.list.pipe(Effect.map((links) => ({ links }))),
+          peerLinks.list.pipe(
+            Effect.map((links) => forClient[WS_METHODS.peerLinksList]({ links }, client)),
+          ),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
         [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
           peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
@@ -2731,7 +2756,7 @@ export const layerWsRpc = (
             const settings = yield* providerInstanceMutation === undefined
               ? serverSettings.updateSettings(nextPatch)
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
-            return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
+            return ServerSettings.redactServerSettingsForClient(settings, client);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverCheckSecretSource]: (input) => secretCheck.check(input.source),
@@ -2946,6 +2971,7 @@ export const layerWsRpc = (
                 (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
               ),
             ),
+        [WS_METHODS.projectsCreateFromThread]: () => UpstreamClientCompat.createProjectFromThread,
         [WS_METHODS.threadsChangeFolder]: (input) => developmentEnvironments.changeFolder(input),
         [WS_METHODS.projectCloneCancel]: (input) =>
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
@@ -3067,6 +3093,7 @@ export const layerWsRpc = (
         [WS_METHODS.threadContextGet]: (input) => contextRecords.get(input),
         [WS_METHODS.threadDefaultContextGet]: (input) => defaultContext.preview(input),
         [WS_METHODS.threadDefaultContextItem]: (input) => defaultContext.itemText(input),
+        [WS_METHODS.threadTimelineGet]: (input) => threadTimeline.get(input),
         [WS_METHODS.threadNotesGet]: (input) => threadNotes.get(input),
         [WS_METHODS.threadNotesSave]: (input) => threadNotes.save(input),
         [WS_METHODS.threadNotesSettings]: () => threadNotes.settings(),
@@ -3506,7 +3533,7 @@ export const layerWsRpc = (
                   : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
-                  ServerSettings.redactServerSettingsForClient(settings, settingsClient),
+                  ServerSettings.redactServerSettingsForClient(settings, client),
                 ),
                 Stream.map((settings) => ({
                   version: 1 as const,
@@ -3717,7 +3744,9 @@ export const layer = Layer.unwrap(
               clientAnalyticsProps,
               serverBrowser,
               reportProfiles,
-              readSettingsClient(url.value),
+              UpstreamClientCompat.readClientWireCapabilities(
+                url.value.searchParams.get(CLIENT_CAPABILITIES_QUERY_PARAM),
+              ),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

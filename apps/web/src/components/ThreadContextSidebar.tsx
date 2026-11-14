@@ -10,6 +10,7 @@ import {
   LinkIcon,
   ListChecksIcon,
   NetworkIcon,
+  ChartGanttIcon,
   PinIcon,
   PinOffIcon,
   ScanSearchIcon,
@@ -88,6 +89,12 @@ const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; abo
     icon: NetworkIcon,
     about:
       "Threads this one delegated to, forked, messaged or heard from. Agent suggestions will appear under Suggested.",
+  },
+  timeline: {
+    title: "Timeline",
+    icon: ChartGanttIcon,
+    about:
+      "When this thread and its delegates ran, one row per thread on a shared clock. Hover a bar for its model and timing; click it to open that thread.",
   },
   details: {
     title: "Details",

@@ -15,6 +15,7 @@ export type ThreadContextSection =
   | "artifacts"
   | "links"
   | "related"
+  | "timeline"
   | "details"
   | "environments"
   | "inspect";

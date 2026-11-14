@@ -4,6 +4,7 @@ import * as MonitoringDialogue from "./monitoring/MonitoringDialogue.ts";
 import * as ThreadMarks from "./threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "./threadInsights/ThreadInsights.ts";
 import * as DefaultContext from "./threadInsights/DefaultContext.ts";
+import * as ThreadTimeline from "./threadInsights/ThreadTimeline.ts";
 import * as ThreadNotes from "./threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "./threadWorkspace/ThreadWorkspace.ts";
 import * as ReviewArtifacts from "./reviewArtifacts/ReviewArtifacts.ts";
@@ -13,20 +14,26 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
+  type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   EnvironmentId,
   EventId,
   GitManagerError,
   MessageId,
+  OrchestrationDispatchCommandError,
   ProjectId,
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  SETTINGS_SECRET_REFERENCES_CAPABILITY,
+  TerminalCwdStatError,
+  TerminalWorkspaceChangedError,
   SourceControlRepositoryError,
   WS_METHODS,
   WsRpcGroup,
@@ -47,6 +54,8 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -171,6 +180,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { readClientWireCapabilities } from "./upstreamClientCompat.ts";
 import {
   layerWsRpc,
   resolveOpenDiscoveryForConfig,
@@ -831,6 +841,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ThreadInsights.ThreadInsights)({}),
   Layer.mock(DefaultContext.DefaultContext)({}),
   Layer.mock(ContextRecords.ContextRecords)({}),
+  Layer.mock(ThreadTimeline.ThreadTimeline)({}),
   Layer.mock(ThreadNotes.ThreadNotes)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
@@ -1059,7 +1070,13 @@ it.effect.each([
             {},
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
-            { secretReferences: true },
+            {
+              secretReferences: true,
+              scheduledTaskSkippedStatus: true,
+              peerLinkUnauthorizedStatus: true,
+              terminalWorkspaceChangedError: true,
+              scheduledTaskEventSchedule: true,
+            },
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );
@@ -1214,7 +1231,13 @@ it.effect("access changes made while the snapshot loads reach the client after i
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+            terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
+          },
         ).pipe(
           Layer.merge(RpcAuthorization.layer([AuthAccessReadScope])),
           Layer.provide(
@@ -1284,6 +1307,135 @@ it.effect("access changes made while the snapshot loads reach the client after i
       ),
     ),
   ),
+);
+
+/** One request from a client that declared only upstream's capabilities, answered by `services`. */
+const upstreamClientRequest = Effect.fn("wsTest.upstreamClientRequest")(function* (
+  request: {
+    readonly tag: RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
+    readonly payload: Record<string, unknown>;
+  },
+  scope: AuthEnvironmentScope,
+  services: Layer.Layer<never>,
+) {
+  const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+  const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    ...WS_RPC_SERVER_OPTIONS,
+    onFromServer: (response) =>
+      response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+  }).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("upstream-client"),
+          subject: "upstream-client",
+          method: "browser-session-cookie",
+          scopes: [],
+        },
+        {},
+        yield* ServerBrowser.ServerBrowser,
+        () => Effect.void,
+        readClientWireCapabilities(SETTINGS_SECRET_REFERENCES_CAPABILITY),
+      ).pipe(
+        Layer.merge(RpcAuthorization.layer([scope])),
+        Layer.provide(
+          Layer.mergeAll(
+            layerUnusedConfigRpcServices,
+            Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+            Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+            Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+            Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/unused",
+            }),
+            Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+            Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+            services,
+          ),
+        ),
+      ),
+    ),
+  );
+  yield* server.write(0, {
+    _tag: "Request",
+    id: RpcMessage.RequestId("upstream-client"),
+    tag: request.tag,
+    // The decoded payload's type depends on the tag; these requests carry plain encoded fields.
+    payload: request.payload as never,
+    headers: Headers.empty,
+  });
+  return yield* Queue.take(exits);
+});
+
+const upstreamClientServices = Layer.mergeAll(
+  Layer.fresh(layerConfigSources),
+  Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(ServerBrowser.ServerBrowser)({}),
+);
+
+it.effect("lists an unauthorized peer link as expired to a client that has not declared it", () =>
+  Effect.gen(function* () {
+    const at = DateTime.makeUnsafe("2026-11-13T00:00:00.000Z");
+    const link = {
+      environmentId: EnvironmentId.make("peer"),
+      label: "Peer",
+      urls: ["http://peer.test"],
+      access: "read-only" as const,
+      linkedAt: at,
+      expiresAt: at,
+      lastReachedAt: null,
+      lastError: null,
+      status: "unauthorized" as const,
+    };
+    const exit = yield* upstreamClientRequest(
+      { tag: WS_METHODS.peerLinksList, payload: {} },
+      AuthAccessReadScope,
+      Layer.mock(PeerLinks.PeerLinks)({ list: Effect.succeed([link]) }),
+    );
+
+    assert.deepEqual(exit, Exit.succeed({ links: [{ ...link, status: "expired" }] }));
+  }).pipe(Effect.provide(upstreamClientServices)),
+);
+
+it.effect(
+  "fails a moved thread's terminal with a cwd error for a client that has not declared it",
+  () =>
+    Effect.gen(function* () {
+      const moved = new TerminalWorkspaceChangedError({
+        threadId: "thread",
+        terminalId: "default",
+        worktreePath: "/work/new",
+      });
+      const exit = yield* upstreamClientRequest(
+        {
+          tag: WS_METHODS.terminalWrite,
+          payload: { threadId: "thread", terminalId: "default", data: "ls\n" },
+        },
+        AuthTerminalOperateScope,
+        Layer.mock(TerminalManager.TerminalManager)({ write: () => Effect.fail(moved) }),
+      );
+
+      assert.deepEqual(
+        Exit.findErrorOption(exit),
+        Option.some(new TerminalCwdStatError({ cwd: moved.message, cause: moved })),
+      );
+    }).pipe(Effect.provide(upstreamClientServices)),
+);
+
+it.effect("refuses to turn a thread into a project and names Change folder", () =>
+  Effect.gen(function* () {
+    const exit = yield* upstreamClientRequest(
+      { tag: WS_METHODS.projectsCreateFromThread, payload: { threadId: "thread" } },
+      AuthOrchestrationOperateScope,
+      Layer.empty,
+    );
+
+    const error = Exit.findErrorOption(exit).pipe(
+      Option.filter(Schema.is(OrchestrationDispatchCommandError)),
+    );
+    assert.include(Option.getOrThrow(error).message, "Change folder");
+  }).pipe(Effect.provide(upstreamClientServices)),
 );
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
@@ -1415,7 +1567,13 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+            terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
+          },
         ).pipe(Layer.provide(configRpcServices)),
       ),
     );
@@ -1775,7 +1933,13 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+            terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
+          },
         ).pipe(Layer.provide(services)),
       ),
     );
@@ -1853,7 +2017,13 @@ it.effect("a git action that fails partway still refreshes the repository status
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+            terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
+          },
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
@@ -1932,7 +2102,13 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+            terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
+          },
         ).pipe(
           Layer.provide(services),
           Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
@@ -2423,7 +2599,13 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
-          { secretReferences: true },
+          {
+            secretReferences: true,
+            scheduledTaskSkippedStatus: true,
+            peerLinkUnauthorizedStatus: true,
+            terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
+          },
         ).pipe(
           Layer.provide(services),
           Layer.merge(

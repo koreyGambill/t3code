@@ -212,3 +212,54 @@ export const DefaultContextItemText = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type DefaultContextItemText = typeof DefaultContextItemText.Type;
+export const ThreadTimelineGetInput = Schema.Struct({ threadId: ThreadId });
+export type ThreadTimelineGetInput = typeof ThreadTimelineGetInput.Type;
+export const ThreadTimelineRelation = Schema.Literals([
+  "self",
+  "delegate",
+  "subagent",
+  "side-chat",
+]);
+export type ThreadTimelineRelation = typeof ThreadTimelineRelation.Type;
+export const ThreadTimelineLane = Schema.Struct({
+  threadId: ThreadId,
+  /** Index of the parent lane; null for the requested thread. */
+  parent: Schema.NullOr(NonNegativeInt),
+  depth: NonNegativeInt,
+  title: Schema.String,
+  relation: ThreadTimelineRelation,
+});
+export type ThreadTimelineLane = typeof ThreadTimelineLane.Type;
+/** `lane` indexes `ThreadTimeline.lanes` and `model` indexes `ThreadTimeline.models`; `startedAt` is epoch ms. */
+export const ThreadTimelineRun = Schema.Struct({
+  lane: NonNegativeInt,
+  ordinal: NonNegativeInt,
+  status: OrchestrationV2RunStatus,
+  model: NonNegativeInt,
+  startedAt: NonNegativeInt,
+  /** From request to start. */
+  queuedMs: NonNegativeInt,
+  /** Null while the run is open. */
+  durationMs: Schema.NullOr(NonNegativeInt),
+});
+export type ThreadTimelineRun = typeof ThreadTimelineRun.Type;
+/** Totals cover every started run, including those past the `runs` cap; open runs are left to the client's clock. */
+export const ThreadTimelineTotals = Schema.Struct({
+  runs: NonNegativeInt,
+  firstStartedAt: Schema.NullOr(NonNegativeInt),
+  lastCompletedAt: Schema.NullOr(NonNegativeInt),
+  finishedMs: NonNegativeInt,
+  finishedMsByModel: Schema.Array(Schema.Struct({ model: Schema.String, ms: NonNegativeInt })),
+});
+export type ThreadTimelineTotals = typeof ThreadTimelineTotals.Type;
+export const ThreadTimeline = Schema.Struct({
+  threadId: ThreadId,
+  /** Only lanes on the way to a returned run, plus the requested thread's own. */
+  lanes: Schema.Array(ThreadTimelineLane),
+  models: Schema.Array(Schema.String),
+  /** The latest started runs, oldest first, at most `THREAD_TIMELINE_RUN_LIMIT`. */
+  runs: Schema.Array(ThreadTimelineRun),
+  totals: ThreadTimelineTotals,
+});
+export type ThreadTimeline = typeof ThreadTimeline.Type;
+export const THREAD_TIMELINE_RUN_LIMIT = 1000;

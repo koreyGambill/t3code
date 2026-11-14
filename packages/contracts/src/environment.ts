@@ -19,6 +19,14 @@ export const ORCHESTRATION_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
 export const CLIENT_CAPABILITIES_QUERY_PARAM = "clientCapabilities";
 /** Secret fields may hold a secret provider reference instead of a string. */
 export const SETTINGS_SECRET_REFERENCES_CAPABILITY = "settingsSecretReferences";
+/** Scheduled tasks may report a `skipped` last run; others see it as `succeeded`. */
+export const SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY = "scheduledTaskSkippedStatus";
+/** Peer links may report an `unauthorized` status; others see it as `expired`. */
+export const PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY = "peerLinkUnauthorizedStatus";
+/** Terminal calls may fail with `TerminalWorkspaceChangedError`; others get a `TerminalCwdStatError`. */
+export const TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY = "terminalWorkspaceChangedError";
+/** Scheduled tasks may have an `event` schedule; others never see or change such a task. */
+export const SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY = "scheduledTaskEventSchedule";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",
