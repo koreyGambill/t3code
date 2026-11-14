@@ -65,6 +65,15 @@ function Invoke-LocalUpdateSwap($install, $payload, $rollback, [scriptblock]$Sta
   }
 }
 
+# Only timeouts are worth retrying; any other failure repeats identically, so callers stop at once.
+function New-LocalUpdateError([string]$Message, [switch]$Transient) {
+  $exception = [Exception]::new($Message)
+  $exception.Data['Transient'] = [bool]$Transient
+  return $exception
+}
+
+function Test-LocalUpdateTransient($exception) { return [bool]$exception.Data['Transient'] }
+
 # A fragmented WSL kernel fails some hvsock channel setups, so wsl.exe launches hang 30s each for minutes
 # (over 3 minutes observed) while a few pass. Only a distro that answers no probe in the whole window counts as hung.
 function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$seconds, [scriptblock]$Invoke, [scriptblock]$Delay = { param($seconds, $failure) Start-Sleep -Seconds $seconds }, [double]$ResponsiveSeconds = 300, [scriptblock]$Now = { [DateTime]::UtcNow }) {
@@ -75,13 +84,43 @@ function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$s
     $attempts++
     try { & $Invoke 'wsl.exe' @('-d', $distro, '--exec', '/bin/true') 'wsl-responsive' 3 | Out-Null; break }
     catch {
+      if (-not (Test-LocalUpdateTransient $_.Exception)) { throw (New-LocalUpdateError "WSL distribution '$distro' cannot run commands; refusing runtime operations. $($_.Exception.Message)") }
       $remaining = ($deadline - (& $Now)).TotalSeconds
-      if ($remaining -le 0) { throw "WSL distribution '$distro' is unresponsive; refusing runtime operations. No probe answered in $attempts attempts over ${ResponsiveSeconds}s. Last: $($_.Exception.Message)" }
+      if ($remaining -le 0) { throw (New-LocalUpdateError "WSL distribution '$distro' is unresponsive; refusing runtime operations. No probe answered in $attempts attempts over ${ResponsiveSeconds}s. Last: $($_.Exception.Message)") }
       & $Delay ([Math]::Min($wait, $remaining)) $_.Exception.Message
       $wait = [Math]::Min(10, $wait * 2)
     }
   }
   return & $Invoke 'wsl.exe' $arguments $label $seconds
+}
+
+# The old server must exit before its app moves. Once it answers "running", it gets 60s; every call, including
+# each probe window, shares $Seconds so the closed desktop's downtime stays bounded.
+function Wait-LocalUpdateStopped([scriptblock]$Probe, [double]$Seconds = 300, [scriptblock]$Now = { [DateTime]::UtcNow }, [scriptblock]$Delay = { param($seconds) Start-Sleep -Milliseconds ($seconds * 1000) }) {
+  $started = & $Now
+  $running = $null
+  $wait = 0.5
+  $last = 'no answer'
+  while ($true) {
+    $left = $Seconds - ((& $Now) - $started).TotalSeconds
+    if ($left -le 0) { throw "Could not confirm the WSL server exited within ${Seconds}s; refusing to move its application. Last: $last" }
+    $answer = $null
+    try { $answer = & $Probe $left }
+    catch {
+      if (-not (Test-LocalUpdateTransient $_.Exception)) { throw }
+      $last = $_.Exception.Message
+    }
+    if ($answer) {
+      if ($answer.stopped) { return }
+      if (-not $running) { $running = & $Now }
+      if (((& $Now) - $running).TotalSeconds -ge 60) { throw 'WSL server still running 60s after the desktop closed; refusing to move its application.' }
+      $last = 'still running'
+      & $Delay 0.5
+    } else {
+      & $Delay $wait
+      $wait = [Math]::Min(5, $wait * 2)
+    }
+  }
 }
 
 function Invoke-LocalRuntimeUpdate($resources, $archive, $digest, $rollback, [scriptblock]$Stop, [scriptblock]$Healthy, [scriptblock]$Recover, $clientSource) {
@@ -142,9 +181,18 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
   function Save-UpdateStatus($status) {
     $details.status = $status
     $details.at = [DateTime]::UtcNow.ToString('o')
-    $details.helpers = @(Get-ChildItem -LiteralPath $helperReceipts -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })
+    # Retries spawn many helpers; helpers/ keeps every record, the receipt only the latest.
+    $all = @(Get-ChildItem -LiteralPath $helperReceipts -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc)
+    $details.helperCount = $all.Count
+    $details.helpers = @($all | Select-Object -Last 50 | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })
     $details | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $receipt
-    Add-Content -LiteralPath $log -Value ($details | ConvertTo-Json -Depth 10 -Compress)
+    $line = @{}
+    foreach ($key in $details.Keys) { if ($key -notin @('helpers', 'timings')) { $line[$key] = $details[$key] } }
+    Add-Content -LiteralPath $log -Value ($line | ConvertTo-Json -Depth 10 -Compress)
+  }
+  # A status write over the WSL share can fail during the same trouble; it must not skip a relaunch.
+  function Save-UpdateRecovering {
+    try { Save-UpdateStatus 'recovering' } catch { $details.statusError = $_.Exception.Message }
   }
   function Record-UpdateHelper($processId, $role) {
     @{ pid = $processId; platform = 'win32'; role = $role; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $helperReceipts ("win32-$processId.json"))
@@ -174,13 +222,17 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       $process = Start-Process -FilePath $executable -ArgumentList ($arguments | ForEach-Object { Quote-UpdateArgument $_ }) -RedirectStandardInput $empty -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -PassThru
       $null = $process.Handle
       Record-UpdateHelper $process.Id $label
-      if (-not $process.WaitForExit([Math]::Max(1, $seconds * 1000))) { $process.Kill(); throw "$label exceeded ${seconds}s; captured helper stopped. Inspect $stdout and $stderr." }
-      if ($process.ExitCode -ne 0) { throw "$label failed ($($process.ExitCode)). $(Get-Content -LiteralPath $stderr -Raw)" }
+      if (-not $process.WaitForExit([Math]::Max(1, $seconds * 1000))) { $process.Kill(); throw (New-LocalUpdateError "$label exceeded ${seconds}s; captured helper stopped. Inspect $stdout and $stderr." -Transient) }
+      if ($process.ExitCode -ne 0) {
+        # wsl.exe writes UTF-16 errors, which read back with NULs between characters.
+        $text = (Get-Content -LiteralPath $stderr -Raw) -replace "`0", ''
+        throw (New-LocalUpdateError "$label failed ($($process.ExitCode)). $text" -Transient:($text -match 'WSAETIMEDOUT'))
+      }
       $details.timings += @{ operation = $label; milliseconds = ([DateTime]::UtcNow - $started).TotalMilliseconds }
       Add-Content -LiteralPath $log -Value (@{ operation = $label; milliseconds = ([DateTime]::UtcNow - $started).TotalMilliseconds; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)
       return (Get-Content -LiteralPath $stdout -Raw | ConvertFrom-Json)
     }
-    function Probe-Update($operation, [string[]]$extra = @(), [double]$seconds = 30) {
+    function Probe-Update($operation, [string[]]$extra = @(), [double]$seconds = 30, [double]$responsiveSeconds = 300) {
       return Invoke-LocalUpdateWsl $config.distro (@('-d', $config.distro, '--exec', $config.node, ($config.output + '/worker.mjs'), '--worker', $operation, ($config.output + '/config.json')) + $extra) $operation $seconds {
         param($executable, $arguments, $label, $remaining)
         Invoke-UpdateProcess $executable $arguments $label $remaining
@@ -188,7 +240,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         param($seconds, $failure)
         Add-Content -LiteralPath $log -Value (@{ operation = 'wsl-responsive-retry'; target = $operation; delaySeconds = $seconds; error = $failure; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)
         Start-Sleep -Seconds $seconds
-      }
+      } $responsiveSeconds
     }
 
     function Windows-UpdateWorker($operation, [string[]]$extra = @(), [double]$seconds = 30) {
@@ -262,7 +314,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         if ($remaining -le 0) { break }
         if (Test-UpdateDesktopExited) { return $false }
         try {
-          $health = Probe-Update 'health' @($digest) ([Math]::Min(5, $remaining))
+          $health = Probe-Update 'health' @($digest) ([Math]::Min(5, $remaining)) $remaining
           $details.lastHealth = $health
           if ($health.healthy) { $details.health = $health; return $true }
         } catch { $details.lastHealth = @{ healthy = $false; error = $_.Exception.Message } }
@@ -271,27 +323,8 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       } while ([DateTime]::UtcNow -lt $deadline)
       return $false
     }
-    # Only answers count toward the 60s exit deadline; failed calls are bounded by the probe window and 600s overall.
     function Wait-UpdateStopped($processId) {
-      $started = [DateTime]::UtcNow
-      $running = $null
-      $last = 'no answer'
-      while ($true) {
-        $answer = $null
-        try { $answer = Probe-Update 'stopped' @([string]$processId) 5 }
-        catch {
-          if ($_.Exception.Message -match 'is unresponsive; refusing') { throw }
-          $last = $_.Exception.Message
-        }
-        if ($answer) {
-          if ($answer.stopped) { return }
-          if (-not $running) { $running = [DateTime]::UtcNow }
-          if (([DateTime]::UtcNow - $running).TotalSeconds -ge 60) { throw "WSL server $processId did not exit within 60s; refusing to move its application." }
-          $last = "process $processId still running"
-        }
-        if (([DateTime]::UtcNow - $started).TotalSeconds -ge 600) { throw "Could not confirm WSL server $processId exited within 600s; refusing to move its application. Last: $last" }
-        Start-Sleep -Milliseconds 500
-      }
+      Wait-LocalUpdateStopped { param($left) Probe-Update 'stopped' @([string]$processId) ([Math]::Min(5, $left)) $left }
     }
     function Assert-UpdateRollback {
       if (Test-Path -LiteralPath $rollback) {
@@ -369,7 +402,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         $details.runtimeInstall = Probe-Update 'install-runtime'
         $details.drain = Wait-LocalUpdateDrain $config.drainMinutes {
           param($remaining)
-          try { Probe-Update 'idle' @() ([Math]::Min(5, $remaining)) } catch { @{ idle = $false; error = $_.Exception.Message } }
+          try { Probe-Update 'idle' @() ([Math]::Min(5, $remaining)) $remaining } catch { @{ idle = $false; error = $_.Exception.Message } }
         }
         Save-UpdateStatus 'backing-up'
         $details.wslBackup = Probe-Update 'backup' @() 300
@@ -381,6 +414,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
           if (@(Get-UpdateProcesses | Where-Object { $_.MainWindowHandle -ne 0 }).Count -ne 1) { throw 'Desktop exited before runtime restart.' }
           Probe-Update 'stop-runtime' @($oldDigest) | Out-Null
         } { Wait-UpdateHealthy $config.digest } {
+          Save-UpdateRecovering
           # The supervisor may already have restarted either selection.
           try { Probe-Update 'stop-runtime' @($config.digest) | Out-Null } catch { Add-Content -LiteralPath $log -Value $_ }
           $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
@@ -427,7 +461,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       Save-UpdateStatus 'draining'
       $details.drain = Wait-LocalUpdateDrain $config.drainMinutes {
         param($remaining)
-        try { Probe-Update 'idle' @() ([Math]::Min(30, $remaining)) } catch { @{ idle = $false; error = $_.Exception.Message } }
+        try { Probe-Update 'idle' @() ([Math]::Min(30, $remaining)) $remaining } catch { @{ idle = $false; error = $_.Exception.Message } }
       }
       Save-UpdateStatus 'backing-up'
       $details.wslBackup = Probe-Update 'backup' @() 300
@@ -453,6 +487,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         if ($null -ne $desktop.launch.exitCode -and -not $desktop.launch.handedOff) { throw "New desktop exited with code $($desktop.launch.exitCode) before its runtime became healthy; see desktopLaunches in the receipt." }
         return $false
       } {
+        Save-UpdateRecovering
         $current = try { Probe-Update 'health' @($config.digest) } catch { @{ } }
         Close-UpdateDesktop
         if ($current.pid) {
@@ -475,13 +510,27 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       Save-UpdateStatus 'verified'
     } catch {
       $details.error = $_.Exception.Message
-      if ($closed -and (-not $swapStarted -or -not (Test-Path -LiteralPath (Join-Path $rollback 'app')))) {
-        Save-UpdateStatus 'recovering'
+      if ($closed) {
+        Save-UpdateRecovering
+        try {
+          # A swap rollback whose close step threw left the candidate installed. Once nothing runs from it, restore.
+          if ($swapStarted -and (Test-Path -LiteralPath (Join-Path $rollback 'app'))) {
+            if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
+            if (@(Get-UpdateProcesses).Count -eq 0) {
+              try {
+                Move-Item -LiteralPath $install -Destination $payload
+                try { Move-Item -LiteralPath (Join-Path $rollback 'app') -Destination $install } catch { Move-Item -LiteralPath $payload -Destination $install; throw }
+              } catch { $details.restoreError = $_.Exception.Message }
+            }
+          }
+        } catch { $details.restoreError = $_.Exception.Message }
+        # Relaunching a candidate that could not be moved out beats leaving no desktop.
+        $details.installed = $(if ($swapStarted -and (Test-Path -LiteralPath (Join-Path $rollback 'app'))) { 'candidate' } else { 'previous' })
         try {
           # A close that timed out may still finish; deciding on the first look would leave no desktop.
           if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
           if (@(Get-UpdateProcesses).Count -eq 0) { Start-UpdateDesktop }
-          $details.rollbackHealthy = Wait-UpdateHealthy $oldDigest
+          $details.rollbackHealthy = Wait-UpdateHealthy $(if ($details.installed -eq 'candidate') { $config.digest } else { $oldDigest })
         } catch { $details.recoveryError = $_.Exception.Message }
       }
       Save-UpdateStatus 'failed'
@@ -502,20 +551,24 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         } catch { $details.backupRecoveryError = $_.Exception.Message; Save-UpdateStatus $details.status }
       }
       if ($config.notifyThread -and -not $config.checkOnly) {
-        $reason = ''
-        if ($details.error) {
-          # Quote-UpdateArgument refuses double quotes and newlines.
-          $flat = ($details.error -replace '\s+', ' ') -replace '"', "'"
-          $reason = ' Error: ' + $flat.Substring(0, [Math]::Min(300, $flat.Length))
+        # Quote-UpdateArgument refuses double quotes and newlines.
+        function Format-UpdateNotice($text) {
+          $flat = ([string]$text -replace '\s+', ' ') -replace '"', "'"
+          return $flat.Substring(0, [Math]::Min(300, $flat.Length))
         }
+        $reason = ''
+        if ($details.error) { $reason += ' Error: ' + (Format-UpdateNotice $details.error) }
+        if ($details.installed) { $reason += " Installed: $($details.installed) app." }
+        if ($null -ne $details.rollbackHealthy) { $reason += " Relaunched app healthy: $($details.rollbackHealthy)." }
+        if ($details.recoveryError) { $reason += ' Recovery error: ' + (Format-UpdateNotice $details.recoveryError) }
         try {
-          Probe-Update 'notify' @($(if ($details.status -eq 'verified') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit).$reason Receipt: $($config.output)/receipt.json. $($details.warning) $($details.reloadHint)") | Out-Null
+          Probe-Update 'notify' @($(if ($details.status -eq 'verified' -or $details.installed -eq 'candidate') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit).$reason Receipt: $($config.output)/receipt.json. $($details.warning) $($details.reloadHint)") | Out-Null
           $details.notification = @{ sent = $true }
         } catch {
           $details.notification = @{ sent = $false; error = $_.Exception.Message }
-          Add-Content -LiteralPath $log -Value "Notification failed: $_"
+          Add-Content -LiteralPath $log -Value "Notification failed: $_" -ErrorAction SilentlyContinue
         }
-        Save-UpdateStatus $details.status
+        try { Save-UpdateStatus $details.status } catch { $details.statusError = $_.Exception.Message }
       }
       $mutex.ReleaseMutex()
       $mutex.Dispose()

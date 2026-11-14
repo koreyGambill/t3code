@@ -123,7 +123,7 @@ try {
   $result = Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'stopped' 5 {
     param($executable, $arguments, $label, $seconds)
     $calls.operations += $label
-    if ($label -eq 'wsl-responsive') { $clock.now = $clock.now.AddSeconds(3); if ($calls.operations.Count -le 4) { throw 'wsl-responsive exceeded 3s' } }
+    if ($label -eq 'wsl-responsive') { $clock.now = $clock.now.AddSeconds(3); if ($calls.operations.Count -le 4) { throw (New-LocalUpdateError 'wsl-responsive exceeded 3s' -Transient) } }
     else { $calls.budget = $seconds; @{ stopped = $true } }
   } { param($seconds, $failure) Assert ($failure -match 'exceeded') 'Retry lost its failure'; $clock.delays += $seconds; $clock.now = $clock.now.AddSeconds($seconds) } 180 { $clock.now }
   Assert ($result.stopped -and ($calls.operations -join ',') -eq 'wsl-responsive,wsl-responsive,wsl-responsive,wsl-responsive,wsl-responsive,stopped') 'Transient WSL hangs refused the operation'
@@ -136,13 +136,56 @@ try {
       param($executable, $arguments, $label, $seconds)
       $calls.operations += $label
       $clock.now = $clock.now.AddSeconds(3)
-      throw 'Wsl/Service/WSAETIMEDOUT'
+      throw (New-LocalUpdateError 'wsl-responsive failed (1). Wsl/Service/WSAETIMEDOUT' -Transient)
     } { param($seconds) $clock.delays += $seconds; $clock.now = $clock.now.AddSeconds($seconds) } 180 { $clock.now }
   } catch { $failure = $_.Exception.Message }
   Assert ($failure -match "'fixture-distro' is unresponsive; refusing runtime operations" -and $failure -match 'WSAETIMEDOUT') 'Hung WSL was not refused with its last failure'
   Assert (@($calls.operations | Where-Object { $_ -ne 'wsl-responsive' }).Count -eq 0) 'Unresponsive WSL still received the operation'
   Assert ($calls.operations.Count -ge 10 -and $calls.operations.Count -le 20 -and ($clock.now - [DateTime]'2026-01-01T00:00:00Z').TotalSeconds -le 190) 'Unresponsive window was not bounded'
+  # A missing distro or node path fails the same way every time; retrying only delays the answer.
+  $calls = @{ operations = @() }
+  $failure = $null
+  try {
+    Invoke-LocalUpdateWsl 'missing-distro' @('fixture-command') 'health' 5 {
+      param($executable, $arguments, $label, $seconds)
+      $calls.operations += $label
+      throw (New-LocalUpdateError 'wsl-responsive failed (1). There is no distribution with the supplied name.')
+    } { throw 'A deterministic failure must not wait' }
+  } catch { $failure = $_.Exception }
+  Assert ($failure.Message -match "'missing-distro' cannot run commands; refusing" -and -not (Test-LocalUpdateTransient $failure) -and $calls.operations.Count -eq 1) 'Deterministic probe failure was retried or lost its cause'
   Write-Host 'PASS case: wsl-responsive-window'
+
+  $start = [DateTime]'2026-01-01T00:00:00Z'
+  foreach ($case in @('exits', 'transient', 'running', 'never-answers', 'deterministic', 'refused')) {
+    $clock = @{ now = $start; probes = 0; delays = @(); windows = @() }
+    $failure = $null
+    try {
+      Wait-LocalUpdateStopped {
+        param($left)
+        $clock.probes++
+        $clock.windows += $left
+        $clock.now = $clock.now.AddSeconds(3)
+        switch ($case) {
+          'exits' { return @{ stopped = $clock.probes -ge 3 } }
+          'transient' { if ($clock.probes -le 5) { throw (New-LocalUpdateError 'stopped exceeded 5s' -Transient) }; return @{ stopped = $true } }
+          'running' { return @{ stopped = $false } }
+          'never-answers' { $clock.now = $clock.now.AddSeconds([Math]::Min(60, [Math]::Max(0, $left))); throw (New-LocalUpdateError 'stopped exceeded 5s' -Transient) }
+          'deterministic' { throw (New-LocalUpdateError 'stopped failed (1). execvpe(/missing/node) failed') }
+          'refused' { throw (New-LocalUpdateError "WSL distribution 'fixture' is unresponsive; refusing runtime operations.") }
+        }
+      } 300 { $clock.now } { param($seconds) $clock.delays += $seconds; $clock.now = $clock.now.AddSeconds($seconds) }
+    } catch { $failure = $_.Exception.Message }
+    $elapsed = ($clock.now - $start).TotalSeconds
+    switch ($case) {
+      'exits' { Assert (-not $failure -and $clock.probes -eq 3 -and ($clock.delays -join ',') -eq '0.5,0.5') 'Exit was not polled to completion' }
+      'transient' { Assert (-not $failure -and ($clock.delays -join ',') -eq '0.5,1,2,4,5') 'Transient stopped failures did not back off' }
+      'running' { Assert ($failure -match 'still running 60s' -and $elapsed -ge 60 -and $elapsed -lt 70) 'A server answering running was not refused after 60s' }
+      'never-answers' { Assert ($failure -match 'within 300s' -and $elapsed -le 310 -and $clock.windows[0] -eq 300 -and $clock.windows[-1] -lt $clock.windows[0]) 'Probe windows were not bounded by the stop budget' }
+      'deterministic' { Assert ($failure -match 'execvpe' -and $clock.probes -eq 1) 'Deterministic stopped failure was retried' }
+      'refused' { Assert ($failure -match 'is unresponsive' -and $clock.probes -eq 1) 'Hung WSL refusal was retried' }
+    }
+  }
+  Write-Host 'PASS case: wait-stopped'
   foreach ($case in @('healthy', 'unhealthy', 'stop-failed', 'promotion-failed')) {
     $fixture = Join-Path $root ('runtime-' + $case)
     $resources = Join-Path $fixture 'resources'
@@ -174,7 +217,7 @@ try {
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
     Write-Host "PASS case: runtime-selection-$case"
   }
-  foreach ($case in @('stopped-throws', 'stopped-transient', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
+  foreach ($case in @('stopped-throws', 'stopped-transient', 'recovering-save-fails', 'swap-close-throws', 'swap-restore-blocked', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
     $fixture = Join-Path $root ('activation-' + $case)
     $install = Join-Path $fixture 'installed'
     $resources = Join-Path $install 'resources'
@@ -214,7 +257,11 @@ try {
     $config = @{ install = $install; updatePath = $(if ($runtimeOnly) { 'wsl-only' } else { 'full' }); archive = (Join-Path $payload 'resources/wsl-runtime.tar.gz'); digest = $digest; exeHash = (Get-FileHash (Join-Path $payload 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $false; drainMinutes = 0; healthSeconds = 0.1; backupRootWindows = $backupRoot; clientSource = $clientSource; clientCommit = 'client-head'; clientAssetsDirectory = 'resources/client' }
     if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) { $config.closeSeconds = 0 }
     if ($case -eq 'desktop-exits') { $config.healthSeconds = 3 }
-    if ($case -in @('stopped-throws', 'stopped-transient')) { $config.notifyThread = 'fixture-thread'; $config.commit = 'fixture-commit' }
+    if ($case -in @('stopped-throws', 'stopped-transient', 'swap-close-throws', 'swap-restore-blocked')) { $config.notifyThread = 'fixture-thread'; $config.commit = 'fixture-commit' }
+    if ($case -eq 'stopped-transient') {
+      New-Item -ItemType Directory -Path (Join-Path $fixture 'helpers') | Out-Null
+      foreach ($index in 1..60) { @{ pid = $index; platform = 'linux'; role = 'fixture' } | ConvertTo-Json | Set-Content (Join-Path $fixture "helpers/linux-$index.json") }
+    }
     $config | ConvertTo-Json | Set-Content $configPath
     $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
     $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0; crashedHealth = 0; stopped = 0; notify = $null; launcherVariables = @() }
@@ -261,10 +308,11 @@ try {
         $calls.health++
         if ($case -eq 'health-transient' -and $calls.health -eq 2) { throw 'One slow wsl call' }
         if ($case -eq 'desktop-exits' -and $calls.starts -eq 1) { $calls.crashedHealth++; return @{ healthy = $false; pid = 123 } }
+        if ($case.StartsWith('swap-') -and $calls.starts -eq 1) { return @{ healthy = $false; pid = 123 } }
         return @{ healthy = ($case -notin @('runtime-recovery', 'runtime-recovery-late-exit') -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
       }
-      if ($label -eq 'stopped' -and $case -eq 'stopped-throws') { throw "WSL distribution 'fixture' is unresponsive; refusing runtime operations. No probe answered." }
-      if ($label -eq 'stopped' -and $case -eq 'stopped-transient' -and ++$calls.stopped -eq 1) { throw 'stopped exceeded 5s; captured helper stopped.' }
+      if ($label -eq 'stopped' -and ($case -in @('stopped-throws', 'recovering-save-fails') -or ($case.StartsWith('swap-') -and $calls.starts -gt 0))) { throw (New-LocalUpdateError "WSL distribution 'fixture' is unresponsive; refusing runtime operations. No probe answered.") }
+      if ($label -eq 'stopped' -and $case -eq 'stopped-transient' -and ++$calls.stopped -eq 1) { throw (New-LocalUpdateError 'stopped exceeded 5s; captured helper stopped.' -Transient) }
       if ($label -eq 'notify') {
         $calls.notify = $arguments[-1]
         if ($case -eq 'stopped-transient') { throw 'notify exceeded 30s' }
@@ -272,14 +320,29 @@ try {
       if ($label -eq 'capture-links') { throw 'No links in fixture' }
       return @{ installed = $true; backedUp = $true; stopped = $true; path = 'fixture-wsl-backup' }
     }
+    if ($case -eq 'recovering-save-fails') {
+      function Add-Content {
+        param($LiteralPath, $Value, $ErrorAction)
+        if ([string]$Value -match '"status":"recovering"') { throw 'WSL share write failed' }
+        Microsoft.PowerShell.Management\Add-Content -LiteralPath $LiteralPath -Value $Value
+      }
+    }
+    if ($case -eq 'swap-restore-blocked') {
+      function Move-Item {
+        param($LiteralPath, $Destination, [switch]$Force)
+        if ($LiteralPath -eq $install -and $Destination -eq $payload) { throw 'Candidate files are in use' }
+        Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+      }
+    }
     # A reader left over from a failed launch must not block the recovery relaunch.
     $stdinHolder = $(if ($case -eq 'desktop-exits') { [IO.File]::Open((Join-Path $fixture 'weavewing-desktop-installed.stdin'), 'OpenOrCreate', 'Read', 'Read') })
     try {
-      if ($case -in @('stopped-throws', 'close-late-exit', 'desktop-exits', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
+      if ($case -in @('stopped-throws', 'recovering-save-fails', 'swap-close-throws', 'swap-restore-blocked', 'close-late-exit', 'desktop-exits', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
       else { Invoke-LocalDesktopUpdate $configPath 'Activate' }
     } finally {
       Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl
       Remove-Item Function:Get-Process,Function:Start-Process,Function:Start-Sleep
+      Remove-Item Function:Add-Content,Function:Move-Item -ErrorAction SilentlyContinue
       $env:TMP = $tmp
       if ($stdinHolder) { $stdinHolder.Dispose() }
     }
@@ -294,7 +357,22 @@ try {
       $recovering = [Array]::IndexOf($statuses, 'recovering')
       Assert ($recovering -gt [Array]::IndexOf($statuses, 'waiting-previous-runtime') -and $recovering -lt [Array]::LastIndexOf($statuses, 'failed')) 'Recovery kept showing the phase that failed'
       Assert ($receipt.notification.sent -and $calls.notify -match 'result: failed\. Commit fixture-commit\. Error: WSL distribution .fixture. is unresponsive') 'Failure notification lost its cause'
+    } elseif ($case -eq 'recovering-save-fails') {
+      Assert ($calls.starts -eq 1 -and $receipt.rollbackHealthy) 'A failed status write skipped the desktop relaunch'
+      Assert ($receipt.status -eq 'failed' -and $receipt.statusError -match 'share write failed') 'Failed recovering save was not recorded'
+    } elseif ($case -eq 'swap-close-throws') {
+      Assert ($receipt.status -eq 'failed' -and $receipt.installed -eq 'previous' -and $calls.starts -eq 2 -and $receipt.rollbackHealthy) 'Swap rollback with a failed close left the desktop closed'
+      Assert ((Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'fixture-shell' -and (Get-Content (Join-Path $payload 'Weavewing.exe')) -eq 'new-shell') 'Failed close did not restore the previous app'
+      $statuses = @(Get-Content (Join-Path $fixture 'activation.log') | ForEach-Object { try { ($_ | ConvertFrom-Json).status } catch {} } | Where-Object { $_ })
+      Assert ([Array]::IndexOf($statuses, 'recovering') -gt [Array]::IndexOf($statuses, 'waiting-new-runtime')) 'Swap rollback kept showing waiting-new-runtime'
+      Assert ($calls.notify -match 'Installed: previous app\. Relaunched app healthy: True\.') 'Notification did not say which app came back'
+    } elseif ($case -eq 'swap-restore-blocked') {
+      Assert ($receipt.status -eq 'failed' -and $receipt.installed -eq 'candidate' -and $receipt.restoreError -match 'in use') 'Blocked restore was not named'
+      Assert ($calls.starts -eq 2 -and $receipt.rollbackHealthy -and (Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'new-shell') 'Installed candidate was not relaunched'
+      Assert ($calls.notify -match 'Installed: candidate app') 'Notification hid the installed candidate'
     } elseif ($case -eq 'stopped-transient') {
+      Assert (@($receipt.helpers).Count -eq 50 -and $receipt.helperCount -ge 60) 'Receipt copied every helper record'
+      Assert (-not (Select-String -Path (Join-Path $fixture 'activation.log') -Pattern '"helpers":' -SimpleMatch -Quiet)) 'Activation log repeated helper records'
       Assert ($receipt.status -eq 'verified' -and $calls.stopped -eq 2 -and $calls.starts -eq 1) 'One slow stopped probe failed the update'
       Assert ($receipt.notification.sent -eq $false -and $receipt.notification.error -match 'notify exceeded') 'Receipt did not record the failed notification'
     } elseif ($case -eq 'close-late-exit') {
