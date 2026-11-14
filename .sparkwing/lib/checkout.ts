@@ -85,7 +85,8 @@ export async function logged(
 }
 
 export function git(root: string, ...args: string[]): string {
-  return NodeChildProcess.execFileSync("git", ["-C", root, ...args], {
+  // Unquoted paths, as check:changed reads them, so non-ASCII names hash and stat correctly.
+  return NodeChildProcess.execFileSync("git", ["-C", root, "-c", "core.quotePath=false", ...args], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   }).trim();
