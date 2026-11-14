@@ -566,6 +566,20 @@ it("bounds numbers, tells a present value from a missing one, and reads target.o
   });
   assert.deepEqual(failed(ungrouped, delegate({ task: "Fix it." })), []);
   assert.lengthOf(failed(ungrouped, delegate({ task: "Fix it.", group: "review" })), 1);
+  const shared = { sharedArg: { tool: "delegate_task", arg: "group" } };
+  const delegates = (...groups: ReadonlyArray<string | undefined>): SampleRun => ({
+    calls: groups.map((group) => ({
+      step: 0,
+      tool: "delegate_task",
+      input: group === undefined ? { task: "Review." } : { task: "Review.", group },
+    })),
+    text: "",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(failed(shared, delegates("review", "review")), []);
+  assert.lengthOf(failed(shared, delegates("review", "second-review")), 1);
+  assert.lengthOf(failed(shared, delegates("review", undefined)), 1);
+  assert.lengthOf(failed(shared, delegates()), 1);
 });
 
 const template = {

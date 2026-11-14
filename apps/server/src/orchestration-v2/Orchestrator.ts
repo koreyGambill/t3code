@@ -14051,7 +14051,80 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...item, status: task.status, completedAt: task.completedAt, updatedAt: now },
       });
     }
+    yield* releaseStoppedTaskGroup(input).pipe(mapDispatchError(command));
   });
+
+  /** A Stop that ends a group's last running task releases the results its siblings held. */
+  const releaseStoppedTaskGroup = Effect.fn("Orchestrator.releaseStoppedTaskGroup")(
+    function* (input: {
+      readonly command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "run.interrupt" | "thread.stop" | "subagent.stop" }
+      >;
+      readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      readonly task: OrchestrationV2Subagent;
+      readonly now: DateTime.Utc;
+    }) {
+      const { command, task } = input;
+      const delivery = task.completionDelivery?.state;
+      if (
+        task.completionGroup === undefined ||
+        task.runId === null ||
+        !isTerminalDelegatedTaskStatus(task.status) ||
+        (delivery !== "acknowledged" && delivery !== "delivered" && delivery !== "disposed")
+      )
+        return;
+      const pendingTasks = new Map<NodeId, OrchestrationV2Subagent>();
+      const pendingRuns = new Map<RunId, OrchestrationV2Run>();
+      for (const event of yield* Ref.get(input.events)) {
+        if (event.threadId !== command.threadId) continue;
+        if (event.type === "subagent.updated") pendingTasks.set(event.payload.id, event.payload);
+        if (event.type === "run.updated") pendingRuns.set(event.payload.id, event.payload);
+      }
+      const controls = yield* projectionStore.getThreadRecords(command.threadId, ["runs"], {
+        runIds: [task.runId],
+      });
+      const parentRun = pendingRuns.get(task.runId) ?? controls.runs[0];
+      const current = parentRun?.delegatedCompletion?.delivery;
+      const records = yield* projectionStore.getThreadRecords(
+        command.threadId,
+        ["messages", "subagents"],
+        {
+          messageIds: current == null ? [] : [current.messageId],
+          subagentIds: current?.taskIds ?? [],
+        },
+      );
+      const deliveryRunId = records.messages[0]?.runId;
+      const deliveryRuns = yield* projectionStore.getThreadRecords(command.threadId, ["runs"], {
+        runIds: deliveryRunId == null ? [] : [deliveryRunId],
+      });
+      const plan = yield* planDelegatedCompletionDelivery({
+        parentProjection: {
+          thread: controls.thread,
+          messages: records.messages,
+          runs: [...(parentRun === undefined ? [] : [parentRun]), ...deliveryRuns.runs].map(
+            (run) => pendingRuns.get(run.id) ?? run,
+          ),
+          subagents: records.subagents.map((row) => pendingTasks.get(row.id) ?? row),
+        },
+        parentRun,
+        task,
+        updatedTask: task,
+        now: input.now,
+        pendingTasks,
+      });
+      if (plan.siblings.length === 0) return;
+      const emitEvent = emit(input.events, command);
+      for (const event of delegatedCompletionPlanEvents(
+        command.threadId,
+        plan,
+        controls.thread.providerInstanceId,
+        input.now,
+      )) {
+        yield* emitEvent(event);
+      }
+    },
+  );
 
   const cancelIdleOrphans = Effect.fn("Orchestrator.cancelIdleOrphans")(
     function* (input: {
@@ -14575,6 +14648,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly task: OrchestrationV2Subagent;
     readonly updatedTask: OrchestrationV2Subagent;
     readonly now: DateTime.Utc;
+    /** Task rows this command already changed but has not committed. */
+    readonly pendingTasks?: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
   }) {
     const taskDelivery = input.updatedTask.completionDelivery;
     const taskSettled =
@@ -14616,6 +14691,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               subagentRunIds: [input.parentRun.id],
             }),
           )).subagents
+            .map((task) => input.pendingTasks?.get(task.id) ?? task)
             .filter(
               (task) =>
                 task.origin === "app_owned" &&
@@ -16395,9 +16471,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "notification.delivery.accept" ||
-      // A steer restart that settled a wake can reserve the next one for its siblings.
+      // A steer restart that settled a wake can reserve the next one for its siblings, and a Stop
+      // that ended a group's last task can release the results its siblings held.
       ((command.type === "message.dispatch" ||
-        command.type === "queued-message.promote-to-steer") &&
+        command.type === "queued-message.promote-to-steer" ||
+        command.type === "subagent.stop" ||
+        command.type === "thread.stop" ||
+        command.type === "run.interrupt") &&
         committed.storedEvents.some(
           ({ event }) =>
             event.type === "subagent.updated" &&
