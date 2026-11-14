@@ -43,6 +43,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
+import { applyNotificationEvent, EMPTY_NOTIFICATION_INBOX } from "./notifications.ts";
 import {
   currentSession,
   isRpcClientError,
@@ -1497,6 +1498,17 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:runs",
       tag: WS_METHODS.scheduledTasksListRuns,
     }),
+    notificationsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:notifications:live",
+      tag: WS_METHODS.notificationsSubscribe,
+      idleTtlMs: 0,
+      // `scan` emits its seed first; skipping it keeps the inbox loading until the snapshot.
+      transform: (events) =>
+        events.pipe(
+          Stream.scan(() => EMPTY_NOTIFICATION_INBOX, applyNotificationEvent),
+          Stream.filter((inbox) => inbox !== EMPTY_NOTIFICATION_INBOX),
+        ),
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1786,6 +1798,15 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    updateNotifications: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:notifications:update",
+      tag: WS_METHODS.notificationsUpdate,
+    }),
+    markAllNotificationsRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:notifications:mark-all-read",
+      tag: WS_METHODS.notificationsMarkAllRead,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",

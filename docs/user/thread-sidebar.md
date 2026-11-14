@@ -56,8 +56,7 @@ The thread keeps its history. Its next turn starts a new agent session in that
 folder with the conversation carried over. Finish or stop any work before moving.
 
 The left sidebar also holds tools for the current thread: Todos, Artifacts,
-Links, Related, Timeline, Details, Environments and Inspect, plus status and watcher
-alerts. Pick a tool from the strip beside the thread list; pick it again, or the
+Links, Related, Timeline, Details, Environments and Inspect, plus the Inbox. Pick a tool from the strip beside the thread list; pick it again, or the
 Weavewing mark, to return to your threads. `Cmd+Alt+I` on macOS or `Ctrl+Alt+I`
 on Windows and Linux switches between your threads and the last tool, and opens
 a hidden sidebar on that tool. While the sidebar is hidden, its toggle shows when
@@ -65,6 +64,15 @@ something needs you, such as an unanswered question or a status alert. The tools
 follow the focused tile; pin them to keep one thread while you move between
 tiles. Hide tools you don't use from the bottom of the strip. Opening a hidden
 tool from elsewhere, such as an artifact reminder, shows it again.
+
+The **Inbox**, the bell at the top of the strip, collects notifications that
+automations and agents raise, newest first. Its badge counts unread ones and turns
+red for critical or amber for a warning. Open one to read it; it then counts as
+read. Snooze one to have it come back later, or dismiss it once it's handled. The
+Snoozed and Dismissed tabs show those, where you can unsnooze or restore them. The
+Status row opens your status sources. Critical notifications also send a desktop
+notification and play a sound, and warnings do when T3 Code is in the background,
+following your settings under **Settings → General → Notifications**.
 
 Links, Artifacts and Related have a filter box, and each row can copy its link,
 ticket ID or thread link. Links also filters by service, sorts, and copies every

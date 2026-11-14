@@ -1,4 +1,9 @@
-import type { ScopedThreadRef, StatusState, ThreadWorkspace } from "@t3tools/contracts";
+import type {
+  NotificationSeverity,
+  ScopedThreadRef,
+  StatusState,
+  ThreadWorkspace,
+} from "@t3tools/contracts";
 import type { RightPanelSurface } from "./rightPanelStore";
 import type { SidebarView, ThreadContextSection } from "./threadContextSidebarStore";
 import type { ThreadTileLayout } from "./threadTileLayout";
@@ -181,9 +186,16 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 export function threadToolsAttention(
   signals: ThreadToolSignals,
   monitoring: { readonly state: StatusState | null; readonly unread: number },
+  inbox: { readonly unread: number; readonly severity: NotificationSeverity | null },
 ): { readonly tone: ThreadToolsAttentionTone; readonly summary: string } | null {
+  // Info notifications only badge the bell.
+  const inboxItem = (severity: NotificationSeverity, tone: ThreadToolsAttentionTone) =>
+    inbox.unread && inbox.severity === severity
+      ? [[tone, plural(inbox.unread, "unread notification", "unread notifications")] as const]
+      : [];
   const items: Array<readonly [ThreadToolsAttentionTone, string]> = [
     ...(monitoring.state === "fail" ? [["alert", "Status alert"] as const] : []),
+    ...inboxItem("critical", "alert"),
     ...(signals.questionCount
       ? [
           [
@@ -193,6 +205,7 @@ export function threadToolsAttention(
         ]
       : []),
     ...(monitoring.state === "warn" ? [["warn", "Status warning"] as const] : []),
+    ...inboxItem("warning", "warn"),
     ...(monitoring.unread
       ? [
           [

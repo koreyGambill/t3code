@@ -18,12 +18,19 @@ export type ThreadContextSection =
   | "timeline"
   | "details"
   | "environments"
-  | "inspect";
+  | "inspect"
+  | "inbox";
 
 export type SidebarView = "threads" | ThreadContextSection;
 
 /** Everything on the strip a viewer can hide; the thread list always stays. */
-export type StripItem = ThreadContextSection | "status";
+export type StripItem = ThreadContextSection;
+
+export type InboxTab = "inbox" | "snoozed" | "dismissed";
+/** A view inside the inbox that replaces its list: one notification, or a legacy alert source. */
+export type InboxSelection =
+  | { readonly kind: "notification"; readonly environmentId: string; readonly id: string }
+  | { readonly kind: "status" | "watchers" };
 
 export interface ShowTarget {
   /** Pins the tools to this thread. */
@@ -32,6 +39,8 @@ export interface ShowTarget {
   /** The thread the artifact belongs to, when it shouldn't pin the tools to that thread. */
   readonly artifactThread?: ScopedThreadRef;
   readonly environmentId?: string;
+  /** Opens the inbox on this notification. */
+  readonly notification?: { readonly environmentId: string; readonly id: string };
 }
 
 interface ThreadContextSidebarState {
@@ -46,6 +55,8 @@ interface ThreadContextSidebarState {
   revealPending: boolean;
   /** The artifact the Artifacts view opens on, for its thread only; null lists them all. */
   artifactSelection: { thread: ScopedThreadRef | null; id: string } | null;
+  inboxTab: InboxTab;
+  inboxSelection: InboxSelection | null;
   selectView: (view: SidebarView) => void;
   toggleTools: (sidebarVisible: boolean) => void;
   /** Opens a tool from outside the strip, unhiding it, and reveals a hidden sidebar. */
@@ -57,6 +68,8 @@ interface ThreadContextSidebarState {
   setTodoFilter: (filter: TodoFilter) => void;
   setTodoShowClosed: (show: boolean) => void;
   selectEnvironment: (thread: ScopedThreadRef, id: string | null) => void;
+  setInboxTab: (tab: InboxTab) => void;
+  selectInbox: (selection: InboxSelection | null) => void;
 }
 
 export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
@@ -71,10 +84,13 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       environmentSelection: null,
       revealPending: false,
       artifactSelection: null,
+      inboxTab: "inbox",
+      inboxSelection: null,
       selectView: (view) =>
         set((state) => ({
           ...nextSidebarView(state, view),
           ...(view === "artifacts" ? { artifactSelection: null } : {}),
+          ...(view === "inbox" ? { inboxSelection: null } : {}),
         })),
       toggleTools: (sidebarVisible) => set((state) => toggleThreadToolsView(state, sidebarVisible)),
       show: (view, target = {}) =>
@@ -92,6 +108,14 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
                       id: target.artifactId,
                     }
                   : null,
+              }
+            : {}),
+          ...(view === "inbox"
+            ? {
+                inboxSelection: target.notification
+                  ? { kind: "notification" as const, ...target.notification }
+                  : null,
+                ...(target.notification ? { inboxTab: "inbox" as const } : {}),
               }
             : {}),
           ...(view === "environments"
@@ -119,10 +143,12 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       setTodoFilter: (todoFilter) => set({ todoFilter }),
       setTodoShowClosed: (todoShowClosed) => set({ todoShowClosed }),
       selectEnvironment: (thread, id) => set({ environmentSelection: id ? { thread, id } : null }),
+      setInboxTab: (inboxTab) => set({ inboxTab, inboxSelection: null }),
+      selectInbox: (inboxSelection) => set({ inboxSelection }),
     }),
     {
       name: "t3code:thread-context-sidebar",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window === "undefined" ? undefined : window.localStorage),
       ),
@@ -134,10 +160,15 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
         todoShowClosed,
       }),
       // v0 stored the right panel's { open, view }; its view becomes the last tool.
+      // v1 named the inbox's strip slot "status".
       migrate: (persisted, version) => {
-        const state = (persisted ?? {}) as { view?: string };
-        return version === 0
-          ? { view: "threads", lastTool: migrateThreadToolsView(state.view) }
+        const state = (persisted ?? {}) as { view?: string; hidden?: ReadonlyArray<string> };
+        if (version === 0) return { view: "threads", lastTool: migrateThreadToolsView(state.view) };
+        return version === 1 && state.hidden
+          ? {
+              ...state,
+              hidden: state.hidden.map((item) => (item === "status" ? "inbox" : item)),
+            }
           : persisted;
       },
     },

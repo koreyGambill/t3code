@@ -9,7 +9,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { ActivityIcon, ChevronLeftIcon, Settings2Icon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, Settings2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AsyncResult } from "effect/reactivity";
 
@@ -30,9 +30,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
-import { StatusSourceDot } from "../statusSources/StatusSourceIcon";
-import { StatusSourcesList, useStatusSourceGroups } from "../statusSources/StatusSources";
+import { useStatusSourceGroups } from "../statusSources/StatusSources";
 import { summarizeStatusSources } from "../statusSources/statusSourceSummary.logic";
 import { useEnvironmentsWithScope } from "../../state/session";
 
@@ -497,7 +495,8 @@ export function useMonitoringSignal() {
   return { state, unread, groups };
 }
 
-export function MonitoringStatusButton() {
+/** Watcher alerts per environment; S6 folds watchers into the inbox and retires this. */
+export function WatcherAlerts() {
   const navigate = useNavigate();
   const environmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
@@ -506,110 +505,47 @@ export function MonitoringStatusButton() {
     environments.find((entry) => entry.environmentId === selectedEnvironmentId) ??
     environments.find((entry) => entry.environmentId === environmentId) ??
     environments[0];
-  const { state, unread, groups } = useMonitoringSignal();
-  const [open, setOpen] = useState(false);
-  const label = `Status and alerts: ${state ?? "no sources"}${unread > 0 ? `, ${unread} unread` : ""}`;
-  const configureSources = (machine: EnvironmentId) => {
-    setOpen(false);
-    void navigate({ to: "/settings/status-sources", search: { machine } });
-  };
+  if (!selected) return null;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <div className="relative">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <PopoverTrigger
-                render={<Button variant="ghost" size="icon-sm" aria-label={label} />}
-              />
-            }
-          >
-            <span className="relative inline-flex">
-              <ActivityIcon />
-              {state && (
-                <span className="absolute -bottom-1 -right-1 rounded-full bg-background p-0.5">
-                  <StatusSourceDot state={state} />
-                </span>
-              )}
-            </span>
-          </TooltipTrigger>
-          <TooltipPopup side="right">{label}</TooltipPopup>
-        </Tooltip>
-        {unread > 0 && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute -right-1 -top-1 min-w-3 rounded-full bg-primary px-0.5 text-center text-3xs text-primary-foreground"
-          >
-            {unread > 99 ? "99+" : unread}
-          </span>
-        )}
-      </div>
-      <PopoverPopup width="lg" padding="none" side="right" align="start">
-        <div className="flex max-h-[min(44rem,var(--available-height))] flex-col">
-          <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border p-3">
-            <PopoverTitle>Status and alerts</PopoverTitle>
-            <PopoverClose
-              render={
-                <Button variant="ghost" size="icon-xs" aria-label="Close status and alerts" />
-              }
+    <section aria-label="Watcher alerts" className="flex min-h-0 flex-1 flex-col">
+      {environments.length > 1 && (
+        <div className="px-3 pt-2">
+          <Menu>
+            <MenuTrigger
+              render={<Button variant="ghost" size="sm" aria-label="Alerts environment" />}
             >
-              <XIcon />
-            </PopoverClose>
-          </header>
-          <div className="min-h-0 overflow-y-auto">
-            <StatusSourcesList groups={groups} onConfigureSources={configureSources} />
-            {groups.length === 0 && (
-              <p className="p-3 text-sm text-muted-foreground">No connected status sources.</p>
-            )}
-            {selected && (
-              <section className="border-t border-border" aria-label="Watcher alerts">
-                {environments.length > 1 && (
-                  <div className="p-3 pb-0">
-                    <Menu>
-                      <MenuTrigger
-                        render={
-                          <Button variant="ghost" size="sm" aria-label="Alerts environment" />
-                        }
-                      >
-                        {selected.label}
-                      </MenuTrigger>
-                      <MenuPopup>
-                        {environments.map((entry) => (
-                          <MenuItem
-                            key={entry.environmentId}
-                            onClick={() => setSelectedEnvironmentId(entry.environmentId)}
-                          >
-                            {entry.label}
-                            {entry.connection.phase !== "connected" ? " · disconnected" : ""}
-                          </MenuItem>
-                        ))}
-                      </MenuPopup>
-                    </Menu>
-                  </div>
-                )}
-                <EnvironmentAlerts
-                  key={selected.environmentId}
-                  environmentId={selected.environmentId}
-                  onOpenThread={(destinationEnvironmentId, threadId) => {
-                    setOpen(false);
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: { environmentId: destinationEnvironmentId, threadId },
-                    });
-                  }}
-                  onConfigure={(destinationEnvironmentId) => {
-                    setOpen(false);
-                    void navigate({
-                      to: "/settings/scheduled-tasks",
-                      search: { environmentId: destinationEnvironmentId },
-                    });
-                  }}
-                />
-              </section>
-            )}
-          </div>
+              {selected.label}
+            </MenuTrigger>
+            <MenuPopup>
+              {environments.map((entry) => (
+                <MenuItem
+                  key={entry.environmentId}
+                  onClick={() => setSelectedEnvironmentId(entry.environmentId)}
+                >
+                  {entry.label}
+                  {entry.connection.phase !== "connected" ? " · disconnected" : ""}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
         </div>
-      </PopoverPopup>
-    </Popover>
+      )}
+      <EnvironmentAlerts
+        key={selected.environmentId}
+        environmentId={selected.environmentId}
+        onOpenThread={(destinationEnvironmentId, threadId) =>
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId: destinationEnvironmentId, threadId },
+          })
+        }
+        onConfigure={(destinationEnvironmentId) =>
+          void navigate({
+            to: "/settings/scheduled-tasks",
+            search: { environmentId: destinationEnvironmentId },
+          })
+        }
+      />
+    </section>
   );
 }

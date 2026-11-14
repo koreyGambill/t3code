@@ -3,6 +3,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contracts";
 import {
+  BellIcon,
   BoxesIcon,
   FilesIcon,
   IdCardIcon,
@@ -42,7 +43,10 @@ import {
   useThreadToolsSlots,
   useThreadToolsTarget,
 } from "./threadToolsHost";
-import { MonitoringStatusButton, useMonitoringSignal } from "./monitoring/MonitoringStatusButton";
+import { useMonitoringSignal } from "./monitoring/WatcherAlerts";
+import { InboxView } from "./inbox/InboxView";
+import { StatusSourceDot } from "./statusSources/StatusSourceIcon";
+import { useInboxSignal } from "../state/inbox";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import {
   FLUSH_THREAD_TOOLS,
@@ -108,6 +112,12 @@ const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; abo
     about:
       "Where this thread's code lives: the Xwing environments it and its delegated work use, or else its worktree and branch.",
   },
+  inbox: {
+    title: "Inbox",
+    icon: BellIcon,
+    about:
+      "Notifications from automations and agents, plus status sources. Snooze or dismiss one to clear it; the Snoozed and Dismissed tabs bring it back.",
+  },
   inspect: {
     title: "Inspect",
     icon: ScanSearchIcon,
@@ -142,7 +152,11 @@ export function ThreadToolsFrame({ children }: { children: ReactNode }) {
       </div>
       {view !== "threads" && visible ? (
         <ThreadToolView
-          key={threadRef ? `${threadRef.environmentId}:${threadRef.threadId}:${view}` : view}
+          key={
+            threadRef && view !== "inbox"
+              ? `${threadRef.environmentId}:${threadRef.threadId}:${view}`
+              : view
+          }
           view={view}
           threadRef={threadRef}
         />
@@ -279,7 +293,7 @@ export function ThreadToolsHeaderEnd({ children }: { children: ReactNode }) {
   return (
     <>
       <div ref={setActions} className="flex items-center" />
-      {threadRef ? (
+      {threadRef && view !== "inbox" ? (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -320,7 +334,8 @@ const attentionToneClass: Record<ThreadToolsAttentionTone, string> = {
 export function useThreadToolsAttention() {
   const signals = useThreadToolSignals(useThreadToolsTarget());
   const monitoring = useMonitoringSignal();
-  return threadToolsAttention(signals, monitoring);
+  const inbox = useInboxSignal();
+  return threadToolsAttention(signals, monitoring, inbox);
 }
 
 export function ThreadToolsAttentionDot({ tone }: { tone: ThreadToolsAttentionTone }) {
@@ -336,10 +351,54 @@ export function ThreadToolsAttentionDot({ tone }: { tone: ThreadToolsAttentionTo
   );
 }
 
-const stripLabels: Record<StripItem, string> = {
-  status: "Status",
-  ...Object.fromEntries(THREAD_TOOL_ORDER.map((id) => [id, tools[id].title])),
-} as Record<StripItem, string>;
+const inboxBadgeClass = {
+  critical: "bg-destructive text-white",
+  warning: "bg-warning text-black",
+  info: "bg-muted-foreground text-sidebar",
+} as const;
+
+function InboxStripButton({ active, tooltip }: { active: boolean; tooltip: string }) {
+  const { unread, severity } = useInboxSignal();
+  const { state } = useMonitoringSignal();
+  const statusAlert = state === "fail" || state === "warn" ? state : null;
+  return (
+    <StripButton
+      id="inbox"
+      title="Inbox"
+      active={active}
+      tooltip={tooltip}
+      badge={
+        [
+          unread ? `${unread} unread${severity && severity !== "info" ? `, ${severity}` : ""}` : "",
+          statusAlert ? `status ${statusAlert === "fail" ? "failing" : "warning"}` : "",
+        ]
+          .filter(Boolean)
+          .join(", ") || undefined
+      }
+      icon={<BellIcon />}
+    >
+      {statusAlert ? (
+        <span className="pointer-events-none absolute right-0 bottom-0 flex rounded-full bg-sidebar p-px">
+          <StatusSourceDot state={statusAlert} />
+        </span>
+      ) : null}
+      {unread ? (
+        <span
+          aria-hidden
+          data-severity={severity}
+          className={cn(
+            "pointer-events-none absolute -right-1 -top-1 min-w-3.5 rounded-full px-1 text-center text-3xs leading-3.5 font-medium ring-2 ring-sidebar",
+            inboxBadgeClass[severity ?? "info"],
+          )}
+        >
+          {unread > 99 ? "99+" : unread}
+        </span>
+      ) : null}
+    </StripButton>
+  );
+}
+
+const STRIP_ITEMS: ReadonlyArray<StripItem> = ["inbox", ...THREAD_TOOL_ORDER];
 
 function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) {
   const view = useThreadContextSidebarStore((state) => state.view);
@@ -351,9 +410,9 @@ function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) 
       aria-label="Sidebar views"
       className="flex w-11 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-sidebar-border py-2 [-webkit-app-region:no-drag] [scrollbar-width:none]"
     >
-      {hidden.includes("status") ? null : (
+      {hidden.includes("inbox") ? null : (
         <>
-          <MonitoringStatusButton />
+          <InboxStripButton active={view === "inbox"} tooltip={tooltip("inbox", "Inbox")} />
           <span aria-hidden className="my-0.5 h-px w-5 shrink-0 bg-sidebar-border" />
         </>
       )}
@@ -421,7 +480,7 @@ function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) 
           <MenuPopup side="right" align="end">
             <MenuGroup>
               <MenuGroupLabel>Show in the strip</MenuGroupLabel>
-              {(["status", ...THREAD_TOOL_ORDER] as const).map((item) => (
+              {STRIP_ITEMS.map((item) => (
                 <MenuCheckboxItem
                   key={item}
                   checked={!hidden.includes(item)}
@@ -429,7 +488,7 @@ function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) 
                     useThreadContextSidebarStore.getState().setHidden(item, !checked)
                   }
                 >
-                  {stripLabels[item]}
+                  {tools[item].title}
                 </MenuCheckboxItem>
               ))}
             </MenuGroup>
@@ -499,10 +558,12 @@ function ThreadToolView({
       aria-label={title}
       className={cn(
         "flex min-h-0 min-w-0 flex-1 flex-col",
-        !FLUSH_THREAD_TOOLS.has(view) && "overflow-auto px-2.5 py-2.5",
+        view !== "inbox" && !FLUSH_THREAD_TOOLS.has(view) && "overflow-auto px-2.5 py-2.5",
       )}
     >
-      {threadRef ? (
+      {view === "inbox" ? (
+        <InboxView actions={actions} />
+      ) : threadRef ? (
         <ThreadToolSection
           section={view}
           threadRef={threadRef}

@@ -191,12 +191,27 @@ describe("thread tool signals", () => {
 describe("thread tools attention", () => {
   const quiet = { listCount: 0, questionCount: 0, ticketState: null } as const;
   const calm = { state: "ok", unread: 0 } as const;
+  const empty = { unread: 0, severity: null } as const;
 
   it("shows nothing when nothing needs the user", () => {
-    expect(threadToolsAttention(quiet, calm)).toBeNull();
+    expect(threadToolsAttention(quiet, calm, empty)).toBeNull();
     expect(
-      threadToolsAttention({ ...quiet, ticketState: "open" }, { ...calm, state: "unknown" }),
+      threadToolsAttention({ ...quiet, ticketState: "open" }, { ...calm, state: "unknown" }, empty),
     ).toBeNull();
+    expect(threadToolsAttention(quiet, calm, { unread: 4, severity: "info" })).toBeNull();
+  });
+
+  it("raises unread warning and critical notifications at their severity", () => {
+    expect(threadToolsAttention(quiet, calm, { unread: 2, severity: "critical" })).toEqual({
+      tone: "alert",
+      summary: "2 unread notifications",
+    });
+    expect(
+      threadToolsAttention({ ...quiet, questionCount: 1 }, calm, {
+        unread: 1,
+        severity: "warning",
+      }),
+    ).toEqual({ tone: "question", summary: "1 unanswered question · 1 unread notification" });
   });
 
   it("takes its tone from the most urgent signal and lists every one", () => {
@@ -204,6 +219,7 @@ describe("thread tools attention", () => {
       threadToolsAttention(
         { listCount: 3, questionCount: 2, ticketState: "needs_review" },
         { state: "fail", unread: 1 },
+        empty,
       ),
     ).toEqual({
       tone: "alert",
@@ -214,15 +230,16 @@ describe("thread tools attention", () => {
       threadToolsAttention(
         { ...quiet, questionCount: 1, listCount: 1 },
         { ...calm, state: "warn" },
+        empty,
       ),
     ).toEqual({
       tone: "question",
       summary: "1 unanswered question · Status warning · 1 open todo",
     });
-    expect(threadToolsAttention({ ...quiet, ticketState: "needs_review" }, calm)?.tone).toBe(
+    expect(threadToolsAttention({ ...quiet, ticketState: "needs_review" }, calm, empty)?.tone).toBe(
       "review",
     );
-    expect(threadToolsAttention({ ...quiet, listCount: 4 }, calm)?.tone).toBe("todo");
+    expect(threadToolsAttention({ ...quiet, listCount: 4 }, calm, empty)?.tone).toBe("todo");
   });
 });
 
@@ -352,8 +369,12 @@ describe("thread tools store", () => {
       view: "threads",
       lastTool: "links",
     });
-    const current = { view: "inspect", lastTool: "inspect", hidden: ["status"] };
-    expect(migrate?.(current, 1)).toBe(current);
+    const current = { view: "inspect", lastTool: "inspect", hidden: ["inbox"] };
+    expect(migrate?.(current, 2)).toBe(current);
+    expect(migrate?.({ ...current, hidden: ["status", "links"] }, 1)).toEqual({
+      ...current,
+      hidden: ["inbox", "links"],
+    });
     reset();
     useThreadContextSidebarStore
       .getState()
