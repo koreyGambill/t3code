@@ -149,10 +149,30 @@ try {
     Invoke-LocalUpdateWsl 'missing-distro' @('fixture-command') 'health' 5 {
       param($executable, $arguments, $label, $seconds)
       $calls.operations += $label
-      throw (New-LocalUpdateError 'wsl-responsive failed (1). There is no distribution with the supplied name.')
+      throw (New-LocalUpdateError 'wsl-responsive failed (255). There is no distribution with the supplied name. Error code: Wsl/Service/WSL_E_DISTRO_NOT_FOUND' -ExitCode 255)
     } { throw 'A deterministic failure must not wait' }
   } catch { $failure = $_.Exception }
   Assert ($failure.Message -match "'missing-distro' cannot run commands; refusing" -and -not (Test-LocalUpdateTransient $failure) -and $calls.operations.Count -eq 1) 'Deterministic probe failure was retried or lost its cause'
+  $calls = @{ operations = @() }
+  $failure = $null
+  try {
+    Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'health' 5 {
+      param($executable, $arguments, $label, $seconds)
+      $calls.operations += $label
+      throw (New-LocalUpdateError 'wsl-responsive failed (1). execvpe(/bin/true) failed: No such file or directory' -ExitCode 1)
+    } { throw 'A missing binary must not wait' }
+  } catch { $failure = $_.Exception.Message }
+  Assert ($failure -match 'cannot run commands' -and $calls.operations.Count -eq 1) 'Missing binary was retried'
+  # Other non-zero exits can come from the WSL service during the same trouble, so they retry within the window.
+  $clock = @{ now = [DateTime]'2026-01-01T00:00:00Z'; delays = @() }
+  $calls = @{ operations = @() }
+  $result = Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'health' 5 {
+    param($executable, $arguments, $label, $seconds)
+    $calls.operations += $label
+    if ($label -eq 'wsl-responsive' -and $calls.operations.Count -le 2) { throw (New-LocalUpdateError 'wsl-responsive failed (1). Error code: Wsl/Service/E_UNEXPECTED' -ExitCode 1) }
+    if ($label -eq 'health') { @{ healthy = $true } }
+  } { param($seconds) $clock.delays += $seconds; $clock.now = $clock.now.AddSeconds($seconds) } 180 { $clock.now }
+  Assert ($result.healthy -and ($calls.operations -join ',') -eq 'wsl-responsive,wsl-responsive,wsl-responsive,health') 'An unknown wsl.exe exit was not retried'
   Write-Host 'PASS case: wsl-responsive-window'
 
   $start = [DateTime]'2026-01-01T00:00:00Z'
@@ -217,7 +237,7 @@ try {
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
     Write-Host "PASS case: runtime-selection-$case"
   }
-  foreach ($case in @('stopped-throws', 'stopped-transient', 'recovering-save-fails', 'swap-close-throws', 'swap-restore-blocked', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
+  foreach ($case in @('stopped-throws', 'stopped-transient', 'recovering-save-fails', 'swap-close-throws', 'swap-restore-blocked', 'swapx-installmissing', 'swap-m2fail', 'swap-m2m3fail', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
     $fixture = Join-Path $root ('activation-' + $case)
     $install = Join-Path $fixture 'installed'
     $resources = Join-Path $install 'resources'
@@ -257,14 +277,14 @@ try {
     $config = @{ install = $install; updatePath = $(if ($runtimeOnly) { 'wsl-only' } else { 'full' }); archive = (Join-Path $payload 'resources/wsl-runtime.tar.gz'); digest = $digest; exeHash = (Get-FileHash (Join-Path $payload 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $false; drainMinutes = 0; healthSeconds = 0.1; backupRootWindows = $backupRoot; clientSource = $clientSource; clientCommit = 'client-head'; clientAssetsDirectory = 'resources/client' }
     if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) { $config.closeSeconds = 0 }
     if ($case -eq 'desktop-exits') { $config.healthSeconds = 3 }
-    if ($case -in @('stopped-throws', 'stopped-transient', 'swap-close-throws', 'swap-restore-blocked')) { $config.notifyThread = 'fixture-thread'; $config.commit = 'fixture-commit' }
+    if ($case -in @('stopped-throws', 'stopped-transient') -or $case -like 'swap*') { $config.notifyThread = 'fixture-thread'; $config.commit = 'fixture-commit' }
     if ($case -eq 'stopped-transient') {
       New-Item -ItemType Directory -Path (Join-Path $fixture 'helpers') | Out-Null
       foreach ($index in 1..60) { @{ pid = $index; platform = 'linux'; role = 'fixture' } | ConvertTo-Json | Set-Content (Join-Path $fixture "helpers/linux-$index.json") }
     }
     $config | ConvertTo-Json | Set-Content $configPath
     $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
-    $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0; crashedHealth = 0; stopped = 0; notify = $null; launcherVariables = @() }
+    $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0; crashedHealth = 0; stopped = 0; notify = $null; restores = 0; launcherVariables = @() }
     $tmp = $env:TMP
     $env:TMP = $fixture
     function Get-Process {
@@ -308,7 +328,7 @@ try {
         $calls.health++
         if ($case -eq 'health-transient' -and $calls.health -eq 2) { throw 'One slow wsl call' }
         if ($case -eq 'desktop-exits' -and $calls.starts -eq 1) { $calls.crashedHealth++; return @{ healthy = $false; pid = 123 } }
-        if ($case.StartsWith('swap-') -and $calls.starts -eq 1) { return @{ healthy = $false; pid = 123 } }
+        if ($case -like 'swap*' -and $calls.starts -eq 1) { return @{ healthy = $false; pid = 123 } }
         return @{ healthy = ($case -notin @('runtime-recovery', 'runtime-recovery-late-exit') -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
       }
       if ($label -eq 'stopped' -and ($case -in @('stopped-throws', 'recovering-save-fails') -or ($case.StartsWith('swap-') -and $calls.starts -gt 0))) { throw (New-LocalUpdateError "WSL distribution 'fixture' is unresponsive; refusing runtime operations. No probe answered.") }
@@ -334,10 +354,20 @@ try {
         Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
       }
     }
+    # swapx: the swap's own restore move fails once, leaving no install. m2: every restore move fails.
+    # m2m3: the candidate put-back fails as well, so nothing can be installed.
+    if ($case -in @('swapx-installmissing', 'swap-m2fail', 'swap-m2m3fail')) {
+      function Move-Item {
+        param($LiteralPath, $Destination, [switch]$Force)
+        if ($LiteralPath -eq (Join-Path $rollback 'app') -and $Destination -eq $install -and ($case -ne 'swapx-installmissing' -or ++$calls.restores -eq 1)) { throw 'restore blocked' }
+        if ($case -eq 'swap-m2m3fail' -and $LiteralPath -eq $payload -and $Destination -eq $install -and $calls.starts -gt 0) { throw 'put back blocked' }
+        Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+      }
+    }
     # A reader left over from a failed launch must not block the recovery relaunch.
     $stdinHolder = $(if ($case -eq 'desktop-exits') { [IO.File]::Open((Join-Path $fixture 'weavewing-desktop-installed.stdin'), 'OpenOrCreate', 'Read', 'Read') })
     try {
-      if ($case -in @('stopped-throws', 'recovering-save-fails', 'swap-close-throws', 'swap-restore-blocked', 'close-late-exit', 'desktop-exits', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
+      if ($case -in @('stopped-throws', 'recovering-save-fails', 'close-late-exit') -or $case -like 'swap*' -or $case -in @('desktop-exits', 'runtime-no-desktop', 'runtime-recovery', 'runtime-recovery-late-exit')) { Must-Fail { Invoke-LocalDesktopUpdate $configPath 'Activate' } }
       else { Invoke-LocalDesktopUpdate $configPath 'Activate' }
     } finally {
       Set-Item Function:Invoke-LocalUpdateWsl $invokeWsl
@@ -365,11 +395,21 @@ try {
       Assert ((Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'fixture-shell' -and (Get-Content (Join-Path $payload 'Weavewing.exe')) -eq 'new-shell') 'Failed close did not restore the previous app'
       $statuses = @(Get-Content (Join-Path $fixture 'activation.log') | ForEach-Object { try { ($_ | ConvertFrom-Json).status } catch {} } | Where-Object { $_ })
       Assert ([Array]::IndexOf($statuses, 'recovering') -gt [Array]::IndexOf($statuses, 'waiting-new-runtime')) 'Swap rollback kept showing waiting-new-runtime'
-      Assert ($calls.notify -match 'Installed: previous app\. Relaunched app healthy: True\.') 'Notification did not say which app came back'
+      Assert ($calls.notify -match 'Installed app: previous\. Relaunched app healthy: True\.') 'Notification did not say which app came back'
     } elseif ($case -eq 'swap-restore-blocked') {
       Assert ($receipt.status -eq 'failed' -and $receipt.installed -eq 'candidate' -and $receipt.restoreError -match 'in use') 'Blocked restore was not named'
       Assert ($calls.starts -eq 2 -and $receipt.rollbackHealthy -and (Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'new-shell') 'Installed candidate was not relaunched'
-      Assert ($calls.notify -match 'Installed: candidate app') 'Notification hid the installed candidate'
+      Assert ($calls.notify -match 'Installed app: candidate\.') 'Notification hid the installed candidate'
+    } elseif ($case -eq 'swapx-installmissing') {
+      Assert ($receipt.installed -eq 'previous' -and $calls.starts -eq 2 -and $receipt.rollbackHealthy) 'A missing install was not restored from the rollback'
+      Assert ((Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'fixture-shell' -and (Get-Content (Join-Path $payload 'Weavewing.exe')) -eq 'new-shell') 'Restore from a missing install lost a copy'
+    } elseif ($case -eq 'swap-m2fail') {
+      Assert ($receipt.installed -eq 'candidate' -and $receipt.restoreError -match 'restore blocked' -and $calls.starts -eq 2 -and $receipt.rollbackHealthy) 'Candidate was not put back and relaunched'
+      Assert ((Get-Content (Join-Path $install 'Weavewing.exe')) -eq 'new-shell' -and (Get-Content (Join-Path $rollback 'app/Weavewing.exe')) -eq 'fixture-shell') 'Candidate put-back lost a copy'
+    } elseif ($case -eq 'swap-m2m3fail') {
+      Assert ($receipt.installed -eq 'none' -and $receipt.restoreError -match 'put back blocked' -and $receipt.recoveryError -match 'Nothing is installed' -and $calls.starts -eq 1) 'Missing install was misreported or launched'
+      Assert ((Get-Content (Join-Path $payload 'Weavewing.exe')) -eq 'new-shell' -and (Get-Content (Join-Path $rollback 'app/Weavewing.exe')) -eq 'fixture-shell') 'Failed restore lost a copy'
+      Assert ($calls.notify -match 'Installed app: none\.' -and $calls.notify -match 'Nothing is installed') 'Notification hid the missing install'
     } elseif ($case -eq 'stopped-transient') {
       Assert (@($receipt.helpers).Count -eq 50 -and $receipt.helperCount -ge 60) 'Receipt copied every helper record'
       Assert (-not (Select-String -Path (Join-Path $fixture 'activation.log') -Pattern '"helpers":' -SimpleMatch -Quiet)) 'Activation log repeated helper records'

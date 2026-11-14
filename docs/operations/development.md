@@ -429,12 +429,13 @@ under the new archive digest to answer the environment endpoint with the origina
 failures remain in the receipt while health polling continues to its deadline.
 Every WSL call first runs `/bin/true` with a 3-second limit. A fragmented WSL kernel can fail the
 hvsock channel each `wsl.exe` launch needs (`page allocation failure: order:7` in `dmesg`), so launches
-can hang for minutes while some still pass. Timed-out probes retry with backoff, logged as
+can hang for minutes while some still pass. Failed probes retry with backoff, logged as
 `wsl-responsive-retry`, and the updater refuses runtime operations only when nothing answers for 5 minutes;
-other failures, such as a missing distro, refuse at once. Waiting for the old WSL server shares one
+a missing distro or binary refuses at once. Waiting for the old WSL server shares one
 5-minute budget, so the closed desktop stays down at most about 6.5 minutes before relaunch.
-Failure restores and relaunches the previous app. If the failed candidate cannot be moved out, it is
-relaunched instead; the receipt's `installed` and the notification say which app is running. The receipt
+Failure restores and relaunches the previous app. If the previous app cannot be moved back, the candidate is
+relaunched instead; the receipt's `installed` (`previous`, `candidate` or `none`) and the notification say
+what is installed. The receipt
 reads `recovering` during every recovery. State snapshots
 are retained for manual recovery; rollback does not overwrite live user data or undo database migrations.
 After a healthy full swap, a separate deadline of at most 20 seconds covers both existing Windows/WSL peer

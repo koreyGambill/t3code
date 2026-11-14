@@ -66,9 +66,10 @@ function Invoke-LocalUpdateSwap($install, $payload, $rollback, [scriptblock]$Sta
 }
 
 # Only timeouts are worth retrying; any other failure repeats identically, so callers stop at once.
-function New-LocalUpdateError([string]$Message, [switch]$Transient) {
+function New-LocalUpdateError([string]$Message, [switch]$Transient, $ExitCode = $null) {
   $exception = [Exception]::new($Message)
   $exception.Data['Transient'] = [bool]$Transient
+  $exception.Data['ExitCode'] = $ExitCode
   return $exception
 }
 
@@ -84,7 +85,9 @@ function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$s
     $attempts++
     try { & $Invoke 'wsl.exe' @('-d', $distro, '--exec', '/bin/true') 'wsl-responsive' 3 | Out-Null; break }
     catch {
-      if (-not (Test-LocalUpdateTransient $_.Exception)) { throw (New-LocalUpdateError "WSL distribution '$distro' cannot run commands; refusing runtime operations. $($_.Exception.Message)") }
+      # wsl.exe exits non-zero for transient service errors too; only a missing distro or binary is certain to repeat.
+      $exited = $null -ne $_.Exception.Data['ExitCode']
+      if (-not (Test-LocalUpdateTransient $_.Exception) -and (-not $exited -or $_.Exception.Message -match 'WSL_E_DISTRO_NOT_FOUND|execvpe')) { throw (New-LocalUpdateError "WSL distribution '$distro' cannot run commands; refusing runtime operations. $($_.Exception.Message)") }
       $remaining = ($deadline - (& $Now)).TotalSeconds
       if ($remaining -le 0) { throw (New-LocalUpdateError "WSL distribution '$distro' is unresponsive; refusing runtime operations. No probe answered in $attempts attempts over ${ResponsiveSeconds}s. Last: $($_.Exception.Message)") }
       & $Delay ([Math]::Min($wait, $remaining)) $_.Exception.Message
@@ -226,7 +229,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       if ($process.ExitCode -ne 0) {
         # wsl.exe writes UTF-16 errors, which read back with NULs between characters.
         $text = (Get-Content -LiteralPath $stderr -Raw) -replace "`0", ''
-        throw (New-LocalUpdateError "$label failed ($($process.ExitCode)). $text" -Transient:($text -match 'WSAETIMEDOUT'))
+        throw (New-LocalUpdateError "$label failed ($($process.ExitCode)). $text" -Transient:($text -match 'WSAETIMEDOUT') -ExitCode $process.ExitCode)
       }
       $details.timings += @{ operation = $label; milliseconds = ([DateTime]::UtcNow - $started).TotalMilliseconds }
       Add-Content -LiteralPath $log -Value (@{ operation = $label; milliseconds = ([DateTime]::UtcNow - $started).TotalMilliseconds; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)
@@ -513,20 +516,28 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       if ($closed) {
         Save-UpdateRecovering
         try {
-          # A swap rollback whose close step threw left the candidate installed. Once nothing runs from it, restore.
+          # A swap rollback can stop after any of its moves. Once nothing runs from the install, put the previous
+          # app back, or failing that the candidate, so something is installed to relaunch.
           if ($swapStarted -and (Test-Path -LiteralPath (Join-Path $rollback 'app'))) {
             if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
             if (@(Get-UpdateProcesses).Count -eq 0) {
               try {
-                Move-Item -LiteralPath $install -Destination $payload
-                try { Move-Item -LiteralPath (Join-Path $rollback 'app') -Destination $install } catch { Move-Item -LiteralPath $payload -Destination $install; throw }
+                if (Test-Path -LiteralPath $install) { Move-Item -LiteralPath $install -Destination $payload }
+                Move-Item -LiteralPath (Join-Path $rollback 'app') -Destination $install
               } catch { $details.restoreError = $_.Exception.Message }
             }
           }
+          if ($swapStarted -and -not (Test-Path -LiteralPath $install) -and (Test-Path -LiteralPath $payload)) {
+            try { Move-Item -LiteralPath $payload -Destination $install } catch { $details.restoreError = "$($details.restoreError) Candidate put-back failed: $($_.Exception.Message)".Trim() }
+          }
         } catch { $details.restoreError = $_.Exception.Message }
-        # Relaunching a candidate that could not be moved out beats leaving no desktop.
-        $details.installed = $(if ($swapStarted -and (Test-Path -LiteralPath (Join-Path $rollback 'app'))) { 'candidate' } else { 'previous' })
+        $details.installed = 'none'
         try {
+          if (Test-Path -LiteralPath $install) {
+            $installedDigest = (Get-FileHash -LiteralPath (Join-Path $install 'resources/wsl-runtime.tar.gz') -Algorithm SHA256).Hash.ToLowerInvariant()
+            $details.installed = $(if ($installedDigest -eq $config.digest) { 'candidate' } else { 'previous' })
+          }
+          if ($details.installed -eq 'none') { throw "Nothing is installed at $install; the previous app is in $(Join-Path $rollback 'app') and the candidate in $payload." }
           # A close that timed out may still finish; deciding on the first look would leave no desktop.
           if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
           if (@(Get-UpdateProcesses).Count -eq 0) { Start-UpdateDesktop }
@@ -558,7 +569,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         }
         $reason = ''
         if ($details.error) { $reason += ' Error: ' + (Format-UpdateNotice $details.error) }
-        if ($details.installed) { $reason += " Installed: $($details.installed) app." }
+        if ($details.installed) { $reason += " Installed app: $($details.installed)." }
         if ($null -ne $details.rollbackHealthy) { $reason += " Relaunched app healthy: $($details.rollbackHealthy)." }
         if ($details.recoveryError) { $reason += ' Recovery error: ' + (Format-UpdateNotice $details.recoveryError) }
         try {
