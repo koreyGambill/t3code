@@ -1518,14 +1518,18 @@ function markTabOverflow(strip: HTMLElement) {
   strip.dataset.masked = String(clip > 0 || fade > 0);
 }
 
-// Tab labels change width after they mount (a terminal names its process), so the cut is
-// measured again whenever the strip or a tab resizes.
+// Tab labels change width after they mount (a terminal names its process) and splitting a tile
+// narrows its strip, so the active tab is revealed again whenever the strip or a tab resizes.
 function observeTabStrip(strip: HTMLElement | null) {
   if (!strip) return;
   let unobserve = () => {};
   const watch = () => {
     unobserve();
-    unobserve = observeResize([strip, ...strip.children], () => markTabOverflow(strip));
+    unobserve = observeResize([strip, ...strip.children], () => {
+      const active = strip.querySelector<HTMLElement>(':scope > [data-active="true"]');
+      if (active) revealTab(active);
+      else markTabOverflow(strip);
+    });
   };
   const mutations = new MutationObserver(watch);
   mutations.observe(strip, { childList: true });
