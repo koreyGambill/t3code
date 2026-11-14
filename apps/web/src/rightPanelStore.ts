@@ -11,6 +11,7 @@ import {
   applyTileAction as reduceTileAction,
   parseTileLayout,
   syncTileLayout,
+  tileCloseFallback,
   type ThreadTileLayout,
   type TileAction,
 } from "./threadTileLayout";
@@ -1199,7 +1200,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (terminalIds.length === 0) {
               const index = current.surfaces.findIndex((entry) => entry.id === surfaceId);
               const surfaces = current.surfaces.filter((entry) => entry.id !== surfaceId);
-              const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+              const groupFallback = tileCloseFallback(current.tileLayout, surfaceId);
+              const fallback =
+                surfaces.find((surface) => surface.id === groupFallback) ??
+                surfaces[Math.min(index, surfaces.length - 1)] ??
+                null;
               return {
                 ...current,
                 isOpen: surfaces.length > 0 && current.isOpen,
@@ -1249,7 +1254,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (current.activeSurfaceId !== surfaceId) {
               return next;
             }
-            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            const groupFallback = tileCloseFallback(current.tileLayout, surfaceId);
+            const fallback =
+              surfaces.find((surface) => surface.id === groupFallback) ??
+              surfaces[Math.min(index, surfaces.length - 1)] ??
+              null;
             return {
               ...next,
               activeSurfaceId: fallback?.id ?? null,

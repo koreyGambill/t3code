@@ -113,11 +113,16 @@ function prune(
       seen.add(id);
       return true;
     });
+    const activeIndex = node.tabs.indexOf(node.activeTabId);
     return tabs.length || emptyGroupIds.has(node.id)
       ? {
           ...node,
           tabs,
-          activeTabId: tabs.includes(node.activeTabId) ? node.activeTabId : (tabs[0] ?? ""),
+          activeTabId: tabs.includes(node.activeTabId)
+            ? node.activeTabId
+            : (node.tabs.slice(activeIndex + 1).find((id) => tabs.includes(id)) ??
+              tabs.at(-1) ??
+              ""),
         }
       : null;
   }
@@ -184,6 +189,14 @@ function settle(layout: ThreadTileLayout): ThreadTileLayout {
           ? layout.maximizedGroupId
           : null,
   };
+}
+
+/** The tab its group shows after `tabId` closes, so focus stays in the group the user closed from. */
+export function tileCloseFallback(layout: ThreadTileLayout | undefined, tabId: string) {
+  const tabs = layout && getTileGroups(layout).find((group) => group.tabs.includes(tabId))?.tabs;
+  if (!tabs) return null;
+  const index = tabs.indexOf(tabId);
+  return tabs[index + 1] ?? tabs[index - 1] ?? null;
 }
 
 export function syncTileLayout(
@@ -269,9 +282,12 @@ export function syncTileLayout(
       ),
     };
   }
+  // A close falls back to another surface, which must not switch the tab another group shows.
+  const closedSurface = previousSurfaceIds.some((id) => !surfaceIds.includes(id));
   if (
     activate &&
     activeSurfaceId &&
+    !(closedSurface && previousSurfaceIds.includes(activeSurfaceId)) &&
     (surfaceIds.includes(activeSurfaceId) || !previousSurfaceIds.includes(activeSurfaceId))
   ) {
     const owner = getTileGroups(next).find((group) => group.tabs.includes(activeSurfaceId));

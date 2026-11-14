@@ -427,6 +427,31 @@ describe("thread tile layout", () => {
     ).toBe("conversation-group");
   });
 
+  it("closing a tab only changes its own group's active tab", () => {
+    let layout = syncTileLayout(undefined, [], ["side", "browser"], "browser", true);
+    layout = applyTileAction(layout, {
+      type: "move",
+      tabId: "side",
+      targetGroupId: "conversation-group",
+    });
+    layout = applyTileAction(layout, {
+      type: "activate",
+      groupId: "conversation-group",
+      tabId: CONVERSATION_TAB_ID,
+    });
+    layout = applyTileAction(layout, { type: "focus", groupId: "panels-group" });
+    // The store falls back to the next surface in its flat list, which lives in the other group.
+    const closed = syncTileLayout(layout, ["side", "browser"], ["side"], "side", true);
+    expect(getTileGroups(closed).map((group) => [group.id, group.activeTabId])).toEqual([
+      ["conversation-group", CONVERSATION_TAB_ID],
+    ]);
+    let three = syncTileLayout(undefined, [], ["a", "b", "c"], "b", true);
+    three = applyTileAction(three, { type: "activate", groupId: "panels-group", tabId: "b" });
+    expect(
+      getTileGroups(syncTileLayout(three, ["a", "b", "c"], ["a", "c"], "a", true))[1]?.activeTabId,
+    ).toBe("c");
+  });
+
   it("prunes closed groups and restores a usable conversation after maximizing", () => {
     let layout = syncTileLayout(undefined, [], ["a"], "a", true);
     layout = applyTileAction(layout, { type: "maximize", groupId: "panels-group" });
