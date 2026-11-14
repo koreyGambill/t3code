@@ -1065,8 +1065,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   nativeTaskRef: Schema.NullOr(OrchestrationV2ProviderRef),
   /** A follow-up's original delegated task: the one its child thread was created for. */
   originalTaskId: Schema.optional(NodeId),
-  /** Follow-ups join the completion group only when the active parent starts them. */
-  completionGroupMember: Schema.optional(Schema.Boolean),
+  /** Tasks of one parent run that share this name report their results together. */
+  completionGroup: Schema.optional(TrimmedNonEmptyString),
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
@@ -3733,6 +3733,7 @@ export const OrchestrationV2Command = Schema.Union([
     ),
     // Defaults to settled_only; fire-and-forget wakes require always.
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    completionGroup: Schema.optional(TrimmedNonEmptyString),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -3884,6 +3885,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     modelSelection: ModelSelection,
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    completionGroup: Schema.optional(TrimmedNonEmptyString),
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its

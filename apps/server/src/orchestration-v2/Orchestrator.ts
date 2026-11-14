@@ -975,6 +975,26 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
+/** A grouped task's result waits for every app-owned task of its parent run and group to end. */
+function completionGroupHeld(
+  task: Pick<OrchestrationV2Subagent, "id" | "runId" | "completionGroup">,
+  tasks: ReadonlyArray<
+    Pick<OrchestrationV2Subagent, "id" | "origin" | "runId" | "completionGroup" | "status">
+  >,
+): boolean {
+  return (
+    task.completionGroup !== undefined &&
+    tasks.some(
+      (other) =>
+        other.id !== task.id &&
+        other.origin === "app_owned" &&
+        other.runId === task.runId &&
+        other.completionGroup === task.completionGroup &&
+        !isTerminalDelegatedTaskStatus(other.status),
+    )
+  );
+}
+
 function delegatedTaskTerminalStatus(
   status: OrchestrationV2Run["status"],
 ): OrchestrationV2Subagent["status"] | null {
@@ -2022,16 +2042,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command.type === "delegated_task.completion-delivery.acknowledge" &&
     command.observedByRunId === null;
 
-  /** Parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
+  /** Sibling, parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
   const delegatedCompletionPlanEvents = (
     threadId: ThreadId,
     plan: {
+      readonly siblings: ReadonlyArray<OrchestrationV2Subagent>;
       readonly parentRun: OrchestrationV2Run | undefined;
       readonly message: OrchestrationV2ThreadProjection["messages"][number] | undefined;
     },
     threadProviderInstanceId: ProviderInstanceId,
     occurredAt: DateTime.Utc,
   ): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> => [
+    ...plan.siblings.map((task) => ({
+      type: "subagent.updated" as const,
+      threadId,
+      ...(task.runId === null ? {} : { runId: task.runId }),
+      nodeId: task.id,
+      driver: task.driver,
+      providerInstanceId: task.providerInstanceId,
+      occurredAt,
+      payload: task,
+    })),
     ...(plan.parentRun === undefined
       ? []
       : [
@@ -2084,10 +2115,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       if (
         subagents.some(
-          (task) =>
-            task.origin === "app_owned" &&
-            (task.completionGroupMember ?? task.originalTaskId === undefined) &&
-            !isTerminalDelegatedTaskStatus(task.status),
+          (task) => delivery.taskIds.includes(task.id) && completionGroupHeld(task, subagents),
         )
       )
         return;
@@ -2181,6 +2209,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 task.runId === parentRun.id &&
                 task.completionDelivery?.state === "pending" &&
                 isTerminalDelegatedTaskStatus(task.status) &&
+                !completionGroupHeld(task, projection.subagents) &&
                 (!parentIsLive || task.completionWake === "always"),
             )
             .map((task) => task.id)
@@ -10017,6 +10046,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.completionGroup === undefined
+          ? {}
+          : { completionGroup: command.completionGroup }),
         status: "running",
         result: null,
         startedAt: now,
@@ -10253,21 +10285,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     if (original === undefined || original.result === null) return;
+    // A follow-up reports back by itself, outside the original's group.
+    const { completionGroup: _group, ...ungrouped } = original;
     const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
     const taskId = idAllocator.derive.delegatedTaskNode({ commandId: command.commandId });
     const task: OrchestrationV2Subagent = {
-      ...original,
+      ...ungrouped,
       createdBy: command.createdBy,
       driver: adapter.driver,
       id: taskId,
       originalTaskId: original.id,
-      completionGroupMember:
-        command.createdBy === "agent" &&
-        command.senderThreadId === parentThreadId &&
-        isActiveRun(owner),
       runId: owner.id,
       parentNodeId: owner.rootNodeId,
       providerInstanceId: run.providerInstanceId,
@@ -10473,6 +10503,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.completionGroup === undefined
+          ? {}
+          : { completionGroup: command.completionGroup }),
         status: "running",
         result: null,
         startedAt: now,
@@ -10822,33 +10855,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (completionPlan === undefined) {
       return;
     }
-    if (completionPlan.parentRun !== undefined) {
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: command.parentThreadId,
-        runId: completionPlan.parentRun.id,
-        ...(completionPlan.parentRun.rootNodeId === null
-          ? {}
-          : { nodeId: completionPlan.parentRun.rootNodeId }),
-        providerInstanceId: completionPlan.parentRun.providerInstanceId,
-        occurredAt: now,
-        payload: completionPlan.parentRun,
-      });
-    }
-    if (completionPlan.message !== undefined) {
-      yield* emitEvent({
-        type: "message.updated",
-        threadId: command.parentThreadId,
-        ...(completionPlan.message.runId === null ? {} : { runId: completionPlan.message.runId }),
-        ...(completionPlan.message.nodeId === null
-          ? {}
-          : { nodeId: completionPlan.message.nodeId }),
-        providerInstanceId:
-          completionPlan.parentRun?.providerInstanceId ??
-          parentProjection.thread.providerInstanceId,
-        occurredAt: now,
-        payload: completionPlan.message,
-      });
+    for (const event of delegatedCompletionPlanEvents(
+      command.parentThreadId,
+      completionPlan,
+      parentProjection.thread.providerInstanceId,
+      now,
+    )) {
+      yield* emitEvent(event);
     }
     return completionPlan.parentRun?.id;
   });
@@ -14564,18 +14577,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly now: DateTime.Utc;
   }) {
     const taskDelivery = input.updatedTask.completionDelivery;
-    if (
+    const taskSettled =
       taskDelivery?.state === "acknowledged" ||
       taskDelivery?.state === "delivered" ||
-      taskDelivery?.state === "disposed"
-    ) {
-      return {
-        task: input.updatedTask,
-        parentRun: undefined,
-        message: undefined,
-        offer: false,
-      };
-    }
+      taskDelivery?.state === "disposed";
+    const unchanged = {
+      task: input.updatedTask,
+      siblings: [],
+      parentRun: undefined,
+      message: undefined,
+      offer: false,
+    };
     const cohort = input.parentRun?.delegatedCompletion;
     if (
       input.parentRun === undefined ||
@@ -14583,24 +14595,80 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       input.parentProjection.thread.deletedAt !== null ||
       (cohort !== undefined && cohort.disposition !== "open")
     ) {
-      return {
-        task: {
-          ...input.updatedTask,
-          completionDelivery: {
-            state: "disposed" as const,
-            observedByRunId: null,
-          },
-        },
-        parentRun: undefined,
-        message: undefined,
-        offer: false,
-      };
+      return taskSettled
+        ? unchanged
+        : {
+            ...unchanged,
+            task: {
+              ...input.updatedTask,
+              completionDelivery: {
+                state: "disposed" as const,
+                observedByRunId: null,
+              },
+            },
+          };
     }
+    const group =
+      input.updatedTask.completionGroup === undefined
+        ? []
+        : (yield* mapDelegatedCompletionError(
+            projectionStore.getThreadRecords(input.parentRun.threadId, ["subagents"], {
+              subagentRunIds: [input.parentRun.id],
+            }),
+          )).subagents
+            .filter(
+              (task) =>
+                task.origin === "app_owned" &&
+                task.id !== input.updatedTask.id &&
+                task.completionGroup === input.updatedTask.completionGroup,
+            )
+            .concat([input.updatedTask]);
+    if (completionGroupHeld(input.updatedTask, group)) {
+      return taskSettled
+        ? unchanged
+        : {
+            ...unchanged,
+            task: {
+              ...input.updatedTask,
+              completionDelivery: { state: "pending" as const, observedByRunId: null },
+            },
+          };
+    }
+    // The group's last task to end carries the results its siblings held.
+    const released = group.filter(
+      (task) =>
+        task.id !== input.updatedTask.id &&
+        task.completionDelivery?.state === "pending" &&
+        isTerminalDelegatedTaskStatus(task.status),
+    );
+    const claimedIds = [
+      ...(taskSettled ? [] : [input.task.id]),
+      ...released.map((task) => task.id),
+    ];
+    if (claimedIds.length === 0) {
+      return unchanged;
+    }
+    const claim = (state: "claimed" | "pending") => ({
+      task: taskSettled
+        ? input.updatedTask
+        : {
+            ...input.updatedTask,
+            completionDelivery: { state, observedByRunId: null },
+          },
+      siblings:
+        state === "pending"
+          ? []
+          : released.map((task) => ({
+              ...task,
+              completionDelivery: { state, observedByRunId: null },
+              updatedAt: input.now,
+            })),
+    });
     const delivery = cohort?.delivery ?? null;
     const deliveryRun = completionDeliveryRun(input.parentProjection, delivery);
     if (delivery !== null) {
       if (deliveryRun?.status === "queued" && deliveryRun.userMessageId === delivery.messageId) {
-        const taskIds = Array.from(new Set([...delivery.taskIds, input.task.id]));
+        const taskIds = Array.from(new Set([...delivery.taskIds, ...claimedIds]));
         const message = completionDeliveryMessage(input.parentProjection, delivery);
         const nextCohort = {
           ...cohort!,
@@ -14609,14 +14677,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             taskIds,
           },
         };
+        const claimed = claim("claimed");
+        const releasedIds = new Set(released.map((task) => task.id));
         return {
-          task: {
-            ...input.updatedTask,
-            completionDelivery: {
-              state: "claimed" as const,
-              observedByRunId: null,
-            },
-          },
+          ...claimed,
           parentRun: {
             ...input.parentRun,
             delegatedCompletion: nextCohort,
@@ -14627,12 +14691,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : {
                   ...message,
                   senderThreadId: undefined,
-                  text: delegatedCompletionWakeDetail(
-                    taskIds,
-                    input.parentProjection.subagents.map((task) =>
-                      task.id === input.updatedTask.id ? input.updatedTask : task,
+                  text: delegatedCompletionWakeDetail(taskIds, [
+                    ...input.parentProjection.subagents.filter(
+                      (task) => task.id !== input.updatedTask.id && !releasedIds.has(task.id),
                     ),
-                  ),
+                    claimed.task,
+                    ...claimed.siblings,
+                  ]),
                   delegatedCompletion: {
                     parentRunId: input.parentRun.id,
                     generation: delivery.generation,
@@ -14645,20 +14710,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (deliveryRun !== undefined) {
         // The terminal-run listener reserves successor wakes; keep racing siblings pending to avoid competing deliveries.
-        return {
-          task: {
-            ...input.updatedTask,
-            completionDelivery: {
-              state: "pending" as const,
-              observedByRunId: null,
-            },
-          },
-          parentRun: undefined,
-          message: undefined,
-          offer: false,
-        };
+        return { ...claim("pending"), parentRun: undefined, message: undefined, offer: false };
       }
-      const taskIds = Array.from(new Set([...delivery.taskIds, input.task.id]));
+      const taskIds = Array.from(new Set([...delivery.taskIds, ...claimedIds]));
       const nextCohort = {
         ...cohort!,
         delivery: {
@@ -14667,13 +14721,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       };
       return {
-        task: {
-          ...input.updatedTask,
-          completionDelivery: {
-            state: "claimed" as const,
-            observedByRunId: null,
-          },
-        },
+        ...claim("claimed"),
         parentRun: {
           ...input.parentRun,
           delegatedCompletion: nextCohort,
@@ -14699,17 +14747,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       delivery: {
         generation,
         messageId,
-        taskIds: [input.task.id],
+        taskIds: claimedIds,
       },
     };
     return {
-      task: {
-        ...input.updatedTask,
-        completionDelivery: {
-          state: "claimed" as const,
-          observedByRunId: null,
-        },
-      },
+      ...claim("claimed"),
       parentRun: {
         ...input.parentRun,
         delegatedCompletion: nextCohort,
@@ -15342,6 +15384,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           task.origin === "app_owned" &&
           task.runId === parentRun.id &&
           isTerminalDelegatedTaskStatus(task.status) &&
+          !completionGroupHeld(task, projection.subagents) &&
           (task.completionDelivery?.state === "pending" ||
             nextTaskStates.get(task.id)?.state === "pending"),
       )

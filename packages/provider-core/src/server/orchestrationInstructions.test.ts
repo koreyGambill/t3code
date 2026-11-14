@@ -32,7 +32,8 @@ describe("T3 delegation instructions", () => {
     }
     for (const text of instructions) {
       assert.include(text, "Use `delegate_task` for every subagent, parallel or not");
-      assert.include(text, "report back together once all finish");
+      assert.include(text, "Each task reports back when it finishes");
+      assert.include(text, "the same `group`: they report back together once all finish");
       assert.include(text, "Follow a running delegate's `next`");
       assert.include(text, "context.runId");
       assert.include(text, "context.mark");

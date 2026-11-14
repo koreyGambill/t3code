@@ -44,7 +44,7 @@ describe("Codex runtime context", () => {
 });
 
 describe("Codex orchestration context", () => {
-  it("routes every subagent through delegates and ends the turn for group delivery", () => {
+  it("routes every subagent through delegates and groups only results needed together", () => {
     const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
       .filter(([key]) => key.startsWith("t3_code_orchestration_"))
       .map(([, entry]) => entry.value)
@@ -54,8 +54,9 @@ describe("Codex orchestration context", () => {
       orchestration.includes("Use `delegate_task` for every subagent, parallel or not"),
     );
     NodeAssert.ok(orchestration.includes("not native ones (Claude `Agent`, Codex `spawn_agent`)"));
-    NodeAssert.ok(orchestration.includes("report back together once all finish"));
-    NodeAssert.ok(orchestration.includes("start a parallel group in one turn, then end your turn"));
+    NodeAssert.ok(orchestration.includes("Each task reports back when it finishes"));
+    NodeAssert.ok(orchestration.includes("the same `group`: they report back together"));
+    NodeAssert.ok(orchestration.includes("Start them in one turn, then end your turn"));
     NodeAssert.ok(orchestration.includes("Follow a running delegate's `next`"));
     NodeAssert.ok(orchestration.includes("end your turn instead of waiting or polling"));
     NodeAssert.ok(orchestration.includes("On completion, use `task_status` to read results"));

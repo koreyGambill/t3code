@@ -539,7 +539,7 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
   ]);
 });
 
-it("bounds numbers and reads target.options in either schema form", () => {
+it("bounds numbers, tells a present value from a missing one, and reads target.options", () => {
   const expect = {
     calls: [
       { tool: "t3_thread_read", args: { limit: "<=20" } },
@@ -558,6 +558,14 @@ it("bounds numbers and reads target.options in either schema form", () => {
   assert.deepEqual(failed(expect, run(5, { effort: "max" }, 90_000)), []);
   assert.lengthOf(failed(expect, run(21, [{ id: "effort", value: "high" }], 59_999)), 2);
   assert.lengthOf(failed(expect, run("10", {}, 60_000)), 2);
+  const ungrouped = { callsMustNot: [{ tool: "delegate_task", args: { group: "~" } }] };
+  const delegate = (input: object): SampleRun => ({
+    calls: [{ step: 0, tool: "delegate_task", input }],
+    text: "",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(failed(ungrouped, delegate({ task: "Fix it." })), []);
+  assert.lengthOf(failed(ungrouped, delegate({ task: "Fix it.", group: "review" })), 1);
 });
 
 const template = {

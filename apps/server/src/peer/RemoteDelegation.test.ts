@@ -897,6 +897,7 @@ const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>)
         model: "gpt-5.4",
       },
       mode: "async",
+      group: "suite",
       clientRequestId: "suite-on-box",
     })
     .pipe(
@@ -989,7 +990,9 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       // A retry with the same key launches nothing new and records nothing new.
       const retried = yield* delegateToBox(a);
       expect(retried.taskId).toBe(delegated.taskId);
-      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
+      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toMatchObject([
+        { completionGroup: "suite" },
+      ]);
 
       const historyReads: Array<string> = [];
       const historyTracer = Tracer.make({
