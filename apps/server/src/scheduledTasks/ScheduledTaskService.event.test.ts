@@ -553,8 +553,10 @@ it.effect("run_ended skips rollbacks, superseded runs and threads outside the li
     yield* insertThread("thread:helper", "project:test", "thread:a", "subagent");
     yield* insertThread("thread:c");
     yield* insertThread("thread:d");
+    yield* insertThread("thread:e");
     yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
-      VALUES ('run:c2', 'thread:c', 2, 'codex', 'running', '1970-01-01T00:00:00Z', '{}')`;
+      VALUES ('run:c2', 'thread:c', 2, 'codex', 'completed', '1970-01-01T00:00:00Z', '{}'),
+        ('run:e2', 'thread:e', 2, 'codex', 'running', '1970-01-01T00:00:00Z', '{}')`;
     yield* withService(f, (service, queued) =>
       Effect.gen(function* () {
         yield* service.upsert(
@@ -566,11 +568,16 @@ it.effect("run_ended skips rollbacks, superseded runs and threads outside the li
         yield* f.publish(yield* runEnded("run:helper", "thread:helper"));
         yield* f.publish(yield* runEnded("run:c1", "thread:c", undefined, { ordinal: 1 }));
         yield* f.publish(yield* runEnded("run:d", "thread:d"));
+        // A queued follow-up already running doesn't hide the turn that just ended.
+        yield* f.publish(yield* runEnded("run:e1", "thread:e", undefined, { ordinal: 1 }));
         yield* queued("thread:d", "run:run:d");
+        yield* queued("thread:e", "run:run:e1");
+        yield* f.tick;
         yield* f.tick;
         const launches = yield* Ref.get(f.launches);
-        expect(launches).toHaveLength(1);
-        expect(launches[0]).toContain("thread:d");
+        expect(launches).toHaveLength(2);
+        expect(launches.join("\n")).toContain("thread:d");
+        expect(launches.join("\n")).toContain("thread:e");
         expect((yield* service.list()).tasks[0]?.nextRunAt).toBeNull();
       }),
     );

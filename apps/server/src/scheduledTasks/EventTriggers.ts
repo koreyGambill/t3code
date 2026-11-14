@@ -195,10 +195,12 @@ export const recordEventFact = Effect.fn("ScheduledTaskEventTriggers.recordEvent
   const thread = fact.threadId === null ? null : yield* loadThreadContext(fact);
   const matching = candidates.filter((task) => matchesEventSchedule(task.schedule, fact, thread));
   if (matching.length === 0) return [];
-  // A late update for a run that is no longer the thread's latest is not a turn ending now.
+  // A late update for a run a newer, already ended run superseded is not a turn ending now. A
+  // newer run that is still going (a queued follow-up) doesn't hide this one's ending.
   if (fact.runOrdinal !== undefined) {
     const newer = yield* sql`SELECT 1 FROM orchestration_v2_projection_runs
-      WHERE thread_id = ${fact.threadId} AND ordinal > ${fact.runOrdinal} LIMIT 1`;
+      WHERE thread_id = ${fact.threadId} AND ordinal > ${fact.runOrdinal}
+        AND status IN ${sql.in([...ENDED_RUN])} LIMIT 1`;
     if (newer.length > 0) return [];
   }
   const [origin] =
