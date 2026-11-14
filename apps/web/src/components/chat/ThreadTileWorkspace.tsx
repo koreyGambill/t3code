@@ -452,12 +452,18 @@ export function ThreadTileWorkspace(props: {
               key,
               enabled,
               run: (groupId: string) => {
-                if (label === "Chat") {
+                // The chooser unmounts once the area arrives. Focus left on it would drop to the
+                // page, and workspace focus recovery would hand it to the composer in another tile.
+                rootRef.current
+                  ?.querySelector<HTMLElement>(`[data-tile-group="${CSS.escape(groupId)}"]`)
+                  ?.focus({ preventScroll: true });
+                if (label === "Chat")
                   apply({ type: "move", tabId: CONVERSATION_TAB_ID, targetGroupId: groupId });
-                  return;
+                else {
+                  apply({ type: "focus", groupId });
+                  run?.();
                 }
-                apply({ type: "focus", groupId });
-                run?.();
+                focus(groupId);
               },
             },
           ]
@@ -925,12 +931,13 @@ export function ThreadTileWorkspace(props: {
                 } as CSSProperties
               }
               className={cn(
-                "workspace-tile-frame @container/tile absolute overflow-hidden bg-background",
+                "workspace-tile-frame @container/tile absolute overflow-hidden bg-background outline-none",
                 group.floating && "shadow-2xl",
               )}
               data-focused={focusedGroupId === id}
               aria-label={`Tile: ${title(group.activeTabId)}`}
               data-tile-group={id}
+              tabIndex={-1}
             >
               <div
                 className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center gap-0.5 px-1 active:cursor-grabbing"
