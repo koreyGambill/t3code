@@ -47,7 +47,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "../state/session";
 import { threadMarksGet } from "../state/threadMarks";
 import { useXwingEnvironmentsSupport } from "../state/xwingEnvironments";
-import { talkedWithThreads } from "../threadContextSidebar";
+import { talkedWithThreads, withDelegates } from "../threadContextSidebar";
 import {
   useThreadContextSidebarStore,
   type ThreadContextSection,
@@ -857,26 +857,35 @@ function ThreadRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
     messagedBy,
     transfers: projection?.contextTransfers ?? [],
   });
-  const shown = talkedWith.filter(({ entry, relation }) =>
-    matchesToolFilter([entry.title, relation, entry.branch], filter),
+  const rows = withDelegates(
+    talkedWith.map(({ entry, relation }) => ({
+      id: entry.id,
+      title: entry.title,
+      branch: entry.branch ?? null,
+      relation,
+    })),
+    projection?.subagents ?? [],
+  );
+  const shown = rows.filter((row) =>
+    matchesToolFilter([row.title, row.relation, row.branch], filter),
   );
   const refOf = (threadId: string) =>
     scopeThreadRef(threadRef.environmentId, ThreadId.make(threadId));
   return (
     <div className="space-y-4 text-xs">
-      {talkedWith.length ? (
+      {rows.length ? (
         <ToolFilterInput label="Filter related threads" value={filter} onChange={setFilter} />
       ) : null}
       <section className="space-y-1">
         <SectionHeading>Talked with</SectionHeading>
-        {shown.map(({ entry, relation }) => (
+        {shown.map((entry) => (
           <div key={entry.id} className={rowClass}>
             <Link
               to="/$environmentId/$threadId"
               params={buildThreadRouteParams(refOf(entry.id))}
               className="min-w-0 flex-1"
             >
-              <span className="block text-3xs text-muted-foreground">{relation}</span>
+              <span className="block text-3xs text-muted-foreground">{entry.relation}</span>
               <span className="block break-words text-primary hover:underline">{entry.title}</span>
             </Link>
             <RowActions
@@ -900,14 +909,14 @@ function ThreadRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
               </MenuItem>
               <MenuItem onClick={() => copy(entry.id, `id:${entry.id}`)}>Copy thread ID</MenuItem>
               {entry.branch ? (
-                <MenuItem onClick={() => copy(entry.branch!, `branch:${entry.id}`)}>
+                <MenuItem onClick={() => entry.branch && copy(entry.branch, `branch:${entry.id}`)}>
                   Copy branch
                 </MenuItem>
               ) : null}
             </RowActions>
           </div>
         ))}
-        {!talkedWith.length ? (
+        {!rows.length ? (
           <Empty size="compact">
             <EmptyMedia variant="icon">
               <NetworkIcon />

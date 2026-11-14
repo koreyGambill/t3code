@@ -7,6 +7,7 @@ import {
   selectContextThread,
   summarizeThreadTools,
   talkedWithThreads,
+  withDelegates,
   threadToolsAttention,
   toggleThreadToolsView,
 } from "./threadContextSidebar";
@@ -268,6 +269,24 @@ describe("thread tool views", () => {
       ["copy", "Fork"],
       ["asker", "Messaged this thread"],
       ["peer", "Shared context"],
+    ]);
+  });
+
+  it("adds finished delegates the shell list leaves out, once, and skips remote ones", () => {
+    const rows = [
+      { id: "worker", title: "Worker", branch: null, relation: "Delegated to" as const },
+    ];
+    expect(
+      withDelegates(rows, [
+        { childThreadId: "worker", title: "Worker" },
+        { childThreadId: "short", title: "Short wait" },
+        { childThreadId: "short", title: "Short wait follow-up" },
+        { childThreadId: null, title: "Native" },
+        { childThreadId: "remote", title: "Remote", remoteChild: {} },
+      ]).map((row) => [row.id, row.title, row.relation]),
+    ).toEqual([
+      ["worker", "Worker", "Delegated to"],
+      ["short", "Short wait", "Delegated to"],
     ]);
   });
 });

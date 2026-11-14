@@ -207,3 +207,39 @@ export function threadToolsAttention(
   const first = items[0];
   return first ? { tone: first[0], summary: items.map(([, text]) => text).join(" · ") } : null;
 }
+
+export interface TalkedWithRow {
+  readonly id: string;
+  readonly title: string;
+  readonly branch: string | null;
+  readonly relation: TalkedWithRelation;
+}
+
+/**
+ * Adds this thread's delegates whose shells the client never received: the server omits idle
+ * subagent shells, so finished delegates are known only from the thread's own subagent records.
+ */
+export function withDelegates(
+  rows: ReadonlyArray<TalkedWithRow>,
+  subagents: ReadonlyArray<{
+    readonly childThreadId: string | null;
+    readonly title: string | null;
+    readonly remoteChild?: unknown;
+  }>,
+): TalkedWithRow[] {
+  const seen = new Set(rows.map((row) => row.id));
+  const delegates = subagents.flatMap((subagent) => {
+    const id = subagent.childThreadId;
+    if (id === null || subagent.remoteChild !== undefined || seen.has(id)) return [];
+    seen.add(id);
+    return [
+      {
+        id,
+        title: subagent.title ?? "Delegated task",
+        branch: null,
+        relation: "Delegated to" as const,
+      },
+    ];
+  });
+  return [...rows, ...delegates];
+}
