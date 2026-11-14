@@ -526,7 +526,7 @@ export function MonitoringStatusButton() {
               )}
             </span>
           </TooltipTrigger>
-          <TooltipPopup side="left">{label}</TooltipPopup>
+          <TooltipPopup side="right">{label}</TooltipPopup>
         </Tooltip>
         {unread > 0 && (
           <span
@@ -537,7 +537,7 @@ export function MonitoringStatusButton() {
           </span>
         )}
       </div>
-      <PopoverPopup width="lg" padding="none" side="left" align="start">
+      <PopoverPopup width="lg" padding="none" side="right" align="start">
         <div className="flex max-h-[min(44rem,var(--available-height))] flex-col">
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border p-3">
             <PopoverTitle>Status and alerts</PopoverTitle>

@@ -217,7 +217,7 @@ export function ArtifactsPanel({
                 </SelectPopup>
               </Select>
             </div>
-            <div className="w-48 shrink-0">
+            <div className="w-48 max-w-full shrink-0">
               <Select value={version.version} onValueChange={setVersionNumber}>
                 <SelectTrigger size="sm" aria-label="Artifact version">
                   <SelectValue>{`v${version.version} · ${new Date(version.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}</SelectValue>

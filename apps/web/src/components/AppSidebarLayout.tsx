@@ -40,7 +40,11 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
+import {
+  SidebarBrandWidthProbe,
+  SidebarChromeFooter,
+  SidebarChromeHeader,
+} from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -64,7 +68,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
-import { ThreadContextSidebarHost } from "./ThreadContextSidebar";
+import { ThreadToolsDetailsHost, ThreadToolsFrame } from "./ThreadContextSidebar";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
@@ -484,12 +488,16 @@ export function AppSidebarLayout({
               }}
               style={windowControlsInsetStyle}
             >
-              <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              <SidebarChromeHeader isElectron={isElectron} />
+              <ThreadToolsFrame>
+                <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              </ThreadToolsFrame>
+              <SidebarChromeFooter />
               <SidebarRail onDoubleClick={resetSidebarWidth} />
             </Sidebar>
           </>
         ) : null}
-        <ThreadContextSidebarHost>{children}</ThreadContextSidebarHost>
+        <ThreadToolsDetailsHost>{children}</ThreadToolsDetailsHost>
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
         {isElectron ? <HistorySwipeNavigation /> : null}

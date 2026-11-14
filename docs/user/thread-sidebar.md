@@ -55,11 +55,14 @@ Pick a recent folder, a project, or a linked Xwing environment, or enter a path.
 The thread keeps its history. Its next turn starts a new agent session in that
 folder with the conversation carried over. Finish or stop any work before moving.
 
-Open the right thread sidebar with `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows
-and Linux. It follows the focused tile. Pin it to keep one thread while you move
-between tiles or conversations. The last view, open state and width stay on this
-device. Choose a view from the right rail. Selecting the active view collapses the
-panel to the rail. Maximize the panel for more room and press Escape to restore it.
+The strip at the left edge of the sidebar switches it between your threads and
+tools for the current thread: List, Artifacts, Marks, Related threads, Details,
+Environments, Context and Ticket. Badges on the strip show open list items,
+unanswered questions and a linked ticket. Select the active tool again to return
+to your threads. `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows and Linux switches
+between your threads and the last tool. The tools follow the focused tile. Pin one
+to keep its thread while you move between tiles or conversations. The last view
+stays on this device. Status and watcher alerts sit at the top of the strip.
 Artifacts can also open in a tile.
 
 The sidebar's **Environments** view shows Xwing environments used by the thread

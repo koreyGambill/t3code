@@ -1831,11 +1831,12 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:thread-context",
-      title: "Toggle thread sidebar",
-      searchTerms: ["marks", "related threads", "details", "context", "pin"],
+      title: "Show thread tools",
+      searchTerms: ["list", "artifacts", "marks", "related threads", "details", "context", "pin"],
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useThreadContextSidebarStore.getState().toggle();
+        const store = useThreadContextSidebarStore.getState();
+        store.show(store.lastTool);
       },
     });
   }
