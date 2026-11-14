@@ -34,6 +34,7 @@ import {
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpScheduledTask,
+  type OrchestratorMcpScheduleTarget,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
   type OrchestratorMcpTarget,
@@ -346,6 +347,10 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     boundThreadId: task.threadId,
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
     schedule: task.schedule,
+    model: {
+      providerInstanceId: task.modelSelection.instanceId,
+      model: task.modelSelection.model,
+    },
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
     ...(task.webhook?.url == null || !mayRun || task.blockedByPolicy !== undefined
@@ -1670,7 +1675,12 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: {
+      readonly thread: Pick<
+        OrchestrationV2ThreadProjection["thread"],
+        "modelSelection" | "projectId"
+      >;
+    };
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -2485,6 +2495,32 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  /** The model a task's new threads start on: `target` applied over `inherited`, as a delegated child's is. */
+  const resolveScheduledTaskModel = Effect.fn("OrchestratorMcpService.resolveScheduledTaskModel")(
+    function* (
+      projectId: ProjectId,
+      inherited: ScheduledTask["modelSelection"],
+      target: OrchestratorMcpScheduleTarget | undefined,
+    ): Effect.fn.Return<ScheduledTask["modelSelection"], OrchestratorMcpFailure> {
+      if (target === undefined) return inherited;
+      const resolved = yield* resolveTargetRechecking({
+        parent: { thread: { modelSelection: inherited, projectId } },
+        target,
+        providers: yield* loadProviders,
+      });
+      const { instanceId } = resolved.modelSelection;
+      if (
+        !(yield* threadManagement.isProviderInstanceEnabledForProject({ projectId, instanceId }))
+      ) {
+        return yield* failure(
+          "provider_unavailable",
+          `Provider instance ${instanceId} is not enabled for this project.`,
+        );
+      }
+      return resolved.modelSelection;
+    },
+  );
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
@@ -2502,8 +2538,11 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
-      const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      const modelSelection = yield* resolveScheduledTaskModel(
+        projectId,
+        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)),
+        input.target,
+      );
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2625,7 +2664,11 @@ const make = Effect.gen(function* () {
                   ? "new_thread"
                   : "continue",
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          modelSelection: yield* resolveScheduledTaskModel(
+            existing.projectId,
+            existing.modelSelection,
+            input.target,
+          ),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
