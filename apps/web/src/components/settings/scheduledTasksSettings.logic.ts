@@ -147,8 +147,7 @@ export interface DraftState {
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
   readonly eventKind: ScheduledTaskEventKind;
-  /** Thread ids separated by commas or whitespace. */
-  readonly eventThreadIds: string;
+  readonly eventThreadIds: ReadonlyArray<string>;
   readonly eventIncludeDescendants: boolean;
   /** Match only threads in the task's project. */
   readonly eventProjectOnly: boolean;
@@ -156,28 +155,26 @@ export interface DraftState {
   readonly eventToState: StatusState | "";
   readonly eventCooldownSeconds: string;
   readonly eventCoalesceSeconds: string;
+  readonly eventMaxRunsPerHour: string;
 }
 
 export const EVENT_DRAFT_DEFAULTS = {
   eventKind: "run_ended",
-  eventThreadIds: "",
+  eventThreadIds: [],
   eventIncludeDescendants: false,
   eventProjectOnly: true,
   eventStatusSource: "",
   eventToState: "",
   eventCooldownSeconds: "",
   eventCoalesceSeconds: "",
+  eventMaxRunsPerHour: "",
 } as const;
 
-function parseSeconds(value: string, maximum: number): number | null | undefined {
+function parseWhole(value: string, minimum: number, maximum: number): number | null | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  const seconds = Number(trimmed);
-  return Number.isInteger(seconds) && seconds >= 0 && seconds <= maximum ? seconds : null;
-}
-
-function eventThreadIds(draft: DraftState): ReadonlyArray<string> {
-  return [...new Set(draft.eventThreadIds.split(/[\s,]+/).filter(Boolean))];
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -206,17 +203,22 @@ export function scheduleDraftErrors(draft: DraftState) {
   }
   if (draft.scheduleMode === "event") {
     const errors: Array<{ title: string; description: string }> = [];
-    if (parseSeconds(draft.eventCooldownSeconds, 86_400) === null)
+    if (parseWhole(draft.eventCooldownSeconds, 0, 86_400) === null)
       errors.push({
         title: "Invalid cooldown",
         description: "Enter whole seconds from 0 to 86400, or leave it blank.",
       });
-    if (parseSeconds(draft.eventCoalesceSeconds, 3600) === null)
+    if (parseWhole(draft.eventCoalesceSeconds, 0, 3600) === null)
       errors.push({
         title: "Invalid coalescing window",
         description: "Enter whole seconds from 0 to 3600, or leave it blank.",
       });
-    if (eventThreadIds(draft).length > MAX_EVENT_FILTER_THREADS)
+    if (parseWhole(draft.eventMaxRunsPerHour, 1, 120) === null)
+      errors.push({
+        title: "Invalid run limit",
+        description: "Enter whole runs per hour from 1 to 120, or leave it blank.",
+      });
+    if (draft.eventThreadIds.length > MAX_EVENT_FILTER_THREADS)
       errors.push({
         title: "Too many threads",
         description: `Watch at most ${MAX_EVENT_FILTER_THREADS} threads.`,
@@ -327,11 +329,13 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     };
   }
   if (draft.scheduleMode === "event") {
-    const cooldownSeconds = parseSeconds(draft.eventCooldownSeconds, 86_400) ?? undefined;
-    const coalesceSeconds = parseSeconds(draft.eventCoalesceSeconds, 3600) ?? undefined;
+    const cooldownSeconds = parseWhole(draft.eventCooldownSeconds, 0, 86_400) ?? undefined;
+    const coalesceSeconds = parseWhole(draft.eventCoalesceSeconds, 0, 3600) ?? undefined;
+    const maxRunsPerHour = parseWhole(draft.eventMaxRunsPerHour, 1, 120) ?? undefined;
     const timing = {
       ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
       ...(coalesceSeconds === undefined ? {} : { coalesceSeconds }),
+      ...(maxRunsPerHour === undefined ? {} : { maxRunsPerHour }),
     };
     if (draft.eventKind === "status_transition") {
       const statusSource = draft.eventStatusSource.trim();
@@ -343,7 +347,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         ...timing,
       };
     }
-    const threadIds = eventThreadIds(draft).map((id) => id as ThreadId);
+    const threadIds = draft.eventThreadIds.map((id) => id as ThreadId);
     return {
       type: "event",
       event: draft.eventKind,
@@ -438,7 +442,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     ...(schedule.type === "event"
       ? {
           eventKind: schedule.event,
-          eventThreadIds: (schedule.threadIds ?? []).join(", "),
+          eventThreadIds: schedule.threadIds ?? [],
           eventIncludeDescendants: schedule.includeDescendants === true,
           eventProjectOnly: schedule.projectId !== undefined,
           eventStatusSource: schedule.statusSource ?? "",
@@ -447,6 +451,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
             schedule.cooldownSeconds === undefined ? "" : String(schedule.cooldownSeconds),
           eventCoalesceSeconds:
             schedule.coalesceSeconds === undefined ? "" : String(schedule.coalesceSeconds),
+          eventMaxRunsPerHour:
+            schedule.maxRunsPerHour === undefined ? "" : String(schedule.maxRunsPerHour),
         }
       : EVENT_DRAFT_DEFAULTS),
   };

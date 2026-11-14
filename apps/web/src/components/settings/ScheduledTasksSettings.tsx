@@ -12,6 +12,7 @@ import {
   PlayIcon,
   PlusIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
 import type {
@@ -75,6 +76,7 @@ import { environmentAtomList, environmentIdsKey } from "../../state/environmentA
 import { useThreadSearch } from "../../state/queries";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { statusSources } from "../../state/statusSources";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
@@ -83,6 +85,9 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
+  DEFAULT_EVENT_MAX_RUNS_PER_HOUR,
+  DEFAULT_RUN_ENDED_COOLDOWN_SECONDS,
+  MAX_EVENT_FILTER_THREADS,
   isEventDrivenWake,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
@@ -216,15 +221,163 @@ const STATUS_STATE_LABELS: Record<Exclude<DraftState["eventToState"], "">, strin
   unknown: "Unknown",
 };
 
+function EventThreadChip({
+  environmentId,
+  threadId,
+  disabled,
+  onRemove,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly disabled: boolean;
+  readonly onRemove: () => void;
+}) {
+  const ref = scopeThreadRef(environmentId, threadId);
+  const shell = useThreadShell(ref);
+  // The shell can omit older settled threads; their family read still carries the title.
+  const family = useEnvironmentQuery(
+    shell === null ? threadFamilies.familyAtom(environmentId, threadId) : null,
+  );
+  const title =
+    (shell ?? family.data?.threads.find((row) => row.id === threadId))?.title.trim() ||
+    `Thread ${threadId}`;
+  return (
+    <Badge variant="outline" size="control">
+      <Tooltip>
+        <TooltipTrigger render={<span className="max-w-56 truncate" />}>{title}</TooltipTrigger>
+        <TooltipPopup>{title}</TooltipPopup>
+      </Tooltip>
+      <Button
+        variant="ghost"
+        size="icon-tiny"
+        aria-label={`Remove ${title}`}
+        disabled={disabled}
+        onClick={onRemove}
+      >
+        <XIcon />
+      </Button>
+    </Badge>
+  );
+}
+
+/** Picks threads from the task's project by title; selected threads show as removable chips. */
+function EventThreadPicker({
+  environmentId,
+  projectId,
+  selected,
+  disabled,
+  onChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: string;
+  readonly selected: ReadonlyArray<string>;
+  readonly disabled: boolean;
+  readonly onChange: (threadIds: ReadonlyArray<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const shells = useVisibleThreadShells(open);
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch(open && projectId ? [environmentId] : [], query, {
+    titlesOnly: true,
+    projectIds: [projectId as ProjectId],
+  });
+  const threads = scheduledTaskDestinationThreads(shells, {
+    environmentId,
+    projectId,
+    currentThreadId: null,
+    query,
+  }).filter((thread) => !selected.includes(thread.id));
+  const items = threads.map((thread) => thread.id);
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) setQuery("");
+  };
+  return (
+    <div className="space-y-2">
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((threadId) => (
+            <EventThreadChip
+              key={threadId}
+              environmentId={environmentId}
+              threadId={threadId as ThreadId}
+              disabled={disabled}
+              onRemove={() => onChange(selected.filter((id) => id !== threadId))}
+            />
+          ))}
+        </div>
+      ) : null}
+      <Combobox
+        items={items}
+        filteredItems={items}
+        filter={null}
+        autoHighlight
+        open={open && !disabled}
+        onOpenChange={handleOpenChange}
+        value={null}
+        onValueChange={(value) => {
+          if (typeof value === "string" && !selected.includes(value)) {
+            onChange([...selected, value]);
+          }
+          handleOpenChange(false);
+        }}
+      >
+        <ComboboxTrigger
+          id="scheduled-task-event-threads"
+          disabled={disabled || selected.length >= MAX_EVENT_FILTER_THREADS}
+          render={<Button variant="outline" size="sm" />}
+          className="w-full justify-between"
+        >
+          <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-left text-muted-foreground">
+            {selected.length === 0 ? "Any thread" : "Add a thread"}
+          </span>
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        </ComboboxTrigger>
+        <ComboboxPopup align="start" side="bottom" className="w-80">
+          <ComboboxSearchInput
+            aria-label="Search threads"
+            placeholder="Search threads in this project..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <ComboboxEmpty>No threads found.</ComboboxEmpty>
+          <ComboboxList className="max-h-72">
+            {items.map((value, index) => (
+              <ComboboxItem key={value} index={index} value={value}>
+                <span className="block truncate">
+                  {threads.find((row) => row.id === value)?.title || "Untitled thread"}
+                </span>
+              </ComboboxItem>
+            ))}
+          </ComboboxList>
+        </ComboboxPopup>
+      </Combobox>
+    </div>
+  );
+}
+
 function EventTriggerFields({
+  environmentId,
   draft,
   setDraft,
 }: {
+  environmentId: EnvironmentId;
   draft: DraftState;
   setDraft: Dispatch<SetStateAction<DraftState>>;
 }) {
   const update = (patch: Partial<DraftState>) => setDraft((current) => ({ ...current, ...patch }));
   const statusEvent = draft.eventKind === "status_transition";
+  const sources = useEnvironmentQuery(
+    statusEvent ? statusSources({ environmentId, input: {} }) : null,
+  );
+  const sourceItems: Record<string, string> = { any: "Any source" };
+  for (const source of sources.data ?? []) sourceItems[source.config.id] = source.config.name;
+  // A source removed since the task was saved still shows, so the form does not silently change it.
+  if (draft.eventStatusSource && sourceItems[draft.eventStatusSource] === undefined) {
+    sourceItems[draft.eventStatusSource] = `${draft.eventStatusSource} (removed)`;
+  }
   return (
     <div className="space-y-4">
       <Field label="Run when" htmlFor="scheduled-task-event-kind">
@@ -249,15 +402,27 @@ function EventTriggerFields({
       </Field>
       {statusEvent ? (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Status source" hint="id, optional" htmlFor="scheduled-task-event-source">
-            <Input
-              id="scheduled-task-event-source"
-              placeholder="Any source"
-              value={draft.eventStatusSource}
-              onChange={(event) => update({ eventStatusSource: event.target.value })}
-            />
+          <Field label="Status source" hint="optional" htmlFor="scheduled-task-event-source">
+            <Select
+              value={draft.eventStatusSource || "any"}
+              onValueChange={(value) =>
+                update({ eventStatusSource: value === null || value === "any" ? "" : value })
+              }
+              items={sourceItems}
+            >
+              <SelectTrigger id="scheduled-task-event-source">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                {Object.entries(sourceItems).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           </Field>
-          <Field label="Changes to" htmlFor="scheduled-task-event-state">
+          <Field label="Changes to" hint="optional" htmlFor="scheduled-task-event-state">
             <Select
               value={draft.eventToState || "any"}
               onValueChange={(value) =>
@@ -292,19 +457,16 @@ function EventTriggerFields({
               onCheckedChange={(eventProjectOnly) => update({ eventProjectOnly })}
             />
           </div>
-          <Field
-            label="Only these threads"
-            hint="ids, optional"
-            htmlFor="scheduled-task-event-threads"
-          >
-            <Input
-              id="scheduled-task-event-threads"
-              placeholder="Any thread"
-              value={draft.eventThreadIds}
-              onChange={(event) => update({ eventThreadIds: event.target.value })}
+          <Field label="Only these threads" hint="optional" htmlFor="scheduled-task-event-threads">
+            <EventThreadPicker
+              environmentId={environmentId}
+              projectId={draft.projectId}
+              selected={draft.eventThreadIds}
+              disabled={!draft.projectId}
+              onChange={(eventThreadIds) => update({ eventThreadIds })}
             />
           </Field>
-          {draft.eventThreadIds.trim() ? (
+          {draft.eventThreadIds.length > 0 ? (
             <div className="flex items-center justify-between gap-4">
               <Label htmlFor="scheduled-task-event-descendants">
                 Include forks, subagents and delegated threads
@@ -318,24 +480,22 @@ function EventTriggerFields({
           ) : null}
         </>
       )}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Cooldown" hint="seconds, optional" htmlFor="scheduled-task-event-cooldown">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field label="Cooldown" hint="seconds" htmlFor="scheduled-task-event-cooldown">
           <Input
             id="scheduled-task-event-cooldown"
             type="number"
             nativeInput
             min={0}
             max={86_400}
-            placeholder="0"
+            placeholder={String(
+              draft.eventKind === "run_ended" ? DEFAULT_RUN_ENDED_COOLDOWN_SECONDS : 0,
+            )}
             value={draft.eventCooldownSeconds}
             onChange={(event) => update({ eventCooldownSeconds: event.target.value })}
           />
         </Field>
-        <Field
-          label="Coalesce window"
-          hint="seconds, optional"
-          htmlFor="scheduled-task-event-coalesce"
-        >
+        <Field label="Coalesce" hint="seconds" htmlFor="scheduled-task-event-coalesce">
           <Input
             id="scheduled-task-event-coalesce"
             type="number"
@@ -347,12 +507,24 @@ function EventTriggerFields({
             onChange={(event) => update({ eventCoalesceSeconds: event.target.value })}
           />
         </Field>
+        <Field label="Max runs" hint="per hour" htmlFor="scheduled-task-event-max-runs">
+          <Input
+            id="scheduled-task-event-max-runs"
+            type="number"
+            nativeInput
+            min={1}
+            max={120}
+            placeholder={String(DEFAULT_EVENT_MAX_RUNS_PER_HOUR)}
+            value={draft.eventMaxRunsPerHour}
+            onChange={(event) => update({ eventMaxRunsPerHour: event.target.value })}
+          />
+        </Field>
       </div>
       <p className="text-xs text-muted-foreground">
         {statusEvent
           ? "Cooldown and coalescing apply per status source."
           : "Cooldown and coalescing apply per thread. Threads this task starts never trigger it."}{" "}
-        The run&apos;s prompt ends with what happened.
+        Events over the hourly limit wait. The run&apos;s prompt ends with what happened.
       </p>
     </div>
   );
@@ -2230,7 +2402,7 @@ function ScheduledTaskEditorForm({
                 ) : null}
               </div>
             ) : draft.scheduleMode === "event" ? (
-              <EventTriggerFields draft={draft} setDraft={setDraft} />
+              <EventTriggerFields environmentId={environmentId} draft={draft} setDraft={setDraft} />
             ) : draft.scheduleMode === "once" ? (
               <div className="flex items-center gap-2">
                 <Label htmlFor="scheduled-task-run-at">Run on</Label>

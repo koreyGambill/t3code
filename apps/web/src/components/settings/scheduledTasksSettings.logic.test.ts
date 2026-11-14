@@ -244,6 +244,7 @@ describe("event scheduled tasks", () => {
       includeDescendants: true,
       cooldownSeconds: 600,
       coalesceSeconds: 30,
+      maxRunsPerHour: 4,
     } as const;
     const draft = taskToDraft({ ...legacyTask, schedule });
     expect(draft.scheduleMode).toBe("event");
@@ -262,16 +263,19 @@ describe("event scheduled tasks", () => {
       toState: "fail",
       cooldownSeconds: 600,
       coalesceSeconds: 30,
+      maxRunsPerHour: 4,
     });
     expect(
       scheduleFromDraft({
         ...draft,
         eventProjectOnly: false,
-        eventThreadIds: "",
+        eventThreadIds: [],
         eventCoalesceSeconds: "",
+        eventMaxRunsPerHour: "",
       }),
     ).toEqual({ type: "event", event: "run_ended", cooldownSeconds: 600 });
     expect(scheduleFromDraft({ ...draft, eventCoalesceSeconds: "3601" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, eventMaxRunsPerHour: "0" })).toBeNull();
   });
 });
 

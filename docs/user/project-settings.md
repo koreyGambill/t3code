@@ -119,7 +119,9 @@ threads, optionally with their forks, subagents, and delegated threads. A status
 source event can be narrowed to one source and the state it changes to. The run's
 prompt ends with what happened. **Cooldown** sets the minimum time between runs for
 the same thread or status source; events during it run once when it ends.
-**Coalesce window** waits after the first event and runs once with the latest.
+**Coalesce** waits after the first event and runs once with the latest. **Max runs**
+caps runs per hour (12 by default); events over it wait for the next hour. A task
+that runs when a turn ends waits 60 seconds per thread by default.
 Threads a task starts, and its own turns, never trigger it.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
