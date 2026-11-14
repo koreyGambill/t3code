@@ -1,10 +1,13 @@
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { checkinFingerprint, pinGitWake, wakeReason } from "./WakeState.ts";
+import * as EventTriggers from "./EventTriggers.ts";
+import * as StatusSources from "../statusSources/StatusSources.ts";
 import * as MonitoringRunner from "../monitoring/MonitoringRunner.ts";
 import { idleCheckinPrompt } from "./IdleCheckin.ts";
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2DomainEvent,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
   ScheduledTask,
@@ -13,6 +16,7 @@ import {
   ThreadId,
   ScheduledTaskWebhookDeliveryId,
   type ScheduledTaskDeleteInput,
+  type ScheduledTaskEventSchedule,
   type ScheduledTaskDeleteResult,
   type ScheduledTaskGetWebhookDeliveryInput,
   type ScheduledTaskGetWebhookDeliveryResult,
@@ -28,6 +32,7 @@ import {
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
+  isEventDrivenWake,
   managedPolicyDeniedMessage,
   scheduledTaskThreadMode,
   managedRuntimeModeDenial,
@@ -330,6 +335,14 @@ function nextRunAt(
   }
 }
 
+/** A saved or resumed thread or task wake checks once now; events bring it back later. */
+function firstRunAt(
+  task: Pick<ScheduledTask, "enabled" | "schedule">,
+  now: DateTime.DateTime,
+): string | null {
+  return task.enabled && isEventDrivenWake(task.schedule) ? iso(now) : nextRunAt(task, now);
+}
+
 /**
  * Next run after an interrupted run. A one-time task counts from the run's start
  * (`lastRunAt`), so a manual run that began before its time does not use it up.
@@ -470,6 +483,7 @@ export const layer = Layer.effect(
     const digest = yield* Digest.Digest;
     const mac = yield* Mac.Mac;
     const monitor = yield* Effect.serviceOption(MonitoringRunner.MonitoringRunner);
+    const statusSources = yield* Effect.serviceOption(StatusSources.StatusSources);
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const serviceScope = yield* Effect.scope;
@@ -546,6 +560,65 @@ export const layer = Layer.effect(
         ),
       ).pipe(
         Effect.catch((cause) => Effect.logWarning("Idle check-in event stream failed", { cause })),
+      ),
+    );
+
+    const withSql = Effect.provideService(SqlClient.SqlClient, sql);
+
+    const eventCandidates = Effect.fn("ScheduledTaskService.eventCandidates")(function* (
+      kind: EventTriggers.EventFact["kind"],
+    ) {
+      const rows = yield* sql<ScheduledTaskRow>`SELECT * FROM scheduled_tasks
+        WHERE enabled = 1 AND json_extract(schedule_json, '$.type') = 'event'
+          AND json_extract(schedule_json, '$.event') = ${kind}`;
+      const candidates: Array<{ id: ScheduledTaskId; schedule: ScheduledTaskEventSchedule }> = [];
+      for (const row of rows) {
+        const decoded = yield* Effect.result(decodeRow(row));
+        if (Result.isSuccess(decoded) && decoded.success.schedule.type === "event") {
+          candidates.push({ id: decoded.success.id, schedule: decoded.success.schedule });
+        }
+      }
+      return candidates;
+    });
+
+    const handleEventFact = Effect.fn("ScheduledTaskService.handleEventFact")(function* (
+      fact: EventTriggers.EventFact,
+    ) {
+      const candidates = yield* eventCandidates(fact.kind);
+      const moved = yield* EventTriggers.recordEventFact(fact, candidates, yield* localNow).pipe(
+        withSql,
+      );
+      if (moved.length > 0) yield* notifyChanged;
+    });
+
+    const handleDomainEvent = Effect.fn("ScheduledTaskService.handleDomainEvent")(function* (
+      event: OrchestrationV2DomainEvent,
+    ) {
+      const woken = yield* EventTriggers.dueWakesForEvent(event, yield* localNow).pipe(withSql);
+      if (woken.length > 0) yield* notifyChanged;
+      const fact = EventTriggers.factFromDomainEvent(event);
+      if (fact !== null) yield* handleEventFact(fact);
+    });
+
+    const eventFacts = Stream.merge(
+      threadManagement.streamDomainEvents.pipe(Stream.map((event) => handleDomainEvent(event))),
+      Option.isSome(statusSources)
+        ? statusSources.value.transitions.pipe(
+            Stream.map((transition) =>
+              handleEventFact(EventTriggers.factFromStatusTransition(transition)),
+            ),
+          )
+        : Stream.empty,
+    );
+    yield* forkParked(
+      Stream.runForEach(eventFacts, (handle) =>
+        handle.pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not record scheduled task event", { cause }),
+          ),
+        ),
+      ).pipe(
+        Effect.catch((cause) => Effect.logWarning("Scheduled task event stream failed", { cause })),
       ),
     );
 
@@ -1009,6 +1082,7 @@ export const layer = Layer.effect(
         if (
           trigger === "scheduled" &&
           active.schedule.type !== "once" &&
+          active.schedule.type !== "event" &&
           active.threadId !== null &&
           (yield* hasQueuedOccurrence(active.id, ThreadId.make(active.threadId)).pipe(
             Effect.orElseSucceed(() => false),
@@ -1030,6 +1104,31 @@ export const layer = Layer.effect(
                     ? "The task was paused before this delivery ran."
                     : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
+        }
+
+        const eventFire =
+          active.schedule.type === "event" && trigger === "scheduled"
+            ? yield* EventTriggers.claimDueEvent(active.id, startedAtIso).pipe(
+                withSql,
+                Effect.mapError((cause) =>
+                  taskError("Could not read the triggering event.", { taskId: active.id, cause }),
+                ),
+              )
+            : null;
+        if (active.schedule.type === "event" && trigger === "scheduled" && eventFire === null) {
+          yield* EventTriggers.pendingEventRunAt(active.id).pipe(
+            Effect.flatMap(
+              (next) =>
+                sql`UPDATE scheduled_tasks SET next_run_at = ${next}
+                  WHERE task_id = ${active.id} AND next_run_at IS ${active.nextRunAt}`,
+            ),
+            withSql,
+            Effect.mapError((cause) =>
+              taskError("Could not reschedule event task.", { taskId: active.id, cause }),
+            ),
+          );
+          yield* notifyChanged;
+          return { task: active, threadId: null, dispatchFailed: false };
         }
 
         if (
@@ -1165,9 +1264,11 @@ export const layer = Layer.effect(
 
         const fireKey =
           webhook === undefined
-            ? wake !== undefined
-              ? `${active.id}:wake:${active.createdAt}:${wake.type === "git_landed" ? wake.ref : wake.type === "thread_finished" ? wake.threadId : wake.task}`
-              : `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
+            ? eventFire !== null
+              ? `${active.id}:event:${eventFire.subject}:${eventFire.key}`
+              : wake !== undefined
+                ? `${active.id}:wake:${active.createdAt}:${wake.type === "git_landed" ? wake.ref : wake.type === "thread_finished" ? wake.threadId : wake.task}`
+                : `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
@@ -1179,7 +1280,7 @@ export const layer = Layer.effect(
             : { kind: "scheduled-task" as const, title: active.title };
         const prompt = idleCheckin
           ? idleCheckinPrompt(active.id)
-          : (webhook?.prompt ?? active.prompt);
+          : (webhook?.prompt ?? active.prompt + (eventFire?.prompt ?? ""));
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
@@ -1263,6 +1364,19 @@ export const layer = Layer.effect(
                   .pipe(
                     Effect.map((launched) => launched.threadId),
                     Effect.tap((threadId) =>
+                      active.schedule.type === "event"
+                        ? EventTriggers.markOwnedThread(active.id, threadId).pipe(
+                            withSql,
+                            Effect.mapError((cause) =>
+                              taskError("Could not record the launched thread.", {
+                                taskId: active.id,
+                                cause,
+                              }),
+                            ),
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.tap((threadId) =>
                       threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
                     ),
                   ),
@@ -1345,10 +1459,12 @@ export const layer = Layer.effect(
             // A manual run that starts before a one-time run must not use it up.
             nextRunAt: consumeWake
               ? null
-              : nextRunAt(
-                  scheduleSource,
-                  scheduleSource.schedule.type === "once" ? startedAt : completedAt,
-                ),
+              : scheduleSource.schedule.type === "event"
+                ? yield* EventTriggers.pendingEventRunAt(task.id).pipe(withSql)
+                : nextRunAt(
+                    scheduleSource,
+                    scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+                  ),
             lastRunStatus,
             lastRunError,
             runCount: scheduleSource.runCount + 1,
@@ -1579,6 +1695,23 @@ export const layer = Layer.effect(
       ),
     );
 
+    // Events that arrived while the server was down are gone: thread and task wakes check once,
+    // and event tasks resume the fires they had queued.
+    yield* Effect.gen(function* () {
+      const now = iso(yield* localNow);
+      yield* sql`UPDATE scheduled_tasks SET next_run_at = ${now}
+        WHERE enabled = 1
+          AND json_extract(schedule_json, '$.wakeWhen.type') IN ('thread_finished', 'task_finished')`;
+      yield* sql`UPDATE scheduled_tasks SET next_run_at = (
+          SELECT MIN(due_at) FROM scheduled_task_event_subjects s
+          WHERE s.task_id = scheduled_tasks.task_id AND s.due_at IS NOT NULL)
+        WHERE enabled = 1 AND json_extract(schedule_json, '$.type') = 'event'`;
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not resume event-triggered schedule tasks", { cause }),
+      ),
+    );
+
     yield* scheduler.register("scheduled-tasks", runDueTasks());
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
@@ -1673,6 +1806,23 @@ export const layer = Layer.effect(
           "Idle check-ins require an existing main thread, continue mode, and a 30-minute interval.",
           { taskId: id },
         );
+      }
+      if (input.schedule.type === "event") {
+        const statusEvent = input.schedule.event === "status_transition";
+        const threadFilters =
+          input.schedule.projectId !== undefined ||
+          (input.schedule.threadIds?.length ?? 0) > 0 ||
+          input.schedule.includeDescendants === true;
+        const statusFilters =
+          input.schedule.statusSource !== undefined || input.schedule.toState !== undefined;
+        if (statusEvent ? threadFilters : statusFilters) {
+          return yield* taskError(
+            statusEvent
+              ? "Status transitions filter by statusSource and toState only."
+              : "statusSource and toState apply only to status_transition.",
+            { taskId: id },
+          );
+        }
       }
       // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
       if (threadId !== null && threadId !== existingTask?.threadId) {
@@ -1810,7 +1960,7 @@ export const layer = Layer.effect(
         updatedAt: iso(now),
         nextRunAt: scheduleUnchanged
           ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+          : firstRunAt({ enabled: input.enabled, schedule }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
@@ -1822,6 +1972,15 @@ export const layer = Layer.effect(
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
       );
+      // Events queued under the old trigger or filters are not this trigger's.
+      if (!scheduleUnchanged && existingTask?.schedule.type === "event") {
+        yield* EventTriggers.clearPendingEvents(id).pipe(
+          withSql,
+          Effect.mapError((cause) =>
+            taskError("Could not clear queued events.", { taskId: id, cause }),
+          ),
+        );
+      }
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
@@ -1851,7 +2010,15 @@ export const layer = Layer.effect(
         now,
         input.id,
       );
-      const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+      const next = firstRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+      if (!input.enabled && existing.schedule.type === "event") {
+        yield* EventTriggers.clearPendingEvents(input.id).pipe(
+          withSql,
+          Effect.mapError((cause) =>
+            taskError("Could not clear queued events.", { taskId: input.id, cause }),
+          ),
+        );
+      }
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
       const updated = yield* sql<{ task_id: string }>`

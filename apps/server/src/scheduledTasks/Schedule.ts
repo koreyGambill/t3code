@@ -1,4 +1,8 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
+import {
+  isEventDrivenWake,
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  type ScheduledTaskSchedule,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -14,7 +18,10 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
-  if (schedule.type === "webhook") return null;
+  // Event triggers and event wakes have no clock time; events set their next run.
+  if (schedule.type === "webhook" || schedule.type === "event" || isEventDrivenWake(schedule)) {
+    return null;
+  }
   if (schedule.type === "once") {
     const runAt = DateTime.make(schedule.runAt);
     return Option.isSome(runAt) &&
@@ -61,6 +68,19 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     );
   }
   if (a.type === "webhook") return b.type === "webhook";
+  if (a.type === "event") {
+    return (
+      b.type === "event" &&
+      a.event === b.event &&
+      a.projectId === b.projectId &&
+      (a.threadIds ?? []).join(",") === (b.threadIds ?? []).join(",") &&
+      (a.includeDescendants ?? false) === (b.includeDescendants ?? false) &&
+      a.statusSource === b.statusSource &&
+      a.toState === b.toState &&
+      (a.cooldownSeconds ?? 0) === (b.cooldownSeconds ?? 0) &&
+      (a.coalesceSeconds ?? 0) === (b.coalesceSeconds ?? 0)
+    );
+  }
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
   if (b.type !== "fixed_time") return false;
   // Compare parsed times so padded-hour edits do not reschedule pending runs.

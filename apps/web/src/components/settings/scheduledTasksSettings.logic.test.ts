@@ -234,6 +234,47 @@ describe("one-time scheduled tasks", () => {
   });
 });
 
+describe("event scheduled tasks", () => {
+  it("round-trips thread filters and timing, and drops filters the event does not use", () => {
+    const schedule = {
+      type: "event",
+      event: "run_ended",
+      projectId: legacyTask.projectId,
+      threadIds: [ThreadId.make("thread:a"), ThreadId.make("thread:b")],
+      includeDescendants: true,
+      cooldownSeconds: 600,
+      coalesceSeconds: 30,
+    } as const;
+    const draft = taskToDraft({ ...legacyTask, schedule });
+    expect(draft.scheduleMode).toBe("event");
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        eventKind: "status_transition",
+        eventStatusSource: " ci ",
+        eventToState: "fail",
+      }),
+    ).toEqual({
+      type: "event",
+      event: "status_transition",
+      statusSource: "ci",
+      toState: "fail",
+      cooldownSeconds: 600,
+      coalesceSeconds: 30,
+    });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        eventProjectOnly: false,
+        eventThreadIds: "",
+        eventCoalesceSeconds: "",
+      }),
+    ).toEqual({ type: "event", event: "run_ended", cooldownSeconds: 600 });
+    expect(scheduleFromDraft({ ...draft, eventCoalesceSeconds: "3601" })).toBeNull();
+  });
+});
+
 describe("webhook scheduled tasks", () => {
   const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
   const webhookTask: ScheduledTask = {

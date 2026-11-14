@@ -283,6 +283,7 @@ export const make = Effect.gen(function* () {
       freshContext: true,
       scheduledTaskThreadModes: true,
       idleWorkCheckins: true,
+      eventTriggers: true,
       xwingEnvironments: true,
       npmReleaseLookup: true,
       voiceTranscription: isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),

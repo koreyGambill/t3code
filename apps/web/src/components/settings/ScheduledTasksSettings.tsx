@@ -13,7 +13,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -83,6 +83,7 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
+  isEventDrivenWake,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
@@ -94,6 +95,7 @@ import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
+  EVENT_DRAFT_DEFAULTS,
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
   moveDraftToThread,
@@ -197,7 +199,164 @@ const EMPTY_DRAFT: DraftState = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  ...EVENT_DRAFT_DEFAULTS,
 };
+
+const EVENT_KIND_LABELS: Record<DraftState["eventKind"], string> = {
+  run_ended: "A turn ends",
+  thread_created: "A thread is created",
+  thread_settled: "A thread settles",
+  status_transition: "A status source changes",
+};
+
+const STATUS_STATE_LABELS: Record<Exclude<DraftState["eventToState"], "">, string> = {
+  ok: "OK",
+  warn: "Warning",
+  fail: "Failing",
+  unknown: "Unknown",
+};
+
+function EventTriggerFields({
+  draft,
+  setDraft,
+}: {
+  draft: DraftState;
+  setDraft: Dispatch<SetStateAction<DraftState>>;
+}) {
+  const update = (patch: Partial<DraftState>) => setDraft((current) => ({ ...current, ...patch }));
+  const statusEvent = draft.eventKind === "status_transition";
+  return (
+    <div className="space-y-4">
+      <Field label="Run when" htmlFor="scheduled-task-event-kind">
+        <Select
+          value={draft.eventKind}
+          onValueChange={(value) => {
+            if (value !== null) update({ eventKind: value });
+          }}
+          items={EVENT_KIND_LABELS}
+        >
+          <SelectTrigger id="scheduled-task-event-kind">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            {Object.entries(EVENT_KIND_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </Field>
+      {statusEvent ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Status source" hint="id, optional" htmlFor="scheduled-task-event-source">
+            <Input
+              id="scheduled-task-event-source"
+              placeholder="Any source"
+              value={draft.eventStatusSource}
+              onChange={(event) => update({ eventStatusSource: event.target.value })}
+            />
+          </Field>
+          <Field label="Changes to" htmlFor="scheduled-task-event-state">
+            <Select
+              value={draft.eventToState || "any"}
+              onValueChange={(value) =>
+                update({
+                  eventToState:
+                    value === null || value === "any" ? "" : (value as DraftState["eventToState"]),
+                })
+              }
+              items={{ any: "Any state", ...STATUS_STATE_LABELS }}
+            >
+              <SelectTrigger id="scheduled-task-event-state">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="any">Any state</SelectItem>
+                {Object.entries(STATUS_STATE_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </Field>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="scheduled-task-event-project">Only threads in this project</Label>
+            <Switch
+              id="scheduled-task-event-project"
+              checked={draft.eventProjectOnly}
+              onCheckedChange={(eventProjectOnly) => update({ eventProjectOnly })}
+            />
+          </div>
+          <Field
+            label="Only these threads"
+            hint="ids, optional"
+            htmlFor="scheduled-task-event-threads"
+          >
+            <Input
+              id="scheduled-task-event-threads"
+              placeholder="Any thread"
+              value={draft.eventThreadIds}
+              onChange={(event) => update({ eventThreadIds: event.target.value })}
+            />
+          </Field>
+          {draft.eventThreadIds.trim() ? (
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="scheduled-task-event-descendants">
+                Include forks, subagents and delegated threads
+              </Label>
+              <Switch
+                id="scheduled-task-event-descendants"
+                checked={draft.eventIncludeDescendants}
+                onCheckedChange={(eventIncludeDescendants) => update({ eventIncludeDescendants })}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Cooldown" hint="seconds, optional" htmlFor="scheduled-task-event-cooldown">
+          <Input
+            id="scheduled-task-event-cooldown"
+            type="number"
+            nativeInput
+            min={0}
+            max={86_400}
+            placeholder="0"
+            value={draft.eventCooldownSeconds}
+            onChange={(event) => update({ eventCooldownSeconds: event.target.value })}
+          />
+        </Field>
+        <Field
+          label="Coalesce window"
+          hint="seconds, optional"
+          htmlFor="scheduled-task-event-coalesce"
+        >
+          <Input
+            id="scheduled-task-event-coalesce"
+            type="number"
+            nativeInput
+            min={0}
+            max={3600}
+            placeholder="0"
+            value={draft.eventCoalesceSeconds}
+            onChange={(event) => update({ eventCoalesceSeconds: event.target.value })}
+          />
+        </Field>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {statusEvent
+          ? "Cooldown and coalescing apply per status source."
+          : "Cooldown and coalescing apply per thread. Threads this task starts never trigger it."}{" "}
+        The run&apos;s prompt ends with what happened.
+      </p>
+    </div>
+  );
+}
 
 function WebhookFiltersField({
   filters,
@@ -795,6 +954,8 @@ function ScheduledTaskRow({
               <>
                 Next run <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
+            ) : task.schedule.type === "event" || isEventDrivenWake(task.schedule) ? (
+              "Listening"
             ) : (
               "Not scheduled"
             )}
@@ -1364,6 +1525,8 @@ function ScheduledTaskEditorForm({
     task?.schedule.type === "once";
   const offersThreadModes =
     environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
+  const eventTriggersSupported =
+    environment?.serverConfig?.environment.capabilities.eventTriggers === true;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1568,8 +1731,8 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a
-          webhook is called.
+          Run a prompt automatically on an interval, at a fixed time, once at a set date, when a
+          webhook is called, or when something happens in your threads.
         </DialogDescription>
       </DialogHeader>
 
@@ -1817,6 +1980,7 @@ function ScheduledTaskEditorForm({
               <Label>Schedule</Label>
               <ToggleGroup
                 aria-label="Schedule type"
+                className="flex-wrap"
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
@@ -1825,7 +1989,8 @@ function ScheduledTaskEditorForm({
                     mode === "fixed" ||
                     mode === "once" ||
                     mode === "interval" ||
-                    mode === "webhook"
+                    mode === "webhook" ||
+                    mode === "event"
                   )
                     setDraft((current) => {
                       const suggested =
@@ -1860,7 +2025,7 @@ function ScheduledTaskEditorForm({
                 {offersOnce || draft.scheduleMode === "once" ? (
                   <Toggle value="once">Once</Toggle>
                 ) : null}
-                <Toggle value="interval">Every interval</Toggle>
+                <Toggle value="interval">Interval</Toggle>
                 <Toggle
                   value="idle_checkin"
                   disabled={
@@ -1874,8 +2039,11 @@ function ScheduledTaskEditorForm({
                   value="webhook"
                   disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
                 >
-                  On webhook
+                  Webhook
                 </Toggle>
+                {eventTriggersSupported || draft.scheduleMode === "event" ? (
+                  <Toggle value="event">Event</Toggle>
+                ) : null}
               </ToggleGroup>
             </div>
 
@@ -2061,6 +2229,8 @@ function ScheduledTaskEditorForm({
                   </div>
                 ) : null}
               </div>
+            ) : draft.scheduleMode === "event" ? (
+              <EventTriggerFields draft={draft} setDraft={setDraft} />
             ) : draft.scheduleMode === "once" ? (
               <div className="flex items-center gap-2">
                 <Label htmlFor="scheduled-task-run-at">Run on</Label>

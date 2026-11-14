@@ -5,6 +5,7 @@ import {
   type StatusSource,
   type StatusSourceUpsertInput,
   type StatusSourceSnoozeInput,
+  type StatusState,
 } from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as Clock from "effect/Clock";
@@ -29,6 +30,14 @@ import * as ServerConfig from "../config.ts";
 import { verifyWebhookSignature } from "../scheduledTasks/webhookVerification.ts";
 import * as Probe from "./StatusSourceProbe.ts";
 
+export interface StatusSourceTransition {
+  readonly sourceId: string;
+  readonly name: string;
+  readonly from: StatusState;
+  readonly to: StatusState;
+  readonly at: string;
+}
+
 export class StatusSources extends Context.Service<
   StatusSources,
   {
@@ -49,6 +58,8 @@ export class StatusSources extends Context.Service<
       readonly headers: Readonly<Record<string, string>>;
       readonly body: Uint8Array;
     }) => Effect.Effect<boolean, StatusSourcesError>;
+    /** One item per state change after a source's first observation. */
+    readonly transitions: Stream.Stream<StatusSourceTransition>;
   }
 >()("t3/statusSources/StatusSources") {}
 
@@ -95,6 +106,7 @@ const make = Effect.gen(function* () {
   const mutations = yield* Semaphore.make(1);
   const pollPermits = yield* Semaphore.make(4);
   const changes = yield* PubSub.sliding<void>(1);
+  const transitions = yield* PubSub.sliding<StatusSourceTransition>(64);
   const configPath = path.join(server.stateDir, "status-sources.json");
   const loaded = yield* fs.readFileString(configPath).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(persistedSchema))),
@@ -176,6 +188,13 @@ const make = Effect.gen(function* () {
           withoutObservationTimes(latest),
         );
         entries.set(config.id, { ...source, latest, lastTransition: transition });
+        if (transition !== source.lastTransition && transition !== null) {
+          yield* PubSub.publish(transitions, {
+            sourceId: config.id,
+            name: config.name,
+            ...transition,
+          });
+        }
         if (changed) yield* emit;
         return true;
       }),
@@ -458,6 +477,7 @@ const make = Effect.gen(function* () {
     snooze,
     rotateWebhookSecret,
     webhook,
+    transitions: Stream.fromPubSub(transitions),
     subscribe: () =>
       Stream.unwrap(
         Effect.gen(function* () {

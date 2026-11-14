@@ -17,6 +17,7 @@ import {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { StatusState } from "./statusSources.ts";
 
 const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
@@ -46,7 +47,7 @@ const CheckinFields = {
     ]),
   ).annotate({
     description:
-      "One-shot wake on thread completion, own delegated task id/title completion, or ref merged into local main (default main). Checked server-side at everyMs. Git refs are pinned at registration.",
+      "One-shot wake on thread completion, own delegated task id/title completion, or ref merged into local main (default main). Thread and task wakes fire on the event; git is checked at everyMs and its ref pinned at registration.",
   }),
 };
 
@@ -216,12 +217,53 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
     "Run per webhook request. Prompt can use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}}, {{request}}.",
 });
 
+export const ScheduledTaskEventKind = Schema.Literals([
+  "run_ended",
+  "thread_created",
+  "thread_settled",
+  "status_transition",
+]);
+export type ScheduledTaskEventKind = typeof ScheduledTaskEventKind.Type;
+
+export const MAX_EVENT_FILTER_THREADS = 50;
+
+export const ScheduledTaskEventSchedule = Schema.Struct({
+  type: Schema.Literal("event"),
+  event: ScheduledTaskEventKind,
+  projectId: Schema.optional(ProjectId).annotate({ description: "Only threads in this project." }),
+  threadIds: Schema.optional(
+    Schema.Array(ThreadId).check(Schema.isMaxLength(MAX_EVENT_FILTER_THREADS)),
+  ).annotate({ description: "Only these threads." }),
+  includeDescendants: Schema.optional(Schema.Boolean).annotate({
+    description: "Also their forks, subagents and delegated threads.",
+  }),
+  statusSource: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "status_transition source id.",
+  }),
+  toState: Schema.optional(StatusState),
+  cooldownSeconds: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86_400 })),
+  ).annotate({
+    description: "Min seconds between runs per thread or source; later events wait.",
+  }),
+  coalesceSeconds: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3600 })),
+  ).annotate({
+    description: "Wait this long after the first event, then run once with the latest.",
+  }),
+}).annotate({
+  description:
+    "Run on a server event; the prompt gets it appended. The task's own turns and threads never trigger it.",
+});
+export type ScheduledTaskEventSchedule = typeof ScheduledTaskEventSchedule.Type;
+
 /** Accept legacy sub-minute schedules so users can still manage them. */
 export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
   ScheduledTaskWebhookSchedule,
+  ScheduledTaskEventSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -239,6 +281,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
   ScheduledTaskUpsertWebhookSchedule,
+  ScheduledTaskEventSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
@@ -452,6 +495,23 @@ export class ScheduledTaskError extends Schema.TaggedError<ScheduledTaskError>()
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/** Thread and task wakes fire on orchestration events instead of polling at `everyMs`. */
+export function isEventDrivenWake(schedule: ScheduledTaskSchedule): boolean {
+  const wake = schedule.type === "interval" ? schedule.wakeWhen : undefined;
+  return wake !== undefined && wake.type !== "git_landed";
+}
+
+const EVENT_LABELS: Record<ScheduledTaskEventKind, string> = {
+  run_ended: "When a turn ends",
+  thread_created: "When a thread is created",
+  thread_settled: "When a thread settles",
+  status_transition: "When a status source changes",
+};
+
+export function scheduledTaskEventLabel(schedule: ScheduledTaskEventSchedule): string {
+  return EVENT_LABELS[schedule.event];
+}
 
 /** Describe the condition attached to a one-shot scheduled wake. */
 export function scheduledWakeLabel(schedule: ScheduledTaskSchedule): string | null {

@@ -1,4 +1,5 @@
 import * as Stream from "effect/Stream";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as DateTime from "effect/DateTime";
 import {
@@ -46,7 +47,8 @@ const input = {
 };
 const decode = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 const fixture = Effect.gen(function* () {
-  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  // A PubSub, like the real stream: the idle check-in listener and the event reactor both subscribe.
+  const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>({ replay: 64 });
   const tick = yield* Ref.make<Effect.Effect<void>>(Effect.void);
   const sends = yield* Ref.make<ThreadManagementService.ThreadManagementSendInput[]>([]);
   const landed = yield* Ref.make(false);
@@ -64,7 +66,7 @@ const fixture = Effect.gen(function* () {
     Layer.succeed(Scheduler.Scheduler, scheduler),
     Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
-      streamDomainEvents: Stream.fromQueue(events),
+      streamDomainEvents: Stream.fromPubSub(events),
       getThreadShell: () =>
         Effect.succeed({
           projectId: "project:test",
@@ -271,7 +273,7 @@ it.effect("idle check-ins reset on terminal runs and never fire during work", ()
             payload: value,
           };
           yield* store.apply(event);
-          yield* Queue.offer(f.events, event);
+          yield* PubSub.publish(f.events, event);
           yield* Queue.take(updates);
         });
       yield* publish(run);
@@ -305,4 +307,61 @@ it.effect("idle check-ins reset on terminal runs and never fire during work", ()
       ).toBe("succeeded");
     }).pipe(Effect.provide(Layer.mergeAll(f.layer, ProjectionStore.layer)));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect.each([
+  { wakeWhen: { type: "thread_finished", threadId: "thread:child" }, kind: "run" },
+  { wakeWhen: { type: "task_finished", task: "step 3" }, kind: "subagent" },
+] as const)(
+  "a $wakeWhen.type wake fires on its event, not after the interval",
+  ({ wakeWhen, kind }) =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const sql = yield* SqlClient.SqlClient;
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const updates =
+          yield* Queue.unbounded<ReadonlyArray<{ readonly nextRunAt: string | null }>>();
+        yield* service.subscribeList().pipe(
+          Stream.runForEach((list) => Queue.offer(updates, list.tasks)),
+          Effect.forkScoped,
+        );
+        yield* service.upsert(
+          yield* decode({ ...input, schedule: { type: "interval", everyMs: 3_600_000, wakeWhen } }),
+        );
+        // The save checks once; an unmet condition then waits for its event, with no next poll.
+        yield* f.tick;
+        expect(yield* Ref.get(f.sends)).toHaveLength(0);
+        expect((yield* service.list()).tasks[0]?.nextRunAt).toBeNull();
+        const occurredAt = yield* DateTime.now;
+        if (kind === "run") {
+          yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('child-run', 'thread:child', 1, 'codex', 'completed', '1970-01-01T00:00:00Z', '{}')`;
+          yield* PubSub.publish(f.events, {
+            id: EventId.make("child-run:completed"),
+            type: "run.updated",
+            threadId: ThreadId.make("thread:child"),
+            occurredAt,
+            payload: { threadId: ThreadId.make("thread:child"), status: "completed" },
+          } as unknown as OrchestrationV2DomainEvent);
+        } else {
+          yield* sql`INSERT INTO orchestration_v2_projection_subagents (subagent_id, thread_id, parent_node_id, provider, origin, status, updated_at, payload_json)
+        VALUES ('task-3', 'thread:main', 'root', 'codex', 'app_owned', 'completed', '1970-01-01T00:00:00Z', '{"title":"step 3"}')`;
+          yield* PubSub.publish(f.events, {
+            id: EventId.make("task-3:completed"),
+            type: "subagent.updated",
+            threadId: ThreadId.make(input.threadId),
+            occurredAt,
+            payload: { threadId: ThreadId.make(input.threadId), status: "completed" },
+          } as unknown as OrchestrationV2DomainEvent);
+        }
+        let tasks = yield* Queue.take(updates);
+        while (tasks[0]?.nextRunAt == null) tasks = yield* Queue.take(updates);
+        // No clock advance: the event made the wake due now.
+        yield* f.tick;
+        const sent = yield* Ref.get(f.sends);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]?.origin).toMatchObject({ kind: "wake" });
+      }).pipe(Effect.provide(f.layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

@@ -1,4 +1,4 @@
-import { scheduledWakeLabel } from "@t3tools/contracts";
+import { scheduledTaskEventLabel, scheduledWakeLabel } from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -122,6 +122,7 @@ function describeSchedule(task: ScheduledTask, timeZone?: string): string {
   const wake = scheduledWakeLabel(task.schedule);
   if (wake !== null) return wake;
   if (task.schedule.type === "webhook") return "On webhook";
+  if (task.schedule.type === "event") return scheduledTaskEventLabel(task.schedule);
   if (task.schedule.type === "once") {
     const runAt = new Date(task.schedule.runAt);
     return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
@@ -1034,6 +1035,9 @@ function TaskForm({
                 ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
                   ? [{ value: "webhook" as const, label: "On webhook" }]
                   : []),
+                ...(draft.schedule.event !== undefined
+                  ? [{ value: "event" as const, label: "On event" }]
+                  : []),
               ]}
               selected={draft.schedule.mode}
               onSelect={(mode) => {
@@ -1188,6 +1192,12 @@ function TaskForm({
                 </View>
               );
             })
+          ) : draft.schedule.mode === "event" ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              {draft.schedule.event === undefined
+                ? "Event trigger"
+                : `${scheduledTaskEventLabel(draft.schedule.event)}. Edit event filters on the web.`}
+            </Text>
           ) : draft.schedule.mode === "webhook" ? (
             <>
               <WebhookScheduleDetails

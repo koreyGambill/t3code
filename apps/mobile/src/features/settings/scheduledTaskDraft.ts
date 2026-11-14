@@ -5,6 +5,7 @@ import type {
   ProjectId,
   RuntimeMode,
   ScheduledTask,
+  ScheduledTaskEventSchedule,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
@@ -53,7 +54,7 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "once" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "once" | "interval" | "webhook" | "event";
   readonly timeOfDay: string;
   /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
   readonly runAt: string;
@@ -71,6 +72,8 @@ export type ScheduleDraft = {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  /** Event triggers are edited on the web and through agents; mobile keeps them as they are. */
+  readonly event?: ScheduledTaskEventSchedule;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -125,6 +128,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         filters: webhookFilterDrafts(task.schedule.filters),
         savedFilters: webhookFilterDrafts(task.schedule.filters),
       };
+    case "event":
+      return { ...DEFAULT_SCHEDULE, mode: "event", event: task.schedule };
   }
 }
 
@@ -133,6 +138,7 @@ export function parseIntervalMinutes(value: string): number {
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  if (draft.mode === "event") return draft.event ?? null;
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
