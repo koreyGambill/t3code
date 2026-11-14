@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   BoxesIcon,
@@ -18,14 +18,12 @@ import {
 import { useEffect, type ReactNode } from "react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
-import { selectThreadTileLayout, useRightPanelStore } from "../rightPanelStore";
 import { registerCommands } from "../shortcuts/dispatcher";
 import { useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentScope } from "../state/session";
 import {
-  selectContextThread,
   summarizeThreadTools,
   THREAD_TOOL_ORDER,
   threadToolsAttention,
@@ -37,8 +35,11 @@ import {
   type StripItem,
   type ThreadContextSection,
 } from "../threadContextSidebarStore";
-import { resolveThreadRouteRef } from "../threadRoutes";
-import { ThreadDetailsDestination } from "./chat/ThreadDetailsDestination";
+import {
+  useSidebarHeaderOnBackdrop,
+  useThreadToolsSlots,
+  useThreadToolsTarget,
+} from "./threadToolsHost";
 import { MonitoringStatusButton, useMonitoringSignal } from "./monitoring/MonitoringStatusButton";
 import { FLUSH_THREAD_TOOLS, sidebarWorkspaceGet, ThreadToolSection } from "./ThreadToolViews";
 import { Button } from "./ui/button";
@@ -101,20 +102,6 @@ const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; abo
   },
 };
 
-function useThreadToolsTarget(): ScopedThreadRef | null {
-  const owner = useRouterState({
-    select: (state) => resolveThreadRouteRef(state.matches.at(-1)?.params ?? {}),
-  });
-  const surfaces = useRightPanelStore((state) =>
-    owner ? state.byThreadKey[`${owner.environmentId}:${owner.threadId}`]?.surfaces : undefined,
-  );
-  const layout = useRightPanelStore((state) =>
-    owner ? selectThreadTileLayout(state.byThreadKey, owner) : null,
-  );
-  const pinned = useThreadContextSidebarStore((state) => state.pinned);
-  return selectContextThread(owner, layout, surfaces ?? [], pinned);
-}
-
 function useThreadToolSignals(threadRef: ScopedThreadRef | null) {
   const canRead = useEnvironmentScope(threadRef?.environmentId ?? null, AuthOrchestrationReadScope);
   const workspace = useEnvironmentQuery(
@@ -126,27 +113,6 @@ function useThreadToolSignals(threadRef: ScopedThreadRef | null) {
       : null,
   );
   return summarizeThreadTools(workspace.data ?? null);
-}
-
-const setDetailsElement = (detailsElement: HTMLDivElement | null) => {
-  useThreadContextSidebarStore.setState({ detailsElement });
-};
-const setActionsElement = (actionsElement: HTMLDivElement | null) => {
-  useThreadContextSidebarStore.setState({ actionsElement });
-};
-
-/** Lets the conversation move its details card into the sidebar's Details view. */
-export function ThreadToolsDetailsHost({ children }: { children: ReactNode }) {
-  const threadRef = useThreadToolsTarget();
-  const view = useThreadContextSidebarStore((state) => state.view);
-  const element = useThreadContextSidebarStore((state) => state.detailsElement);
-  return (
-    <ThreadDetailsDestination
-      value={view === "details" && threadRef && element ? { threadRef, element } : null}
-    >
-      {children}
-    </ThreadDetailsDestination>
-  );
 }
 
 /** The activity strip beside the left sidebar's content, swapping the thread list for a tool view. */
@@ -284,13 +250,9 @@ export function ThreadToolsBrand({ onBackdrop }: { onBackdrop: boolean }) {
 }
 
 /** The header's right end: navigation on the thread list, the open tool's own buttons otherwise. */
-export function ThreadToolsHeaderEnd({
-  onBackdrop,
-  children,
-}: {
-  onBackdrop: boolean;
-  children: ReactNode;
-}) {
+export function ThreadToolsHeaderEnd({ children }: { children: ReactNode }) {
+  const onBackdrop = useSidebarHeaderOnBackdrop();
+  const { setActions } = useThreadToolsSlots();
   const view = useThreadContextSidebarStore((state) => state.view);
   const pinned = useThreadContextSidebarStore((state) => state.pinned);
   const threadRef = useThreadToolsTarget();
@@ -298,7 +260,7 @@ export function ThreadToolsHeaderEnd({
   if (view === "threads") return children;
   return (
     <>
-      <div ref={setActionsElement} className="flex items-center" />
+      <div ref={setActions} className="flex items-center" />
       {threadRef ? (
         <Tooltip>
           <TooltipTrigger
@@ -505,7 +467,7 @@ function ThreadToolView({
   view: ThreadContextSection;
   threadRef: ScopedThreadRef | null;
 }) {
-  const actions = useThreadContextSidebarStore((state) => state.actionsElement);
+  const { actions, setDetails } = useThreadToolsSlots();
   const { title } = tools[view];
   return (
     <section
@@ -519,7 +481,7 @@ function ThreadToolView({
         <ThreadToolSection
           section={view}
           threadRef={threadRef}
-          detailsRef={setDetailsElement}
+          detailsRef={setDetails}
           actions={actions}
         />
       ) : (

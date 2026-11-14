@@ -43,7 +43,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadArtifactList, threadListRead, threadListUpdate } from "../../state/threadWorkspace";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useRightPanelStore } from "../../rightPanelStore";
 import { useThreadContextSidebarStore } from "../../threadContextSidebarStore";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -161,6 +160,7 @@ export function ThreadListView({
   const renderBranch = (node: TodoNode, depth: number) => (
     <div key={node.item.id} role="listitem">
       <TodoRow
+        crossThread={Boolean(supplied)}
         node={node}
         collapsed={collapsed.has(node.item.id)}
         onToggle={() =>
@@ -386,6 +386,7 @@ export function ThreadListView({
 }
 
 function TodoRow({
+  crossThread,
   node,
   collapsed,
   onToggle,
@@ -401,6 +402,7 @@ function TodoRow({
   artifactTitles,
   threadRef,
 }: {
+  crossThread: boolean;
   node: TodoNode;
   collapsed: boolean;
   onToggle: () => void;
@@ -505,6 +507,7 @@ function TodoRow({
           />
           {item.links.map((link) => (
             <TodoLinkChip
+              crossThread={crossThread}
               key={`${link.type}:${link.target}`}
               link={link}
               item={item}
@@ -649,12 +652,14 @@ function OwnerIcon({ owner, className }: { owner: Owner; className: string }) {
 }
 
 function TodoLinkChip({
+  crossThread,
   link,
   item,
   artifactCounts,
   artifactTitles,
   threadRef,
 }: {
+  crossThread: boolean;
   link: ListItem["links"][number];
   item: ListItem;
   artifactCounts: Map<string, number>;
@@ -692,7 +697,13 @@ function TodoLinkChip({
           <button
             type="button"
             aria-label={`Open artifact: ${description}`}
-            onClick={() => useRightPanelStore.getState().openReviews(threadRef, link.target)}
+            onClick={() =>
+              useThreadContextSidebarStore.getState().show("artifacts", {
+                artifactId: link.target,
+                // The QA view lists other threads, so their artifacts pin the sidebar to them.
+                ...(crossThread ? { thread: threadRef } : {}),
+              })
+            }
           />
         }
       >
@@ -749,7 +760,7 @@ export function ThreadListSummary({ threadRef }: { threadRef: ScopedThreadRef })
   return (
     <button
       className="flex w-full min-w-0 gap-2 px-3 py-2 text-left text-xs hover:bg-muted"
-      onClick={() => useThreadContextSidebarStore.getState().openTodos(threadRef)}
+      onClick={() => useThreadContextSidebarStore.getState().show("todos", { thread: threadRef })}
     >
       <span className="shrink-0">
         Todos · {entry.items.filter((item) => item.state === "done").length}/{entry.items.length}

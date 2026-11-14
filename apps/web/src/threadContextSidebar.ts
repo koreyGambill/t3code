@@ -27,26 +27,34 @@ interface SidebarViewState {
   readonly lastTool: ThreadContextSection;
 }
 
+interface ToggleState extends SidebarViewState {
+  readonly hidden: ReadonlyArray<string>;
+}
+
 /** Selecting the active tool view returns to the thread list. */
 export function nextSidebarView(state: SidebarViewState, view: SidebarView): SidebarViewState {
   if (view === "threads") return { view, lastTool: state.lastTool };
   return state.view === view ? { view: "threads", lastTool: view } : { view, lastTool: view };
 }
 
-/** A hidden sidebar opens on a tool view; a visible one flips between the threads and the last tool. */
+/**
+ * A hidden sidebar opens on a tool view; a visible one flips between the threads and the last
+ * tool. With every tool hidden there is nothing to flip to, so the thread list shows.
+ */
 export function toggleThreadToolsView(
-  state: SidebarViewState,
+  state: ToggleState,
   sidebarVisible: boolean,
 ): SidebarViewState & { revealPending: boolean } {
+  const tool = state.hidden.includes(state.lastTool) ? null : state.lastTool;
   if (!sidebarVisible) {
     return {
-      view: state.view === "threads" ? state.lastTool : state.view,
+      view: state.view === "threads" ? (tool ?? "threads") : state.view,
       lastTool: state.lastTool,
       revealPending: true,
     };
   }
   return {
-    view: state.view === "threads" ? state.lastTool : "threads",
+    view: state.view === "threads" ? (tool ?? "threads") : "threads",
     lastTool: state.lastTool,
     revealPending: false,
   };
@@ -87,8 +95,8 @@ export const THREAD_TOOL_ORDER: ReadonlyArray<ThreadContextSection> = [
   "inspect",
 ];
 
-export function firstVisibleThreadTool(hidden: ReadonlyArray<string>): ThreadContextSection {
-  return THREAD_TOOL_ORDER.find((tool) => !hidden.includes(tool)) ?? "todos";
+export function firstVisibleThreadTool(hidden: ReadonlyArray<string>): ThreadContextSection | null {
+  return THREAD_TOOL_ORDER.find((tool) => !hidden.includes(tool)) ?? null;
 }
 
 /** Maps a view saved by the retired right panel to the view that replaced it. */

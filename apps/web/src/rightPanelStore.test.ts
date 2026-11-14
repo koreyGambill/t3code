@@ -69,17 +69,6 @@ describe("rightPanelStore", () => {
         (group) => group.id === "extra",
       )?.tabs,
     ).toEqual([second]);
-    store.add(refA, "inspect");
-    const inspectA = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      refA,
-    ).activeSurfaceId!;
-    store.add(refA, "inspect");
-    const inspectB = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      refA,
-    ).activeSurfaceId!;
-    store.setInspectSection(refA, "tokens", inspectA);
     store.add(refA, "reviews");
     const workspaceA = selectThreadRightPanelState(
       useRightPanelStore.getState().byThreadKey,
@@ -90,7 +79,6 @@ describe("rightPanelStore", () => {
       useRightPanelStore.getState().byThreadKey,
       refA,
     ).activeSurfaceId!;
-    store.setWorkspaceSection(refA, "list", workspaceA);
     for (const kind of ["files", "diff", "device", "pull-requests"] as const) {
       store.add(refA, kind);
       store.add(refA, kind);
@@ -129,14 +117,9 @@ describe("rightPanelStore", () => {
       useRightPanelStore.getState().byThreadKey,
       refA,
     ).surfaces;
-    expect(surfaces.find((surface) => surface.id === inspectA)).toMatchObject({
-      inspectSection: "tokens",
-    });
-    expect(surfaces.find((surface) => surface.id === inspectB)).toMatchObject({
-      inspectSection: "loads",
-    });
-    expect(surfaces.find((surface) => surface.id === workspaceA)).toMatchObject({
-      workspaceSection: "list",
+    expect(surfaces.find((surface) => surface.id === workspaceA)).toEqual({
+      id: workspaceA,
+      kind: "reviews",
     });
     expect(workspaceB).toBe(workspaceA);
     expect(surfaces.filter((surface) => surface.kind === "reviews")).toHaveLength(1);
@@ -169,20 +152,19 @@ describe("rightPanelStore", () => {
   it("persists tab groups per thread and follows external activation without stealing unchanged focus", async () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");
-    store.open(refA, "inspect");
+    store.open(refA, "notes");
     store.open(refB, "files");
     store.applyTileAction(refA, {
       type: "move",
-      tabId: "inspect",
+      tabId: "notes",
       targetGroupId: "conversation-group",
     });
     store.applyTileAction(refA, { type: "focus", groupId: "panels-group" });
-    store.setInspectSection(refA, "tokens");
     expect(
       selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, refA).focusedGroupId,
     ).toBe("panels-group");
     store.activateSurface(refA, "files");
-    store.activateSurface(refA, "inspect");
+    store.activateSurface(refA, "notes");
     expect(
       selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, refA).focusedGroupId,
     ).toBe("conversation-group");
@@ -191,7 +173,7 @@ describe("rightPanelStore", () => {
       getTileGroups(selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, refA)).map(
         (group) => group.tabs,
       ),
-    ).toEqual([["conversation", "inspect"], ["files"]]);
+    ).toEqual([["conversation", "notes"], ["files"]]);
     expect(
       getTileGroups(selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, refB)).map(
         (group) => group.tabs,
@@ -207,12 +189,12 @@ describe("rightPanelStore", () => {
 
   it("closing the active surface selects a neighbour from the same tile", () => {
     const store = useRightPanelStore.getState();
-    for (const kind of ["files", "inspect", "notes"] as const) store.open(refA, kind);
+    for (const kind of ["files", "diff", "notes"] as const) store.open(refA, kind);
     store.applyTileAction(refA, { type: "move", tabId: "files", targetGroupId: "panels-group" });
     store.applyTileAction(refA, { type: "move", tabId: "notes", targetGroupId: "panels-group" });
     store.applyTileAction(refA, {
       type: "move",
-      tabId: "inspect",
+      tabId: "diff",
       targetGroupId: "conversation-group",
     });
     store.activateSurface(refA, "files");
@@ -263,50 +245,33 @@ describe("rightPanelStore", () => {
     ).toBe("file:existing.ts");
   });
 
-  it("keeps Inspect and Notes separate from Workspace and restores their state", async () => {
+  it("drops saved Artifacts and Inspect tabs, which moved to the sidebar, and keeps QA and Notes", async () => {
+    const { storage, name } = useRightPanelStore.persist.getOptions();
     const store = useRightPanelStore.getState();
+    store.open(refA, "notes");
     store.open(refA, "reviews");
-    store.setWorkspaceSection(refA, "marks");
-    store.open(refA, "inspect");
-    store.setInspectSection(refA, "tokens");
-    await reloadRightPanelStore();
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      id: "inspect",
-      kind: "inspect",
-      inspectSection: "tokens",
-    });
-    store.closeSurface(refA, "inspect");
-    const closed = useClosedViewStore.getState().entries[0]!;
-    await reopenClosedView(closed, {
-      workspaceAvailable: true,
-      openPreview: async () => {
-        throw new Error("Unexpected browser open");
-      },
-    });
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      id: "inspect",
-      kind: "inspect",
-      inspectSection: "tokens",
-    });
-    store.open(refA, "notes");
-    store.open(refA, "notes");
-    await reloadRightPanelStore();
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      id: "notes",
-      kind: "notes",
-    });
+    const persisted = (await storage!.getItem(name!)) as unknown as {
+      state: { byThreadKey: Record<string, { surfaces: unknown[] }> };
+    };
+    const thread = Object.values(persisted.state.byThreadKey)[0]!;
+    thread.surfaces = [
+      { id: "notes", kind: "notes" },
+      { id: "reviews", kind: "reviews", reviewId: null, workspaceSection: "qa" },
+      { id: "reviews:old", kind: "reviews", reviewId: "artifact-1", workspaceSection: "artifacts" },
+      { id: "inspect", kind: "inspect", inspectSection: "tokens" },
+    ];
+    useRightPanelStore.setState(useRightPanelStore.getInitialState());
+    await storage!.setItem(name!, persisted as never);
+    await useRightPanelStore.persist.rehydrate();
     expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.filter(
-        (surface) => surface.kind === "notes",
-      ),
-    ).toHaveLength(1);
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "notes", kind: "notes" },
+      { id: "reviews", kind: "reviews" },
+    ]);
     store.closeSurface(refA, "notes");
     await useClosedViewStore.persist.rehydrate();
     const closedNote = useClosedViewStore.getState().entries[0]!;
-    expect(closedNote).toMatchObject({
-      kind: "panel-tab",
-      surface: { id: "notes", kind: "notes" },
-    });
     await reopenClosedView(closedNote, {
       workspaceAvailable: false,
       openPreview: async () => {
@@ -317,31 +282,14 @@ describe("rightPanelStore", () => {
       id: "notes",
       kind: "notes",
     });
-    store.open(refA, "reviews");
-    expect(
-      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
-    ).toMatchObject({
-      kind: "reviews",
-      workspaceSection: "marks",
-    });
   });
 
-  it("offers and reopens reviews without replacing existing panels or their maximize state", async () => {
+  it("reopens the QA view without replacing existing panels or their maximize state", async () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "src/app.ts");
     store.openTerminal(refA, "terminal-a");
     store.setMaximized(refA, true);
-    store.offerReviews(refA, "review-a");
-    let panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
-    expect(panel.activeSurfaceId).toBe("terminal:terminal-a");
-    expect(panel.maximized).toBe(true);
-    expect(panel.surfaces.map((surface) => surface.id)).toEqual([
-      "file:src/app.ts",
-      "terminal:terminal-a",
-      "reviews",
-    ]);
-    store.openReviews(refA, "review-b");
-    store.setWorkspaceSection(refA, "artifacts");
+    store.open(refA, "reviews");
     store.closeSurface(refA, "reviews");
     const closed = useClosedViewStore.getState().entries[0]!;
     await reopenClosedView(closed, {
@@ -350,30 +298,18 @@ describe("rightPanelStore", () => {
         throw new Error("Unexpected browser open");
       },
     });
-    panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
     expect(panel.activeSurfaceId).toBe("reviews");
     expect(panel.maximized).toBe(true);
-    expect(panel.surfaces.at(-1)).toEqual({
-      id: "reviews",
-      kind: "reviews",
-      reviewId: "review-b",
-      workspaceSection: "artifacts",
-    });
+    expect(panel.surfaces.map((surface) => surface.id)).toEqual([
+      "file:src/app.ts",
+      "terminal:terminal-a",
+      "reviews",
+    ]);
     await reloadRightPanelStore();
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
       panel,
     );
-    store.open(refA, "reviews");
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
-      panel.surfaces.at(-1),
-    );
-    store.openReviews(refA, "review-linked");
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      id: "reviews",
-      kind: "reviews",
-      reviewId: "review-linked",
-      workspaceSection: "artifacts",
-    });
   });
 
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {

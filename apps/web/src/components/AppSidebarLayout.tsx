@@ -70,10 +70,11 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import {
   ThreadToolsAttentionDot,
-  ThreadToolsDetailsHost,
   ThreadToolsFrame,
   useThreadToolsAttention,
 } from "./ThreadContextSidebar";
+import { ThreadToolsHost } from "./threadToolsHost";
+import { SidebarFolderDrop } from "./sidebar/SidebarFolderDrop";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
@@ -476,47 +477,51 @@ export function AppSidebarLayout({
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
-      <SidebarProvider
-        className="h-dvh! min-h-0!"
-        data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
-        storageKey="chat_thread_sidebar_open"
-        style={sidebarProviderStyle}
-      >
-        {showSidebar ? (
-          <>
-            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-            <Sidebar
-              side="left"
-              collapsible="offcanvas"
-              data-app-sidebar=""
-              {...sidebarArea}
-              role="navigation"
-              aria-label="Threads"
-              resizable={{
-                maxWidth: sidebarMaximumWidth,
-                minWidth: sidebarMinimumWidth,
-                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-                  nextWidth <= currentWidth ||
-                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-                onResize: setSidebarWidth,
-              }}
-              style={windowControlsInsetStyle}
-            >
-              <SidebarChromeHeader isElectron={isElectron} />
-              <ThreadToolsFrame>
-                <ThreadSidebar routeReveal={sidebarRouteReveal} />
-              </ThreadToolsFrame>
-              <SidebarChromeFooter />
-              <SidebarRail onDoubleClick={resetSidebarWidth} />
-            </Sidebar>
-          </>
-        ) : null}
-        <ThreadToolsDetailsHost>{children}</ThreadToolsDetailsHost>
-        <BackgroundThreadAnnouncer />
-        <SidebarControl showSidebar={showSidebar} />
-        {isElectron ? <HistorySwipeNavigation /> : null}
-      </SidebarProvider>
+      <ThreadToolsHost>
+        <SidebarProvider
+          className="h-dvh! min-h-0!"
+          data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+          storageKey="chat_thread_sidebar_open"
+          style={sidebarProviderStyle}
+        >
+          {showSidebar ? (
+            <>
+              <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+              <Sidebar
+                side="left"
+                collapsible="offcanvas"
+                data-app-sidebar=""
+                {...sidebarArea}
+                role="navigation"
+                aria-label="Threads"
+                resizable={{
+                  maxWidth: sidebarMaximumWidth,
+                  minWidth: sidebarMinimumWidth,
+                  shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                    nextWidth <= currentWidth ||
+                    wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                  storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                  onResize: setSidebarWidth,
+                }}
+                style={windowControlsInsetStyle}
+              >
+                <SidebarFolderDrop>
+                  <SidebarChromeHeader isElectron={isElectron} />
+                  <ThreadToolsFrame>
+                    <ThreadSidebar routeReveal={sidebarRouteReveal} />
+                  </ThreadToolsFrame>
+                  <SidebarChromeFooter />
+                </SidebarFolderDrop>
+                <SidebarRail onDoubleClick={resetSidebarWidth} />
+              </Sidebar>
+            </>
+          ) : null}
+          {children}
+          <BackgroundThreadAnnouncer />
+          <SidebarControl showSidebar={showSidebar} />
+          {isElectron ? <HistorySwipeNavigation /> : null}
+        </SidebarProvider>
+      </ThreadToolsHost>
     </PanelAnimationSuppressionProvider>
   );
 }

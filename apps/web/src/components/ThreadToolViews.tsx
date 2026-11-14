@@ -1,14 +1,45 @@
 import { Link } from "@tanstack/react-router";
-import { AuthOrchestrationReadScope, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  ThreadId,
+  type ScopedThreadRef,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
-import { LinkIcon, NetworkIcon, RefreshCwIcon, LightbulbIcon } from "lucide-react";
+import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  CheckIcon,
+  ChevronLeftIcon,
+  CopyIcon,
+  FilesIcon,
+  LightbulbIcon,
+  LinkIcon,
+  MoreHorizontalIcon,
+  NetworkIcon,
+  RefreshCwIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { configuredHostedAppUrl } from "../hostedPairing";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { useNowMinute } from "../hooks/useNowMinute";
+import { copyThreadReference } from "../lib/copyThreadReference";
+import { cn } from "../lib/utils";
+import { formatElapsedDurationLabel } from "../timestampFormat";
+import {
+  markTimestamp,
+  matchesToolFilter,
+  visibleMarks,
+  type LinkSort,
+} from "./threadToolFilters.logic";
 import { createPortal } from "react-dom";
 import { connectionAtomRuntime } from "../connection/runtime";
-import type { ThreadInspectSection } from "../rightPanelStore";
 import {
   useProject,
-  useThreadProjection,
+  useQuietThreadProjection,
   useThreadRelationshipShells,
   useThreadShell,
 } from "../state/entities";
@@ -22,12 +53,27 @@ import {
   type ThreadContextSection,
 } from "../threadContextSidebarStore";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { ThreadInspectPanel } from "./insights/ThreadInspectPanel";
+import { ThreadInspectPanel, type ThreadInspectSection } from "./insights/ThreadInspectPanel";
+import { ToolHeaderButton } from "./threadToolsHost";
 import { ThreadListView } from "./reviews/ThreadListView";
 import { ArtifactsPanel } from "./reviews/ThreadWorkspacePanel";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyMedia } from "./ui/empty";
+import { Input } from "./ui/input";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useThreadEnvironmentUsage } from "./xwing/ThreadEnvironments";
 import { XwingEnvironmentsPanel } from "./xwing/XwingEnvironmentsPanel";
@@ -62,15 +108,7 @@ export function ThreadToolSection({
         />
       );
     case "artifacts":
-      return (
-        <ArtifactsPanel
-          inSidebar
-          threadRef={threadRef}
-          selectedId={null}
-          workspaceMutationId={null}
-          composerDraftTarget={threadRef}
-        />
-      );
+      return <ThreadArtifacts threadRef={threadRef} />;
     case "links":
       return <ThreadLinks threadRef={threadRef} actions={actions} />;
     case "related":
@@ -97,6 +135,126 @@ function SectionHeading({ children }: { children: ReactNode }) {
   return <h3 className="text-xs font-medium text-muted-foreground">{children}</h3>;
 }
 
+const useLinkPreferences = create(
+  persist<{
+    local: boolean;
+    utc: boolean;
+    service: boolean;
+    description: boolean;
+    hour24: boolean;
+    sort: LinkSort;
+    toggle: (key: "local" | "utc" | "service" | "description" | "hour24") => void;
+    setSort: (sort: LinkSort) => void;
+  }>(
+    (set) => ({
+      local: true,
+      utc: false,
+      service: true,
+      description: true,
+      hour24: false,
+      sort: "newest",
+      toggle: (key) => set((state) => ({ [key]: !state[key] })),
+      setSort: (sort) => set({ sort }),
+    }),
+    // The retired Marks panel's key, so its column choices carry over.
+    { name: "t3-workspace-mark-columns" },
+  ),
+);
+
+function useRowCopy() {
+  const [copied, setCopied] = useState<string | null>(null);
+  const { copyToClipboard, isCopied } = useCopyToClipboard<string>({
+    target: "link",
+    onCopy: setCopied,
+    onError: (error) =>
+      toastManager.add(
+        stackedThreadToast({ type: "error", title: "Could not copy", description: error.message }),
+      ),
+  });
+  return {
+    copy: (value: string, key = value) => copyToClipboard(value, key),
+    isCopied: (key: string) => isCopied && copied === key,
+  };
+}
+
+function ToolFilterInput({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <Input
+        size="compact"
+        type="search"
+        aria-label={label}
+        placeholder={`${label}…`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && value) {
+            event.stopPropagation();
+            onChange("");
+          }
+        }}
+      />
+      {children}
+    </div>
+  );
+}
+
+/** A row's copy button and ⋯ menu, shown on hover, focus or while the menu is open. */
+function RowActions({
+  label,
+  copied,
+  onCopy,
+  copyLabel,
+  children,
+}: {
+  label: string;
+  copied: boolean;
+  onCopy: () => void;
+  copyLabel: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex shrink-0 items-center opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:opacity-100">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-tiny"
+              aria-label={`${copyLabel}: ${label}`}
+              onClick={onCopy}
+            />
+          }
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </TooltipTrigger>
+        <TooltipPopup>{copied ? "Copied" : copyLabel}</TooltipPopup>
+      </Tooltip>
+      <Menu>
+        <MenuTrigger
+          render={<Button variant="ghost" size="icon-tiny" aria-label={`Actions for ${label}`} />}
+        >
+          <MoreHorizontalIcon />
+        </MenuTrigger>
+        <MenuPopup align="end">{children}</MenuPopup>
+      </Menu>
+    </div>
+  );
+}
+
+const rowClass =
+  "group/row flex min-w-0 items-start gap-1 rounded-md px-1.5 py-1 hover:bg-muted/40 focus-within:bg-muted/40";
+
 function ThreadLinks({
   threadRef,
   actions,
@@ -122,6 +280,10 @@ function ThreadLinks({
         })
       : null,
   );
+  const preferences = useLinkPreferences();
+  const [filter, setFilter] = useState("");
+  const [service, setService] = useState("all");
+  const { copy, isCopied } = useRowCopy();
   const ticketStates = workspace.data?.items.flatMap((item) => item.linkStates ?? []) ?? [];
   const tickets = [
     ...new Set(
@@ -129,180 +291,528 @@ function ThreadLinks({
         item.links.filter((link) => link.type === "ticket").map((link) => link.target),
       ) ?? [],
     ),
-  ];
-  const pullRequests = shell?.pullRequests ?? [];
-  const rows = marks.data ?? [];
-  const empty = !tickets.length && !pullRequests.length && !rows.length;
+  ]
+    .map((ticket) => ({
+      ticket,
+      state: ticketStates.find((link) => link.type === "ticket" && link.target === ticket),
+    }))
+    .filter(
+      ({ ticket, state }) =>
+        (service === "all" || service === "Ticket") &&
+        matchesToolFilter([ticket, state?.title, state?.label, state?.url], filter),
+    );
+  const pullRequests = (shell?.pullRequests ?? []).filter(
+    (pullRequest) =>
+      (service === "all" || service === "Pull request") &&
+      matchesToolFilter(
+        [
+          `${pullRequest.repository}#${pullRequest.number}`,
+          pullRequest.url,
+          pullRequest.snapshot?.title,
+          pullRequest.snapshot?.state,
+        ],
+        filter,
+      ),
+  );
+  const allMarks = marks.data ?? [];
+  const rows = visibleMarks(allMarks, {
+    filter,
+    service,
+    sort: preferences.sort,
+    hour24: preferences.hour24,
+  });
+  const services = [...new Set(allMarks.map((mark) => mark.service))].toSorted();
+  const nothing = !tickets.length && !pullRequests.length && !rows.length;
+  const filtered = filter.trim() !== "" || service !== "all";
+  const markLine = (mark: (typeof rows)[number]) =>
+    [
+      preferences.local ? markTimestamp(mark.timestamp, false, preferences.hour24) : "",
+      preferences.utc ? `${markTimestamp(mark.timestamp, true, preferences.hour24)} UTC` : "",
+      preferences.service ? mark.service : "",
+      mark.url,
+      preferences.description ? mark.description : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  const copyAll = () =>
+    copy(
+      [
+        ...tickets.map(({ ticket, state }) =>
+          [ticket, state?.label, state?.url].filter(Boolean).join(" "),
+        ),
+        ...pullRequests.map((pullRequest) =>
+          [pullRequest.url, pullRequest.snapshot?.title].filter(Boolean).join(" "),
+        ),
+        ...rows.map(markLine),
+      ].join("\n"),
+      "all",
+    );
   return (
-    <div className="space-y-4 text-xs">
+    <div className="space-y-3 text-xs">
       {actions
         ? createPortal(
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Refresh links"
-                    disabled={!canRead}
-                    onClick={() => {
-                      marks.refresh();
-                      workspace.refresh();
-                    }}
-                  />
-                }
-              >
-                <RefreshCwIcon />
-              </TooltipTrigger>
-              <TooltipPopup>Refresh links</TooltipPopup>
-            </Tooltip>,
+            <ToolHeaderButton
+              label="Refresh links"
+              disabled={!canRead}
+              onClick={() => {
+                marks.refresh();
+                workspace.refresh();
+              }}
+            >
+              <RefreshCwIcon />
+            </ToolHeaderButton>,
             actions,
           )
         : null}
       {!canRead ? (
         <p className="text-muted-foreground">This connection cannot read links.</p>
-      ) : null}
+      ) : (
+        <ToolFilterInput label="Filter links" value={filter} onChange={setFilter}>
+          <Menu>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <Button
+                        variant={service === "all" ? "ghost" : "secondary"}
+                        size="icon-sm"
+                        aria-label="Link options"
+                      />
+                    }
+                  />
+                }
+              >
+                <SlidersHorizontalIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Service, sort, columns and copy</TooltipPopup>
+            </Tooltip>
+            <MenuPopup align="end">
+              <MenuGroup>
+                <MenuGroupLabel>Service</MenuGroupLabel>
+                <MenuRadioGroup value={service} onValueChange={(next) => setService(String(next))}>
+                  {["all", "Ticket", "Pull request", ...services].map((name) => (
+                    <MenuRadioItem key={name} value={name}>
+                      {name === "all" ? "All" : name}
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuGroup>
+              <MenuSeparator />
+              <MenuGroup>
+                <MenuGroupLabel>Sort links</MenuGroupLabel>
+                <MenuRadioGroup
+                  value={preferences.sort}
+                  onValueChange={(next) => {
+                    if (
+                      next === "newest" ||
+                      next === "oldest" ||
+                      next === "service" ||
+                      next === "link"
+                    )
+                      preferences.setSort(next);
+                  }}
+                >
+                  <MenuRadioItem value="newest">Newest first</MenuRadioItem>
+                  <MenuRadioItem value="oldest">Oldest first</MenuRadioItem>
+                  <MenuRadioItem value="service">By service</MenuRadioItem>
+                  <MenuRadioItem value="link">By link</MenuRadioItem>
+                </MenuRadioGroup>
+              </MenuGroup>
+              <MenuSeparator />
+              <MenuGroup>
+                <MenuGroupLabel>Show</MenuGroupLabel>
+                {(
+                  [
+                    ["local", "Local time"],
+                    ["utc", "UTC"],
+                    ["service", "Service"],
+                    ["description", "Description"],
+                    ["hour24", "24-hour clock"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <MenuCheckboxItem
+                    key={key}
+                    checked={preferences[key]}
+                    onCheckedChange={() => preferences.toggle(key)}
+                  >
+                    {label}
+                  </MenuCheckboxItem>
+                ))}
+              </MenuGroup>
+              <MenuSeparator />
+              <MenuItem disabled={nothing} onClick={copyAll}>
+                {isCopied("all") ? "Copied" : filtered ? "Copy shown links" : "Copy all links"}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </ToolFilterInput>
+      )}
       {tickets.length ? (
-        <section className="space-y-2">
+        <section className="space-y-1">
           <SectionHeading>Ticket</SectionHeading>
-          {tickets.map((ticket) => {
-            const state = ticketStates.find(
-              (link) => link.type === "ticket" && link.target === ticket,
-            );
+          {tickets.map(({ ticket, state }) => (
+            <div key={ticket} className={cn(rowClass, "flex-col items-stretch")}>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <a
+                  href={state?.url ?? ticket}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 truncate font-medium text-primary hover:underline"
+                >
+                  {ticket}
+                </a>
+                <Badge
+                  size="sm"
+                  variant={
+                    state?.state === "closed"
+                      ? "success"
+                      : state?.state === "open"
+                        ? "info"
+                        : "outline"
+                  }
+                >
+                  {state?.label ?? "Unavailable"}
+                </Badge>
+                <span className="flex-1" />
+                <RowActions
+                  label={ticket}
+                  copyLabel="Copy ticket ID"
+                  copied={isCopied(`ticket:${ticket}`)}
+                  onCopy={() => copy(ticket, `ticket:${ticket}`)}
+                >
+                  <MenuItem onClick={() => copy(ticket, `ticket:${ticket}`)}>
+                    Copy ticket ID
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!state?.url}
+                    onClick={() => state?.url && copy(state.url, `ticket-url:${ticket}`)}
+                  >
+                    Copy link
+                  </MenuItem>
+                  {state?.title ? (
+                    <MenuItem
+                      onClick={() => copy(`${ticket} ${state.title}`, `ticket-title:${ticket}`)}
+                    >
+                      Copy ID and title
+                    </MenuItem>
+                  ) : null}
+                  <MenuItem
+                    render={<a href={state?.url ?? ticket} target="_blank" rel="noreferrer" />}
+                  >
+                    Open ticket
+                  </MenuItem>
+                </RowActions>
+              </div>
+              <p className="break-words leading-5 text-muted-foreground">
+                {state?.title ?? "Ticket details unavailable"}
+              </p>
+            </div>
+          ))}
+        </section>
+      ) : null}
+      {pullRequests.length ? (
+        <section className="space-y-1">
+          <SectionHeading>Pull requests</SectionHeading>
+          {pullRequests.map((pullRequest) => {
+            const name = `${pullRequest.repository}#${pullRequest.number}`;
             return (
-              <div key={ticket} className="space-y-1 rounded-lg border border-border/60 p-2">
-                <div className="flex items-center justify-between gap-2">
+              <div
+                key={`${pullRequest.host}/${name}`}
+                className={cn(rowClass, "flex-col items-stretch")}
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
                   <a
-                    href={state?.url ?? ticket}
+                    href={pullRequest.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-medium text-primary hover:underline"
+                    className="min-w-0 truncate font-medium text-primary hover:underline"
                   >
-                    {ticket}
+                    {name}
                   </a>
-                  <Badge
-                    size="sm"
-                    variant={
-                      state?.state === "closed"
-                        ? "success"
-                        : state?.state === "open"
-                          ? "info"
-                          : "outline"
-                    }
+                  {pullRequest.snapshot ? (
+                    <Badge
+                      size="sm"
+                      variant={
+                        pullRequest.snapshot.state === "merged"
+                          ? "success"
+                          : pullRequest.snapshot.state === "open"
+                            ? pullRequest.snapshot.isDraft
+                              ? "outline"
+                              : "info"
+                            : "secondary"
+                      }
+                    >
+                      {pullRequest.snapshot.isDraft && pullRequest.snapshot.state === "open"
+                        ? "draft"
+                        : pullRequest.snapshot.state}
+                    </Badge>
+                  ) : null}
+                  <span className="flex-1" />
+                  <RowActions
+                    label={name}
+                    copyLabel="Copy link"
+                    copied={isCopied(pullRequest.url)}
+                    onCopy={() => copy(pullRequest.url)}
                   >
-                    {state?.label ?? "Unavailable"}
-                  </Badge>
+                    <MenuItem onClick={() => copy(pullRequest.url)}>Copy link</MenuItem>
+                    <MenuItem onClick={() => copy(name, `pr-name:${name}`)}>Copy {name}</MenuItem>
+                    {pullRequest.snapshot ? (
+                      <MenuItem
+                        onClick={() => copy(pullRequest.snapshot!.headBranch, `pr-branch:${name}`)}
+                      >
+                        Copy branch
+                      </MenuItem>
+                    ) : null}
+                    <MenuItem
+                      render={<a href={pullRequest.url} target="_blank" rel="noreferrer" />}
+                    >
+                      Open pull request
+                    </MenuItem>
+                  </RowActions>
                 </div>
-                <p className="break-words leading-5 text-muted-foreground">
-                  {state?.title ?? "Ticket details unavailable"}
-                </p>
+                {pullRequest.snapshot ? (
+                  <p className="break-words leading-5 text-muted-foreground">
+                    {pullRequest.snapshot.title}
+                  </p>
+                ) : null}
               </div>
             );
           })}
         </section>
       ) : null}
-      {pullRequests.length ? (
-        <section className="space-y-2">
-          <SectionHeading>Pull requests</SectionHeading>
-          {pullRequests.map((pullRequest) => (
-            <div
-              key={`${pullRequest.host}/${pullRequest.repository}#${pullRequest.number}`}
-              className="space-y-1 rounded-lg border border-border/60 p-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <a
-                  href={pullRequest.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="min-w-0 truncate font-medium text-primary hover:underline"
-                >
-                  {pullRequest.repository}#{pullRequest.number}
-                </a>
-                {pullRequest.snapshot ? (
-                  <Badge
-                    size="sm"
-                    variant={
-                      pullRequest.snapshot.state === "merged"
-                        ? "success"
-                        : pullRequest.snapshot.state === "open"
-                          ? pullRequest.snapshot.isDraft
-                            ? "outline"
-                            : "info"
-                          : "secondary"
-                    }
-                  >
-                    {pullRequest.snapshot.isDraft && pullRequest.snapshot.state === "open"
-                      ? "draft"
-                      : pullRequest.snapshot.state}
-                  </Badge>
-                ) : null}
-              </div>
-              {pullRequest.snapshot ? (
-                <p className="break-words leading-5 text-muted-foreground">
-                  {pullRequest.snapshot.title}
-                </p>
-              ) : null}
-            </div>
-          ))}
-        </section>
-      ) : null}
       {rows.length ? (
-        <section className="space-y-2">
+        <section className="space-y-1">
           <SectionHeading>From the conversation</SectionHeading>
-          {rows.map((mark) => (
-            <div key={mark.url} className="min-w-0 break-words">
-              {"contextSource" in mark && mark.contextSource ? (
-                <Link
-                  to="/$environmentId/$threadId"
-                  params={buildThreadRouteParams({
-                    environmentId: threadRef.environmentId,
-                    threadId: mark.contextSource.threadId,
-                  })}
-                  className="text-primary hover:underline"
+          {rows.map((mark) => {
+            const environmentId =
+              mark.link?.type === "xwing_environment" ? mark.link.xwingEnvironmentId : null;
+            const label = mark.name ?? mark.url.replace(/^xwing-environment:/, "Xwing ");
+            const meta = [
+              preferences.service ? mark.service : "",
+              preferences.local ? markTimestamp(mark.timestamp, false, preferences.hour24) : "",
+              preferences.utc
+                ? `${markTimestamp(mark.timestamp, true, preferences.hour24)} UTC`
+                : "",
+            ].filter(Boolean);
+            return (
+              <div key={mark.url} className={rowClass}>
+                <div className="min-w-0 flex-1">
+                  {mark.contextSource ? (
+                    <Link
+                      to="/$environmentId/$threadId"
+                      params={buildThreadRouteParams({
+                        environmentId: threadRef.environmentId,
+                        threadId: mark.contextSource.threadId,
+                      })}
+                      className="block truncate text-primary hover:underline"
+                    >
+                      {label}
+                    </Link>
+                  ) : environmentId ? (
+                    <button
+                      type="button"
+                      className="block max-w-full truncate text-left text-primary hover:underline"
+                      onClick={() =>
+                        useThreadContextSidebarStore
+                          .getState()
+                          .show("environments", { thread: threadRef, environmentId })
+                      }
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    <a
+                      href={mark.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate text-primary hover:underline"
+                    >
+                      {label}
+                    </a>
+                  )}
+                  {meta.length ? (
+                    <p className="truncate text-3xs text-muted-foreground">{meta.join(" · ")}</p>
+                  ) : null}
+                  {preferences.description && mark.description ? (
+                    <p className="break-words text-muted-foreground">{mark.description}</p>
+                  ) : null}
+                </div>
+                <RowActions
+                  label={label}
+                  copyLabel="Copy link"
+                  copied={isCopied(mark.url)}
+                  onCopy={() => copy(mark.url)}
                 >
-                  {mark.name ?? mark.url}
-                </Link>
-              ) : mark.url.startsWith("xwing-environment:") ? (
-                <Button
-                  variant="link"
-                  size="xs"
-                  onClick={() =>
-                    useThreadContextSidebarStore
-                      .getState()
-                      .openEnvironments(threadRef, mark.url.slice("xwing-environment:".length))
-                  }
-                >
-                  {mark.url}
-                </Button>
-              ) : (
-                <a
-                  href={mark.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  {"name" in mark ? (mark.name ?? mark.url) : mark.url}
-                </a>
-              )}
-              {mark.description ? (
-                <p className="text-muted-foreground">{mark.description}</p>
-              ) : null}
-            </div>
-          ))}
+                  <MenuItem onClick={() => copy(mark.url)}>Copy link</MenuItem>
+                  <MenuItem onClick={() => copy(markLine(mark), `line:${mark.url}`)}>
+                    Copy with details
+                  </MenuItem>
+                  {mark.description ? (
+                    <MenuItem onClick={() => copy(mark.description, `description:${mark.url}`)}>
+                      Copy description
+                    </MenuItem>
+                  ) : null}
+                  {environmentId ? (
+                    <MenuItem
+                      onClick={() =>
+                        useThreadContextSidebarStore
+                          .getState()
+                          .show("environments", { thread: threadRef, environmentId })
+                      }
+                    >
+                      Open in Environments
+                    </MenuItem>
+                  ) : mark.contextSource ? null : (
+                    <MenuItem render={<a href={mark.url} target="_blank" rel="noreferrer" />}>
+                      Open link
+                    </MenuItem>
+                  )}
+                </RowActions>
+              </div>
+            );
+          })}
         </section>
       ) : null}
       {marks.error ? <p role="alert">Could not load links.</p> : null}
-      {empty && canRead ? (
-        <Empty size="compact">
-          <EmptyMedia variant="icon">
-            <LinkIcon />
-          </EmptyMedia>
-          <EmptyDescription>
-            {marks.isPending
-              ? "Loading links…"
-              : "The ticket, pull requests and links from the conversation appear here."}
-          </EmptyDescription>
-        </Empty>
+      {nothing && canRead ? (
+        filtered ? (
+          <p className="px-1.5 text-muted-foreground">No links match.</p>
+        ) : (
+          <Empty size="compact">
+            <EmptyMedia variant="icon">
+              <LinkIcon />
+            </EmptyMedia>
+            <EmptyDescription>
+              {marks.isPending
+                ? "Loading links…"
+                : "The ticket, pull requests and links from the conversation appear here."}
+            </EmptyDescription>
+          </Empty>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function ThreadArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
+  const workspace = useEnvironmentQuery(
+    canRead
+      ? sidebarWorkspaceGet({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  const open = useThreadContextSidebarStore((state) => state.artifactId);
+  const setOpen = (id: string | null) =>
+    useThreadContextSidebarStore.getState().selectArtifact(id);
+  const [filter, setFilter] = useState("");
+  const { copy, isCopied } = useRowCopy();
+  const nowMinute = useNowMinute();
+  if (open !== null)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <Button variant="ghost" size="xs" className="self-start" onClick={() => setOpen(null)}>
+          <ChevronLeftIcon />
+          All artifacts
+        </Button>
+        <ArtifactsPanel
+          key={open}
+          inSidebar
+          threadRef={threadRef}
+          selectedId={open}
+          workspaceMutationId={null}
+          composerDraftTarget={threadRef}
+        />
+      </div>
+    );
+  const artifacts = (workspace.data?.artifacts ?? [])
+    .map((artifact) => {
+      const latest = artifact.versions.at(-1);
+      return {
+        artifact,
+        latest,
+        unanswered:
+          latest?.questions.filter((question) => !latest.answers[question.id]?.submittedAt)
+            .length ?? 0,
+      };
+    })
+    .filter(({ artifact, latest }) =>
+      matchesToolFilter([artifact.title, artifact.id, latest?.content], filter),
+    )
+    .toSorted(
+      (left, right) =>
+        right.unanswered - left.unanswered ||
+        (right.latest?.createdAt ?? "").localeCompare(left.latest?.createdAt ?? ""),
+    );
+  const total = workspace.data?.artifacts.length ?? 0;
+  if (!canRead)
+    return <p className="text-xs text-muted-foreground">This connection cannot read artifacts.</p>;
+  if (!workspace.data)
+    return (
+      <p className="text-xs text-muted-foreground">{workspace.error ?? "Loading artifacts…"}</p>
+    );
+  return (
+    <div className="space-y-2 text-xs">
+      {total ? (
+        <ToolFilterInput label="Filter artifacts" value={filter} onChange={setFilter} />
+      ) : null}
+      {artifacts.map(({ artifact, latest, unanswered }) => (
+        <div key={artifact.id} className={rowClass}>
+          <button
+            type="button"
+            className="min-w-0 flex-1 text-left"
+            onClick={() => setOpen(artifact.id)}
+          >
+            <span className="block break-words font-medium leading-5">{artifact.title}</span>
+            <span className="block truncate text-3xs text-muted-foreground">
+              v{latest?.version ?? 1} · {artifact.format === "html" ? "HTML" : "Markdown"}
+              {latest
+                ? ` · ${formatElapsedDurationLabel(latest.createdAt, Date.parse(`${nowMinute}:00.000Z`))}`
+                : ""}
+            </span>
+          </button>
+          {unanswered ? (
+            <Badge size="sm" variant="warning" className="mt-0.5">
+              {unanswered} unanswered
+            </Badge>
+          ) : null}
+          <RowActions
+            label={artifact.title}
+            copyLabel="Copy content"
+            copied={isCopied(`content:${artifact.id}`)}
+            onCopy={() => latest && copy(latest.content, `content:${artifact.id}`)}
+          >
+            <MenuItem onClick={() => setOpen(artifact.id)}>Open</MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              disabled={!latest}
+              onClick={() => latest && copy(latest.content, `content:${artifact.id}`)}
+            >
+              Copy content
+            </MenuItem>
+            <MenuItem onClick={() => copy(artifact.title, `title:${artifact.id}`)}>
+              Copy title
+            </MenuItem>
+            <MenuItem onClick={() => copy(artifact.id, `id:${artifact.id}`)}>Copy ID</MenuItem>
+          </RowActions>
+        </div>
+      ))}
+      {!artifacts.length ? (
+        total ? (
+          <p className="px-1.5 text-muted-foreground">No artifacts match.</p>
+        ) : (
+          <Empty size="compact">
+            <EmptyMedia variant="icon">
+              <FilesIcon />
+            </EmptyMedia>
+            <EmptyDescription>
+              Documents agents publish for this thread appear here.
+            </EmptyDescription>
+          </Empty>
+        )
       ) : null}
     </div>
   );
@@ -311,7 +821,9 @@ function ThreadLinks({
 function ThreadRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
   const shell = useThreadShell(threadRef);
   const shells = useThreadRelationshipShells(threadRef);
-  const projection = useThreadProjection(threadRef)?.projection;
+  const projection = useQuietThreadProjection(threadRef)?.projection;
+  const [filter, setFilter] = useState("");
+  const { copy } = useRowCopy();
   const messagedBy = new Set(
     projection?.messages.flatMap((message) => [
       ...(message.origin &&
@@ -333,23 +845,55 @@ function ThreadRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
     messagedBy,
     transfers: projection?.contextTransfers ?? [],
   });
+  const shown = talkedWith.filter(({ entry, relation }) =>
+    matchesToolFilter([entry.title, relation, entry.branch], filter),
+  );
+  const refOf = (threadId: string) =>
+    scopeThreadRef(threadRef.environmentId, ThreadId.make(threadId));
   return (
     <div className="space-y-4 text-xs">
-      <section className="space-y-2">
+      {talkedWith.length ? (
+        <ToolFilterInput label="Filter related threads" value={filter} onChange={setFilter} />
+      ) : null}
+      <section className="space-y-1">
         <SectionHeading>Talked with</SectionHeading>
-        {talkedWith.map(({ entry, relation }) => (
-          <Link
-            key={entry.id}
-            to="/$environmentId/$threadId"
-            params={buildThreadRouteParams({
-              environmentId: threadRef.environmentId,
-              threadId: entry.id,
-            })}
-            className="block"
-          >
-            <span className="block text-3xs text-muted-foreground">{relation}</span>
-            <span className="text-primary hover:underline">{entry.title}</span>
-          </Link>
+        {shown.map(({ entry, relation }) => (
+          <div key={entry.id} className={rowClass}>
+            <Link
+              to="/$environmentId/$threadId"
+              params={buildThreadRouteParams(refOf(entry.id))}
+              className="min-w-0 flex-1"
+            >
+              <span className="block text-3xs text-muted-foreground">{relation}</span>
+              <span className="block break-words text-primary hover:underline">{entry.title}</span>
+            </Link>
+            <RowActions
+              label={entry.title}
+              copyLabel="Copy thread link"
+              copied={false}
+              onCopy={() =>
+                void copyThreadReference(
+                  threadChipCopyTarget(refOf(entry.id), entry.title, configuredHostedAppUrl()),
+                )
+              }
+            >
+              <MenuItem
+                onClick={() =>
+                  void copyThreadReference(
+                    threadChipCopyTarget(refOf(entry.id), entry.title, configuredHostedAppUrl()),
+                  )
+                }
+              >
+                Copy thread link
+              </MenuItem>
+              <MenuItem onClick={() => copy(entry.id, `id:${entry.id}`)}>Copy thread ID</MenuItem>
+              {entry.branch ? (
+                <MenuItem onClick={() => copy(entry.branch!, `branch:${entry.id}`)}>
+                  Copy branch
+                </MenuItem>
+              ) : null}
+            </RowActions>
+          </div>
         ))}
         {!talkedWith.length ? (
           <Empty size="compact">
@@ -360,6 +904,8 @@ function ThreadRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
               Threads this one delegates to, forks or messages appear here.
             </EmptyDescription>
           </Empty>
+        ) : !shown.length ? (
+          <p className="px-1.5 text-muted-foreground">No threads match.</p>
         ) : null}
       </section>
       <section className="space-y-2">

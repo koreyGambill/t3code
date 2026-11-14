@@ -1811,9 +1811,7 @@ function OpenCommandPaletteDialog(props: {
       ],
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useRightPanelStore
-          .getState()
-          .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "reviews");
+        useThreadContextSidebarStore.getState().show("artifacts");
       },
     });
     actionItems.push({
@@ -1855,7 +1853,7 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["xwing", "environments", "development environments", "checkouts", "apps"],
       icon: <BoxesIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useThreadContextSidebarStore.getState().openEnvironments();
+        useThreadContextSidebarStore.getState().show("environments");
       },
     });
   }

@@ -87,7 +87,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         ) : null}
       </div>
       <div className="relative z-10 ml-auto flex shrink-0 items-center [-webkit-app-region:no-drag]">
-        <ThreadToolsHeaderEnd onBackdrop={backdropVariant !== null}>
+        <ThreadToolsHeaderEnd>
           <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
           <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
           <WorkspaceHistoryButton />

@@ -33,11 +33,8 @@ const RIGHT_PANEL_KINDS = [
   "pull-requests",
   "side-chat",
   "reviews",
-  "inspect",
   "notes",
 ] as const;
-export type ThreadWorkspaceSection = "list" | "artifacts" | "qa" | "summary" | "marks" | "threads";
-export type ThreadInspectSection = "loads" | "tokens" | "context";
 
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 export type AddableRightPanelKind = Exclude<
@@ -104,14 +101,9 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests" | `pull-requests:${string}`; kind: "pull-requests" }
-  | {
-      id: "reviews" | `reviews:${string}`;
-      kind: "reviews";
-      reviewId: string | null;
-      workspaceSection?: ThreadWorkspaceSection;
-    }
+  /** Items that need your QA across threads; a thread's artifacts live in the sidebar. */
+  | { id: "reviews" | `reviews:${string}`; kind: "reviews" }
   | { id: "notes" | `notes:${string}`; kind: "notes" }
-  | { id: "inspect" | `inspect:${string}`; kind: "inspect"; inspectSection?: ThreadInspectSection }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -169,18 +161,6 @@ interface RightPanelStoreState {
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
-  openReviews: (ref: ScopedThreadRef, reviewId?: string) => void;
-  setWorkspaceSection: (
-    ref: ScopedThreadRef,
-    section: ThreadWorkspaceSection,
-    surfaceId?: string,
-  ) => void;
-  setInspectSection: (
-    ref: ScopedThreadRef,
-    section: ThreadInspectSection,
-    surfaceId?: string,
-  ) => void;
-  offerReviews: (ref: ScopedThreadRef, reviewId: string) => void;
   openDevice: (
     ref: ScopedThreadRef,
     target: DeviceTabTarget,
@@ -289,11 +269,9 @@ const singletonSurface = (
     case "device":
       return { id: "device", kind };
     case "reviews":
-      return { id: "reviews", kind, reviewId: null };
+      return { id: "reviews", kind };
     case "notes":
       return { id: "notes", kind };
-    case "inspect":
-      return { id: "inspect", kind, inspectSection: "loads" };
   }
 };
 
@@ -607,32 +585,13 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     if (kind === "plan" || kind === "agents" || kind === "environments") return [];
                     if (surface.kind === "notes")
                       return validAreaId(surface.id, "notes") ? [surface] : [];
-                    if (surface.kind === "inspect") {
-                      return validAreaId(surface.id, "inspect")
-                        ? [
-                            {
-                              ...surface,
-                              inspectSection:
-                                surface.inspectSection === "context"
-                                  ? "context"
-                                  : surface.inspectSection === "tokens"
-                                    ? "tokens"
-                                    : "loads",
-                            },
-                          ]
-                        : [];
-                    }
+                    // Artifacts and Inspect moved to the sidebar; only the QA view stays a tab.
+                    if (kind === "inspect") return [];
                     if (surface.kind === "reviews") {
+                      const legacy = surface as { reviewId?: unknown; workspaceSection?: string };
                       return validAreaId(surface.id, "reviews") &&
-                        (surface.reviewId === null || typeof surface.reviewId === "string")
-                        ? [
-                            surface.workspaceSection === undefined ||
-                            ["list", "artifacts", "qa", "summary", "marks", "threads"].includes(
-                              surface.workspaceSection,
-                            )
-                              ? surface
-                              : { ...surface, workspaceSection: "list" },
-                          ]
+                        (!("reviewId" in legacy) || legacy.workspaceSection === "qa")
+                        ? [{ id: surface.id, kind: "reviews" }]
                         : [];
                     }
                     if (
@@ -908,56 +867,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
             return upsertSurface(current, existing ?? singletonSurface(kind));
           }),
-        ),
-      openReviews: (ref, reviewId) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const surface: RightPanelSurface = {
-              id: current.surfaces.find((entry) => entry.kind === "reviews")?.id ?? "reviews",
-              kind: "reviews",
-              workspaceSection: "artifacts",
-              reviewId: reviewId ?? null,
-            };
-            const next = upsertSurface(current, surface);
-            return {
-              ...next,
-              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
-            };
-          }),
-        ),
-      setWorkspaceSection: (ref, section, surfaceId) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => ({
-            ...current,
-            surfaces: current.surfaces.map((surface) =>
-              surface.kind === "reviews" && surface.id === (surfaceId ?? current.activeSurfaceId)
-                ? { ...surface, workspaceSection: section }
-                : surface,
-            ),
-          })),
-        ),
-      setInspectSection: (ref, section, surfaceId) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => ({
-            ...current,
-            surfaces: current.surfaces.map((surface) =>
-              surface.kind === "inspect" && surface.id === (surfaceId ?? current.activeSurfaceId)
-                ? { ...surface, inspectSection: section }
-                : surface,
-            ),
-          })),
-        ),
-      offerReviews: (ref, reviewId) =>
-        set((state) =>
-          automaticUpdate(state, scopedThreadKey(ref), (current) =>
-            current.surfaces.some((surface) => surface.kind === "reviews")
-              ? current
-              : {
-                  ...current,
-                  surfaces: [...current.surfaces, { id: "reviews", kind: "reviews", reviewId }],
-                  activeSurfaceId: current.activeSurfaceId ?? "reviews",
-                },
-          ),
         ),
       openDevice: (ref, target, automatic = false, surfaceId) =>
         set((state) =>

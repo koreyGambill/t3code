@@ -24,6 +24,13 @@ export type SidebarView = "threads" | ThreadContextSection;
 /** Everything on the strip a viewer can hide; the thread list always stays. */
 export type StripItem = ThreadContextSection | "status";
 
+export interface ShowTarget {
+  /** Pins the tools to this thread. */
+  readonly thread?: ScopedThreadRef;
+  readonly artifactId?: string;
+  readonly environmentId?: string;
+}
+
 interface ThreadContextSidebarState {
   view: SidebarView;
   lastTool: ThreadContextSection;
@@ -34,20 +41,18 @@ interface ThreadContextSidebarState {
   environmentSelection: { thread: ScopedThreadRef; id: string } | null;
   /** Set when a tool view was requested while the sidebar may be hidden; the sidebar clears it. */
   revealPending: boolean;
-  /** Where the Details view hosts the conversation's details card while it is showing. */
-  detailsElement: HTMLDivElement | null;
-  /** The sidebar header slot where the open tool view puts its own buttons. */
-  actionsElement: HTMLDivElement | null;
+  /** The artifact the Artifacts view opens on; null lists them all. */
+  artifactId: string | null;
   selectView: (view: SidebarView) => void;
   toggleTools: (sidebarVisible: boolean) => void;
-  show: (view: ThreadContextSection, thread?: ScopedThreadRef) => void;
+  /** Opens a tool from outside the strip, unhiding it, and reveals a hidden sidebar. */
+  show: (view: ThreadContextSection, target?: ShowTarget) => void;
+  selectArtifact: (id: string | null) => void;
   consumeReveal: () => void;
   pin: (thread: ScopedThreadRef | null) => void;
   setHidden: (item: StripItem, hidden: boolean) => void;
   setTodoFilter: (filter: TodoFilter) => void;
   setTodoShowClosed: (show: boolean) => void;
-  openTodos: (thread: ScopedThreadRef) => void;
-  openEnvironments: (thread?: ScopedThreadRef, id?: string) => void;
   selectEnvironment: (thread: ScopedThreadRef, id: string | null) => void;
 }
 
@@ -62,12 +67,31 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       todoShowClosed: false,
       environmentSelection: null,
       revealPending: false,
-      detailsElement: null,
-      actionsElement: null,
-      selectView: (view) => set((state) => nextSidebarView(state, view)),
+      artifactId: null,
+      selectView: (view) =>
+        set((state) => ({
+          ...nextSidebarView(state, view),
+          ...(view === "artifacts" ? { artifactId: null } : {}),
+        })),
       toggleTools: (sidebarVisible) => set((state) => toggleThreadToolsView(state, sidebarVisible)),
-      show: (view, thread) =>
-        set({ view, lastTool: view, revealPending: true, ...(thread ? { pinned: thread } : {}) }),
+      show: (view, target = {}) =>
+        set((state) => ({
+          view,
+          lastTool: view,
+          revealPending: true,
+          hidden: state.hidden.filter((entry) => entry !== view),
+          ...(target.thread ? { pinned: target.thread } : {}),
+          ...(view === "artifacts" ? { artifactId: target.artifactId ?? null } : {}),
+          ...(view === "environments"
+            ? {
+                environmentSelection:
+                  target.thread && target.environmentId
+                    ? { thread: target.thread, id: target.environmentId }
+                    : null,
+              }
+            : {}),
+        })),
+      selectArtifact: (artifactId) => set({ artifactId }),
       consumeReveal: () => set({ revealPending: false }),
       pin: (pinned) => set({ pinned }),
       setHidden: (item, hide) =>
@@ -77,21 +101,11 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
             : state.hidden.filter((entry) => entry !== item),
           ...(hide && state.view === item ? { view: "threads" as const } : {}),
           ...(hide && state.lastTool === item
-            ? { lastTool: firstVisibleThreadTool([...state.hidden, item]) }
+            ? { lastTool: firstVisibleThreadTool([...state.hidden, item]) ?? state.lastTool }
             : {}),
         })),
       setTodoFilter: (todoFilter) => set({ todoFilter }),
       setTodoShowClosed: (todoShowClosed) => set({ todoShowClosed }),
-      openTodos: (thread) =>
-        set({ view: "todos", lastTool: "todos", pinned: thread, revealPending: true }),
-      openEnvironments: (thread, id) =>
-        set({
-          view: "environments",
-          lastTool: "environments",
-          revealPending: true,
-          ...(thread ? { pinned: thread } : {}),
-          environmentSelection: thread && id ? { thread, id } : null,
-        }),
       selectEnvironment: (thread, id) => set({ environmentSelection: id ? { thread, id } : null }),
     }),
     {

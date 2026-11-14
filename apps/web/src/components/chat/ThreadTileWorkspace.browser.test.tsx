@@ -32,12 +32,12 @@ async function setup(resizeScenario = false) {
   useRightPanelStore.setState({ byThreadKey: {} });
   const store = useRightPanelStore.getState();
   store.open(threadRef, "files");
-  store.open(threadRef, "inspect");
+  store.open(threadRef, "diff");
   if (resizeScenario) {
     store.closeSurface(threadRef, "files");
     store.applyTileAction(threadRef, {
       type: "move",
-      tabId: "inspect",
+      tabId: "diff",
       targetGroupId: "conversation-group",
     });
     store.openTerminal(threadRef, "new-terminal");
@@ -214,23 +214,23 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   // The region supplies coordinates; its floating content and drop overlay receive the drag.
   await userEvent.dragAndDrop(
     screen.getByRole("tab", { name: "files", exact: true }),
-    screen.getByRole("region", { name: "Tile: inspect", exact: true }),
+    screen.getByRole("region", { name: "Tile: diff", exact: true }),
     { force: true },
   );
   await expect
     .element(screen.getByRole("textbox", { name: "Editor files" }))
     .toHaveValue("unsaved editor contents");
   expect(getTileGroups(layout()).find((group) => group.tabs.includes("files"))?.tabs).toContain(
-    "inspect",
+    "diff",
   );
   const tabGroupId = layout().focusedGroupId;
   await userEvent.keyboard("{Control>}{Tab}{/Control}");
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
-    "inspect",
+    "diff",
   );
   // Focus follows into the shown tab, rather than dropping to the page with the hidden one.
   await vi.waitFor(() =>
-    expect(document.activeElement?.getAttribute("data-tile-content")).toBe("inspect"),
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe("diff"),
   );
   await userEvent.keyboard("{Control>}{Shift>}{Tab}{/Shift}{/Control}");
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(

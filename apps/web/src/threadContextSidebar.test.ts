@@ -73,13 +73,13 @@ describe("sidebar views", () => {
   });
 
   it("toggles between threads and the last tool, opening a hidden sidebar on a tool", () => {
-    const threads = { view: "threads", lastTool: "links" } as const;
+    const threads = { view: "threads", lastTool: "links", hidden: [] } as const;
     expect(toggleThreadToolsView(threads, true)).toEqual({
       view: "links",
       lastTool: "links",
       revealPending: false,
     });
-    expect(toggleThreadToolsView({ view: "links", lastTool: "links" }, true)).toEqual({
+    expect(toggleThreadToolsView({ view: "links", lastTool: "links", hidden: [] }, true)).toEqual({
       view: "threads",
       lastTool: "links",
       revealPending: false,
@@ -89,7 +89,9 @@ describe("sidebar views", () => {
       lastTool: "links",
       revealPending: true,
     });
-    expect(toggleThreadToolsView({ view: "inspect", lastTool: "inspect" }, false)).toMatchObject({
+    expect(
+      toggleThreadToolsView({ view: "inspect", lastTool: "inspect", hidden: [] }, false),
+    ).toMatchObject({
       view: "inspect",
       revealPending: true,
     });
@@ -267,5 +269,69 @@ describe("thread tool views", () => {
       ["asker", "Messaged this thread"],
       ["peer", "Shared context"],
     ]);
+  });
+});
+
+describe("thread tools store", () => {
+  const reset = () =>
+    useThreadContextSidebarStore.setState(useThreadContextSidebarStore.getInitialState());
+
+  it("hiding the open or last tool falls back to the thread list and the next visible tool", () => {
+    reset();
+    const store = useThreadContextSidebarStore.getState();
+    store.selectView("todos");
+    store.setHidden("todos", true);
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({
+      view: "threads",
+      lastTool: "artifacts",
+      hidden: ["todos"],
+    });
+    for (const tool of [
+      "artifacts",
+      "links",
+      "related",
+      "details",
+      "environments",
+      "inspect",
+    ] as const)
+      store.setHidden(tool, true);
+    expect(firstVisibleThreadTool(useThreadContextSidebarStore.getState().hidden)).toBeNull();
+    store.toggleTools(true);
+    expect(useThreadContextSidebarStore.getState().view).toBe("threads");
+  });
+
+  it("opening a hidden tool from outside the strip unhides it and selects the artifact", () => {
+    reset();
+    const store = useThreadContextSidebarStore.getState();
+    store.setHidden("artifacts", true);
+    store.show("artifacts", { thread: child, artifactId: "plan" });
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({
+      view: "artifacts",
+      lastTool: "artifacts",
+      artifactId: "plan",
+      pinned: child,
+      hidden: [],
+      revealPending: true,
+    });
+    store.selectView("artifacts");
+    store.selectView("artifacts");
+    expect(useThreadContextSidebarStore.getState().artifactId).toBeNull();
+  });
+
+  it("migrates the right panel's saved view and persists only viewer choices", () => {
+    const { migrate, partialize } = useThreadContextSidebarStore.persist.getOptions();
+    expect(migrate?.({ open: true, view: "marks" }, 0)).toEqual({
+      view: "threads",
+      lastTool: "links",
+    });
+    const current = { view: "inspect", lastTool: "inspect", hidden: ["status"] };
+    expect(migrate?.(current, 1)).toBe(current);
+    reset();
+    useThreadContextSidebarStore
+      .getState()
+      .show("environments", { thread: child, environmentId: "e" });
+    expect(
+      Object.keys(partialize!(useThreadContextSidebarStore.getState()) as object).toSorted(),
+    ).toEqual(["hidden", "lastTool", "todoFilter", "todoShowClosed", "view"]);
   });
 });

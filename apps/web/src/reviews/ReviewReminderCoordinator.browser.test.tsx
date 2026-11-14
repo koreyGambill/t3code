@@ -1,5 +1,5 @@
 import { EnvironmentId, ReviewId, ThreadId, type ReviewSummary } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -81,6 +81,7 @@ vi.mock(
 );
 
 import { useRightPanelStore } from "../rightPanelStore";
+import { useThreadContextSidebarStore } from "../threadContextSidebarStore";
 import { ReviewReminderCoordinator } from "./ReviewReminderCoordinator";
 
 const environmentId = EnvironmentId.make("remote-environment");
@@ -105,6 +106,7 @@ function setup() {
   state.close.mockReset();
   state.query.mockReset();
   useRightPanelStore.setState({ byThreadKey: {} });
+  useThreadContextSidebarStore.setState(useThreadContextSidebarStore.getInitialState());
 }
 
 it.each(["other-thread", "list"])(
@@ -116,15 +118,14 @@ it.each(["other-thread", "list"])(
     const ref = scopeThreadRef(environmentId, review.threadId);
     if (view === "list") {
       state.active = { environmentId, threadId: review.threadId };
-      useRightPanelStore.getState().openReviews(ref, review.id);
-      useRightPanelStore.getState().setWorkspaceSection(ref, "list");
+      useThreadContextSidebarStore.getState().show("todos", { thread: ref });
     }
     const route = view === "list" ? "/remote-environment/review-thread" : "/existing/thread";
-    const initialPanels = useRightPanelStore.getState().byThreadKey;
+    const initialTools = useThreadContextSidebarStore.getState().view;
     await using screen = await render(<ReviewReminderCoordinator />, { router: route });
     await vi.waitFor(() => expect(state.add).toHaveBeenCalledTimes(1));
     expect(screen.router?.state.location.pathname).toBe(route);
-    expect(useRightPanelStore.getState().byThreadKey).toEqual(initialPanels);
+    expect(useThreadContextSidebarStore.getState().view).toBe(initialTools);
     state.due = [{ ...review, revision: 2 }];
     await screen.rerender(<ReviewReminderCoordinator />);
     expect(state.add).toHaveBeenCalledTimes(1);
@@ -132,14 +133,10 @@ it.each(["other-thread", "list"])(
     await vi.waitFor(() =>
       expect(screen.router?.state.location.pathname).toBe("/remote-environment/review-thread"),
     );
-    expect(
-      useRightPanelStore.getState().byThreadKey[
-        scopedThreadKey(scopeThreadRef(environmentId, review.threadId))
-      ],
-    ).toMatchObject({
-      isOpen: true,
-      activeSurfaceId: "reviews",
-      surfaces: [{ kind: "reviews", reviewId: review.id }],
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({
+      view: "artifacts",
+      artifactId: review.id,
+      pinned: ref,
     });
   },
 );
@@ -192,9 +189,10 @@ it("opens the review from a desktop notification without starting work", async (
   using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
   using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   state.active = { environmentId, threadId: review.threadId };
-  useRightPanelStore
-    .getState()
-    .openReviews(scopeThreadRef(environmentId, review.threadId), review.id);
+  useThreadContextSidebarStore.getState().show("artifacts", {
+    thread: scopeThreadRef(environmentId, review.threadId),
+    artifactId: review.id,
+  });
   await using screen = await render(<ReviewReminderCoordinator />, {
     router: "/remote-environment/review-thread",
   });
@@ -204,9 +202,8 @@ it("opens the review from a desktop notification without starting work", async (
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/remote-environment/review-thread"),
   );
-  expect(
-    useRightPanelStore.getState().byThreadKey[
-      scopedThreadKey(scopeThreadRef(environmentId, review.threadId))
-    ]?.activeSurfaceId,
-  ).toBe("reviews");
+  expect(useThreadContextSidebarStore.getState()).toMatchObject({
+    view: "artifacts",
+    artifactId: review.id,
+  });
 });
