@@ -388,9 +388,9 @@ function ProfileEditor({
           </label>
         </div>
       )}
-      {draft.schedule.type === "webhook" ? (
+      {draft.schedule.type === "webhook" || draft.schedule.type === "event" ? (
         <p role="alert">
-          This watcher has an unsupported webhook schedule. Choose a timed schedule.
+          This watcher has an unsupported {draft.schedule.type} schedule. Choose a timed schedule.
         </p>
       ) : (
         <MonitoringScheduleFields

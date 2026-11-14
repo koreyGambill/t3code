@@ -40,6 +40,8 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         streamDomainEvents: Stream.empty,
+        streamDomainEventsFrom: () => Stream.empty,
+        latestDomainEventSequence: Effect.succeed(0),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
@@ -90,6 +92,8 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         streamDomainEvents: Stream.empty,
+        streamDomainEventsFrom: () => Stream.empty,
+        latestDomainEventSequence: Effect.succeed(0),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
@@ -147,6 +151,8 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         streamDomainEvents: Stream.empty,
+        streamDomainEventsFrom: () => Stream.empty,
+        latestDomainEventSequence: Effect.succeed(0),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
@@ -360,6 +366,8 @@ it.effect(
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           streamDomainEvents: Stream.empty,
+          streamDomainEventsFrom: () => Stream.empty,
+          latestDomainEventSequence: Effect.succeed(0),
         }),
         Layer.mock(SecretRequests.SecretRequests)({}),
       );

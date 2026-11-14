@@ -12,8 +12,9 @@ import {
   PlayIcon,
   PlusIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -75,6 +76,7 @@ import { environmentAtomList, environmentIdsKey } from "../../state/environmentA
 import { useThreadSearch } from "../../state/queries";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { statusSources } from "../../state/statusSources";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
@@ -83,6 +85,10 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
+  DEFAULT_EVENT_MAX_RUNS_PER_HOUR,
+  DEFAULT_RUN_ENDED_COOLDOWN_SECONDS,
+  MAX_EVENT_FILTER_THREADS,
+  isEventDrivenWake,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
@@ -94,6 +100,7 @@ import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
+  EVENT_DRAFT_DEFAULTS,
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
   moveDraftToThread,
@@ -197,7 +204,331 @@ const EMPTY_DRAFT: DraftState = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  ...EVENT_DRAFT_DEFAULTS,
 };
+
+const EVENT_KIND_LABELS: Record<DraftState["eventKind"], string> = {
+  run_ended: "A turn ends",
+  thread_created: "A thread is created",
+  thread_settled: "A thread settles",
+  status_transition: "A status source changes",
+};
+
+const STATUS_STATE_LABELS: Record<Exclude<DraftState["eventToState"], "">, string> = {
+  ok: "OK",
+  warn: "Warning",
+  fail: "Failing",
+  unknown: "Unknown",
+};
+
+function EventThreadChip({
+  environmentId,
+  threadId,
+  disabled,
+  onRemove,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly disabled: boolean;
+  readonly onRemove: () => void;
+}) {
+  const ref = scopeThreadRef(environmentId, threadId);
+  const shell = useThreadShell(ref);
+  // The shell can omit older settled threads; their family read still carries the title.
+  const family = useEnvironmentQuery(
+    shell === null ? threadFamilies.familyAtom(environmentId, threadId) : null,
+  );
+  const title =
+    (shell ?? family.data?.threads.find((row) => row.id === threadId))?.title.trim() ||
+    `Thread ${threadId}`;
+  return (
+    <Badge variant="outline" size="control">
+      <Tooltip>
+        <TooltipTrigger render={<span className="max-w-56 truncate" />}>{title}</TooltipTrigger>
+        <TooltipPopup>{title}</TooltipPopup>
+      </Tooltip>
+      <Button
+        variant="ghost"
+        size="icon-tiny"
+        aria-label={`Remove ${title}`}
+        disabled={disabled}
+        onClick={onRemove}
+      >
+        <XIcon />
+      </Button>
+    </Badge>
+  );
+}
+
+/** Picks threads from the task's project by title; selected threads show as removable chips. */
+function EventThreadPicker({
+  environmentId,
+  projectId,
+  selected,
+  disabled,
+  onChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: string;
+  readonly selected: ReadonlyArray<string>;
+  readonly disabled: boolean;
+  readonly onChange: (threadIds: ReadonlyArray<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const shells = useVisibleThreadShells(open);
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch(open && projectId ? [environmentId] : [], query, {
+    titlesOnly: true,
+    projectIds: [projectId as ProjectId],
+  });
+  const threads = scheduledTaskDestinationThreads(shells, {
+    environmentId,
+    projectId,
+    currentThreadId: null,
+    query,
+  }).filter((thread) => !selected.includes(thread.id));
+  const items = threads.map((thread) => thread.id);
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) setQuery("");
+  };
+  return (
+    <div className="space-y-2">
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((threadId) => (
+            <EventThreadChip
+              key={threadId}
+              environmentId={environmentId}
+              threadId={threadId as ThreadId}
+              disabled={disabled}
+              onRemove={() => onChange(selected.filter((id) => id !== threadId))}
+            />
+          ))}
+        </div>
+      ) : null}
+      <Combobox
+        items={items}
+        filteredItems={items}
+        filter={null}
+        autoHighlight
+        open={open && !disabled}
+        onOpenChange={handleOpenChange}
+        value={null}
+        onValueChange={(value) => {
+          if (typeof value === "string" && !selected.includes(value)) {
+            onChange([...selected, value]);
+          }
+          handleOpenChange(false);
+        }}
+      >
+        <ComboboxTrigger
+          id="scheduled-task-event-threads"
+          disabled={disabled || selected.length >= MAX_EVENT_FILTER_THREADS}
+          render={<Button variant="outline" size="sm" />}
+          className="w-full justify-between"
+        >
+          <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-left text-muted-foreground">
+            {selected.length === 0 ? "Any thread" : "Add a thread"}
+          </span>
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        </ComboboxTrigger>
+        <ComboboxPopup align="start" side="bottom" className="w-80">
+          <ComboboxSearchInput
+            aria-label="Search threads"
+            placeholder="Search threads in this project..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <ComboboxEmpty>No threads found.</ComboboxEmpty>
+          <ComboboxList className="max-h-72">
+            {items.map((value, index) => (
+              <ComboboxItem key={value} index={index} value={value}>
+                <span className="block truncate">
+                  {threads.find((row) => row.id === value)?.title || "Untitled thread"}
+                </span>
+              </ComboboxItem>
+            ))}
+          </ComboboxList>
+        </ComboboxPopup>
+      </Combobox>
+    </div>
+  );
+}
+
+function EventTriggerFields({
+  environmentId,
+  draft,
+  setDraft,
+}: {
+  environmentId: EnvironmentId;
+  draft: DraftState;
+  setDraft: Dispatch<SetStateAction<DraftState>>;
+}) {
+  const update = (patch: Partial<DraftState>) => setDraft((current) => ({ ...current, ...patch }));
+  const statusEvent = draft.eventKind === "status_transition";
+  const sources = useEnvironmentQuery(
+    statusEvent ? statusSources({ environmentId, input: {} }) : null,
+  );
+  const sourceItems: Record<string, string> = { any: "Any source" };
+  for (const source of sources.data ?? []) sourceItems[source.config.id] = source.config.name;
+  // A source removed since the task was saved still shows, so the form does not silently change it.
+  if (draft.eventStatusSource && sourceItems[draft.eventStatusSource] === undefined) {
+    sourceItems[draft.eventStatusSource] = `${draft.eventStatusSource} (removed)`;
+  }
+  return (
+    <div className="space-y-4">
+      <Field label="Run when" htmlFor="scheduled-task-event-kind">
+        <Select
+          value={draft.eventKind}
+          onValueChange={(value) => {
+            if (value !== null) update({ eventKind: value });
+          }}
+          items={EVENT_KIND_LABELS}
+        >
+          <SelectTrigger id="scheduled-task-event-kind">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            {Object.entries(EVENT_KIND_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </Field>
+      {statusEvent ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Status source" hint="optional" htmlFor="scheduled-task-event-source">
+            <Select
+              value={draft.eventStatusSource || "any"}
+              onValueChange={(value) =>
+                update({ eventStatusSource: value === null || value === "any" ? "" : value })
+              }
+              items={sourceItems}
+            >
+              <SelectTrigger id="scheduled-task-event-source">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                {Object.entries(sourceItems).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </Field>
+          <Field label="Changes to" hint="optional" htmlFor="scheduled-task-event-state">
+            <Select
+              value={draft.eventToState || "any"}
+              onValueChange={(value) =>
+                update({
+                  eventToState:
+                    value === null || value === "any" ? "" : (value as DraftState["eventToState"]),
+                })
+              }
+              items={{ any: "Any state", ...STATUS_STATE_LABELS }}
+            >
+              <SelectTrigger id="scheduled-task-event-state">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="any">Any state</SelectItem>
+                {Object.entries(STATUS_STATE_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </Field>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="scheduled-task-event-project">Only threads in this project</Label>
+            <Switch
+              id="scheduled-task-event-project"
+              checked={draft.eventProjectOnly}
+              onCheckedChange={(eventProjectOnly) => update({ eventProjectOnly })}
+            />
+          </div>
+          <Field label="Only these threads" hint="optional" htmlFor="scheduled-task-event-threads">
+            <EventThreadPicker
+              environmentId={environmentId}
+              projectId={draft.projectId}
+              selected={draft.eventThreadIds}
+              disabled={!draft.projectId}
+              onChange={(eventThreadIds) => update({ eventThreadIds })}
+            />
+          </Field>
+          {draft.eventThreadIds.length > 0 ? (
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="scheduled-task-event-descendants">
+                Include forks, subagents and delegated threads
+              </Label>
+              <Switch
+                id="scheduled-task-event-descendants"
+                checked={draft.eventIncludeDescendants}
+                onCheckedChange={(eventIncludeDescendants) => update({ eventIncludeDescendants })}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field label="Cooldown" hint="seconds" htmlFor="scheduled-task-event-cooldown">
+          <Input
+            id="scheduled-task-event-cooldown"
+            type="number"
+            nativeInput
+            min={0}
+            max={86_400}
+            placeholder={String(
+              draft.eventKind === "run_ended" ? DEFAULT_RUN_ENDED_COOLDOWN_SECONDS : 0,
+            )}
+            value={draft.eventCooldownSeconds}
+            onChange={(event) => update({ eventCooldownSeconds: event.target.value })}
+          />
+        </Field>
+        <Field label="Coalesce" hint="seconds" htmlFor="scheduled-task-event-coalesce">
+          <Input
+            id="scheduled-task-event-coalesce"
+            type="number"
+            nativeInput
+            min={0}
+            max={3600}
+            placeholder="0"
+            value={draft.eventCoalesceSeconds}
+            onChange={(event) => update({ eventCoalesceSeconds: event.target.value })}
+          />
+        </Field>
+        <Field label="Max runs" hint="per hour" htmlFor="scheduled-task-event-max-runs">
+          <Input
+            id="scheduled-task-event-max-runs"
+            type="number"
+            nativeInput
+            min={1}
+            max={120}
+            placeholder={String(DEFAULT_EVENT_MAX_RUNS_PER_HOUR)}
+            value={draft.eventMaxRunsPerHour}
+            onChange={(event) => update({ eventMaxRunsPerHour: event.target.value })}
+          />
+        </Field>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {statusEvent
+          ? "Cooldown and coalescing apply per status source."
+          : "Cooldown and coalescing apply per thread. Threads this task starts never trigger it."}{" "}
+        Events over the hourly limit wait. The run&apos;s prompt ends with what happened.
+      </p>
+    </div>
+  );
+}
 
 function WebhookFiltersField({
   filters,
@@ -795,6 +1126,8 @@ function ScheduledTaskRow({
               <>
                 Next run <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
+            ) : task.schedule.type === "event" || isEventDrivenWake(task.schedule) ? (
+              "Listening"
             ) : (
               "Not scheduled"
             )}
@@ -1364,6 +1697,8 @@ function ScheduledTaskEditorForm({
     task?.schedule.type === "once";
   const offersThreadModes =
     environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
+  const eventTriggersSupported =
+    environment?.serverConfig?.environment.capabilities.eventTriggers === true;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1568,8 +1903,8 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a
-          webhook is called.
+          Run a prompt automatically on an interval, at a fixed time, once at a set date, when a
+          webhook is called, or when something happens in your threads.
         </DialogDescription>
       </DialogHeader>
 
@@ -1817,6 +2152,7 @@ function ScheduledTaskEditorForm({
               <Label>Schedule</Label>
               <ToggleGroup
                 aria-label="Schedule type"
+                className="flex-wrap"
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
@@ -1825,7 +2161,8 @@ function ScheduledTaskEditorForm({
                     mode === "fixed" ||
                     mode === "once" ||
                     mode === "interval" ||
-                    mode === "webhook"
+                    mode === "webhook" ||
+                    mode === "event"
                   )
                     setDraft((current) => {
                       const suggested =
@@ -1860,7 +2197,7 @@ function ScheduledTaskEditorForm({
                 {offersOnce || draft.scheduleMode === "once" ? (
                   <Toggle value="once">Once</Toggle>
                 ) : null}
-                <Toggle value="interval">Every interval</Toggle>
+                <Toggle value="interval">Interval</Toggle>
                 <Toggle
                   value="idle_checkin"
                   disabled={
@@ -1874,8 +2211,11 @@ function ScheduledTaskEditorForm({
                   value="webhook"
                   disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
                 >
-                  On webhook
+                  Webhook
                 </Toggle>
+                {eventTriggersSupported || draft.scheduleMode === "event" ? (
+                  <Toggle value="event">Event</Toggle>
+                ) : null}
               </ToggleGroup>
             </div>
 
@@ -2061,6 +2401,8 @@ function ScheduledTaskEditorForm({
                   </div>
                 ) : null}
               </div>
+            ) : draft.scheduleMode === "event" ? (
+              <EventTriggerFields environmentId={environmentId} draft={draft} setDraft={setDraft} />
             ) : draft.scheduleMode === "once" ? (
               <div className="flex items-center gap-2">
                 <Label htmlFor="scheduled-task-run-at">Run on</Label>

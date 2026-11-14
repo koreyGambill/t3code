@@ -2731,46 +2731,21 @@ code {
 .workspace-tile-tabs {
   scrollbar-width: none;
 }
+.workspace-tile-tabs[data-masked="true"] {
+  mask-image: linear-gradient(
+    to right,
+    transparent var(--tile-tabs-clip),
+    black var(--tile-tabs-clip),
+    black calc(100% - var(--tile-tabs-fade-end)),
+    transparent
+  );
+}
 .workspace-tile-tabs::-webkit-scrollbar {
   display: none;
 }
 
 .workspace-area-tabs-with-tools {
   padding-inline-end: min(16rem, 60%);
-}
-
-.workspace-tile-tab-picker,
-.workspace-tile-overflow {
-  display: none;
-}
-@container tile (max-width: 320px) {
-  .workspace-tile-tabs,
-  .workspace-tile-secondary {
-    display: none;
-  }
-  .workspace-tile-tab-picker {
-    display: flex;
-  }
-  .workspace-tile-overflow {
-    display: inline-flex;
-  }
-}
-@container tile (max-width: 180px) {
-  .workspace-tile-add-area {
-    display: none;
-  }
-  .workspace-tile-minor {
-    opacity: 0;
-    pointer-events: none;
-    position: absolute;
-    right: 24px;
-    background: var(--background);
-  }
-  .workspace-tile-titlebar:hover .workspace-tile-minor,
-  .workspace-tile-titlebar:focus-within .workspace-tile-minor {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 
 .thread-glyph-notification-dot {

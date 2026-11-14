@@ -29,15 +29,8 @@ const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("../DiffPanel"));
-const ThreadWorkspacePanel = lazy(() =>
-  import("../reviews/ThreadWorkspacePanel").then((module) => ({
-    default: module.ThreadWorkspacePanel,
-  })),
-);
-const ThreadInspectPanel = lazy(() =>
-  import("../insights/ThreadInspectPanel").then((module) => ({
-    default: module.ThreadInspectPanel,
-  })),
+const YourQaView = lazy(() =>
+  import("../reviews/ThreadListView").then((module) => ({ default: module.YourQaView })),
 );
 const NotesPanel = lazy(() =>
   import("../notes/NotesPanel").then((module) => ({ default: module.NotesPanel })),
@@ -99,21 +92,11 @@ export function RightPanelSurfaceContent(props: {
   if (surface === null) return null;
   switch (surface.kind) {
     case "reviews":
-      return (
+      return visible ? (
         <Suspense fallback={null}>
-          <ThreadWorkspacePanel
-            surfaceId={surface.id}
-            key={`${threadRef.environmentId}:${threadRef.threadId}`}
-            section={surface.workspaceSection ?? "artifacts"}
-            composerDraftTarget={props.composerDraftTarget}
-            workspaceMutationId={props.workspaceMutationId}
-            threadRef={threadRef}
-            reviewId={surface.reviewId}
-            visible={visible}
-            startedThread={props.startedThread}
-          />
+          <YourQaView threadRef={threadRef} />
         </Suspense>
-      );
+      ) : null;
     case "notes":
       return (
         <Suspense fallback={null}>
@@ -124,19 +107,6 @@ export function RightPanelSurfaceContent(props: {
               threadId={threadRef.threadId}
             />
           ) : null}
-        </Suspense>
-      );
-    case "inspect":
-      return (
-        <Suspense fallback={null}>
-          <ThreadInspectPanel
-            surfaceId={surface.id}
-            key={`${threadRef.environmentId}:${threadRef.threadId}`}
-            threadRef={threadRef}
-            section={surface.inspectSection ?? "loads"}
-            visible={visible}
-            startedThread={props.startedThread}
-          />
         </Suspense>
       );
     case "preview":

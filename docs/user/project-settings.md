@@ -106,12 +106,23 @@ it; the agent can also pause it when work is done or waiting for you.
 
 Ask the agent to resume this conversation when another thread or one of its
 delegated tasks finishes, or when a commit or branch lands on a repository’s local
-main branch. It can save a one-shot wake condition and end its turn. The server
-checks the condition at the saved interval, then queues one message saying what
-fired. Git conditions track the commit selected when the wake was saved, so they
+main branch. It can save a one-shot wake condition and end its turn. Thread and
+task wakes fire as soon as that thread or task finishes; landing wakes are checked
+at the saved interval. Each queues one message saying what fired. Git conditions track the commit selected when the wake was saved, so they
 still work after the source branch is deleted. View and cancel wakes in the
 thread’s Automations panel or **Settings → Scheduled tasks**. Pausing or deleting
 the task cancels its pending wake.
+
+Choose **Event** under Schedule to run a task when a turn ends, a thread is created or
+settles, or a status source changes. Narrow it to this project or to listed
+threads, optionally with their forks, subagents, and delegated threads. A status
+source event can be narrowed to one source and the state it changes to. The run's
+prompt ends with what happened. **Cooldown** sets the minimum time between runs for
+the same thread or status source; events during it run once when it ends.
+**Coalesce** waits after the first event and runs once with the latest. **Max runs**
+caps runs per hour (12 by default); events over it wait for the next hour. A task
+that runs when a turn ends waits 60 seconds per thread by default.
+Threads a task starts, and its own turns, never trigger it.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
@@ -148,7 +159,7 @@ cannot receive the advisory.
 
 ## Context reviews
 
-Open **Inspect → Context** in a thread to see each turn's instruction sizes,
+Open **Inspect → Context** from the sidebar's strip to see each turn's instruction sizes,
 injected tools, file and knowledge reads, repeated reads and reported token usage.
 Read counts from shell commands are inferred. Missing provider telemetry stays
 unknown. Use **Older turns** to page through the history.
@@ -162,7 +173,7 @@ skills or knowledge. The reviewer never edits those files itself.
 
 ## Webhook automations
 
-In **Settings → Scheduled tasks**, choose **On webhook**
+In **Settings → Scheduled tasks**, choose **Webhook**
 as a task's schedule to run it whenever another service calls its URL, such as
 GitHub on a new pull request or a CI job that failed. A public URL needs a
 [T3 Connect](remote-access.md) managed tunnel; after you save the task, copy

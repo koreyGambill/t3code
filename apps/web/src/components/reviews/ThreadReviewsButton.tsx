@@ -1,12 +1,13 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { FilesIcon, ListChecksIcon } from "lucide-react";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { useThreadContextSidebarStore } from "../../threadContextSidebarStore";
 import { Button } from "../ui/button";
 export function ThreadReviewsButton({ threadRef }: { threadRef: ScopedThreadRef }) {
   const open = (section: "artifacts" | "qa") => {
-    const panels = useRightPanelStore.getState();
-    panels.openReviews(threadRef);
-    panels.setWorkspaceSection(threadRef, section);
+    if (section === "artifacts")
+      useThreadContextSidebarStore.getState().show("artifacts", { thread: threadRef });
+    else useRightPanelStore.getState().open(threadRef, "reviews");
   };
   return (
     <>

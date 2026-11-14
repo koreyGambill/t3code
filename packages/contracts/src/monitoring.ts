@@ -30,8 +30,11 @@ export const MonitoringProfileInput = Schema.Struct({
   modelSelection: ModelSelection,
   schedule: ScheduledTaskSchedule.check(
     Schema.makeFilter(
+      // Watchers react to turn ends through `turnEnd` until they fold into event-triggered tasks.
       (schedule) =>
-        schedule.type !== "webhook" && (schedule.type !== "interval" || !schedule.idleCheckin),
+        schedule.type !== "webhook" &&
+        schedule.type !== "event" &&
+        (schedule.type !== "interval" || !schedule.idleCheckin),
     ),
   ),
   turnEnd: Schema.optional(

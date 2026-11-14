@@ -19,7 +19,7 @@ import {
 } from "../../state/reviews";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useRightPanelStore } from "../../rightPanelStore";
+import { useThreadContextSidebarStore } from "../../threadContextSidebarStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import ChatMarkdown from "../ChatMarkdown";
 import { RelativeTime } from "../RelativeTime";
@@ -80,7 +80,10 @@ export function ReviewPanel({
       ? reviewArtifactGet({ environmentId: threadRef.environmentId, input: { reviewId: validId } })
       : null,
   );
-  const open = (id?: string) => useRightPanelStore.getState().openReviews(threadRef, id);
+  const open = (id?: string) =>
+    useThreadContextSidebarStore
+      .getState()
+      .show("artifacts", { thread: threadRef, ...(id ? { artifactId: id } : {}) });
   if (!startedThread)
     return (
       <p className="p-5 text-sm text-muted-foreground">

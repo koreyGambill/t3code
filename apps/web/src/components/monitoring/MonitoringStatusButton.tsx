@@ -472,16 +472,10 @@ function EnvironmentAlerts({
   );
 }
 
-export function MonitoringStatusButton() {
-  const navigate = useNavigate();
-  const environmentId = usePrimaryEnvironmentId();
+/** The worst status-source state and unread watcher findings across connected environments. */
+export function useMonitoringSignal() {
   const { environments } = useEnvironments();
   const readable = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
-  const selected =
-    environments.find((entry) => entry.environmentId === selectedEnvironmentId) ??
-    environments.find((entry) => entry.environmentId === environmentId) ??
-    environments[0];
   const connected = environments.filter(
     (entry) =>
       entry.connection.phase === "connected" &&
@@ -500,6 +494,19 @@ export function MonitoringStatusButton() {
     groups.flatMap((group) => group.sources ?? []),
     groups.some((group) => group.failed || group.sources === null),
   );
+  return { state, unread, groups };
+}
+
+export function MonitoringStatusButton() {
+  const navigate = useNavigate();
+  const environmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const selected =
+    environments.find((entry) => entry.environmentId === selectedEnvironmentId) ??
+    environments.find((entry) => entry.environmentId === environmentId) ??
+    environments[0];
+  const { state, unread, groups } = useMonitoringSignal();
   const [open, setOpen] = useState(false);
   const label = `Status and alerts: ${state ?? "no sources"}${unread > 0 ? `, ${unread} unread` : ""}`;
   const configureSources = (machine: EnvironmentId) => {
@@ -526,7 +533,7 @@ export function MonitoringStatusButton() {
               )}
             </span>
           </TooltipTrigger>
-          <TooltipPopup side="left">{label}</TooltipPopup>
+          <TooltipPopup side="right">{label}</TooltipPopup>
         </Tooltip>
         {unread > 0 && (
           <span
@@ -537,7 +544,7 @@ export function MonitoringStatusButton() {
           </span>
         )}
       </div>
-      <PopoverPopup width="lg" padding="none" side="left" align="start">
+      <PopoverPopup width="lg" padding="none" side="right" align="start">
         <div className="flex max-h-[min(44rem,var(--available-height))] flex-col">
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border p-3">
             <PopoverTitle>Status and alerts</PopoverTitle>

@@ -243,6 +243,8 @@ const withService = <A, E>(
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         streamDomainEvents: Stream.empty,
+        streamDomainEventsFrom: () => Stream.empty,
+        latestDomainEventSequence: Effect.succeed(0),
       }),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {

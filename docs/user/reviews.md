@@ -96,7 +96,7 @@ panel.
 
 ## Inspect: loads and token usage
 
-Open a right-panel tab and choose **Inspect** for Loads and Tokens.
+Choose **Inspect** in the sidebar's strip for Loads, Context and Tokens.
 
 Loads shows file reads, skill loads, and related tool activity observed in the
 conversation. Use Refresh to update these views while an agent is working. Reported events and events inferred from command text are labeled

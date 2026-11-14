@@ -16,7 +16,6 @@ import { environmentThreadDetails } from "../../state/threads";
 import { useWorkspaceMutationRefresh } from "../../hooks/useWorkspaceMutationRefresh";
 import { randomUUID } from "../../lib/utils";
 import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore";
-import type { ThreadWorkspaceSection } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadWorkspaceGet, threadArtifactAnswer } from "../../state/threadWorkspace";
@@ -29,39 +28,8 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { Badge } from "../ui/badge";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { ThreadListView, ThreadListSummary, YourQaView } from "./ThreadListView";
 
 type AnswerDraft = { chosenOptionIds: readonly string[]; notes: string };
-export function ThreadWorkspacePanel(props: {
-  readonly threadRef: ScopedThreadRef;
-  readonly composerDraftTarget?: ComposerThreadTarget;
-  readonly surfaceId?: string;
-  readonly workspaceMutationId?: string | null;
-  readonly reviewId: string | null;
-  readonly visible: boolean;
-  readonly startedThread: boolean;
-  readonly section: ThreadWorkspaceSection;
-}) {
-  if (!props.visible) return null;
-  if (props.section === "list")
-    return (
-      <div className="p-3">
-        <ThreadListView threadRef={props.threadRef} />
-      </div>
-    );
-  if (props.section === "qa") return <YourQaView threadRef={props.threadRef} />;
-  if (props.section === "summary") return <ThreadListSummary threadRef={props.threadRef} />;
-  return (
-    <ArtifactsPanel
-      key={`${props.threadRef.environmentId}:${props.threadRef.threadId}:${props.reviewId ?? ""}`}
-      threadRef={props.threadRef}
-      selectedId={props.reviewId}
-      workspaceMutationId={props.workspaceMutationId ?? null}
-      composerDraftTarget={props.composerDraftTarget ?? props.threadRef}
-    />
-  );
-}
-
 const latestUserMessageId = (items: readonly ThreadStructureVisibleTurnItem[]) =>
   items.findLast((entry) => entry.item.type === "user_message")?.item.id ?? null;
 
@@ -217,7 +185,7 @@ export function ArtifactsPanel({
                 </SelectPopup>
               </Select>
             </div>
-            <div className="w-48 shrink-0">
+            <div className="w-48 max-w-full shrink-0">
               <Select value={version.version} onValueChange={setVersionNumber}>
                 <SelectTrigger size="sm" aria-label="Artifact version">
                   <SelectValue>{`v${version.version} · ${new Date(version.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}</SelectValue>

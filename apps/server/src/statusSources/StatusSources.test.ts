@@ -93,6 +93,10 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { service, results, updates, calls } = yield* setup;
+      const transitions = yield* Queue.unbounded<StatusSources.StatusSourceTransition>();
+      yield* Stream.runForEach(service.transitions, (value) =>
+        Queue.offer(transitions, value),
+      ).pipe(Effect.forkScoped);
       const source = yield* service.upsert({
         name: "Fixture",
         kind: "wing-status",
@@ -110,6 +114,12 @@ it.effect(
       const failed = (yield* Queue.take(updates))[0]!;
       expect(failed.lastTransition).toMatchObject({ from: "ok", to: "fail" });
       const transition = failed.lastTransition;
+      // The first observation is not a transition; ok -> fail publishes exactly one.
+      expect(yield* Queue.take(transitions)).toEqual({
+        sourceId: source.config.id,
+        name: "Fixture",
+        ...transition,
+      });
       yield* TestClock.adjust("70 seconds");
       yield* Queue.take(calls);
       yield* Queue.offer(results, { ...payload("fail"), updatedAt: "2026-01-01T00:00:00Z" });
@@ -118,6 +128,7 @@ it.effect(
       expect(snoozed.latest.state).toBe("fail");
       expect(snoozed.lastTransition).toEqual(transition);
       expect(yield* Queue.size(updates)).toBe(0);
+      expect(yield* Queue.size(transitions)).toBe(0);
       yield* TestClock.adjust("140 seconds");
       yield* Queue.take(calls);
       yield* Queue.offer(results, payload("ok"));

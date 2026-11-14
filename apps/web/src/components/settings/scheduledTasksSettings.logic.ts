@@ -1,10 +1,14 @@
 import {
   isListedThreadLineage,
   isWebhookDedupeTemplate,
+  scheduledTaskEventLabel,
   scheduledWakeLabel,
+  type ScheduledTaskEventKind,
+  type StatusState,
 } from "@t3tools/contracts";
 import {
   EnvironmentId,
+  MAX_EVENT_FILTER_THREADS,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
   ScheduledTaskId,
@@ -52,6 +56,7 @@ export function scheduleLabel(
   const wake = scheduledWakeLabel(schedule);
   if (wake !== null) return wake;
   if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "event") return scheduledTaskEventLabel(schedule);
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
     if (schedule.idleCheckin) return "Idle work check-in · after 30 min idle";
@@ -96,7 +101,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "once" | "interval" | "webhook" | "idle_checkin";
+export type ScheduleMode = "fixed" | "once" | "interval" | "webhook" | "idle_checkin" | "event";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -141,6 +146,35 @@ export interface DraftState {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  readonly eventKind: ScheduledTaskEventKind;
+  readonly eventThreadIds: ReadonlyArray<string>;
+  readonly eventIncludeDescendants: boolean;
+  /** Match only threads in the task's project. */
+  readonly eventProjectOnly: boolean;
+  readonly eventStatusSource: string;
+  readonly eventToState: StatusState | "";
+  readonly eventCooldownSeconds: string;
+  readonly eventCoalesceSeconds: string;
+  readonly eventMaxRunsPerHour: string;
+}
+
+export const EVENT_DRAFT_DEFAULTS = {
+  eventKind: "run_ended",
+  eventThreadIds: [],
+  eventIncludeDescendants: false,
+  eventProjectOnly: true,
+  eventStatusSource: "",
+  eventToState: "",
+  eventCooldownSeconds: "",
+  eventCoalesceSeconds: "",
+  eventMaxRunsPerHour: "",
+} as const;
+
+function parseWhole(value: string, minimum: number, maximum: number): number | null | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -166,6 +200,30 @@ export function scheduleDraftErrors(draft: DraftState) {
         { title: "Invalid run time", description: "That time does not exist in your time zone." },
       ];
     return [];
+  }
+  if (draft.scheduleMode === "event") {
+    const errors: Array<{ title: string; description: string }> = [];
+    if (parseWhole(draft.eventCooldownSeconds, 0, 86_400) === null)
+      errors.push({
+        title: "Invalid cooldown",
+        description: "Enter whole seconds from 0 to 86400, or leave it blank.",
+      });
+    if (parseWhole(draft.eventCoalesceSeconds, 0, 3600) === null)
+      errors.push({
+        title: "Invalid coalescing window",
+        description: "Enter whole seconds from 0 to 3600, or leave it blank.",
+      });
+    if (parseWhole(draft.eventMaxRunsPerHour, 1, 120) === null)
+      errors.push({
+        title: "Invalid run limit",
+        description: "Enter whole runs per hour from 1 to 120, or leave it blank.",
+      });
+    if (draft.eventThreadIds.length > MAX_EVENT_FILTER_THREADS)
+      errors.push({
+        title: "Too many threads",
+        description: `Watch at most ${MAX_EVENT_FILTER_THREADS} threads.`,
+      });
+    return errors;
   }
   if (draft.scheduleMode !== "webhook") return [];
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
@@ -270,6 +328,39 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         : {}),
     };
   }
+  if (draft.scheduleMode === "event") {
+    const cooldownSeconds = parseWhole(draft.eventCooldownSeconds, 0, 86_400) ?? undefined;
+    const coalesceSeconds = parseWhole(draft.eventCoalesceSeconds, 0, 3600) ?? undefined;
+    const maxRunsPerHour = parseWhole(draft.eventMaxRunsPerHour, 1, 120) ?? undefined;
+    const timing = {
+      ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
+      ...(coalesceSeconds === undefined ? {} : { coalesceSeconds }),
+      ...(maxRunsPerHour === undefined ? {} : { maxRunsPerHour }),
+    };
+    if (draft.eventKind === "status_transition") {
+      const statusSource = draft.eventStatusSource.trim();
+      return {
+        type: "event",
+        event: draft.eventKind,
+        ...(statusSource ? { statusSource } : {}),
+        ...(draft.eventToState ? { toState: draft.eventToState } : {}),
+        ...timing,
+      };
+    }
+    const threadIds = draft.eventThreadIds.map((id) => id as ThreadId);
+    return {
+      type: "event",
+      event: draft.eventKind,
+      ...(draft.eventProjectOnly && draft.projectId
+        ? { projectId: draft.projectId as ProjectId }
+        : {}),
+      ...(threadIds.length > 0 ? { threadIds } : {}),
+      ...(threadIds.length > 0 && draft.eventIncludeDescendants
+        ? { includeDescendants: true }
+        : {}),
+      ...timing,
+    };
+  }
   if (draft.scheduleMode === "idle_checkin")
     return { ...draft.intervalOptions, type: "interval", everyMs: 1_800_000, idleCheckin: true };
   if (draft.scheduleMode === "interval") {
@@ -348,6 +439,22 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         : "",
     filters,
     savedFilters: filters,
+    ...(schedule.type === "event"
+      ? {
+          eventKind: schedule.event,
+          eventThreadIds: schedule.threadIds ?? [],
+          eventIncludeDescendants: schedule.includeDescendants === true,
+          eventProjectOnly: schedule.projectId !== undefined,
+          eventStatusSource: schedule.statusSource ?? "",
+          eventToState: schedule.toState ?? "",
+          eventCooldownSeconds:
+            schedule.cooldownSeconds === undefined ? "" : String(schedule.cooldownSeconds),
+          eventCoalesceSeconds:
+            schedule.coalesceSeconds === undefined ? "" : String(schedule.coalesceSeconds),
+          eventMaxRunsPerHour:
+            schedule.maxRunsPerHour === undefined ? "" : String(schedule.maxRunsPerHour),
+        }
+      : EVENT_DRAFT_DEFAULTS),
   };
 }
 

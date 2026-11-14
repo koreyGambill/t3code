@@ -37,8 +37,8 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
+  ListChecks,
   NotebookPen,
-  ScanSearch,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -48,7 +48,6 @@ import {
   MessagesSquare,
   Plus,
   TerminalSquare,
-  Zap,
   Volume2Icon,
   VolumeOffIcon,
 } from "lucide-react";
@@ -143,9 +142,7 @@ export interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddReviews?: (() => void) | undefined;
   onAddNotes?: (() => void) | undefined;
-  onAddInspect?: (() => void) | undefined;
   /** Absent where the environment cannot list Xwing environments. */
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -328,9 +325,7 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddReviews?: (() => void) | undefined;
   onAddNotes?: (() => void) | undefined;
-  onAddInspect?: (() => void) | undefined;
   /** Absent where the environment cannot list Xwing environments. */
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -407,18 +402,6 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
-    ...(props.onAddReviews
-      ? [
-          {
-            label: "Artifacts",
-            icon: Zap,
-            shortcut: "R",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddReviews,
-          },
-        ]
-      : []),
     ...(props.onAddNotes
       ? [
           {
@@ -428,18 +411,6 @@ function RightPanelEmptyState(props: {
             available: true,
             disabledReason: "",
             onClick: props.onAddNotes,
-          },
-        ]
-      : []),
-    ...(props.onAddInspect
-      ? [
-          {
-            label: "Inspect",
-            icon: ScanSearch,
-            shortcut: "I",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddInspect,
           },
         ]
       : []),
@@ -644,11 +615,9 @@ export function surfaceTitle(
     case "side-chat":
       return "Side chat";
     case "reviews":
-      return surface.workspaceSection === "qa" ? "Your QA" : "Artifacts";
+      return "Your QA";
     case "notes":
       return "Notes";
-    case "inspect":
-      return "Inspect";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -740,11 +709,9 @@ export function SurfaceIcon({
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "reviews":
-      return <Zap className="size-3 shrink-0" />;
+      return <ListChecks className="size-3 shrink-0" />;
     case "notes":
       return <NotebookPen className="size-3 shrink-0" />;
-    case "inspect":
-      return <ScanSearch className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1213,18 +1180,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
-    ...(props.onAddReviews
-      ? [
-          {
-            label: "Artifacts",
-            icon: Zap,
-            shortcut: "R",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddReviews,
-          },
-        ]
-      : []),
     ...(props.onAddNotes
       ? [
           {
@@ -1234,18 +1189,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             available: true,
             disabledReason: "",
             onClick: props.onAddNotes,
-          },
-        ]
-      : []),
-    ...(props.onAddInspect
-      ? [
-          {
-            label: "Inspect",
-            icon: ScanSearch,
-            shortcut: "I",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddInspect,
           },
         ]
       : []),
@@ -1640,9 +1583,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
-            onAddReviews={props.onAddReviews}
             onAddNotes={props.onAddNotes}
-            onAddInspect={props.onAddInspect}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}

@@ -32,12 +32,12 @@ async function setup(resizeScenario = false) {
   useRightPanelStore.setState({ byThreadKey: {} });
   const store = useRightPanelStore.getState();
   store.open(threadRef, "files");
-  store.open(threadRef, "inspect");
+  store.open(threadRef, "diff");
   if (resizeScenario) {
     store.closeSurface(threadRef, "files");
     store.applyTileAction(threadRef, {
       type: "move",
-      tabId: "inspect",
+      tabId: "diff",
       targetGroupId: "conversation-group",
     });
     store.openTerminal(threadRef, "new-terminal");
@@ -59,7 +59,11 @@ async function setup(resizeScenario = false) {
     return (
       <ThreadTileWorkspace
         threadRef={threadRef}
-        header={null}
+        header={<header style={{ height: 32 }}>Thread header</header>}
+        runningTerminalIds={[]}
+        onCloseTileSurfaces={(surfaces) => {
+          for (const surface of surfaces) store.closeSurface(threadRef, surface.id);
+        }}
         conversation={<textarea aria-label="Conversation draft" defaultValue="" />}
         panels={{
           surfaces: panel.surfaces,
@@ -119,39 +123,12 @@ async function setup(resizeScenario = false) {
       { router: false },
     ),
   );
-  const selectTab = async (name: string) => {
-    const tab = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
-      (element) => element.getAttribute("aria-label") === name,
-    )!;
-    if (tab.getClientRects().length)
-      await userEvent.click(screen.getByRole("tab", { name, exact: true }));
-    else {
-      const region = screen.getByRole("region", {
-        name: tab.closest("section")!.getAttribute("aria-label")!,
-        exact: true,
-      });
-      await userEvent.click(region.getByRole("button", { name: /^Tabs:/ }));
-      await userEvent.click(screen.getByRole("menuitem", { name, exact: true }));
-    }
-  };
-  const newTileRight = async () => {
-    const section = document.querySelector<HTMLElement>("section.workspace-tile-frame")!;
-    const region = screen.getByRole("region", {
-      name: section.getAttribute("aria-label")!,
-      exact: true,
-    });
-    const button = section.querySelector<HTMLElement>('[aria-label="New tile to the right"]')!;
-    if (button.getClientRects().length)
-      await userEvent.click(
-        region.getByRole("button", { name: "New tile to the right", exact: true }),
-      );
-    else {
-      await userEvent.click(region.getByRole("button", { name: "Tile actions", exact: true }));
-      await userEvent.click(
-        screen.getByRole("menuitem", { name: "New tile to the right", exact: true }),
-      );
-    }
-  };
+  const selectTab = (name: string) =>
+    userEvent.click(screen.getByRole("tab", { name, exact: true }));
+  const newTileRight = () =>
+    userEvent.click(
+      screen.getByRole("button", { name: "New tile to the right", exact: true }).first(),
+    );
   const layout = () => selectThreadTileLayout(useRightPanelStore.getState().byThreadKey, threadRef);
   const owned = resources.move();
   return {
@@ -207,18 +184,7 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   await expect
     .element(screen.getByRole("textbox", { name: "Editor files" }))
     .toHaveValue("unsaved editor contents");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Switch tile, 3 tiles, maximized", exact: true }),
-  );
-  await userEvent.click(screen.getByRole("menuitem", { name: "1. Conversation", exact: true }));
-  expect(layout().maximizedGroupId).toBe(conversation.id);
-  await expect
-    .element(screen.getByRole("textbox", { name: "Conversation draft" }))
-    .toHaveValue("unfinished conversation");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Switch tile, 3 tiles, maximized", exact: true }),
-  );
-  await userEvent.click(screen.getByRole("menuitem", { name: "Restore all tiles", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Maximized · Esc to restore" }));
   expect(layout().maximizedGroupId).toBeNull();
   await expect
     .element(screen.getByRole("textbox", { name: "Conversation draft" }))
@@ -236,34 +202,42 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.id === chooser.id)?.tabs).toContain(
     "terminal:new-terminal",
   );
-  await userEvent.click(screen.getByRole("button", { name: "Add area", exact: true }).nth(0));
+  await userEvent.click(screen.getByRole("button", { name: "New tab", exact: true }).nth(0));
+  await expect.element(screen.getByRole("tab", { name: "New tab", exact: true })).toBeVisible();
+  await userEvent.keyboard("t");
   await expect
-    .element(screen.getByRole("menuitem", { name: "Terminal", exact: true }))
-    .toBeVisible();
-  await userEvent.click(screen.getByRole("menuitem", { name: "Terminal", exact: true }));
+    .element(screen.getByRole("tab", { name: "New tab", exact: true }))
+    .not.toBeInTheDocument();
   await expect
     .element(screen.getByRole("textbox", { name: "Editor terminal:new-terminal" }))
     .toBeVisible();
   // The region supplies coordinates; its floating content and drop overlay receive the drag.
   await userEvent.dragAndDrop(
     screen.getByRole("tab", { name: "files", exact: true }),
-    screen.getByRole("region", { name: "Tile: inspect", exact: true }),
+    screen.getByRole("region", { name: "Tile: diff", exact: true }),
     { force: true },
   );
   await expect
     .element(screen.getByRole("textbox", { name: "Editor files" }))
     .toHaveValue("unsaved editor contents");
   expect(getTileGroups(layout()).find((group) => group.tabs.includes("files"))?.tabs).toContain(
-    "inspect",
+    "diff",
   );
   const tabGroupId = layout().focusedGroupId;
   await userEvent.keyboard("{Control>}{Tab}{/Control}");
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
-    "inspect",
+    "diff",
+  );
+  // Focus follows into the shown tab, rather than dropping to the page with the hidden one.
+  await vi.waitFor(() =>
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe("diff"),
   );
   await userEvent.keyboard("{Control>}{Shift>}{Tab}{/Shift}{/Control}");
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
     "files",
+  );
+  await vi.waitFor(() =>
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe("files"),
   );
   await newTileRight();
   await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
@@ -277,12 +251,12 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   ).toHaveLength(1);
   await userEvent.click(screen.getByRole("button", { name: "Close empty tile", exact: true }));
   expect(getTileGroups(layout()).some((group) => group.id === empty.id)).toBe(false);
-  await selectTab("Conversation");
+  await selectTab("Chat");
   const movedGroup = getTileGroups(layout()).find((group) => group.tabs.includes("files"))!;
   const targetGroup = getTileGroups(layout()).find((group) => group.tabs.includes("conversation"))!;
   await userEvent.dragAndDrop(
     screen.getByRole("toolbar", { name: "Move tile: files", exact: true }),
-    screen.getByRole("region", { name: "Tile: Conversation", exact: true }),
+    screen.getByRole("region", { name: "Tile: Chat", exact: true }),
     { sourcePosition: { x: 5, y: 12 }, force: true },
   );
   expect(getTileGroups(layout()).findIndex((group) => group.id === movedGroup.id)).toBeLessThan(
@@ -296,19 +270,24 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
     .toHaveValue("unsaved editor contents");
   await userEvent.dragAndDrop(
     screen.getByRole("toolbar", { name: "Move tile: files", exact: true }),
-    screen.getByRole("toolbar", { name: "Move tile: Conversation", exact: true }),
+    screen.getByRole("toolbar", { name: "Move tile: Chat", exact: true }),
     { sourcePosition: { x: 5, y: 12 }, force: true },
   );
   expect(getTileGroups(layout()).find((group) => group.tabs.includes("files"))?.tabs).toContain(
     "conversation",
   );
   expect(getTileGroups(layout()).some((group) => group.id === movedGroup.id)).toBe(false);
+  // Middle-clicking a tab that doesn't hold focus leaves the caret where the user was typing.
+  const elsewhere = document.body.appendChild(document.createElement("input"));
+  elsewhere.focus();
   await userEvent.click(screen.getByRole("tab", { name: "files", exact: true }), {
     button: "middle",
   });
   await expect
     .element(screen.getByRole("tab", { name: "files", exact: true }))
     .not.toBeInTheDocument();
+  expect(document.activeElement).toBe(elsewhere);
+  elsewhere.remove();
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces.some(
       (surface) => surface.id === "files",
@@ -316,9 +295,9 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   ).toBe(false);
 });
 
-it("resizes, focuses any two tabs and opens independent area views", async () => {
+it("resizes, shows tiles beside a maximized one and opens independent area views", async () => {
   await using fixture = await setup(true);
-  const { screen, store, threadRef, layout, selectTab, newTileRight } = fixture;
+  const { screen, store, threadRef, layout, newTileRight } = fixture;
   await newTileRight();
   const notesChooser = getTileGroups(layout()).find((group) => group.tabs.length === 0)!;
   await userEvent.click(screen.getByRole("button", { name: "Notes", exact: true }));
@@ -359,98 +338,32 @@ it("resizes, focuses any two tabs and opens independent area views", async () =>
   expect(layout().focusedGroupId).not.toBe(focusedBefore);
   store.applyTileAction(threadRef, { type: "focus", groupId: notesChooser.id });
   const fullTree = JSON.stringify(layout().root);
-  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
-  expect(layout().focusPairGroupId).toBe(notesChooser.id);
-  await expect
-    .element(screen.getByRole("button", { name: "Choose tile: terminal", exact: true }))
-    .toBeVisible();
   const notesElement = screen.getByRole("textbox", { name: "Editor notes" }).element();
-  await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
-  await userEvent.keyboard("{Control>}{Alt>}{ArrowLeft}{/Alt}{/Control}");
-  expect(layout().focusPairLeftTabId).toBeTruthy();
-  expect(layout().focusPairRightTabId).toBe(notesId);
-  await userEvent.click(screen.getByRole("button", { name: "Choose left tab", exact: true }));
-  const chooseTerminal = screen.getByRole("button", { name: "Choose tile: terminal", exact: true });
-  const guestRect = chooseTerminal.element().getBoundingClientRect();
-  const hostedGuest = document.createElement("button");
-  Object.assign(hostedGuest.style, {
-    position: "fixed",
-    zIndex: "30",
-    left: `${guestRect.x}px`,
-    top: `${guestRect.y}px`,
-    width: `${guestRect.width}px`,
-    height: `${guestRect.height}px`,
-  });
-  let pageClicks = 0;
-  hostedGuest.onclick = () => {
-    pageClicks++;
-  };
-  document.body.append(hostedGuest);
-  using _hostedGuest = { [Symbol.dispose]: () => hostedGuest.remove() };
-  expect(
-    document.elementFromPoint(
-      guestRect.x + guestRect.width / 2,
-      guestRect.y + guestRect.height / 2,
-    ),
-  ).toBe(chooseTerminal.element());
-  await userEvent.click(chooseTerminal);
-  expect(pageClicks).toBe(0);
-  hostedGuest.remove();
-  expect(layout().focusPairLeftTabId).toBe("terminal:new-terminal");
-  await userEvent.click(screen.getByRole("button", { name: "Choose left tab", exact: true }));
-  await userEvent.keyboard("{Escape}");
-  expect(layout().focusPairGroupId).toBeNull();
-  expect(JSON.stringify(layout().root)).toBe(fullTree);
   await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
-  screen.getByRole("button", { name: "Show inspect on left", exact: true }).element().focus();
-  await userEvent.keyboard("{Enter}");
-  expect(layout().focusPairLeftTabId).toBe("inspect");
-  expect(screen.getByRole("textbox", { name: "Editor notes" }).element()).toBe(notesElement);
-  expect(JSON.stringify(layout().root)).toBe(fullTree);
-  await expect.element(screen.getByRole("textbox", { name: "Editor notes" })).toBeVisible();
-  expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(2);
-  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+  expect(layout().maximizedGroupId).toBe(notesChooser.id);
   expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(1);
-  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  await userEvent.click(screen.getByRole("menuitem", { name: /terminal$/ }));
+  expect(layout().besideGroupId).toBe("terminal-group");
   expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(2);
-  const pairRect = screen
-    .getByRole("textbox", { name: "Editor notes" })
-    .element()
-    .getBoundingClientRect();
-  window.dispatchEvent(
-    new PointerEvent("pointermove", { clientX: pairRect.x + 30, clientY: pairRect.y + 30 }),
-  );
-  await userEvent.keyboard("{Control>}{Alt>}{r>}");
-  await expect.element(screen.getByRole("status", { name: "Resizing focused tile" })).toBeVisible();
-  window.dispatchEvent(
-    new PointerEvent("pointermove", { clientX: pairRect.x + 90, clientY: pairRect.y + 30 }),
-  );
-  await userEvent.keyboard("{/r}{/Alt}{/Control}");
-  expect(layout().focusPairRatio).not.toBe(0.55);
-  expect(JSON.stringify(layout().root)).toBe(fullTree);
+  await expect
+    .element(screen.getByRole("button", { name: "2 tiles · Esc to restore" }))
+    .toBeVisible();
+  await userEvent.keyboard("{Control>}{Alt>}s{/Alt}{/Control}");
+  expect([layout().maximizedGroupId, layout().besideGroupId]).toEqual([
+    "terminal-group",
+    notesChooser.id,
+  ]);
+  expect(screen.getByRole("textbox", { name: "Editor notes" }).element()).toBe(notesElement);
   await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
-  expect(layout().focusPairGroupId).toBeNull();
+  expect([layout().maximizedGroupId, layout().besideGroupId]).toEqual([null, undefined]);
+  await userEvent.click(screen.getByRole("textbox", { name: "Editor notes" }));
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(layout().maximizedGroupId).toBe(notesChooser.id);
+  await userEvent.keyboard("{Escape}");
+  expect(layout().maximizedGroupId).toBeNull();
+  expect(JSON.stringify(layout().root)).toBe(fullTree);
   expect(document.querySelectorAll("section.workspace-tile-frame")).toHaveLength(3);
-  expect(JSON.stringify(layout().root)).toBe(fullTree);
-
-  await selectTab("Conversation");
-  const beforeSameGroupFocus = JSON.stringify(layout().root);
-  const wrapper = document.querySelector<HTMLElement>("[data-thread-tiling]")!.parentElement!;
-  wrapper.style.width = "520px";
-  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
-  await userEvent.click(screen.getByRole("button", { name: "Show inspect on left", exact: true }));
-  await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
-  await expect.element(screen.getByRole("textbox", { name: "Editor inspect" })).toBeVisible();
-  await userEvent.click(screen.getByRole("textbox", { name: "Editor inspect" }));
-  expect(layout().focusPairRightTabId).toBe("conversation");
-  expect(layout().focusPairLeftTabId).toBe("inspect");
-  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
-  await expect.element(screen.getByRole("textbox", { name: "Editor inspect" })).toBeVisible();
-  await userEvent.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
-  await expect.element(screen.getByRole("textbox", { name: "Conversation draft" })).toBeVisible();
-  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
-  expect(JSON.stringify(layout().root)).toBe(beforeSameGroupFocus);
-  wrapper.style.width = "900px";
 
   const beforeNativeResize = JSON.stringify(layout().root);
   dispatchMenuAction("workspace.tile.resize");
@@ -477,20 +390,127 @@ it("resizes, focuses any two tabs and opens independent area views", async () =>
   expect(getTileGroups(layout()).find((group) => group.id === notesChooser.id)?.tabs).toContain(
     notesId,
   );
-  const notesGroups = getTileGroups(layout()).filter((group) =>
-    group.tabs.some((tabId) => tabId.startsWith("notes:")),
-  );
-  await userEvent.click(
-    screen
-      .getByRole("region", { name: "Tile: notes", exact: true })
-      .nth(notesGroups.findIndex((group) => group.id === secondNotesGroup.id))
-      .getByRole("button", { name: "Tile actions", exact: true }),
-  );
-  await userEvent.click(screen.getByRole("menuitem", { name: "Close tab", exact: true }));
+  store.applyTileAction(threadRef, { type: "focus", groupId: secondNotesGroup.id });
+  await userEvent.keyboard("{Control>}{Alt>}.{/Alt}{/Control}");
+  await userEvent.click(screen.getByRole("menuitem", { name: /^Close tab/ }));
   expect(
     selectThreadRightPanelState(
       useRightPanelStore.getState().byThreadKey,
       threadRef,
     ).surfaces.filter((surface) => surface.kind === "notes"),
   ).toHaveLength(1);
+});
+
+it("moves and resizes floating tiles without docking, and drives the empty chooser by keys", async () => {
+  await using fixture = await setup(true);
+  const { screen, store, threadRef, layout } = fixture;
+  await userEvent.click(
+    screen
+      .getByRole("region", { name: "Tile: terminal", exact: true })
+      .getByRole("button", { name: "Float tile", exact: true }),
+  );
+  const floated = getTileGroups(layout()).find((group) => group.id === "terminal-group")!;
+  expect(floated.floating).toBeDefined();
+  const titlebar = screen.getByRole("toolbar", { name: "Move tile: terminal", exact: true });
+  const target = screen.getByRole("region", { name: "Tile: Chat", exact: true });
+  const targetRect = target.element().getBoundingClientRect();
+  const barRect = titlebar.element().getBoundingClientRect();
+  // Over another tile's edge, where the old snapping would have docked it.
+  await userEvent.dragAndDrop(titlebar, target, {
+    sourcePosition: { x: 4, y: barRect.height / 2 },
+    targetPosition: { x: 4, y: targetRect.height / 2 },
+    force: true,
+  });
+  const moved = getTileGroups(layout()).find((group) => group.id === "terminal-group")!;
+  expect(moved.floating).toBeDefined();
+  expect(moved.floating!.x).not.toBe(floated.floating!.x);
+  const corner = screen.getByRole("separator", {
+    name: "Resize floating terminal bottom right",
+    exact: true,
+  });
+  await userEvent.dragAndDrop(corner, target, { targetPosition: { x: 10, y: 10 }, force: true });
+  const resized = getTileGroups(layout()).find((group) => group.id === "terminal-group")!;
+  expect(resized.floating!.width).not.toBe(moved.floating!.width);
+  await userEvent.click(
+    screen
+      .getByRole("region", { name: "Tile: terminal", exact: true })
+      .getByRole("button", { name: "Dock tile", exact: true }),
+  );
+  expect(
+    getTileGroups(layout()).find((group) => group.id === "terminal-group")?.lastFloating,
+  ).toEqual(resized.floating);
+
+  store.applyTileAction(threadRef, {
+    type: "new-group",
+    targetGroupId: "terminal-group",
+    axis: "vertical",
+    side: "after",
+    groupId: "chooser",
+    splitId: "chooser-split",
+  });
+  await expect.element(screen.getByRole("button", { name: "Chat", exact: true })).toBeVisible();
+  // Focus is still on the other tile's Dock button, which keeps its keys.
+  await userEvent.keyboard("n");
+  expect(getTileGroups(layout()).find((group) => group.id === "chooser")?.tabs).toEqual([]);
+  await userEvent.click(screen.getByText("Choose an area", { exact: true }));
+  await userEvent.keyboard("{ArrowRight}{ArrowLeft}n");
+  const chosen = getTileGroups(layout()).find((group) => group.id === "chooser")!.tabs[0]!;
+  expect(chosen).toMatch(/^notes:/);
+  // The chooser unmounts; focus moves into the chosen area rather than dropping to the page.
+  await vi.waitFor(() =>
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe(chosen),
+  );
+  store.applyTileAction(threadRef, {
+    type: "new-group",
+    targetGroupId: "terminal-group",
+    axis: "vertical",
+    side: "after",
+    groupId: "escaped",
+    splitId: "escaped-split",
+  });
+  await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByText("Choose an area", { exact: true }));
+  await userEvent.keyboard("{Escape}");
+  expect(getTileGroups(layout()).some((group) => group.id === "escaped")).toBe(false);
+  await vi.waitFor(() => expect(document.activeElement).not.toBe(document.body));
+  store.applyTileAction(threadRef, {
+    type: "new-group",
+    targetGroupId: "terminal-group",
+    axis: "vertical",
+    side: "after",
+    groupId: "tabbed",
+    splitId: "tabbed-split",
+  });
+  await userEvent.click(screen.getByText("Choose an area", { exact: true }));
+  // Chat is highlighted, but Enter on a Tabbed-to choice presses that choice.
+  await userEvent.keyboard("{Tab}{Tab}{Tab}");
+  await expect.element(screen.getByRole("button", { name: "Notes", exact: true })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(getTileGroups(layout()).find((group) => group.id === "tabbed")?.tabs[0]).toMatch(
+    /^notes:/,
+  );
+  expect(getTileGroups(layout()).find((group) => group.tabs.includes("conversation"))?.id).toBe(
+    "conversation-group",
+  );
+
+  store.applyTileAction(threadRef, {
+    type: "move",
+    tabId: "terminal:new-terminal",
+    targetGroupId: "conversation-group",
+  });
+  await userEvent.click(
+    screen
+      .getByRole("region", { name: "Tile: terminal", exact: true })
+      .getByRole("button", { name: "Close tile", exact: true }),
+  );
+  await expect
+    .element(screen.getByRole("alertdialog", { name: "Close all 3 tabs in this tile?" }))
+    .toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Close tile", exact: true }).last());
+  expect(getTileGroups(layout()).some((group) => group.tabs.includes("conversation"))).toBe(false);
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces.map(
+      (surface) => surface.id,
+    ),
+  ).not.toContain("terminal:new-terminal");
 });
