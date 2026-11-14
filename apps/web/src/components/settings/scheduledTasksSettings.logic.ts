@@ -98,6 +98,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
     ...(typeof raw.taskId === "string" && raw.taskId.trim()
       ? { taskId: ScheduledTaskId.make(raw.taskId) }
       : {}),
+    ...(raw.new === true || raw.new === "true" ? { new: true as const } : {}),
   };
 }
 

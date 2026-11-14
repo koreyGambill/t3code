@@ -4,6 +4,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   BoxesIcon,
+  CalendarClockIcon,
   FilesIcon,
   IdCardIcon,
   InfoIcon,
@@ -64,6 +65,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { useSidebar, useSidebarVisibility } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { WeavewingMark } from "./WeavewingMark";
+import { AutomationsView } from "./automations/AutomationsView";
 
 const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; about: string }> = {
   todos: {
@@ -113,6 +115,12 @@ const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; abo
     icon: ScanSearchIcon,
     about:
       "What the agent loaded and spent: file and skill reads, context per turn, and tokens. T3 records it as turns run.",
+  },
+  automations: {
+    title: "Automations",
+    icon: CalendarClockIcon,
+    about:
+      "Agents that run on a schedule, a webhook or an event. Switch them on or off for this thread, the project or the whole server, and open a run's thread from its history.",
   },
 };
 
@@ -502,7 +510,9 @@ function ThreadToolView({
         !FLUSH_THREAD_TOOLS.has(view) && "overflow-auto px-2.5 py-2.5",
       )}
     >
-      {threadRef ? (
+      {view === "automations" ? (
+        <AutomationsView threadRef={threadRef} />
+      ) : threadRef ? (
         <ThreadToolSection
           section={view}
           threadRef={threadRef}

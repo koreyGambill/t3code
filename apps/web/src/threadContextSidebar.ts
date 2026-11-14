@@ -94,6 +94,7 @@ export const THREAD_TOOL_ORDER: ReadonlyArray<ThreadContextSection> = [
   "details",
   "environments",
   "inspect",
+  "automations",
 ];
 
 export function firstVisibleThreadTool(hidden: ReadonlyArray<string>): ThreadContextSection | null {
@@ -113,6 +114,7 @@ export function migrateThreadToolsView(view: string | undefined): ThreadContextS
     case "timeline":
     case "details":
     case "environments":
+    case "automations":
       return view;
     default:
       return "todos";

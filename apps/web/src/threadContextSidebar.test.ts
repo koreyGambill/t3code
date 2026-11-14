@@ -314,6 +314,7 @@ describe("thread tools store", () => {
       "details",
       "environments",
       "inspect",
+      "automations",
     ] as const)
       store.setHidden(tool, true);
     expect(firstVisibleThreadTool(useThreadContextSidebarStore.getState().hidden)).toBeNull();
