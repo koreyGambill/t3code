@@ -13,6 +13,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Deferred from "effect/Deferred";
@@ -1505,7 +1506,11 @@ export function createServerEnvironmentAtoms<R, E>(
       // `scan` emits its seed first; skipping it keeps the inbox loading until the snapshot.
       transform: (events) =>
         events.pipe(
-          Stream.scan(() => EMPTY_NOTIFICATION_INBOX, applyNotificationEvent),
+          Stream.mapEffect((event) => Effect.map(Clock.currentTimeMillis, (at) => ({ event, at }))),
+          Stream.scan(
+            () => EMPTY_NOTIFICATION_INBOX,
+            (inbox, { event, at }) => applyNotificationEvent(inbox, event, at),
+          ),
           Stream.filter((inbox) => inbox !== EMPTY_NOTIFICATION_INBOX),
         ),
     }),

@@ -40,5 +40,7 @@ export function useInboxSignal() {
     severity: maxNotificationSeverity(
       groups.map((group) => group.inbox?.maxUnreadSeverity ?? null),
     ),
+    /** A count of zero proves nothing while a stream is failing. */
+    failed: groups.some((group) => group.failed),
   };
 }

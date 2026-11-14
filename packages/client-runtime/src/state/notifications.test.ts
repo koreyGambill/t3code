@@ -28,33 +28,49 @@ const item = (id: string, overrides: Partial<Notification> = {}): Notification =
 
 describe("notification inbox", () => {
   it("replaces on a snapshot and merges upserts newest raise first", () => {
-    const snapshot = applyNotificationEvent(EMPTY_NOTIFICATION_INBOX, {
-      type: "snapshot",
-      unreadCount: 2,
-      maxUnreadSeverity: "warning",
-      items: [item("b", { updatedAt: "2026-11-14T11:00:00.000Z" }), item("a")],
-    });
-    const repeated = applyNotificationEvent(snapshot, {
-      type: "upsert",
-      unreadCount: 3,
-      maxUnreadSeverity: "critical",
-      items: [
-        item("a", { updatedAt: "2026-11-14T11:30:00.000Z", repeatCount: 1 }),
-        item("c", { severity: "critical", updatedAt: "2026-11-14T11:15:00.000Z" }),
-      ],
-    });
+    const snapshot = applyNotificationEvent(
+      EMPTY_NOTIFICATION_INBOX,
+      {
+        type: "snapshot",
+        unreadCount: 2,
+        maxUnreadSeverity: "warning",
+        items: [item("b", { updatedAt: "2026-11-14T11:00:00.000Z" }), item("a")],
+      },
+      NOW,
+    );
+    const repeated = applyNotificationEvent(
+      snapshot,
+      {
+        type: "upsert",
+        unreadCount: 3,
+        maxUnreadSeverity: "critical",
+        items: [
+          item("a", { updatedAt: "2026-11-14T11:30:00.000Z", repeatCount: 1 }),
+          item("c", { severity: "critical", updatedAt: "2026-11-14T11:15:00.000Z" }),
+        ],
+      },
+      NOW + 1,
+    );
     expect(repeated.items.map((entry) => [entry.id, entry.repeatCount])).toEqual([
       ["a", 1],
       ["c", 0],
       ["b", 0],
     ]);
-    expect(repeated).toMatchObject({ unreadCount: 3, maxUnreadSeverity: "critical" });
-    const counts = applyNotificationEvent(repeated, {
-      type: "upsert",
-      unreadCount: 0,
-      maxUnreadSeverity: null,
-      items: [],
+    expect(repeated).toMatchObject({
+      unreadCount: 3,
+      maxUnreadSeverity: "critical",
+      receivedAt: NOW + 1,
     });
+    const counts = applyNotificationEvent(
+      repeated,
+      {
+        type: "upsert",
+        unreadCount: 0,
+        maxUnreadSeverity: null,
+        items: [],
+      },
+      NOW + 2,
+    );
     expect(counts).toMatchObject({ unreadCount: 0, maxUnreadSeverity: null });
     expect(counts.items).toHaveLength(3);
   });

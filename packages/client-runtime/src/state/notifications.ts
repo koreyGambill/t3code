@@ -10,12 +10,15 @@ export interface NotificationInbox {
   readonly maxUnreadSeverity: NotificationSeverity | null;
   /** Newest raise first. */
   readonly items: ReadonlyArray<Notification>;
+  /** When the last event arrived; a snooze-wake upsert lands after its snooze ends. */
+  readonly receivedAt: number;
 }
 
 export const EMPTY_NOTIFICATION_INBOX: NotificationInbox = {
   unreadCount: 0,
   maxUnreadSeverity: null,
   items: [],
+  receivedAt: 0,
 };
 
 // Upserts can outlive the snapshot's 200-row window; past this the oldest rows drop.
@@ -29,8 +32,13 @@ const newestFirst = (a: Notification, b: Notification) =>
 export function applyNotificationEvent(
   inbox: NotificationInbox,
   event: NotificationStreamEvent,
+  receivedAt: number,
 ): NotificationInbox {
-  const counts = { unreadCount: event.unreadCount, maxUnreadSeverity: event.maxUnreadSeverity };
+  const counts = {
+    unreadCount: event.unreadCount,
+    maxUnreadSeverity: event.maxUnreadSeverity,
+    receivedAt,
+  };
   if (event.type === "snapshot") return { ...counts, items: event.items };
   const changed = new Set(event.items.map((item) => item.id));
   const items = [...event.items, ...inbox.items.filter((item) => !changed.has(item.id))]

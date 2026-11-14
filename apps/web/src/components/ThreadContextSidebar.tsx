@@ -358,7 +358,7 @@ const inboxBadgeClass = {
 } as const;
 
 function InboxStripButton({ active, tooltip }: { active: boolean; tooltip: string }) {
-  const { unread, severity } = useInboxSignal();
+  const { unread, severity, failed } = useInboxSignal();
   const { state } = useMonitoringSignal();
   const statusAlert = state === "fail" || state === "warn" ? state : null;
   return (
@@ -370,6 +370,7 @@ function InboxStripButton({ active, tooltip }: { active: boolean; tooltip: strin
       badge={
         [
           unread ? `${unread} unread${severity && severity !== "info" ? `, ${severity}` : ""}` : "",
+          failed ? "notifications unavailable" : "",
           statusAlert ? `status ${statusAlert === "fail" ? "failing" : "warning"}` : "",
         ]
           .filter(Boolean)
@@ -382,7 +383,14 @@ function InboxStripButton({ active, tooltip }: { active: boolean; tooltip: strin
           <StatusSourceDot state={statusAlert} />
         </span>
       ) : null}
-      {unread ? (
+      {failed && !unread ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -right-1 -top-1 min-w-3.5 rounded-full bg-muted-foreground px-1 text-center text-3xs leading-3.5 font-medium text-sidebar ring-2 ring-sidebar"
+        >
+          !
+        </span>
+      ) : unread ? (
         <span
           aria-hidden
           data-severity={severity}

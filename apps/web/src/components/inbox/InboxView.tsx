@@ -25,7 +25,7 @@ import {
   MessageSquareIcon,
   Settings2Icon,
 } from "lucide-react";
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { memo, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { createPortal, flushSync } from "react-dom";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -34,11 +34,7 @@ import { useThreadShell } from "../../state/entities";
 import { useInboxEnvironments } from "../../state/inbox";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  type InboxSelection,
-  type InboxTab,
-  useThreadContextSidebarStore,
-} from "../../threadContextSidebarStore";
+import { type InboxTab, useThreadContextSidebarStore } from "../../threadContextSidebarStore";
 import ChatMarkdown from "../ChatMarkdown";
 import { useScheduledTaskTitle } from "../chat/TimelineUserMessageRow";
 import { WatcherAlerts, useMonitoringSignal } from "../monitoring/WatcherAlerts";
@@ -83,8 +79,7 @@ const severityBar: Record<NotificationSeverity, string | null> = {
   info: null,
 };
 
-const rowKey = (item: { environmentId: string; notification: { id: string } }) =>
-  `${item.environmentId}:${item.notification.id}`;
+const rowKey = (environmentId: string, id: string) => `${environmentId}:${id}`;
 
 function useNotificationActions(environmentId: EnvironmentId) {
   const permitted = useAtomValue(
@@ -102,11 +97,13 @@ function SnoozeMenu({
   disabled,
   compact,
   onSnooze,
+  onOpenChange,
 }: {
   disabled: boolean;
   compact?: boolean;
-  /** Returns where focus goes once the snoozed row leaves the list. */
-  onSnooze: (until: string) => HTMLElement | null | void;
+  /** Returns where focus goes once the snoozed item leaves its place. */
+  onSnooze: (until: string) => HTMLElement | null;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const finalFocus = useRef<HTMLElement | null>(null);
   const [presets, setPresets] = useState<ReturnType<typeof resolveSnoozePresets>>([]);
@@ -114,6 +111,7 @@ function SnoozeMenu({
     <Menu
       onOpenChange={(open) => {
         if (open) setPresets(resolveSnoozePresets(new Date(), { presets: SNOOZE_PRESETS }));
+        onOpenChange?.(open);
       }}
     >
       {compact ? (
@@ -142,7 +140,7 @@ function SnoozeMenu({
           <MenuItem
             key={preset.id}
             onClick={() => {
-              finalFocus.current = onSnooze(preset.snoozedUntil) ?? null;
+              finalFocus.current = onSnooze(preset.snoozedUntil);
             }}
           >
             <span className="flex-1">{preset.label}</span>
@@ -209,38 +207,66 @@ function VerificationChip({ notification }: { notification: Notification }) {
   );
 }
 
-function InboxRow({
-  item,
+// Props stay primitive or fold-stable so an upsert re-renders only the rows it changed.
+const InboxRow = memo(function InboxRow({
+  notification,
+  environmentId,
+  environmentLabel,
   tab,
-  onOpen,
 }: {
-  item: InboxItem;
+  notification: Notification;
+  environmentId: EnvironmentId;
+  environmentLabel: string | null;
   tab: NotificationTab;
-  onOpen: () => void;
 }) {
-  const { notification, environmentId } = item;
   const actions = useNotificationActions(environmentId);
   const source = useSourceLabel(environmentId, notification);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const unread = notification.readAt === null;
   const bar = severityBar[notification.severity];
   const itemRef = useRef<HTMLLIElement>(null);
-  // The row leaves this tab, so focus moves to its neighbour instead of the page.
+  const open = () => {
+    useThreadContextSidebarStore
+      .getState()
+      .selectInbox({ kind: "notification", environmentId, id: notification.id });
+    if (unread && actions.permitted) actions.run(notification, { type: "read" });
+  };
+  // The row leaves this tab, so focus moves to a neighbour, or the tabs for the last row.
   const leave = (action: NotificationAction) => {
     const item = itemRef.current;
-    const neighbour = (
-      item?.nextElementSibling ?? item?.previousElementSibling
-    )?.querySelector<HTMLElement>("[data-inbox-row]");
-    neighbour?.focus();
+    const target =
+      (item?.nextElementSibling ?? item?.previousElementSibling)?.querySelector<HTMLElement>(
+        "[data-inbox-row]",
+      ) ??
+      item?.closest("[data-inbox-root]")?.querySelector<HTMLElement>('[aria-pressed="true"]') ??
+      null;
+    target?.focus();
     actions.run(notification, action);
-    return neighbour ?? null;
+    return target;
   };
   return (
-    <li ref={itemRef} className="group/row relative border-b border-border">
+    <li
+      ref={itemRef}
+      className="group/row relative border-b border-border"
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (
+          !(
+            event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)
+          )
+        )
+          setFocused(false);
+      }}
+    >
       <button
         type="button"
-        data-inbox-row={rowKey(item)}
-        className="flex w-full min-w-0 gap-2 py-2 pr-3 pl-3 text-left outline-hidden hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-        onClick={onOpen}
+        data-inbox-row={rowKey(environmentId, notification.id)}
+        className="flex w-full min-w-0 gap-2 py-2 pr-3 pl-3 text-left outline-hidden group-hover/row:bg-accent group-focus-within/row:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        onClick={open}
       >
         {bar ? (
           <span
@@ -276,68 +302,71 @@ function InboxRow({
               </span>
             ) : null}
           </span>
-          {item.environmentLabel || notification.verification ? (
+          {environmentLabel || notification.verification ? (
             <span className="flex min-w-0 flex-wrap items-center gap-1">
               <VerificationChip notification={notification} />
-              {item.environmentLabel ? (
+              {environmentLabel ? (
                 <span className="min-w-0 truncate text-xs text-muted-foreground">
-                  {item.environmentLabel}
+                  {environmentLabel}
                 </span>
               ) : null}
             </span>
           ) : null}
         </span>
       </button>
-      {/* Hover and focus reveal these; touch reaches them in the detail. */}
-      <div className="absolute top-1 right-1 flex items-center gap-0.5 rounded-md bg-sidebar opacity-0 shadow-xs ring-1 ring-border group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:hidden">
-        <IconAction
-          label={unread ? "Mark read" : "Mark unread"}
-          disabled={!actions.permitted}
-          onClick={() => actions.run(notification, { type: unread ? "read" : "unread" })}
-        >
-          {unread ? <MailOpenIcon /> : <MailIcon />}
-        </IconAction>
-        {tab === "snoozed" ? (
+      {/* Mounted on hover or focus only; touch reaches the same actions in the detail. The
+          fade lets the title run under the toolbar instead of being cut. */}
+      {hovered || focused || menuOpen ? (
+        <div className="absolute top-1 right-1 flex items-center gap-0.5 rounded-md bg-accent before:pointer-events-none before:absolute before:inset-y-0 before:-left-6 before:w-6 before:bg-linear-to-r before:from-transparent before:to-accent pointer-coarse:hidden">
           <IconAction
-            label="Unsnooze"
+            label={unread ? "Mark read" : "Mark unread"}
             disabled={!actions.permitted}
-            onClick={() => leave({ type: "unsnooze" })}
+            onClick={() => actions.run(notification, { type: unread ? "read" : "unread" })}
           >
-            <AlarmClockOffIcon />
+            {unread ? <MailOpenIcon /> : <MailIcon />}
           </IconAction>
-        ) : tab === "inbox" ? (
-          <SnoozeMenu
-            compact
-            disabled={!actions.permitted}
-            onSnooze={(until) => leave({ type: "snooze", until })}
-          />
-        ) : null}
-        {tab === "dismissed" ? (
+          {tab === "snoozed" ? (
+            <IconAction
+              label="Unsnooze"
+              disabled={!actions.permitted}
+              onClick={() => leave({ type: "unsnooze" })}
+            >
+              <AlarmClockOffIcon />
+            </IconAction>
+          ) : tab === "inbox" ? (
+            <SnoozeMenu
+              compact
+              disabled={!actions.permitted}
+              onOpenChange={setMenuOpen}
+              onSnooze={(until) => leave({ type: "snooze", until })}
+            />
+          ) : null}
           <IconAction
-            label="Restore"
+            label={tab === "dismissed" ? "Restore" : "Dismiss"}
             disabled={!actions.permitted}
-            onClick={() => leave({ type: "restore" })}
+            onClick={() => leave({ type: tab === "dismissed" ? "restore" : "dismiss" })}
           >
-            <ArchiveRestoreIcon />
+            {tab === "dismissed" ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
           </IconAction>
-        ) : (
-          <IconAction
-            label="Dismiss"
-            disabled={!actions.permitted}
-            onClick={() => leave({ type: "dismiss" })}
-          >
-            <ArchiveIcon />
-          </IconAction>
-        )}
-      </div>
+        </div>
+      ) : null}
     </li>
   );
-}
+});
 
-function BackHeader({ label, onBack }: { label: string; onBack: () => void }) {
+function BackHeader({
+  label,
+  onBack,
+  backRef,
+}: {
+  label: string;
+  onBack: () => void;
+  backRef?: Ref<HTMLButtonElement>;
+}) {
   return (
     <div className="flex min-w-0 shrink-0 items-center gap-1 border-b border-border px-1.5 py-1.5">
       <Button
+        ref={backRef}
         variant="ghost"
         size="icon-sm"
         aria-label="Back to inbox"
@@ -352,18 +381,24 @@ function BackHeader({ label, onBack }: { label: string; onBack: () => void }) {
   );
 }
 
-function InboxDetail({ item, onBack }: { item: InboxItem; onBack: () => void }) {
+function InboxDetail({ item, now, onBack }: { item: InboxItem; now: number; onBack: () => void }) {
   const { notification, environmentId } = item;
   const navigate = useNavigate();
   const actions = useNotificationActions(environmentId);
   const source = useSourceLabel(environmentId, notification);
-  const now = Date.parse(`${useNowMinute()}Z`);
+  const backRef = useRef<HTMLButtonElement>(null);
   const tab = notificationTab(notification, now);
   const unread = notification.readAt === null;
   const { verification } = notification;
+  // Snooze and Unsnooze swap each other out, so focus waits on Back.
+  const swap = (action: NotificationAction) => {
+    backRef.current?.focus();
+    actions.run(notification, action);
+    return backRef.current;
+  };
   return (
     <>
-      <BackHeader label="Inbox" onBack={onBack} />
+      <BackHeader label="Inbox" onBack={onBack} backRef={backRef} />
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
         <div className="space-y-1.5">
           <h4 className="font-medium wrap-anywhere">{notification.title}</h4>
@@ -431,7 +466,7 @@ function InboxDetail({ item, onBack }: { item: InboxItem; onBack: () => void }) 
             size="sm"
             variant="outline"
             disabled={!actions.permitted}
-            onClick={() => actions.run(notification, { type: "unsnooze" })}
+            onClick={() => swap({ type: "unsnooze" })}
           >
             <AlarmClockOffIcon />
             Unsnooze
@@ -439,7 +474,7 @@ function InboxDetail({ item, onBack }: { item: InboxItem; onBack: () => void }) 
         ) : tab === "inbox" ? (
           <SnoozeMenu
             disabled={!actions.permitted}
-            onSnooze={(until) => actions.run(notification, { type: "snooze", until })}
+            onSnooze={(until) => swap({ type: "snooze", until })}
           />
         ) : null}
         {tab === "dismissed" ? (
@@ -477,159 +512,88 @@ function InboxDetail({ item, onBack }: { item: InboxItem; onBack: () => void }) 
   );
 }
 
-function PanelRow(props: {
-  id: "status" | "watchers";
-  label: string;
-  detail: ReactNode;
-  onOpen: () => void;
-}) {
+function StatusRow({ onOpen }: { onOpen: () => void }) {
+  const { state, groups, unread } = useMonitoringSignal();
+  const watchers = useWatchersSupported();
+  if (groups.length === 0 && !watchers) return null;
+  const sources = groups.flatMap((group) => group.sources ?? []);
+  const failing = sources.filter((source) => source.latest.state === "fail").length;
+  const warning = sources.filter((source) => source.latest.state === "warn").length;
+  const summary = [
+    failing ? `${failing} failing` : warning ? `${warning} warning${warning === 1 ? "" : "s"}` : "",
+    unread ? `${unread} watcher alert${unread === 1 ? "" : "s"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <button
       type="button"
-      data-inbox-row={props.id}
+      data-inbox-row="status"
       className="flex w-full min-w-0 items-center gap-2 border-b border-border px-3 py-2 text-left text-sm outline-hidden hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      onClick={props.onOpen}
+      onClick={onOpen}
     >
-      <span className="shrink-0 font-medium">{props.label}</span>
+      <span className="shrink-0 font-medium">Status</span>
       <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground">
-        {props.detail}
+        {state && state !== "ok" ? <StatusSourceDot state={state} /> : null}
+        <span className="truncate">{summary}</span>
       </span>
       <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
     </button>
   );
 }
 
-function StatusRow({ onOpen }: { onOpen: () => void }) {
-  const { state, groups } = useMonitoringSignal();
-  const sources = groups.flatMap((group) => group.sources ?? []);
-  const failing = sources.filter((source) => source.latest.state === "fail").length;
-  const warning = sources.filter((source) => source.latest.state === "warn").length;
-  if (groups.length === 0) return null;
-  return (
-    <PanelRow
-      id="status"
-      label="Status"
-      onOpen={onOpen}
-      detail={
-        <>
-          {state ? <StatusSourceDot state={state} /> : null}
-          <span className="truncate">
-            {sources.length === 0
-              ? "No sources"
-              : failing
-                ? `${failing} failing`
-                : warning
-                  ? `${warning} warning${warning === 1 ? "" : "s"}`
-                  : "All OK"}
-          </span>
-        </>
-      }
-    />
-  );
-}
-
-function WatchersRow({ onOpen }: { onOpen: () => void }) {
-  const { unread } = useMonitoringSignal();
-  const inboxEnvironments = useInboxEnvironments();
-  const supported = inboxEnvironments.some(
+function useWatchersSupported() {
+  return useInboxEnvironments().some(
     ({ environment }) => environment.serverConfig?.environment.capabilities.monitoring === true,
   );
-  if (!supported && unread === 0) return null;
-  return (
-    <PanelRow
-      id="watchers"
-      label="Watcher alerts"
-      onOpen={onOpen}
-      detail={unread ? <span className="truncate">{unread} unread</span> : null}
-    />
-  );
 }
 
-function InboxList({
-  items,
-  tab,
-  loading,
-  failed,
-  supported,
-  onSelect,
-}: {
-  items: ReadonlyArray<InboxItem>;
-  tab: InboxTab;
-  loading: boolean;
-  failed: boolean;
-  supported: boolean;
-  onSelect: (selection: InboxSelection) => void;
-}) {
+/** Status sources, watcher alerts until S6 folds them in, and the notification settings. */
+function StatusPanel() {
+  const navigate = useNavigate();
+  const { groups } = useMonitoringSignal();
+  const watchers = useWatchersSupported();
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      {tab === "inbox" ? (
-        <>
-          <StatusRow onOpen={() => onSelect({ kind: "status" })} />
-          <WatchersRow onOpen={() => onSelect({ kind: "watchers" })} />
-        </>
-      ) : null}
-      {failed ? (
-        <p role="alert" className="px-3 py-3 text-sm text-muted-foreground">
-          Could not load notifications.
-        </p>
-      ) : null}
-      {items.length > 0 ? (
-        <ul aria-label={`${TABS.find((entry) => entry.id === tab)!.label} notifications`}>
-          {items.map((item) => (
-            <InboxRow
-              key={rowKey(item)}
-              item={item}
-              tab={tab}
-              onOpen={() =>
-                onSelect({
-                  kind: "notification",
-                  environmentId: item.environmentId,
-                  id: item.notification.id,
-                })
-              }
-            />
-          ))}
-        </ul>
-      ) : loading ? (
-        <p role="status" className="px-3 py-3 text-sm text-muted-foreground">
-          Loading notifications…
-        </p>
-      ) : failed ? null : (
-        <Empty size="compact">
-          <EmptyMedia variant="icon">{TABS.find((entry) => entry.id === tab)!.icon}</EmptyMedia>
-          <EmptyTitle>
-            {!supported
-              ? "No inbox here"
-              : tab === "inbox"
-                ? "You're all caught up"
-                : tab === "snoozed"
-                  ? "Nothing snoozed"
-                  : "Nothing dismissed"}
-          </EmptyTitle>
-          <EmptyDescription>
-            {!supported
-              ? "Connect to a server that supports notifications."
-              : tab === "inbox"
-                ? "Automations and agents post here when something needs you."
-                : tab === "snoozed"
-                  ? "Snoozed notifications come back to the inbox when their time ends."
-                  : "Dismissed notifications stay here so you can restore them."}
-          </EmptyDescription>
-        </Empty>
-      )}
+      <StatusSourcesList
+        groups={groups}
+        onConfigureSources={(machine) =>
+          void navigate({ to: "/settings/status-sources", search: { machine } })
+        }
+      />
+      {watchers ? <WatcherAlerts /> : null}
+      <div className="border-t border-border p-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void navigate({ to: "/settings/general", hash: "notifications" })}
+        >
+          <Settings2Icon />
+          Notification settings
+        </Button>
+      </div>
     </div>
   );
 }
 
-/** The inbox strip view: tabs, notification rows and detail, and the legacy status panels. */
+const Note = ({ children }: { children: ReactNode }) => (
+  <p role="status" className="px-3 py-3 text-sm text-muted-foreground">
+    {children}
+  </p>
+);
+
+/** The inbox strip view: tabs, notification rows and detail, and the status panel. */
 export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
-  const navigate = useNavigate();
   const rootRef = useRef<HTMLDivElement>(null);
   const tab = useThreadContextSidebarStore((state) => state.inboxTab);
   const selection = useThreadContextSidebarStore((state) => state.inboxSelection);
   const groups = useInboxEnvironments();
   const markAllRead = useAtomCommand(serverEnvironment.markAllNotificationsRead);
-  const now = Date.parse(`${useNowMinute()}Z`);
+  // A snooze-wake upsert re-renders before the minute ticks; its arrival time ends the snooze.
+  const now = Math.max(
+    Date.parse(`${useNowMinute()}Z`),
+    ...groups.map((group) => group.inbox?.receivedAt ?? 0),
+  );
   const multiple = groups.length > 1;
   const all: InboxItem[] = groups
     .flatMap(({ environment, inbox }) =>
@@ -640,21 +604,23 @@ export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
       })),
     )
     .sort((a, b) => b.notification.updatedAt.localeCompare(a.notification.updatedAt));
-  const counts = { inbox: 0, snoozed: 0, dismissed: 0 };
+  let snoozedCount = 0;
   const shown: InboxItem[] = [];
   for (const item of all) {
     const itemTab = notificationTab(item.notification, now);
-    counts[itemTab] += 1;
+    if (itemTab === "snoozed") snoozedCount += 1;
     if (itemTab === tab) shown.push(item);
   }
   const unread = groups.reduce((total, group) => total + (group.inbox?.unreadCount ?? 0), 0);
+  const loading = groups.some((group) => group.inbox === null && !group.failed);
+  const failed = groups.some((group) => group.failed);
   const store = useThreadContextSidebarStore.getState;
 
   const back = () => {
     if (!selection) return;
     const key =
       selection.kind === "notification"
-        ? `${selection.environmentId}:${selection.id}`
+        ? rowKey(selection.environmentId, selection.id)
         : selection.kind;
     flushSync(() => store().selectInbox(null));
     rootRef.current?.querySelector<HTMLElement>(`[data-inbox-row="${CSS.escape(key)}"]`)?.focus();
@@ -671,21 +637,6 @@ export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
     event.preventDefault();
     back();
   };
-  const markRead = useAtomCommand(serverEnvironment.updateNotifications, { reportFailure: false });
-  // Opening an unread notification reads it; the OS-notification path does the same.
-  const select = (next: InboxSelection) => {
-    store().selectInbox(next);
-    if (next.kind !== "notification") return;
-    const item = all.find(
-      (entry) => entry.environmentId === next.environmentId && entry.notification.id === next.id,
-    );
-    if (item?.notification.readAt === null)
-      void markRead({
-        environmentId: item.environmentId,
-        input: { ids: [item.notification.id], action: { type: "read" } },
-      });
-  };
-
   const selected =
     selection?.kind === "notification"
       ? all.find(
@@ -698,33 +649,23 @@ export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
   return (
     <div
       ref={rootRef}
-      className="@container/inbox flex min-h-0 min-w-0 flex-1 flex-col"
+      data-inbox-root
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
       onKeyDown={onKeyDown}
     >
       {actions
         ? createPortal(
-            <>
-              <ToolHeaderButton
-                label="Mark all read"
-                disabled={unread === 0}
-                onClick={() => {
-                  for (const group of groups)
-                    if (group.inbox?.unreadCount)
-                      void markAllRead({
-                        environmentId: group.environment.environmentId,
-                        input: {},
-                      });
-                }}
-              >
-                <CheckCheckIcon />
-              </ToolHeaderButton>
-              <ToolHeaderButton
-                label="Notification settings"
-                onClick={() => void navigate({ to: "/settings/general", hash: "notifications" })}
-              >
-                <Settings2Icon />
-              </ToolHeaderButton>
-            </>,
+            <ToolHeaderButton
+              label="Mark all read"
+              disabled={unread === 0}
+              onClick={() => {
+                for (const group of groups)
+                  if (group.inbox?.unreadCount)
+                    void markAllRead({ environmentId: group.environment.environmentId, input: {} });
+              }}
+            >
+              <CheckCheckIcon />
+            </ToolHeaderButton>,
             actions,
           )
         : null}
@@ -733,22 +674,20 @@ export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
           <BackHeader label="Status" onBack={back} />
           <StatusPanel />
         </>
-      ) : selection?.kind === "watchers" ? (
-        <>
-          <BackHeader label="Watcher alerts" onBack={back} />
-          <WatcherAlerts />
-        </>
       ) : selection?.kind === "notification" ? (
         selected ? (
-          <InboxDetail key={rowKey(selected)} item={selected} onBack={back} />
+          <InboxDetail
+            key={rowKey(selected.environmentId, selected.notification.id)}
+            item={selected}
+            now={now}
+            onBack={back}
+          />
         ) : (
           <>
-            <BackHeader label="Notification" onBack={back} />
-            <p className="px-3 py-3 text-sm text-muted-foreground">
-              {groups.some((group) => group.inbox === null)
-                ? "Loading notification…"
-                : "This notification is no longer available."}
-            </p>
+            <BackHeader label="Inbox" onBack={back} />
+            <Note>
+              {loading ? "Loading notifications…" : "This notification is no longer available."}
+            </Note>
           </>
         )
       ) : (
@@ -766,20 +705,9 @@ export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
               {TABS.map((entry) => (
                 <Tooltip key={entry.id}>
                   <TooltipTrigger render={<Toggle value={entry.id} aria-label={entry.label} />}>
-                    {/* Every label fits from 16rem; below, only the active tab names itself. */}
-                    <span aria-hidden className="flex @[16rem]/inbox:hidden">
-                      {entry.icon}
-                    </span>
-                    <span
-                      className={cn(
-                        "hidden @[16rem]/inbox:inline",
-                        entry.id === tab && "@[13rem]/inbox:inline",
-                      )}
-                    >
-                      {entry.label}
-                    </span>
-                    {entry.id === "snoozed" && counts.snoozed > 0 ? (
-                      <span className="text-muted-foreground tabular-nums">{counts.snoozed}</span>
+                    {entry.icon}
+                    {entry.id === "snoozed" && snoozedCount > 0 ? (
+                      <span className="text-muted-foreground tabular-nums">{snoozedCount}</span>
                     ) : null}
                   </TooltipTrigger>
                   <TooltipPopup>{entry.label}</TooltipPopup>
@@ -787,34 +715,41 @@ export function InboxView({ actions }: { actions: HTMLDivElement | null }) {
               ))}
             </ToggleGroup>
           </div>
-          <InboxList
-            items={shown}
-            tab={tab}
-            loading={groups.some((group) => group.inbox === null && !group.failed)}
-            failed={groups.some((group) => group.failed)}
-            supported={groups.length > 0}
-            onSelect={select}
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {tab === "inbox" ? (
+              <StatusRow onOpen={() => store().selectInbox({ kind: "status" })} />
+            ) : null}
+            {failed ? <Note>Could not load notifications.</Note> : null}
+            {shown.length > 0 ? (
+              <ul aria-label={`${TABS.find((entry) => entry.id === tab)!.label} notifications`}>
+                {shown.map((item) => (
+                  <InboxRow
+                    key={rowKey(item.environmentId, item.notification.id)}
+                    notification={item.notification}
+                    environmentId={item.environmentId}
+                    environmentLabel={item.environmentLabel}
+                    tab={tab}
+                  />
+                ))}
+              </ul>
+            ) : loading ? (
+              <Note>Loading notifications…</Note>
+            ) : failed ? null : (
+              <Empty size="compact">
+                <EmptyMedia variant="icon">
+                  {TABS.find((entry) => entry.id === tab)!.icon}
+                </EmptyMedia>
+                <EmptyTitle>No notifications</EmptyTitle>
+                <EmptyDescription>
+                  {groups.length > 0
+                    ? "Automations and agents post here when something needs you."
+                    : "Connect to a server that supports notifications."}
+                </EmptyDescription>
+              </Empty>
+            )}
+          </div>
         </>
       )}
-    </div>
-  );
-}
-
-function StatusPanel() {
-  const navigate = useNavigate();
-  const { groups } = useMonitoringSignal();
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <StatusSourcesList
-        groups={groups}
-        onConfigureSources={(machine) =>
-          void navigate({ to: "/settings/status-sources", search: { machine } })
-        }
-      />
-      {groups.length === 0 ? (
-        <p className="p-3 text-sm text-muted-foreground">No connected status sources.</p>
-      ) : null}
     </div>
   );
 }
