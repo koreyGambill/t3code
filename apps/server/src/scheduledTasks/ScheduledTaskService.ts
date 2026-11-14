@@ -220,7 +220,7 @@ const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
 const DisabledThreadsJson = Schema.fromJsonString(Schema.Array(ThreadId));
-const decodeDisabledThreadsJson = Schema.decodeUnknownEffect(DisabledThreadsJson);
+const decodeDisabledThreadsJson = Schema.decodeUnknownOption(DisabledThreadsJson);
 const encodeDisabledThreadsJson = Schema.encodeSync(DisabledThreadsJson);
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const MissingFieldsJson = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -439,8 +439,10 @@ const decodeRow = Effect.fnUntraced(
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
-    const disabledThreadIds = yield* decodeDisabledThreadsJson(
-      row.disabled_thread_ids_json ?? "[]",
+    // A damaged list switches nothing off rather than hiding the whole task.
+    const disabledThreadIds = Option.getOrElse(
+      decodeDisabledThreadsJson(row.disabled_thread_ids_json ?? "[]"),
+      () => [],
     );
     return yield* decodeTask({
       id: row.task_id,
