@@ -11,16 +11,20 @@ const state = vi.hoisted(() => ({
   reply: null as unknown,
   remote: null as unknown,
 }));
-vi.mock(import("../../state/entities"), () => ({
-  useThreadShell: ((ref: { environmentId: string } | null) =>
-    ref?.environmentId === "remote" ? state.remote : null) as never,
-  useThreadRefs: (enabled = true) =>
-    enabled
-      ? [{ environmentId: EnvironmentId.make("remote"), threadId: ThreadId.make("older-thread") }]
-      : [],
-  useProject: (ref: { projectId: string } | null) =>
-    ref?.projectId === "essay-project" ? ({ title: "Essays" } as never) : null,
-}));
+vi.mock(import("../../state/entities"), () => {
+  const useThreadShell = ((ref: { environmentId: string } | null) =>
+    ref?.environmentId === "remote" ? state.remote : null) as never;
+  return {
+    useThreadShell,
+    useQuietThreadShell: useThreadShell,
+    useThreadRefs: (enabled = true) =>
+      enabled
+        ? [{ environmentId: EnvironmentId.make("remote"), threadId: ThreadId.make("older-thread") }]
+        : [],
+    useProject: (ref: { projectId: string } | null) =>
+      ref?.projectId === "essay-project" ? ({ title: "Essays" } as never) : null,
+  };
+});
 vi.mock(import("../../state/environments"), () => ({
   useEnvironmentIdentities: () => [
     { environmentId: EnvironmentId.make("environment"), label: "Here" },

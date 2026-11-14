@@ -1319,7 +1319,7 @@ describe("MessagesTimeline automation prompts", () => {
   it("leaves ordinary user messages as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([message(AUTOMATION_PROMPT)]);
-    expect(screen.buttons(/^Automation/)).toHaveLength(0);
+    expect(screen.buttons(/^Scheduled task/)).toHaveLength(0);
     expect(screen.text()).toContain("Label every new issue and close duplicates.");
   });
 
@@ -1332,7 +1332,7 @@ describe("MessagesTimeline automation prompts", () => {
       activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
     });
     await expect
-      .element(screen.getByRole("button", { name: /^Automation:/ }))
+      .element(screen.getByRole("button", { name: /^Scheduled task Automation:/ }))
       .toHaveAttribute("aria-expanded", "true");
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
     const details = screen.container.querySelector("[data-thread-find-text]")!;
@@ -1399,9 +1399,8 @@ describe("MessagesTimeline agent messages", () => {
       { onOpenThread },
     );
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
-    await screen.getByRole("button", { name: /^Agent:/ }).click();
-    await screen.getByRole("link", { name: "Agent", exact: true }).click();
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+    await screen.getByRole("link", { name: "Thread, Agent" }).click();
+    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID);
   });
 
   it("keeps messages sent by T3 Code readable", async () => {
@@ -1409,7 +1408,7 @@ describe("MessagesTimeline agent messages", () => {
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),
     ]);
-    expect(screen.buttons(/^Agent/)).toHaveLength(0);
+    expect(screen.buttons(/^Message from/)).toHaveLength(0);
     expect(screen.text()).toContain("drops the index");
   });
 
@@ -1436,7 +1435,7 @@ describe("MessagesTimeline agent messages", () => {
       },
     );
     await expect
-      .element(screen.getByRole("button", { name: /^Agent:/ }))
+      .element(screen.getByRole("button", { name: /^Message from thread Agent:/ }))
       .toHaveAttribute("aria-expanded", "true");
     const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
     const body = screen.container.querySelector("[data-user-message-body]")!;
