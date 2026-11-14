@@ -97,7 +97,6 @@ export function ThreadTimelineView({
         })
       : null,
   );
-  const [zoom, setZoom] = useState<number | null>(null);
   const timeline = query.data;
   if (!canRead)
     return <p className="text-xs text-muted-foreground">This connection cannot read runs.</p>;
@@ -118,8 +117,7 @@ export function ThreadTimelineView({
       key={`${threadRef.environmentId}:${threadRef.threadId}`}
       threadRef={threadRef}
       timeline={timeline}
-      zoom={zoom}
-      onZoom={setZoom}
+      answeredAt={query.dataUpdatedAt}
       actions={actions}
     />
   );
@@ -128,17 +126,17 @@ export function ThreadTimelineView({
 function TimelineChart({
   threadRef,
   timeline,
-  zoom,
-  onZoom,
+  answeredAt,
   actions,
 }: {
   threadRef: ScopedThreadRef;
   timeline: ThreadTimeline;
-  zoom: number | null;
-  onZoom: (zoom: number | null) => void;
+  /** When this answer arrived; it can be later than the minute tick, which a just-started run is. */
+  answeredAt: number;
   actions: HTMLDivElement | null;
 }) {
-  const now = Date.parse(`${useNowMinute()}Z`);
+  const now = Math.max(Date.parse(`${useNowMinute()}Z`), answeredAt);
+  const [zoom, onZoom] = useState<number | null>(null);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const navigate = useNavigate();
   const [hover, setHover] = useState<Hover | null>(null);
@@ -231,7 +229,11 @@ function TimelineChart({
       <div>
         <div className="flex justify-between gap-2 text-3xs text-muted-foreground tabular-nums">
           <span className="truncate">{time(layout.start)}</span>
-          <span className="shrink-0">{time(layout.end)}</span>
+          <span className="shrink-0">
+            {time(layout.end) === time(layout.start)
+              ? `+${formatDuration(layout.spanMs)}`
+              : time(layout.end)}
+          </span>
         </div>
         <div
           className="mt-1 space-y-1.5"
@@ -320,7 +322,7 @@ function BarMark({ bar, relation }: { bar: TimelineBar; relation: ThreadTimeline
           barClass(bar, relation),
           bar.open && "rounded-r-none border-r-2 border-foreground",
         )}
-        style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+        style={{ left: `min(${bar.left}%, 100% - 2px)`, width: `${bar.width}%` }}
       />
     </>
   );

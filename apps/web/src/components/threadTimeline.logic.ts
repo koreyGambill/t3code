@@ -116,7 +116,7 @@ export function layoutTimeline(
     last = Math.max(last, runEnd(run, now));
   }
   if (!Number.isFinite(first)) first = last = now;
-  const end = last;
+  const end = options.windowMs === null ? last : Math.max(last, now);
   const start = options.windowMs === null ? first : Math.max(first, end - options.windowMs);
   const spanMs = Math.max(end - start, 1);
   const pct = (time: number) => ((Math.min(Math.max(time, start), end) - start) / spanMs) * 100;
@@ -141,7 +141,11 @@ export function layoutTimeline(
     const lane = bars.get(run.lane);
     if (lane) lane.push(bar);
     else bars.set(run.lane, [bar]);
-    lastActive.set(run.lane, Math.max(lastActive.get(run.lane) ?? 0, finish));
+    let active: number | null = run.lane;
+    while (active !== null && finish > (lastActive.get(active) ?? 0)) {
+      lastActive.set(active, finish);
+      active = timeline.lanes[active]?.parent ?? null;
+    }
   });
 
   const withBars = new Set<number>();

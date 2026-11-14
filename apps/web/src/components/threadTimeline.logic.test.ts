@@ -105,6 +105,20 @@ describe("layoutTimeline", () => {
     ]);
   });
 
+  it("draws a run that opened after the minute tick once the answer that carried it is the clock", () => {
+    const minute = 100 * MIN;
+    const data = timeline(
+      [lane("lead", null, 0, "self")],
+      [run(0, 0, 10), run(0, 100 + 20 / 60, null)],
+    );
+    const answeredAt = minute + 30_000;
+    const bar = layoutTimeline(data, { now: Math.max(minute, answeredAt), windowMs: null }).lanes[0]
+      ?.bars[1];
+    expect(bar?.open).toBe(true);
+    expect(bar?.left).toBeLessThan(100);
+    expect(bar?.width).toBeGreaterThan(0);
+  });
+
   it("clips to the zoom window and drops lanes with nothing inside it", () => {
     const data = timeline(
       [lane("lead", null, 0, "self"), lane("old", 0, 1), lane("recent", 0, 1)],
@@ -115,6 +129,8 @@ describe("layoutTimeline", () => {
     expect(layout.lanes.map((entry) => entry.threadId)).toEqual(["lead", "recent"]);
     expect(layout.lanes[0]?.bars[0]).toMatchObject({ left: 0, width: 100 });
     expect(layout.lanes[1]?.bars[0]).toMatchObject({ left: 50, width: 50 });
+    const later = layoutTimeline(data, { now: 120 * MIN, windowMs: 40 * MIN });
+    expect([later.start, later.end]).toEqual([80 * MIN, 120 * MIN]);
   });
 
   it("keeps the most recently active lanes past the cap, with the lead always shown", () => {
@@ -123,6 +139,21 @@ describe("layoutTimeline", () => {
     const layout = layoutTimeline(data, { now: 40 * MIN, windowMs: null, laneLimit: 3 });
     expect(layout.lanes.map((entry) => entry.threadId)).toEqual(["lead", "c3", "c4"]);
     expect(layout.hiddenLanes).toBe(2);
+
+    const nested = timeline(
+      [
+        lane("lead", null, 0, "self"),
+        lane("parent", 0, 1),
+        lane("child", 1, 2),
+        lane("busy", 0, 1),
+      ],
+      [run(1, 0, 1), run(2, 30, 1), run(3, 20, 1)],
+    );
+    expect(
+      layoutTimeline(nested, { now: 40 * MIN, windowMs: null, laneLimit: 3 }).lanes.map(
+        (entry) => entry.threadId,
+      ),
+    ).toEqual(["lead", "parent", "child"]);
   });
 
   it("summarises from server totals and adds open runs on the client clock", () => {
