@@ -1104,12 +1104,13 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  // T: assistant text, W: completed tool, R: reasoning, E: empty assistant message. Entry i starts
-  // at second i + 1; messages stream for one second.
+  // T: assistant text, W: completed tool, R: reasoning, E: empty assistant message, H: HTML render.
+  // Entry i starts at second i + 1; messages stream for one second.
   it.each([
     ["TWTWT", "T0 fold(turn-1)=4s T2 fold(:part:W3)=2s T4", "T0 T2"],
     ["WTWT", "fold(turn-1)=3s T1 fold(:part:W2)=2s T3", "T1"],
-    ["TW", "T0 fold(turn-1)=3s", "T0"],
+    ["TW", "T0 fold(turn-1)=3s", ""],
+    ["TH", "T0 H1", ""],
     ["TTWT", "T0 T1 fold(turn-1)=5s T3", "T0 T1"],
     ["TT", "T0 T1", "T0"],
     ["TRT", "T0 fold(turn-1)=4s T2", "T0"],
@@ -1133,6 +1134,15 @@ describe("deriveMessagesTimelineRows", () => {
             updatedAt: at(index + 2),
             streaming: false,
           },
+        };
+      }
+      if (kind === "H") {
+        return {
+          id,
+          kind: "html-render",
+          createdAt: at(index + 1),
+          runId,
+          htmlRender: { attachmentId: id, title: id, height: 200 },
         };
       }
       return {
@@ -3832,32 +3842,31 @@ describe("streaming v2 row projection", () => {
     }
   });
 
-  it("marks a streamed text part that gains its first text after later work", () => {
+  it("marks a text part once the next text of its turn starts streaming", () => {
     const runId = RunId.make("live-run");
     const at = "2026-09-04T00:00:05.000Z";
+    const message = (id: string, text: string, streaming: boolean): TimelineEntry => ({
+      id,
+      kind: "message",
+      createdAt: at,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant",
+        text,
+        runId,
+        streaming,
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+    const earlier = message("earlier-text", "Found it", false);
     const laterTool: TimelineEntry = {
       id: "later-tool",
       kind: "work",
       createdAt: at,
       entry: { id: "later-tool", createdAt: at, runId, label: "Read", tone: "tool" },
     };
-    const entries = (text: string): TimelineEntry[] => [
-      {
-        id: "live-text",
-        kind: "message",
-        createdAt: at,
-        message: {
-          id: MessageId.make("live-text"),
-          role: "assistant",
-          text,
-          runId,
-          streaming: true,
-          createdAt: at,
-          updatedAt: at,
-        },
-      },
-      laterTool,
-    ];
+    const entries = (text: string) => [earlier, laterTool, message("live-text", text, true)];
     const input = {
       latestRun: { runId, status: "running" as const, startedAt: at, completedAt: null },
       runningRunId: runId,
@@ -3866,33 +3875,41 @@ describe("streaming v2 row projection", () => {
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     };
+    const rowsFor = (timelineEntries: TimelineEntry[]) =>
+      deriveMessagesTimelineRows({ ...input, timelineEntries });
+    // Work after a text does not mark it: it may still be the turn's answer.
+    expect(
+      rowsFor([earlier, laterTool]).find((row) => row.id === "earlier-text"),
+    ).not.toHaveProperty("whileWorking");
     const previous = deriveMessagesTimelineRowsWithState({
       ...input,
       timelineEntries: entries(""),
     });
+    expect(previous.rows.find((row) => row.id === "earlier-text")).not.toHaveProperty(
+      "whileWorking",
+    );
     const next = deriveMessagesTimelineRowsWithState(
-      { ...input, timelineEntries: entries("Found it") },
+      { ...input, timelineEntries: entries("Next") },
       previous,
     );
-    // The text arrived on the streaming path: every other row kept its identity.
-    expect(next.rows.filter((row) => row.id !== "live-text")).toEqual(
-      previous.rows.filter((row) => row.id !== "live-text"),
+    // The new text arrived on the streaming path: the tool rows kept their identity.
+    expect(next.rows.find((row) => row.id === "later-tool")).toBe(
+      previous.rows.find((row) => row.id === "later-tool"),
     );
-    expect(next.rows.find((row) => row.id !== "live-text")).toBe(
-      previous.rows.find((row) => row.id !== "live-text"),
-    );
-    expect(next.rows.find((row) => row.id === "live-text")).toMatchObject({ whileWorking: true });
-    // Work arriving after a finished text part marks it, even though its message is unchanged.
-    const [text] = entries("Found it");
-    const alone = deriveMessagesTimelineRows({ ...input, timelineEntries: [text!] });
+    expect(next.rows.find((row) => row.id === "earlier-text")).toMatchObject({
+      whileWorking: true,
+    });
+    expect(next.rows.find((row) => row.id === "live-text")).not.toHaveProperty("whileWorking");
+    expect(next.rows).toEqual(rowsFor(entries("Next")));
+    // A later text marks a finished one even though its message is unchanged.
     const stable = computeStableMessagesTimelineRows(
-      deriveMessagesTimelineRows({ ...input, timelineEntries: [text!, laterTool] }),
-      computeStableMessagesTimelineRows(alone, { result: [], byId: new Map() }),
+      rowsFor([earlier, laterTool, message("next-text", "Next", false)]),
+      computeStableMessagesTimelineRows(rowsFor([earlier, laterTool]), {
+        result: [],
+        byId: new Map(),
+      }),
     );
-    expect(stable.byId.get("live-text")).toMatchObject({ whileWorking: true });
-    expect(next.rows).toEqual(
-      deriveMessagesTimelineRows({ ...input, timelineEntries: entries("Found it") }),
-    );
+    expect(stable.byId.get("earlier-text")).toMatchObject({ whileWorking: true });
   });
 
   it.each(["file", "image", "handoff", "streaming-image"] as const)(

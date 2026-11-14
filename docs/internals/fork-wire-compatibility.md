@@ -27,7 +27,8 @@ The rule for changes to `packages/contracts` that cross the wire:
   App Store app. Without `assistantTextParts`, every assistant text turn item goes out as
   `final_answer` on the thread stream, `getThreadProjection`, `getTurnItem` and the history page,
   which takes the same `clientCapabilities` list as a query parameter. Their zen mode then shows
-  those texts too.
+  those texts too, and so do their superseded attempts, because the mapping sees one item at a time
+  and not its attempt's status.
 - **Methods upstream clients call stay served** under the same names and request shapes. A feature
   the fork dropped answers with a typed error upstream clients show: `projects.createFromThread`
   points to Change folder, and `threadProjectFromScratch` stays unadvertised so they hide the action.

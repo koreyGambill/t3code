@@ -728,15 +728,17 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
+// Only a later text proves an earlier one was not the turn's answer.
 function deriveWhileWorkingEntryIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const ids = new Set<string>();
-  const laterRunIds = new Set<RunId>();
+  const laterTextRunIds = new Set<RunId>();
   for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
     const entry = timelineEntries[index]!;
+    if (!timelineEntryIsTextPart(entry)) continue;
     const runId = timelineEntryRunId(entry);
     if (runId === null) continue;
-    if (laterRunIds.has(runId) && timelineEntryIsTextPart(entry)) ids.add(entry.id);
-    laterRunIds.add(runId);
+    if (laterTextRunIds.has(runId)) ids.add(entry.id);
+    laterTextRunIds.add(runId);
   }
   return ids;
 }
@@ -2653,17 +2655,20 @@ function replaceStreamingMessageRows(
     }
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
-    if (!entry) return row;
-    const patched = {
-      ...row,
-      message: entry.message,
-      ...(entry.projectedItem === undefined ? {} : { projectedItem: entry.projectedItem }),
-    };
+    const patched = entry
+      ? {
+          ...row,
+          message: entry.message,
+          ...(entry.projectedItem === undefined ? {} : { projectedItem: entry.projectedItem }),
+        }
+      : row;
     if (patched.kind !== "message" || !textPartChanges) return patched;
-    // A message's first text can make it a part that more of its turn follows.
+    // A message gaining or losing its text changes which earlier texts a later one follows.
     whileWorkingIds ??= deriveWhileWorkingEntryIds(timelineEntries);
+    const whileWorking = whileWorkingIds.has(patched.id);
+    if (whileWorking === (patched.whileWorking === true)) return patched;
     const { whileWorking: _previous, ...rest } = patched;
-    return whileWorkingIds.has(patched.id) ? { ...rest, whileWorking: true } : rest;
+    return whileWorking ? { ...rest, whileWorking: true } : rest;
   });
   // Only a live row holds thinking without deriving a label from its text. Settled
   // groups, folded turns, and work toggles summarize it, so they need the full rebuild.
