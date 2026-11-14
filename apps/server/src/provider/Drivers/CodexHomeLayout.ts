@@ -46,6 +46,15 @@ function resolveHomePath(path: Path.Path, home: string, value: string | undefine
   return path.resolve(expanded);
 }
 
+/** An instance without its own home uses CODEX_HOME from its environment, as Codex itself would. */
+export const withEnvironmentCodexHome = <Config extends Pick<CodexSettings, "homePath">>(
+  config: Config,
+  environment: NodeJS.ProcessEnv,
+): Config =>
+  !config.homePath.trim() && environment.CODEX_HOME?.trim()
+    ? { ...config, homePath: environment.CODEX_HOME }
+    : config;
+
 export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(function* (
   config: CodexSettings,
 ): Effect.fn.Return<CodexHomeLayout, never, Path.Path> {

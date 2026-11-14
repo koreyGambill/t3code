@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - opening with O_NONBLOCK and O_NOFOLLOW needs node:fs.
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+
 import {
   type DefaultContextItem,
   type InstructionFootprint,
@@ -5,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 /** Where a provider documents its instruction files. Groups list alternatives: the first existing name wins. */
@@ -51,7 +54,7 @@ export const FILE_CONVENTIONS: Readonly<Record<string, FileConvention>> = {
 
 const SECRET_NAME =
   /^\.?env(\..*|rc)?$|\.(pem|key|p12|pfx|keystore|kdbx)$|^id_|^\.?netrc$|^\.npmrc$|^\.pgpass$|^\.?credentials|^\.git-credentials$|^secrets?(\.|$)|^auth\.json$|^hosts\.ya?ml$|_history$/i;
-const SECRET_PATH = /\/\.(ssh|gnupg|aws|docker|kube|t3)\//;
+const SECRET_PATH = /\/\.(ssh|gnupg|aws|docker|kube|t3|git)\//;
 const MAX_FILES = 64;
 const MAX_IMPORT_DEPTH = 5;
 export const MAX_READ_BYTES = 256 * 1024;
@@ -74,26 +77,38 @@ export function importReferences(text: string): ReadonlyArray<string> {
   );
 }
 
-/** Reads at most MAX_READ_BYTES of a file that still resolves to `realPath`, so a swapped symlink is refused. */
+/** Reads at most MAX_READ_BYTES of a regular file, opened without following a symlink or blocking on a FIFO. */
 export const readBounded = Effect.fn("DefaultContext.readBounded")(function* (realPath: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const bytes = yield* Effect.scoped(
-    Effect.gen(function* () {
-      const handle = yield* fs.open(realPath, { flag: "r" });
-      const chunks: Uint8Array[] = [];
-      let total = 0;
-      while (total < MAX_READ_BYTES) {
-        const chunk = yield* handle.readAlloc(MAX_READ_BYTES - total);
-        if (Option.isNone(chunk) || chunk.value.length === 0) break;
-        chunks.push(chunk.value);
-        total += chunk.value.length;
-      }
-      return Buffer.concat(chunks);
+  return yield* Effect.acquireUseRelease(
+    Effect.tryPromise({
+      // Windows lacks both flags.
+      try: () =>
+        NodeFSP.open(
+          realPath,
+          NodeFS.constants.O_RDONLY |
+            (NodeFS.constants.O_NONBLOCK ?? 0) |
+            (NodeFS.constants.O_NOFOLLOW ?? 0),
+        ),
+      catch: (cause) => new ThreadInsightsError({ message: "Could not open the file.", cause }),
     }),
+    (handle) =>
+      Effect.tryPromise({
+        try: async () => {
+          const stat = await handle.stat();
+          if (!stat.isFile()) throw new Error("Not a regular file.");
+          const buffer = Buffer.alloc(Math.min(stat.size, MAX_READ_BYTES));
+          let offset = 0;
+          while (offset < buffer.length) {
+            const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+            if (bytesRead === 0) break;
+            offset += bytesRead;
+          }
+          return buffer.subarray(0, offset).toString("utf8");
+        },
+        catch: (cause) => new ThreadInsightsError({ message: "Could not read the file.", cause }),
+      }),
+    (handle) => Effect.promise(() => handle.close()),
   );
-  if ((yield* fs.realPath(realPath)) !== realPath)
-    return yield* new ThreadInsightsError({ message: "The file moved while it was read." });
-  return bytes.toString("utf8");
 });
 
 /**
@@ -111,9 +126,9 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => file));
-    const sizeOf = (file: string, type: "File" | "Directory") =>
+    const statOf = (file: string) =>
       fs.stat(file).pipe(
-        Effect.map((info) => (info.type === type ? Number(info.size) : null)),
+        Effect.map((info) => ({ type: info.type, size: Number(info.size) })),
         Effect.orElseSucceed(() => null),
       );
     const within = (root: string, file: string) => {
@@ -130,15 +145,12 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
       }
       if (path.dirname(dir) === dir) break;
     }
-    const repo = gitRoot ?? workspace;
-    const inRepo = (file: string) => within(repo, file) || within(workspace, file);
+    // $HOME or a folder above it is never the repository, even with a dotfiles ~/.git.
+    const repo = [gitRoot, workspace].find((dir) => dir !== null && !within(dir, home)) ?? null;
+    const inRepo = (file: string) => repo !== null && within(repo, file);
     const blocked = (file: string) =>
       SECRET_NAME.test(path.basename(file)) || SECRET_PATH.test(`${file}/`);
-    const readText = (file: string) =>
-      readBounded(file).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.orElseSucceed(() => ""),
-      );
+    const readText = (file: string) => readBounded(file).pipe(Effect.orElseSucceed(() => ""));
 
     const files: ResolvedFile[] = [];
     const seen = new Set<string>();
@@ -150,15 +162,16 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
       trusted: boolean,
     ) => Effect.Effect<boolean, never, never> = Effect.fnUntraced(
       function* (file, scope, depth, trusted) {
-        const bytes = yield* sizeOf(file, "File");
-        if (bytes === null) return false;
+        const info = yield* statOf(file);
+        if (info === null) return false;
+        const bytes = info.type === "File" ? info.size : 0;
         const resolved = yield* real(file);
         if (seen.has(resolved) || files.length >= MAX_FILES) return true;
         seen.add(resolved);
         const status: ResolvedFile["status"] =
           blocked(file) || blocked(resolved) || (yield* isServerInternal(resolved))
             ? "secret"
-            : inRepo(resolved) || (trusted && resolved.endsWith(".md"))
+            : info.type === "File" && (inRepo(resolved) || (trusted && resolved.endsWith(".md")))
               ? "expected"
               : "not-read";
         files.push({ path: file, realPath: resolved, scope, bytes, depth, status });
@@ -175,14 +188,15 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
     );
     // Claude Code skips rules scoped to `paths:` until a matching file is read.
     const addRules = Effect.fnUntraced(function* (dir: string, trusted: boolean) {
-      if ((yield* sizeOf(dir, "Directory")) === null) return;
+      if ((yield* statOf(dir))?.type !== "Directory") return;
       const names = yield* fs
         .readDirectory(dir, { recursive: true })
         .pipe(Effect.orElseSucceed(() => []));
       for (const name of names.filter((entry) => entry.endsWith(".md")).toSorted()) {
         const file = path.join(dir, name);
         const resolved = yield* real(file);
-        if (!blocked(resolved) && (inRepo(resolved) || trusted)) {
+        const regular = (yield* statOf(resolved))?.type === "File";
+        if (regular && !blocked(resolved) && (inRepo(resolved) || trusted)) {
           const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(yield* readText(resolved))?.[1];
           if (frontmatter !== undefined && /^paths\s*:/m.test(frontmatter)) continue;
         }
@@ -198,7 +212,10 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
     const chain: string[] = [];
     for (let dir = workspace; ; dir = path.dirname(dir)) {
       chain.unshift(dir);
-      const top = convention.walk === "git" ? dir === repo : dir === home || !within(home, dir);
+      const top =
+        convention.walk === "git"
+          ? dir === (gitRoot ?? workspace)
+          : dir === home || !within(home, dir);
       if (top || path.dirname(dir) === dir) break;
     }
     for (const dir of chain) {

@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -14,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -28,6 +31,7 @@ import { ProjectService } from "../project/ProjectService.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import { DefaultContext, layer as defaultContextLayer } from "./DefaultContext.ts";
 import { t3ContextParts } from "./defaultContextParts.ts";
 import { InstructionFootprints } from "./InstructionFootprints.ts";
@@ -239,6 +243,67 @@ it.effect("never reads credential or state files a repository imports", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "lists FIFOs and repository git files without reading them",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }),
+      );
+      const repo = path.join(home, "code", "repo");
+      yield* write(fs, path.join(repo, ".git", "config"), "[remote]\nurl=https://user:tok@host");
+      yield* write(fs, path.join(repo, "CLAUDE.md"), "@pipe.md\n@.git/config");
+      yield* fs.makeDirectory(path.join(repo, ".claude", "rules"), { recursive: true });
+      NodeChildProcess.execFileSync("mkfifo", [path.join(repo, "pipe.md")]);
+      NodeChildProcess.execFileSync("mkfifo", [path.join(repo, ".claude", "rules", "f.md")]);
+
+      const { files } = yield* resolveInstructionFiles(
+        FILE_CONVENTIONS.claudeAgent!,
+        repo,
+        { home, platform: "linux", configDir: path.join(home, ".claude") },
+        notInternal,
+      );
+      expect(files.map((file) => [path.relative(repo, file.path), file.status])).toEqual([
+        ["CLAUDE.md", "expected"],
+        ["pipe.md", "not-read"],
+        [".git/config", "secret"],
+        [".claude/rules/f.md", "not-read"],
+      ]);
+      expect(yield* Effect.flip(readBounded(path.join(repo, "pipe.md")))).toMatchObject({
+        message: "Could not read the file.",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("never treats a dotfiles ~/.git as the repository", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
+    const project = path.join(home, "Downloads", "tarball");
+    yield* write(fs, path.join(home, ".git", "HEAD"), "ref");
+    yield* write(fs, path.join(home, ".pypirc"), "token");
+    yield* write(fs, path.join(home, "plain.md"), "notes");
+    yield* write(fs, path.join(project, "CLAUDE.md"), "@~/.pypirc\n@~/plain.md\n@local.md");
+    yield* write(fs, path.join(project, "local.md"), "local");
+
+    const { files } = yield* resolveInstructionFiles(
+      FILE_CONVENTIONS.claudeAgent!,
+      project,
+      { home, platform: "linux", configDir: path.join(home, ".claude") },
+      notInternal,
+    );
+    expect(files.map((file) => [path.relative(home, file.path), file.status])).toEqual([
+      ["Downloads/tarball/CLAUDE.md", "expected"],
+      [".pypirc", "not-read"],
+      ["plain.md", "not-read"],
+      ["Downloads/tarball/local.md", "expected"],
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("reads at most 256 KiB of a file", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -302,6 +367,7 @@ const serviceLayer = (input: {
   readonly home: string;
   readonly footprint?: InstructionFootprint;
   readonly codexHomePath?: string;
+  readonly projectRoot?: string;
 }) =>
   defaultContextLayer.pipe(
     Layer.provide(
@@ -326,7 +392,17 @@ const serviceLayer = (input: {
         Layer.mock(McpAppModelContext.McpAppModelContext)({
           forThread: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService)({ getById: () => Effect.succeedNone }),
+        Layer.mock(ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              input.projectRoot === undefined
+                ? Option.none()
+                : Option.some({ workspaceRoot: input.projectRoot } as never),
+            ),
+        }),
+        Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+          assertContains: (cwd) => Effect.fail(new KnownWorkspaces.UnknownWorkspaceError({ cwd })),
+        }),
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: () => Effect.succeed({ driverKind: "codex" } as never),
         }),
@@ -406,32 +482,46 @@ it.effect("serves file text only for readable ids, and honours the instance's Co
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("previews a draft from its project folder before the thread exists", () =>
+it.effect("previews a draft from its project folder and rejects folders outside it", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
-    yield* write(fs, path.join(home, "AGENTS.md"), "draft rules");
-    const context = yield* Layer.build(serviceLayer({ home })).pipe(
-      Effect.provideService(HostProcess.HomeDirectory, home),
-      Effect.provideService(HostProcess.Environment, {}),
-    );
-    const preview = yield* inHome(
-      home,
-      Context.get(context, DefaultContext).preview({
-        threadId,
-        providerInstanceId: codex,
-        model: "gpt-5.4",
-        draft: {
-          projectId: ProjectId.make("project"),
-          worktreePath: home,
-          interactionMode: "plan",
-        },
-      }),
-    );
+    const projectRoot = path.join(home, "repo");
+    yield* write(fs, path.join(projectRoot, "AGENTS.md"), "draft rules");
+    const build = (projectRootOption?: string) =>
+      Layer.build(
+        serviceLayer({ home, ...(projectRootOption ? { projectRoot: projectRootOption } : {}) }),
+      ).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+    const previewFor = (service: typeof DefaultContext.Service, worktreePath: string | null) =>
+      inHome(
+        home,
+        service.preview({
+          threadId,
+          providerInstanceId: codex,
+          model: "gpt-5.4",
+          draft: { projectId: ProjectId.make("project"), worktreePath, interactionMode: "plan" },
+        }),
+      );
+    const service = Context.get(yield* build(projectRoot), DefaultContext);
+    const preview = yield* previewFor(service, null);
     expect(preview.lastTurn).toBeNull();
+    expect(preview.cwd).toBe(projectRoot);
     expect(preview.items.find((item) => item.category === "files")?.label).toBe(
-      path.join(home, "AGENTS.md"),
+      path.join(projectRoot, "AGENTS.md"),
+    );
+    expect((yield* previewFor(service, projectRoot)).cwd).toBe(projectRoot);
+    for (const outside of ["/", home]) {
+      expect((yield* Effect.flip(previewFor(service, outside))).message).toBe(
+        "This draft's folder is not a known workspace.",
+      );
+    }
+    const missing = Context.get(yield* build(), DefaultContext);
+    expect((yield* Effect.flip(previewFor(missing, projectRoot))).message).toBe(
+      "This draft's project no longer exists.",
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

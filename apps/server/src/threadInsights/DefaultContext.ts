@@ -29,10 +29,14 @@ import * as McpToolCatalog from "../mcp/McpToolCatalog.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { SCRATCH_FOLDER_CONTEXT } from "../orchestration-v2/ProviderTurnStartService.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { codexDefaultReasoningEffortOverride } from "../provider/CodexProvider.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  resolveCodexHomeLayout,
+  withEnvironmentCodexHome,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { notVisibleFor, t3ContextParts, toolExposure } from "./defaultContextParts.ts";
@@ -113,6 +117,7 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
   const mcpSessions = yield* McpProviderSessions;
   const catalog = yield* McpToolCatalog.McpToolCatalog;
+  const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -141,11 +146,7 @@ const make = Effect.gen(function* () {
     }
     const config = Option.getOrUndefined(decodeCodexSettings(entry?.config ?? {}));
     if (config === undefined) return env.CODEX_HOME || path.join(home, ".codex");
-    const layout = yield* resolveCodexHomeLayout(
-      !config.homePath.trim() && env.CODEX_HOME?.trim()
-        ? { ...config, homePath: env.CODEX_HOME }
-        : config,
-    );
+    const layout = yield* resolveCodexHomeLayout(withEnvironmentCodexHome(config, env));
     return layout.effectiveHomePath ?? layout.sharedHomePath;
   });
 
@@ -164,6 +165,20 @@ const make = Effect.gen(function* () {
     const project = yield* projects
       .getById(projectId, { includeDeleted: true })
       .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (draft !== undefined && Option.isNone(project))
+      return yield* new ThreadInsightsError({ message: "This draft's project no longer exists." });
+    // A draft's folder comes from the client: only the project root or a known worktree counts.
+    if (
+      draft?.worktreePath &&
+      draft.worktreePath !== Option.getOrUndefined(project)?.workspaceRoot &&
+      !(yield* knownWorkspaces.assertContains(draft.worktreePath).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ))
+    )
+      return yield* new ThreadInsightsError({
+        message: "This draft's folder is not a known workspace.",
+      });
     const projectDefault =
       draft === undefined || input.providerInstanceId !== undefined
         ? undefined
@@ -304,12 +319,7 @@ const make = Effect.gen(function* () {
             ...(file.depth > 0 ? { depth: file.depth } : {}),
             status: fileStatus(file),
           },
-          readable
-            ? readBounded(file.realPath).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.orElseSucceed(() => ""),
-              )
-            : undefined,
+          readable ? readBounded(file.realPath).pipe(Effect.orElseSucceed(() => "")) : undefined,
         );
       }
       const projectBytes = resolved.files
@@ -400,16 +410,12 @@ const make = Effect.gen(function* () {
       return (yield* resolve(input)).preview;
     }),
     itemText: Effect.fn("DefaultContext.itemText")(function* (input) {
-      const { loaders } = yield* resolve(input);
+      const { preview, loaders } = yield* resolve(input);
       const load = loaders.get(input.itemId);
       if (load === undefined)
         return yield* new ThreadInsightsError({ message: "This item has no readable text." });
-      const text = yield* load;
-      return {
-        itemId: input.itemId,
-        text: text.slice(0, MAX_READ_BYTES),
-        truncated: Buffer.byteLength(text, "utf8") >= MAX_READ_BYTES,
-      };
+      const bytes = preview.items.find((item) => item.id === input.itemId)?.bytes ?? 0;
+      return { itemId: input.itemId, text: yield* load, truncated: bytes > MAX_READ_BYTES };
     }),
   });
 });
