@@ -660,6 +660,12 @@ describe("resolveShortcutCommand", () => {
         ["Enter", false, "workspace.tile.maximize"],
         ["[", false, "workspace.tile.previousTab"],
         ["]", false, "workspace.tile.nextTab"],
+        ["f", false, "workspace.tile.focusPair"],
+        ["s", false, "workspace.tile.swap"],
+        ["p", false, "workspace.tile.float"],
+        ["t", false, "workspace.tile.newTab"],
+        ["w", false, "workspace.tile.closeTab"],
+        [".", false, "workspace.tile.actions"],
       ] as const;
       for (const [key, shiftKey, command] of chords) {
         const input = event({ key, ctrlKey: true, altKey: true, shiftKey });

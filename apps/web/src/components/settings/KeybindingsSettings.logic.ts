@@ -388,7 +388,12 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "workspace.tile.splitUp") return "Split Tile Up";
   if (command === "workspace.tile.splitDown") return "Split Tile Down";
   if (command === "workspace.tile.maximize") return "Maximize Tile";
-  if (command === "workspace.tile.focusPair") return "Focus Two Tabs";
+  if (command === "workspace.tile.focusPair") return "Maximize Tile or Show Another Beside It";
+  if (command === "workspace.tile.swap") return "Swap Side-by-Side Tiles";
+  if (command === "workspace.tile.float") return "Float or Dock Tile";
+  if (command === "workspace.tile.newTab") return "New Tab in Tile";
+  if (command === "workspace.tile.closeTab") return "Close Tab in Tile";
+  if (command === "workspace.tile.actions") return "Tile Actions Menu";
   if (command === "workspace.tile.resize") return "Resize Focused Tile (Hold)";
   if (command === "workspace.tile.previousTab") return "Previous Tab in Tile";
   if (command === "workspace.tile.nextTab") return "Next Tab in Tile";
