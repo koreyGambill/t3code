@@ -5,6 +5,7 @@
 //
 //   vp run upstream-contracts:refresh          from upstream/main (git fetch upstream first)
 //   vp run upstream-contracts:refresh <ref>    from another ref
+// UPSTREAM_SNAPSHOT=<path> writes the bundle there instead, for the test to read with the same variable.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -14,7 +15,10 @@ import { build } from "esbuild";
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 const ref = process.argv[2] ?? "upstream/main";
-const outfile = NodePath.join(root, "apps/server/src/upstreamClientCompat.snapshot.js");
+const outfile = NodePath.resolve(
+  process.env.UPSTREAM_SNAPSHOT ??
+    NodePath.join(root, "apps/server/src/upstreamClientCompat.snapshot.js"),
+);
 const git = (...args: Array<string>) =>
   NodeChildProcess.execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
 

@@ -26,7 +26,7 @@ import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as Schema from "effect/Schema";
 import * as AST from "effect/SchemaAST";
 
-import * as Upstream from "./upstreamClientCompat.snapshot.js";
+import * as PinnedUpstream from "./upstreamClientCompat.snapshot.js";
 import type * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   errorForClient,
@@ -36,6 +36,13 @@ import {
   scheduledTasksForClient,
   type ClientWireCapabilities,
 } from "./upstreamClientCompat.ts";
+
+// A probe bundle from `UPSTREAM_SNAPSHOT=<absolute path> vp run upstream-contracts:refresh <ref>`. It
+// resolves effect from its own directory, so write it under apps/server/node_modules/.cache.
+const Upstream: typeof PinnedUpstream =
+  process.env.UPSTREAM_SNAPSHOT === undefined
+    ? PinnedUpstream
+    : await import(process.env.UPSTREAM_SNAPSHOT);
 
 // Accepted gaps, each asserted to still fail so a fixed one is removed here.
 const KNOWN_GAPS: ReadonlyMap<string, string> = new Map([

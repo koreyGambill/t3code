@@ -32,5 +32,7 @@ upstream's schemas. Each value the fork adds is forced into samples: an enum mem
 sibling, and a new union member, such as a schedule type or an error, sampled whole where its union
 sits. `check:changed` runs it for any change to `packages/contracts/src`, `ws.ts` or
 the compatibility module. After each upstream merge, refresh the bundle with
-`git fetch upstream && vp run upstream-contracts:refresh`, then run the test. Its `KNOWN_GAPS` list
+`git fetch upstream && vp run upstream-contracts:refresh`, then run the test. To check another
+upstream commit without replacing the pinned bundle, set `UPSTREAM_SNAPSHOT` to a path under
+`apps/server/node_modules/.cache` for both the refresh and the test. Its `KNOWN_GAPS` list
 names accepted exceptions. Each entry is asserted to still fail, so it is removed once fixed.
