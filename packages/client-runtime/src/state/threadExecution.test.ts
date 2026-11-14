@@ -775,6 +775,7 @@ describe("presentPendingBackgroundWork", () => {
     title: "Review",
     status: "completed" as const,
     childThreadId: ThreadId.make("review"),
+    completionGroup: "feature",
     result: null,
     startedAt: now,
     completedAt: now,
@@ -787,11 +788,11 @@ describe("presentPendingBackgroundWork", () => {
     status: "running" as const,
     childThreadId: ThreadId.make("implementation"),
   };
+  const { completionGroup: _group, ...ungrouped } = running;
   const later = {
-    ...running,
+    ...ungrouped,
     id: NodeId.make("node:delegated-task:later"),
     originalTaskId: done.id,
-    completionGroupMember: false,
   };
   const item = {
     id: TurnItemId.make("turn-item:delegated-task:running"),
@@ -824,7 +825,7 @@ describe("presentPendingBackgroundWork", () => {
     turnItems: [item],
   };
 
-  it("counts the original group and presents each task once with its turn-item identity", () => {
+  it("counts a named group and presents each task once with its turn-item identity", () => {
     const groups = derivePendingDelegatedTaskGroups(projection);
     expect(groups).toMatchObject([{ runId: parentRunId, done: 1, total: 2 }]);
     expect(groups[0]?.items).toEqual([
@@ -906,10 +907,7 @@ describe("presentPendingBackgroundWork", () => {
       { ...projection, subagents: [done, { ...running, status: "completed" as const }, later] },
     ],
     ["follow-up only", { ...projection, subagents: [done, later] }],
-    [
-      "legacy follow-up",
-      { ...projection, subagents: [done, { ...later, completionGroupMember: undefined }] },
-    ],
+    ["ungrouped", { ...projection, subagents: [done, ungrouped] }],
     [
       "provider native",
       { ...projection, subagents: [done, { ...running, origin: "provider_native" as const }] },
@@ -935,7 +933,7 @@ describe("presentPendingBackgroundWork", () => {
     expect(derivePendingDelegatedTaskGroups(source)).toEqual([]);
   });
 
-  it("counts an explicitly included follow-up and links remote children", () => {
+  it("links remote children in a group", () => {
     const remoteChild = {
       environmentId: EnvironmentId.make("remote"),
       threadId: ThreadId.make("remote-task"),
@@ -943,10 +941,7 @@ describe("presentPendingBackgroundWork", () => {
     };
     const groups = derivePendingDelegatedTaskGroups({
       ...projection,
-      subagents: [
-        done,
-        { ...later, completionGroupMember: true, childThreadId: null, remoteChild },
-      ],
+      subagents: [done, { ...later, completionGroup: "feature", childThreadId: null, remoteChild }],
     });
     expect(groups).toMatchObject([{ done: 1, total: 2 }]);
     expect(groups[0]?.items[0]).toMatchObject({

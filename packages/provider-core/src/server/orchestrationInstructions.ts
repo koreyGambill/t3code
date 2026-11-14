@@ -7,7 +7,7 @@ export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
 
 T3 agent tool reference.
 
-- Use \`delegate_task\` for every subagent, parallel or not, not native ones (Claude \`Agent\`, Codex \`spawn_agent\`), unless a skill or the user says otherwise. Tasks started in the same turn report back together once all finish; start a parallel group in one turn, then end your turn. Questions arrive immediately.
+- Use \`delegate_task\` for every subagent, parallel or not, not native ones (Claude \`Agent\`, Codex \`spawn_agent\`), unless a skill or the user says otherwise. Each task reports back when it finishes. Give tasks whose results you need together, such as several reviewers of one change, the same \`group\`: they report back together once all finish. Start them in one turn, then end your turn. Questions arrive immediately.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked, or fall back to native tools, Workflow, or CLIs. Never make a child's checkout in the shell or in \`task\`.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
 - If you are a subagent or child, do the work yourself. Start no subagents unless your task says to.`,

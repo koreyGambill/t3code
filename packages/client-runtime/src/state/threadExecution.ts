@@ -588,8 +588,7 @@ interface DelegatedTaskGroupSource {
       | "status"
       | "childThreadId"
       | "remoteChild"
-      | "originalTaskId"
-      | "completionGroupMember"
+      | "completionGroup"
     >
   >;
 }
@@ -601,12 +600,12 @@ export interface PendingDelegatedTaskGroup {
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
 }
 
-/** Completion counts for open parent-turn groups that still have work to finish. */
+/** Completion counts for named task groups of ended parent turns that still have work to finish. */
 export function derivePendingDelegatedTaskGroups(
   projection: DelegatedTaskGroupSource,
 ): ReadonlyArray<PendingDelegatedTaskGroup> {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return [];
-  const groups = new Map<RunId, Array<DelegatedTaskGroupSource["subagents"][number]>>();
+  const endedRunIds = new Set<RunId>();
   for (const run of projection.runs) {
     if (
       (run.status === "completed" ||
@@ -616,23 +615,32 @@ export function derivePendingDelegatedTaskGroups(
         run.status === "rolled_back") &&
       (run.delegatedCompletion === undefined || run.delegatedCompletion.disposition === "open")
     )
-      groups.set(run.id, []);
+      endedRunIds.add(run.id);
   }
-  if (groups.size === 0) return [];
+  if (endedRunIds.size === 0) return [];
+  const groups = new Map<
+    string,
+    { readonly runId: RunId; readonly tasks: Array<DelegatedTaskGroupSource["subagents"][number]> }
+  >();
   for (const task of projection.subagents) {
     if (
-      task.origin === "app_owned" &&
-      task.runId !== null &&
-      (task.completionGroupMember ?? task.originalTaskId === undefined)
+      task.origin !== "app_owned" ||
+      task.runId === null ||
+      task.completionGroup === undefined ||
+      !endedRunIds.has(task.runId)
     )
-      groups.get(task.runId)?.push(task);
+      continue;
+    const key = JSON.stringify([task.runId, task.completionGroup]);
+    const group = groups.get(key) ?? { runId: task.runId, tasks: [] };
+    group.tasks.push(task);
+    groups.set(key, group);
   }
   const taskIds = new Map(
     projection.turnItems
       .filter((item) => item.type === "subagent")
       .map((item) => [item.subagentId, item.nativeItemRef?.nativeId || item.id]),
   );
-  return Array.from(groups, ([runId, tasks]) => {
+  return Array.from(groups.values(), ({ runId, tasks }) => {
     const pending = tasks.filter((task) => !isTerminalSubagentStatus(task.status));
     return {
       runId,

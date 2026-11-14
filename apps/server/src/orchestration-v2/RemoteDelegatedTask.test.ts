@@ -309,11 +309,18 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
           ["always", "settled_only"],
           ["settled_only", "always"],
         ] as const
-      ).map((policies) => ({ key: `${status}-${policies.join("-")}`, status, policies })),
+      ).flatMap((policies) =>
+        [true, false].map((grouped) => ({
+          key: `${status}-${policies.join("-")}${grouped ? "-grouped" : ""}`,
+          status,
+          policies,
+          grouped,
+        })),
+      ),
     ),
   )(
-    "delivers a parent run's group once after both tasks finish ($key)",
-    ({ key, status, policies }) =>
+    "delivers both tasks' results in one wake after both finish ($key)",
+    ({ key, status, policies, grouped }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
@@ -332,6 +339,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
             modelSelection,
             remoteChild: { ...remoteChild, threadId: ThreadId.make(`thread:remote-${name}`) },
             completionWake: policies[index]!,
+            ...(grouped ? { completionGroup: "pair" } : {}),
           });
         }
         const projection = yield* orchestrator.getThreadProjection(parent.threadId);
@@ -360,8 +368,10 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
             result: `Result ${index}`,
           });
           yield* worker.drain();
-          const seen = index === 0 ? yield* Queue.clear(offers) : [yield* Queue.take(offers)];
-          assert.equal(seen.length, index === 0 ? 0 : 1);
+          // Ungrouped, the first result is offered at once; the second joins its undispatched wake.
+          const held = grouped && index === 0;
+          const seen = held ? yield* Queue.clear(offers) : [yield* Queue.take(offers)];
+          assert.equal(seen.length, held ? 0 : 1);
         }
         const finished = yield* orchestrator.getThreadProjection(parent.threadId);
         const delivery = finished.runs.find((run) => run.id === parent.runId)!.delegatedCompletion!
