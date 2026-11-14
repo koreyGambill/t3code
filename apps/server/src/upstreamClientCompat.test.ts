@@ -22,7 +22,6 @@ import {
 import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import type * as HttpApi from "effect/http-api/HttpApi";
 import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as Schema from "effect/Schema";
 import * as AST from "effect/SchemaAST";
@@ -472,8 +471,23 @@ const sharedRpcs = [...upstreamRpcs].flatMap(([tag, upstream]) => {
   return fork === undefined ? [] : [{ tag, fork, upstream }];
 });
 
+interface HttpApiSchemas {
+  readonly groups: Readonly<
+    Record<
+      string,
+      {
+        readonly endpoints: Readonly<
+          Record<
+            string,
+            { readonly success: ReadonlySet<Schema.Top>; readonly error: ReadonlySet<Schema.Top> }
+          >
+        >;
+      }
+    >
+  >;
+}
 /** HTTP endpoints by `group.endpoint`; upstream clients load their first screens through these. */
-const httpEndpoints = (api: HttpApi.Top) =>
+const httpEndpoints = (api: HttpApiSchemas) =>
   new Map(
     Object.entries(api.groups).flatMap(([group, { endpoints }]) =>
       Object.entries(endpoints).map(([name, endpoint]) => [`${group}.${name}`, endpoint] as const),
@@ -652,11 +666,12 @@ describe("upstream client wire compatibility", () => {
           schedule: { type: "event" as const, event: "thread_created" as const },
         };
         const ran: Array<string> = [];
-        const record = (method: string) => (input: { readonly id?: string | undefined }) =>
-          Effect.sync(() => {
-            ran.push(`${method} ${input.id ?? "new"}`);
-            return { id: input.id ?? shown.id, task: shown, threadId: null };
-          });
+        const record =
+          (method: string) => (input: { readonly id?: ScheduledTask["id"] | undefined }) =>
+            Effect.sync(() => {
+              ran.push(`${method} ${input.id ?? "new"}`);
+              return { id: input.id ?? shown.id, task: shown, threadId: null };
+            });
         const service = {
           list: () => Effect.succeed({ tasks: [shown, onEvent] }),
           upsert: record("upsert"),
@@ -669,7 +684,9 @@ describe("upstream client wire compatibility", () => {
         > as ScheduledTasks.ScheduledTaskService["Service"];
         const forUpstream = scheduledTasksForClient(service, upstreamClient);
         const { id: _id, ...upsert } = shown;
-        const calls = (id: ScheduledTask["id"]) => [
+        const calls = (
+          id: ScheduledTask["id"],
+        ): Array<Effect.Effect<object, ScheduledTaskError>> => [
           forUpstream.upsert({ ...upsert, id }),
           forUpstream.setEnabled({ id, enabled: false }),
           forUpstream.runNow({ id }),
