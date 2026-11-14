@@ -95,6 +95,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.monitoringSetDisposition]: AuthOrchestrationOperateScope,
   [WS_METHODS.monitoringRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notificationsUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notificationsMarkAllRead]: AuthOrchestrationOperateScope,
   [WS_METHODS.statusSourcesUpsert]: AuthSettingsWriteScope,
   [WS_METHODS.statusSourcesDelete]: AuthSettingsWriteScope,
   [WS_METHODS.statusSourcesSnooze]: AuthOrchestrationOperateScope,

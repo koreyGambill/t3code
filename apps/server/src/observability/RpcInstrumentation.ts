@@ -289,6 +289,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.monitoringRunNow]: "monitoring",
   [WS_METHODS.monitoringSetDisposition]: "monitoring",
   [WS_METHODS.monitoringRespond]: "monitoring",
+  [WS_METHODS.notificationsSubscribe]: "notifications",
+  [WS_METHODS.notificationsUpdate]: "notifications",
+  [WS_METHODS.notificationsMarkAllRead]: "notifications",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

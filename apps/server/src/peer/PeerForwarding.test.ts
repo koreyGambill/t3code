@@ -1,5 +1,6 @@
 import * as ContextRecords from "../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../monitoring/MonitoringDialogue.ts";
+import * as NotificationService from "../notifications/NotificationService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -293,9 +294,10 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       ),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
       Layer.provide(
-        Layer.merge(
+        Layer.mergeAll(
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           Layer.mock(MonitoringDialogue.MonitoringDialogue)({}),
+          Layer.mock(NotificationService.NotificationService)({}),
         ),
       ),
       Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
@@ -414,6 +416,7 @@ const makeLaptop = Effect.fn(function* (
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(MonitoringDialogue.MonitoringDialogue)({}),
+        Layer.mock(NotificationService.NotificationService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),

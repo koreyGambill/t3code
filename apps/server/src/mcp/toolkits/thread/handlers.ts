@@ -1,5 +1,6 @@
 import * as ContextRecords from "../../../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
+import * as NotificationService from "../../../notifications/NotificationService.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -19,8 +20,10 @@ import {
   newCommandId,
   readCaller,
   readThread,
+  threadNotFound,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -127,6 +130,36 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           .respond({ ...input, role: "agent", callerThreadId: caller.id })
           .pipe(Effect.mapError(unavailable));
       }),
+  ),
+  t3_notify: McpToolAccess.actsAsCaller(({ threadId, severity, ...input }) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
+        Effect.flatMap((context) => McpInvocationContext.requireThreadScope(context, "t3_notify")),
+      );
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const callerId = scope.thread.threadId;
+      const targetId = threadId ?? callerId;
+      const target = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
+      if (target === null || target.deletedAt !== null)
+        return yield* threadNotFound(threads, targetId, "The thread was not found.");
+      const notifications = yield* NotificationService.NotificationService;
+      const { notification, status } = yield* notifications
+        .raise({
+          ...input,
+          severity: severity ?? "info",
+          source: { kind: "agent", threadId: callerId },
+          threadId: target.id,
+          projectId: target.projectId,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "NotificationRateLimitedError"
+              ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+              : unavailable(),
+          ),
+        );
+      return { notificationId: notification.id, status };
+    }),
   ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {

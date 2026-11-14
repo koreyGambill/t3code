@@ -1,9 +1,14 @@
 import * as ContextRecords from "../../../threadInsights/ContextRecords.ts";
 import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
+import * as NotificationService from "../../../notifications/NotificationService.ts";
 import {
   OrchestratorMcpEnvironmentTarget,
   MonitoringFindingId,
   MonitoringFinding,
+  NotificationBody,
+  NotificationId,
+  NotificationSeverity,
+  NotificationTitle,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -284,9 +289,39 @@ const MonitoringRespondTool = Tool.make("respond_monitoring_advisory", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false);
 
+const NotifyTool = Tool.make("t3_notify", {
+  description:
+    "Tell the user something that needs their attention later, in their inbox. Not for answering the conversation. Automations: use it for findings.",
+  parameters: Schema.Struct({
+    title: NotificationTitle,
+    body: Schema.optional(NotificationBody),
+    severity: Schema.optional(NotificationSeverity),
+    threadId: Schema.optional(ThreadId).annotate({
+      description: "Thread it opens. Default: this thread.",
+    }),
+    dedupeKey: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).annotate({
+      description: "Same key within a day updates one item. Default: thread and title.",
+    }),
+  }),
+  success: Schema.Struct({
+    notificationId: NotificationId,
+    status: Schema.Literals(["delivered", "pending_verification", "repeat"]),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    NotificationService.NotificationService,
+  ],
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const ThreadToolkit = Toolkit.make(
   ContextReadTool,
   MonitoringRespondTool,
+  NotifyTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,

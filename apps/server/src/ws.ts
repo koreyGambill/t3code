@@ -134,6 +134,7 @@ import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as UpstreamClientCompat from "./upstreamClientCompat.ts";
 import * as StatusSources from "./statusSources/StatusSources.ts";
+import * as NotificationService from "./notifications/NotificationService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1482,6 +1483,7 @@ export const layerWsRpc = (
         client,
       );
       const statusSources = yield* StatusSources.StatusSources;
+      const notifications = yield* NotificationService.NotificationService;
       const monitoring = yield* MonitoringService.MonitoringService;
       const monitoringDialogue = yield* MonitoringDialogue.MonitoringDialogue;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2341,6 +2343,9 @@ export const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
+        [WS_METHODS.notificationsSubscribe]: () => notifications.subscribe(),
+        [WS_METHODS.notificationsUpdate]: (input) => notifications.update(input),
+        [WS_METHODS.notificationsMarkAllRead]: () => notifications.markAllRead(),
         [WS_METHODS.statusSourcesSubscribe]: () => statusSources.subscribe(),
         [WS_METHODS.statusSourcesUpsert]: (input) => statusSources.upsert(input),
         [WS_METHODS.statusSourcesDelete]: (input) => statusSources.remove(input),

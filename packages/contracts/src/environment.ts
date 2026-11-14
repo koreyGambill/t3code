@@ -207,6 +207,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server saves and runs scheduled task `threadMode`; older servers ignore it. */
   scheduledTaskThreadModes: Schema.optionalKey(Schema.Boolean),
   monitoring: Schema.optionalKey(Schema.Boolean),
+  /** Server answers notifications.* and agents can call `t3_notify`. */
+  notifications: Schema.optionalKey(Schema.Boolean),
   idleWorkCheckins: Schema.optionalKey(Schema.Boolean),
   /** Server records automation runs and answers scheduledTasks.listRuns. */
   automations: Schema.optionalKey(Schema.Boolean),

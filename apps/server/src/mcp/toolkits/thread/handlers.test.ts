@@ -3,10 +3,13 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as MonitoringDialogue from "../../../monitoring/MonitoringDialogue.ts";
+import * as NotificationService from "../../../notifications/NotificationService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as Sqlite from "../../../persistence/Sqlite.ts";
@@ -95,6 +98,7 @@ it.effect("defaults to compact context pages and lets callers request full tool 
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(MonitoringDialogue.MonitoringDialogue)({})),
+        Layer.provide(Layer.mock(NotificationService.NotificationService)({})),
         Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
         Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
         Layer.provide(
@@ -126,6 +130,97 @@ it.effect("defaults to compact context pages and lets callers request full tool 
               }),
             ),
           ),
+        ),
+        Layer.provideMerge(Sqlite.layerMemory),
+      ),
+    ),
+  ),
+);
+
+it.effect("t3_notify raises from the calling thread and links the thread it names", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const notifications = yield* NotificationService.NotificationService;
+    const client = McpSchema.McpServerClient.of({
+      clientId: 1,
+      protocolVersion: "2025-06-18",
+      clientCapabilities: {},
+      clientInfo: { name: "notify-test", version: "1" },
+      initializePayload: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "notify-test", version: "1" },
+      },
+      getClient: Effect.die("unused"),
+    });
+    const callerId = ThreadId.make("notify-caller");
+    const scope = (thread: boolean): Invocation.McpInvocationScope => ({
+      environmentId: EnvironmentId.make("notify-environment"),
+      requestNamespace: "notify-session",
+      issuedAt: 0,
+      capabilities: new Set(["orchestration"]),
+      thread: thread
+        ? {
+            threadId: callerId,
+            providerSessionId: "notify-session",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }
+        : undefined,
+      client: undefined,
+    });
+    const notify = (args: Record<string, unknown>, thread = true) =>
+      server
+        .callTool({ name: "t3_notify", arguments: args })
+        .pipe(
+          Effect.provideService(Invocation.McpInvocationContext, scope(thread)),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const first = yield* notify({ title: "Lands ran from bash", severity: "warning" });
+    expect(first.isError).not.toBe(true);
+    expect(first.structuredContent).toMatchObject({ status: "delivered" });
+    const repeat = yield* notify({ title: "Lands ran from bash", severity: "warning" });
+    expect(repeat.structuredContent).toEqual(
+      first.structuredContent && {
+        ...first.structuredContent,
+        status: "repeat",
+      },
+    );
+    yield* notify({ title: "PR merged", threadId: "notify-target" });
+    const snapshot = yield* notifications.subscribe().pipe(Stream.runHead);
+    expect(Option.getOrThrow(snapshot).items).toMatchObject([
+      {
+        title: "PR merged",
+        severity: "info",
+        threadId: "notify-target",
+        source: { kind: "agent", threadId: callerId },
+      },
+      { title: "Lands ran from bash", severity: "warning", threadId: callerId, repeatCount: 1 },
+    ]);
+
+    expect(JSON.stringify((yield* notify({ title: "x", threadId: "missing" })).content)).toContain(
+      "thread was not found",
+    );
+    expect((yield* notify({ title: "x" }, false)).isError).toBe(true);
+    for (let index = 0; index < NotificationService.RATE_LIMIT_PER_HOUR - 3; index++)
+      yield* notify({ title: `finding ${index}` });
+    expect(JSON.stringify((yield* notify({ title: "one too many" })).content)).toContain(
+      "notifications per hour",
+    );
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(NotificationService.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(MonitoringDialogue.MonitoringDialogue)({})),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(ContextRecords.ContextRecords)({})),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(id === "missing" ? null : liveThreadShell(id)),
+          }),
         ),
         Layer.provideMerge(Sqlite.layerMemory),
       ),

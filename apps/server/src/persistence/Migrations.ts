@@ -105,6 +105,7 @@ import Migration0093 from "./Migrations/093_TurnItemTypeStatusIndex.ts";
 import Migration0094 from "./Migrations/094_ShellThreadReadIndexes.ts";
 import Migration0095 from "./Migrations/095_ScheduledTaskEventSubjects.ts";
 import Migration0096 from "./Migrations/096_ScheduledTaskRuns.ts";
+import Migration0097 from "./Migrations/097_Notifications.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -204,6 +205,7 @@ const migrationEntries = [
   [94, "ShellThreadReadIndexes", Migration0094],
   [95, "ScheduledTaskEventSubjects", Migration0095],
   [96, "ScheduledTaskRuns", Migration0096],
+  [97, "Notifications", Migration0097],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
