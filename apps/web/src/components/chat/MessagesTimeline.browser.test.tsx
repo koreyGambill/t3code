@@ -158,6 +158,13 @@ function work(id: string, entry: Record<string, unknown>): Entry {
   } as Entry;
 }
 
+// Text never folds, but failed attempts each keep their own row inside the turn's fold.
+function retriedWork(runId: RunId, prefix = "retry"): Entry[] {
+  return Array.from({ length: 20 }, (_, index) =>
+    work(`${prefix}-${index}`, { runId, label: `Attempt ${index} failed`, tone: "error" }),
+  );
+}
+
 function v2Item(type: string, fields: Record<string, unknown>) {
   const id = (fields.id as string | undefined) ?? type;
   return {
@@ -297,50 +304,59 @@ describe("MessagesTimeline work rows", () => {
     });
   });
 
-  it("keeps the worked-for heading in place when expanded at the bottom", async () => {
-    const props = baseProps();
-    const runId = RunId.make("completed-run");
-    const container = document.createElement("div");
-    // Keep the heading on screen so Playwright does not scroll it before clicking.
-    container.style.cssText =
-      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
-    await using screen = await render(
-      <MessagesTimeline
-        {...props}
-        timelineEntries={[
-          ...Array.from({ length: 12 }, (_, index) =>
-            message(`Earlier context ${index}`, {}, `context-${index}`),
-          ),
-          message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
-          message("Done", { role: "assistant", runId }, "final"),
-        ]}
-      />,
-      { container },
-    );
-    const heading = screen.getByRole("button", { name: /^Worked for/ });
-    // LegendList keeps rows click-through until its initial scroll settles on animation
-    // frames, which the fake clock below would freeze.
-    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
-    const viewport = props.listRef.current!.getScrollableNode()!;
-    // Legend keeps rows transparent and unclickable until its initial scroll settles.
-    await vi.waitFor(() => {
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
-      expect(heading.element().checkVisibility({ opacityProperty: true })).toBe(true);
-    });
-    expect(viewport.scrollTop).toBeGreaterThan(0);
-    const top = heading.element().getBoundingClientRect().top;
-    const height = viewport.scrollHeight;
-    using _timers = fakeTimers();
-    await heading.click();
-    await act(() => vi.advanceTimersByTime(1000));
-    await vi.waitFor(() => {
-      expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
-      expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
-        500,
+  it.each([1, 2])(
+    "keeps the last of %i worked-for headings in place when expanded at the bottom",
+    async (folds) => {
+      const props = baseProps();
+      const runId = RunId.make("completed-run");
+      const container = document.createElement("div");
+      // Keep the heading on screen so Playwright does not scroll it before clicking.
+      container.style.cssText =
+        "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
+      await using screen = await render(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[
+            ...Array.from({ length: 12 }, (_, index) =>
+              message(`Earlier context ${index}`, {}, `context-${index}`),
+            ),
+            ...(folds === 2
+              ? [
+                  ...retriedWork(runId, "first"),
+                  message("Found it", { role: "assistant", runId }, "found"),
+                ]
+              : []),
+            ...retriedWork(runId),
+            message("Done", { role: "assistant", runId }, "final"),
+          ]}
+        />,
+        { container },
       );
-    });
-  });
+      const heading = screen.getByRole("button", { name: /^Worked for/ }).last();
+      // LegendList keeps rows click-through until its initial scroll settles on animation
+      // frames, which the fake clock below would freeze.
+      await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
+      const viewport = props.listRef.current!.getScrollableNode()!;
+      // Legend keeps rows transparent and unclickable until its initial scroll settles.
+      await vi.waitFor(() => {
+        expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+        expect(heading.element().checkVisibility({ opacityProperty: true })).toBe(true);
+      });
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      const top = heading.element().getBoundingClientRect().top;
+      const height = viewport.scrollHeight;
+      using _timers = fakeTimers();
+      await heading.click();
+      await act(() => vi.advanceTimersByTime(1000));
+      await vi.waitFor(() => {
+        expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
+        expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);
+        expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+          500,
+        );
+      });
+    },
+  );
 
   it("keeps following a streaming turn after a heading is expanded at the bottom", async () => {
     const props = { ...baseProps(), isWorking: true };
@@ -352,7 +368,7 @@ describe("MessagesTimeline work rows", () => {
       ...Array.from({ length: 12 }, (_, index) =>
         message(`Earlier context ${index}`, {}, `context-${index}`),
       ),
-      message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+      ...retriedWork(runId),
       message("Done", { role: "assistant", runId }, "final"),
     ];
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
