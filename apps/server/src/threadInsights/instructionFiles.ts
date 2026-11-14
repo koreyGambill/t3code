@@ -1,28 +1,30 @@
-import type { DefaultContextItem, InstructionFootprint } from "@t3tools/contracts";
+import {
+  type DefaultContextItem,
+  type InstructionFootprint,
+  ThreadInsightsError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 /** Where a provider documents its instruction files. Groups list alternatives: the first existing name wins. */
 export interface FileConvention {
   readonly globals: (dirs: ProviderDirs) => ReadonlyArray<ReadonlyArray<string>>;
-  readonly globalRuleDirs?: (dirs: ProviderDirs) => ReadonlyArray<string>;
-  /** `home`: cwd and its ancestors inside $HOME. `git`: git root down to cwd. `nearest`: first match walking up to the git root. `root`: the git root (or cwd). */
-  readonly walk: "home" | "git" | "nearest" | "root";
+  readonly globalRuleDir?: (dirs: ProviderDirs) => string;
+  /** `home`: cwd and its ancestors inside $HOME. `git`: git root down to cwd. */
+  readonly walk: "home" | "git";
   readonly perDir: ReadonlyArray<ReadonlyArray<string>>;
-  readonly ruleDirs?: ReadonlyArray<string>;
-  readonly ruleExtension?: string;
-  readonly ruleApplies?: (frontmatter: string) => boolean;
+  readonly ruleDir?: string;
   readonly imports?: boolean;
 }
 
 export interface ProviderDirs {
   readonly home: string;
   readonly platform: NodeJS.Platform;
-  readonly env: NodeJS.ProcessEnv;
+  /** The provider's resolved config folder: Claude's config dir or Codex's home. */
+  readonly configDir: string;
 }
-
-const inHome = (dirs: ProviderDirs, ...parts: string[]) => [dirs.home, ...parts].join("/");
 
 export const FILE_CONVENTIONS: Readonly<Record<string, FileConvention>> = {
   claudeAgent: {
@@ -32,84 +34,24 @@ export const FILE_CONVENTIONS: Readonly<Record<string, FileConvention>> = {
           ? "/Library/Application Support/ClaudeCode/CLAUDE.md"
           : "/etc/claude-code/CLAUDE.md",
       ],
-      [`${dirs.env.CLAUDE_CONFIG_DIR || inHome(dirs, ".claude")}/CLAUDE.md`],
+      [`${dirs.configDir}/CLAUDE.md`],
     ],
-    globalRuleDirs: (dirs) => [`${dirs.env.CLAUDE_CONFIG_DIR || inHome(dirs, ".claude")}/rules`],
+    globalRuleDir: (dirs) => `${dirs.configDir}/rules`,
     walk: "home",
     perDir: [["CLAUDE.md"], [".claude/CLAUDE.md"], ["CLAUDE.local.md"]],
-    ruleDirs: [".claude/rules"],
-    ruleApplies: (frontmatter) => !/^paths\s*:/m.test(frontmatter),
+    ruleDir: ".claude/rules",
     imports: true,
   },
   codex: {
-    globals: (dirs) => {
-      const home = dirs.env.CODEX_HOME || inHome(dirs, ".codex");
-      return [[`${home}/AGENTS.override.md`, `${home}/AGENTS.md`]];
-    },
+    globals: (dirs) => [[`${dirs.configDir}/AGENTS.override.md`, `${dirs.configDir}/AGENTS.md`]],
     walk: "git",
     perDir: [["AGENTS.override.md", "AGENTS.md"]],
-  },
-  opencode: {
-    globals: (dirs) => [
-      [inHome(dirs, ".config/opencode/AGENTS.md"), inHome(dirs, ".claude/CLAUDE.md")],
-    ],
-    walk: "nearest",
-    perDir: [["AGENTS.md", "CLAUDE.md"]],
-  },
-  cursor: {
-    globals: () => [],
-    walk: "root",
-    perDir: [["AGENTS.md"], [".cursorrules"]],
-    ruleDirs: [".cursor/rules"],
-    ruleExtension: ".mdc",
-    ruleApplies: (frontmatter) => /^alwaysApply\s*:\s*true/m.test(frontmatter),
-  },
-  pi: {
-    globals: (dirs) => {
-      const agent = dirs.env.PI_CODING_AGENT_DIR || inHome(dirs, ".pi/agent");
-      return [[`${agent}/AGENTS.md`, `${agent}/CLAUDE.md`]];
-    },
-    walk: "home",
-    perDir: [["AGENTS.override.md", "AGENTS.md", "CLAUDE.md"]],
-  },
-  kiro: {
-    globals: () => [],
-    globalRuleDirs: (dirs) => [inHome(dirs, ".kiro/steering")],
-    walk: "root",
-    perDir: [["AGENTS.md"]],
-    ruleDirs: [".kiro/steering"],
-    ruleApplies: (frontmatter) =>
-      !/^inclusion\s*:/m.test(frontmatter) || /^inclusion\s*:\s*always/m.test(frontmatter),
-  },
-  grok: {
-    globals: () => [],
-    walk: "git",
-    perDir: [
-      ["AGENTS.md"],
-      ["Agents.md"],
-      ["AGENT.md"],
-      ["CLAUDE.md"],
-      ["Claude.md"],
-      ["CLAUDE.local.md"],
-    ],
-    ruleDirs: [".grok/rules"],
-  },
-  antigravity: {
-    globals: (dirs) =>
-      ["GEMINI.md", "AGENTS.md", "config/GEMINI.md", "config/AGENTS.md"].map((name) => [
-        inHome(dirs, ".gemini", name),
-      ]),
-    globalRuleDirs: (dirs) => [inHome(dirs, ".gemini/config/rules")],
-    walk: "root",
-    perDir: [["AGENTS.md"], ["GEMINI.md"], [".agents/AGENTS.md"], [".agents/GEMINI.md"]],
-    ruleDirs: [".agents/rules", ".agent/rules"],
-    ruleApplies: (frontmatter) =>
-      !/^trigger\s*:/m.test(frontmatter) || /^trigger\s*:\s*always_on/m.test(frontmatter),
   },
 };
 
 const SECRET_NAME =
-  /^\.env(\..*)?$|\.(pem|key|p12|pfx|keystore)$|^id_|^\.netrc$|^\.npmrc$|^\.pgpass$|^credentials|^secrets?(\.|$)|^auth\.json$/i;
+  /^\.?env(\..*|rc)?$|\.(pem|key|p12|pfx|keystore|kdbx)$|^id_|^\.?netrc$|^\.npmrc$|^\.pgpass$|^\.?credentials|^\.git-credentials$|^secrets?(\.|$)|^auth\.json$|^hosts\.ya?ml$|_history$/i;
+const SECRET_PATH = /\/\.(ssh|gnupg|aws|docker|kube|t3)\//;
 const MAX_FILES = 64;
 const MAX_IMPORT_DEPTH = 5;
 export const MAX_READ_BYTES = 256 * 1024;
@@ -121,7 +63,7 @@ export interface ResolvedFile {
   readonly scope: "global" | "project" | "rule" | "import";
   readonly bytes: number;
   readonly depth: number;
-  readonly status: "expected" | "outside-home" | "secret";
+  readonly status: "expected" | "not-read" | "secret";
 }
 
 /** `@path` references outside code spans and fences, as Claude Code resolves imports. */
@@ -132,27 +74,47 @@ export function importReferences(text: string): ReadonlyArray<string> {
   );
 }
 
-const frontmatterOf = (text: string) => /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
+/** Reads at most MAX_READ_BYTES of a file that still resolves to `realPath`, so a swapped symlink is refused. */
+export const readBounded = Effect.fn("DefaultContext.readBounded")(function* (realPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const bytes = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* fs.open(realPath, { flag: "r" });
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      while (total < MAX_READ_BYTES) {
+        const chunk = yield* handle.readAlloc(MAX_READ_BYTES - total);
+        if (Option.isNone(chunk) || chunk.value.length === 0) break;
+        chunks.push(chunk.value);
+        total += chunk.value.length;
+      }
+      return Buffer.concat(chunks);
+    }),
+  );
+  if ((yield* fs.realPath(realPath)) !== realPath)
+    return yield* new ThreadInsightsError({ message: "The file moved while it was read." });
+  return bytes.toString("utf8");
+});
 
 /**
- * Resolves the files a provider documents loading for this cwd. Reads happen only inside
- * $HOME, the workspace, or the provider's own documented global paths; anything else is
- * listed by path and left unread.
+ * Resolves the files a provider documents loading for this cwd. Text is read only from the
+ * repository (workspace and git root), the documented files themselves, and `.md` files a
+ * user-owned instruction file imports. Anything else is listed by path and left unread.
  */
 export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstructionFiles")(
-  function* (convention: FileConvention, cwd: string, dirs: ProviderDirs) {
+  function* (
+    convention: FileConvention,
+    cwd: string,
+    dirs: ProviderDirs,
+    isServerInternal: (file: string) => Effect.Effect<boolean>,
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => file));
-    const isFile = (file: string) =>
+    const sizeOf = (file: string, type: "File" | "Directory") =>
       fs.stat(file).pipe(
-        Effect.map((info) => (info.type === "File" ? Number(info.size) : null)),
+        Effect.map((info) => (info.type === type ? Number(info.size) : null)),
         Effect.orElseSucceed(() => null),
-      );
-    const isDir = (dir: string) =>
-      fs.stat(dir).pipe(
-        Effect.map((info) => info.type === "Directory"),
-        Effect.orElseSucceed(() => false),
       );
     const within = (root: string, file: string) => {
       const relative = path.relative(root, file);
@@ -168,100 +130,87 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
       }
       if (path.dirname(dir) === dir) break;
     }
-    const globalPaths = new Set<string>();
-    for (const group of convention.globals(dirs)) for (const file of group) globalPaths.add(file);
-    for (const dir of convention.globalRuleDirs?.(dirs) ?? []) globalPaths.add(dir);
-    const statusOf = (file: string): ResolvedFile["status"] =>
-      SECRET_NAME.test(path.basename(file))
-        ? "secret"
-        : within(home, file) ||
-            within(workspace, file) ||
-            (gitRoot !== null && within(gitRoot, file)) ||
-            [...globalPaths].some((allowed) => within(allowed, file))
-          ? "expected"
-          : "outside-home";
+    const repo = gitRoot ?? workspace;
+    const inRepo = (file: string) => within(repo, file) || within(workspace, file);
+    const blocked = (file: string) =>
+      SECRET_NAME.test(path.basename(file)) || SECRET_PATH.test(`${file}/`);
     const readText = (file: string) =>
-      fs.readFileString(file).pipe(
-        Effect.map((text) => text.slice(0, MAX_READ_BYTES)),
+      readBounded(file).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
         Effect.orElseSucceed(() => ""),
       );
 
     const files: ResolvedFile[] = [];
     const seen = new Set<string>();
+    /** `trusted`: the file sits outside the repository, where the repository cannot plant it. */
     const add: (
       file: string,
       scope: ResolvedFile["scope"],
       depth: number,
-    ) => Effect.Effect<boolean, never, never> = Effect.fnUntraced(function* (file, scope, depth) {
-      const bytes = yield* isFile(file);
-      if (bytes === null) return false;
-      const resolved = yield* real(file);
-      if (seen.has(resolved) || files.length >= MAX_FILES) return true;
-      seen.add(resolved);
-      const status = SECRET_NAME.test(path.basename(file)) ? "secret" : statusOf(resolved);
-      files.push({ path: file, realPath: resolved, scope, bytes, depth, status });
-      if (convention.imports && status === "expected" && depth < MAX_IMPORT_DEPTH) {
-        for (const reference of importReferences(yield* readText(resolved))) {
-          const target = reference.startsWith("~/")
-            ? path.join(dirs.home, reference.slice(2))
-            : path.resolve(path.dirname(file), reference);
-          yield* add(target, "import", depth + 1);
+      trusted: boolean,
+    ) => Effect.Effect<boolean, never, never> = Effect.fnUntraced(
+      function* (file, scope, depth, trusted) {
+        const bytes = yield* sizeOf(file, "File");
+        if (bytes === null) return false;
+        const resolved = yield* real(file);
+        if (seen.has(resolved) || files.length >= MAX_FILES) return true;
+        seen.add(resolved);
+        const status: ResolvedFile["status"] =
+          blocked(file) || blocked(resolved) || (yield* isServerInternal(resolved))
+            ? "secret"
+            : inRepo(resolved) || (trusted && resolved.endsWith(".md"))
+              ? "expected"
+              : "not-read";
+        files.push({ path: file, realPath: resolved, scope, bytes, depth, status });
+        if (convention.imports && status === "expected" && depth < MAX_IMPORT_DEPTH) {
+          for (const reference of importReferences(yield* readText(resolved))) {
+            const target = reference.startsWith("~/")
+              ? path.join(dirs.home, reference.slice(2))
+              : path.resolve(path.dirname(file), reference);
+            yield* add(target, "import", depth + 1, trusted && !inRepo(resolved));
+          }
         }
-      }
-      return true;
-    });
-    const addRules = Effect.fnUntraced(function* (dir: string) {
-      if (!(yield* isDir(dir)) || statusOf(yield* real(dir)) !== "expected") return;
-      const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
-      for (const name of names
-        .filter((entry) => entry.endsWith(convention.ruleExtension ?? ".md"))
-        .toSorted()) {
+        return true;
+      },
+    );
+    // Claude Code skips rules scoped to `paths:` until a matching file is read.
+    const addRules = Effect.fnUntraced(function* (dir: string, trusted: boolean) {
+      if ((yield* sizeOf(dir, "Directory")) === null) return;
+      const names = yield* fs
+        .readDirectory(dir, { recursive: true })
+        .pipe(Effect.orElseSucceed(() => []));
+      for (const name of names.filter((entry) => entry.endsWith(".md")).toSorted()) {
         const file = path.join(dir, name);
-        if (
-          convention.ruleApplies !== undefined &&
-          !convention.ruleApplies(frontmatterOf(yield* readText(file)))
-        )
-          continue;
-        yield* add(file, "rule", 0);
+        const resolved = yield* real(file);
+        if (!blocked(resolved) && (inRepo(resolved) || trusted)) {
+          const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(yield* readText(resolved))?.[1];
+          if (frontmatter !== undefined && /^paths\s*:/m.test(frontmatter)) continue;
+        }
+        yield* add(file, "rule", 0, trusted);
       }
     });
 
     for (const group of convention.globals(dirs)) {
-      for (const file of group) if (yield* add(file, "global", 0)) break;
+      for (const file of group) if (yield* add(file, "global", 0, true)) break;
     }
-    for (const dir of convention.globalRuleDirs?.(dirs) ?? []) yield* addRules(dir);
+    if (convention.globalRuleDir) yield* addRules(convention.globalRuleDir(dirs), true);
 
-    const top = gitRoot ?? workspace;
     const chain: string[] = [];
-    if (convention.walk === "root") chain.push(top);
-    else if (convention.walk === "home") {
-      for (let dir = workspace; ; dir = path.dirname(dir)) {
-        chain.unshift(dir);
-        if (dir === home || !within(home, dir) || path.dirname(dir) === dir) break;
-      }
-    } else {
-      for (let dir = workspace; ; dir = path.dirname(dir)) {
-        chain.unshift(dir);
-        if (dir === top || path.dirname(dir) === dir) break;
-      }
+    for (let dir = workspace; ; dir = path.dirname(dir)) {
+      chain.unshift(dir);
+      const top = convention.walk === "git" ? dir === repo : dir === home || !within(home, dir);
+      if (top || path.dirname(dir) === dir) break;
     }
-    if (convention.walk === "nearest") chain.reverse();
-    walk: for (const dir of chain) {
-      let found = false;
+    for (const dir of chain) {
       for (const group of convention.perDir) {
         for (const name of group) {
-          if (yield* add(path.join(dir, name), "project", 0)) {
-            found = true;
-            break;
-          }
+          const file = path.join(dir, name);
+          if (yield* add(file, "project", 0, !inRepo(dir))) break;
         }
       }
-      if (found && convention.walk === "nearest") break walk;
     }
-    for (const base of new Set([top, workspace])) {
-      for (const dir of convention.ruleDirs ?? []) yield* addRules(path.join(base, dir));
-    }
-    return { files, cwd: workspace };
+    if (convention.ruleDir) yield* addRules(path.join(workspace, convention.ruleDir), false);
+    return { files, cwd: workspace, insideHome: within(home, workspace) };
   },
 );
 
@@ -291,17 +240,17 @@ export function reconcileFiles(
         scope: "project" as const,
         bytes: source.bytes ?? 0,
         depth: 0,
-        status: "expected" as const,
+        status: "not-read" as const,
         unexpected: true,
       })),
   ];
 }
 
 export const fileStatus = (file: FileRow): NonNullable<DefaultContextItem["status"]> =>
-  file.status !== "expected"
-    ? file.status
-    : file.unexpected
-      ? "unexpected"
+  file.unexpected
+    ? "unexpected"
+    : file.status !== "expected"
+      ? file.status
       : file.loaded === undefined
         ? "expected"
         : file.loaded

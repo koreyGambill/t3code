@@ -40,7 +40,6 @@ describe("RPC authorization scopes", () => {
   it("keeps review drafts and sends under their read and operate scopes", () => {
     for (const method of [
       WS_METHODS.threadDefaultContextGet,
-      WS_METHODS.threadDefaultContextItem,
       WS_METHODS.threadWorkspaceGet,
       WS_METHODS.threadListRead,
       WS_METHODS.threadArtifactRead,
@@ -50,6 +49,9 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.reviewsDue,
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.threadDefaultContextItem)).toBe(
+      AuthFilesystemReadScope,
+    );
     for (const method of [
       WS_METHODS.threadListUpdate,
       WS_METHODS.threadListRewrite,

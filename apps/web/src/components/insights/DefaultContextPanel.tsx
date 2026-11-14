@@ -1,5 +1,7 @@
 import {
+  AuthFilesystemReadScope,
   AuthOrchestrationReadScope,
+  type DefaultContextGetInput,
   type DefaultContextItem,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
@@ -23,6 +25,7 @@ import {
   formatTokens,
   homeOf,
   shortenPath,
+  splitPath,
   STATUS_LABELS,
   TOOL_PREVIEW_COUNT,
 } from "./defaultContext.logic";
@@ -38,27 +41,27 @@ const STATUS_MARKS: Partial<Record<NonNullable<DefaultContextItem["status"]>, st
   loaded: "✓",
   "not-loaded": "!",
   unexpected: "+",
-  changed: "Δ",
-  "outside-home": "⊘",
+  "not-read": "⊘",
   secret: "⊘",
 };
 
 export function DefaultContextPanel({
   threadRef,
+  request,
   visible,
   tabs,
 }: {
   readonly threadRef: ScopedThreadRef;
+  /** A draft thread passes its project and composer selection. */
+  readonly request: DefaultContextGetInput;
   readonly visible: boolean;
   readonly tabs: ReactNode;
 }) {
   const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
+  const canReadFiles = useEnvironmentScope(threadRef.environmentId, AuthFilesystemReadScope);
   const query = useEnvironmentQuery(
     visible && canRead
-      ? threadDefaultContextGet({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
+      ? threadDefaultContextGet({ environmentId: threadRef.environmentId, input: request })
       : null,
   );
   const [showAllTools, setShowAllTools] = useState(false);
@@ -74,7 +77,24 @@ export function DefaultContextPanel({
       : homeOf([...(preview.cwd ? [preview.cwd] : []), ...preview.items.map((item) => item.label)]);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
-      <header className="flex min-h-7 shrink-0 items-center border-b px-1 py-0.5">{tabs}</header>
+      <header className="flex min-h-7 shrink-0 items-center justify-between gap-1 border-b px-1 py-0.5">
+        {tabs}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Refresh default context"
+                onClick={() => query.refresh()}
+              />
+            }
+          >
+            <RefreshCwIcon />
+          </TooltipTrigger>
+          <TooltipPopup>Refresh default context</TooltipPopup>
+        </Tooltip>
+      </header>
       <div className="min-w-0 space-y-3 p-2 text-xs">
         {!canRead ? (
           <p>Context access is unavailable.</p>
@@ -89,31 +109,14 @@ export function DefaultContextPanel({
                 What loads before your message for {provider}
                 {preview.model ? ` · ${preview.model}` : ""}
               </p>
-              <div className="flex items-center gap-1">
-                <p className="min-w-0 flex-1 text-sm font-medium tabular-nums">
-                  ~{formatTokens(summary.tokens)} tokens
-                  <span className="font-normal text-muted-foreground">
-                    {" "}
-                    · {formatBytes(summary.bytes)}
-                    {preview.support === "estimate" ? " · estimate" : ""}
-                  </span>
-                </p>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="Refresh default context"
-                        onClick={() => query.refresh()}
-                      />
-                    }
-                  >
-                    <RefreshCwIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup>Refresh default context</TooltipPopup>
-                </Tooltip>
-              </div>
+              <p className="text-sm font-medium tabular-nums">
+                ~{formatTokens(summary.tokens)} tokens
+                <span className="font-normal text-muted-foreground">
+                  {" "}
+                  · {formatBytes(summary.bytes)}
+                  {preview.support === "estimate" ? " · estimate" : ""}
+                </span>
+              </p>
               <div className="flex h-2 overflow-hidden rounded-sm bg-muted" aria-hidden="true">
                 {summary.categories.map((category) => (
                   <div
@@ -142,7 +145,7 @@ export function DefaultContextPanel({
             <p className="text-muted-foreground">
               {preview.lastTurn === null
                 ? "No turn captured yet; everything here is expected."
-                : `Compared with the turn at ${new Date(preview.lastTurn.capturedAt).toLocaleString()}${summary.attention > 0 ? ` · ${summary.attention} ${summary.attention === 1 ? "difference" : "differences"}` : ""}.`}
+                : `Compared with the turn at ${new Date(preview.lastTurn.capturedAt).toLocaleString()}: T3's text ${summary.injectedDiff === 0 ? "matches" : `differs by ${formatBytes(Math.abs(summary.injectedDiff ?? 0))}`}${summary.attention > 0 ? `, ${summary.attention} ${summary.attention === 1 ? "file differs" : "files differ"}` : ""}.`}
               {preview.lastTurn !== null && !preview.lastTurn.reportsFiles && preview.filesSupported
                 ? ` ${provider} doesn't report which instruction files it loaded.`
                 : ""}
@@ -152,8 +155,11 @@ export function DefaultContextPanel({
             )}
             {preview.support !== "unsupported" && !preview.filesSupported && (
               <p className="text-muted-foreground">
-                Instruction files aren't supported for {provider}: it documents no convention.
+                Instruction files are not resolved for {provider}.
               </p>
+            )}
+            {!canReadFiles && (
+              <p className="text-muted-foreground">Full text needs file read access.</p>
             )}
             {preview.notes.map((note) => (
               <p key={note} className="text-muted-foreground">
@@ -174,7 +180,9 @@ export function DefaultContextPanel({
                     <ContextRow
                       key={item.id}
                       threadRef={threadRef}
+                      request={request}
                       item={item}
+                      expandable={item.readable && canReadFiles}
                       label={
                         group.category === "files" ? shortenPath(item.label, home) : item.label
                       }
@@ -212,11 +220,15 @@ export function DefaultContextPanel({
 
 function ContextRow({
   threadRef,
+  request,
   item,
+  expandable,
   label,
 }: {
   readonly threadRef: ScopedThreadRef;
+  readonly request: DefaultContextGetInput;
   readonly item: DefaultContextItem;
+  readonly expandable: boolean;
   readonly label: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -227,7 +239,7 @@ function ContextRow({
       <button
         type="button"
         aria-expanded={open}
-        disabled={!item.readable}
+        disabled={!expandable}
         onClick={() => setOpen((value) => !value)}
         className={cn(
           "flex w-full min-w-0 items-center gap-1 rounded px-0.5 py-0.5 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default disabled:hover:bg-transparent",
@@ -239,11 +251,17 @@ function ContextRow({
           className={cn(
             "size-3 shrink-0 text-muted-foreground",
             open && "rotate-90",
-            !item.readable && "invisible",
+            !expandable && "invisible",
           )}
         />
         {item.category === "files" ? (
-          <MiddleTruncate value={label} showTitle={false} className="min-w-0 flex-1" />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <MiddleTruncate value={splitPath(label).name} showTitle={false} tail={6} />
+            {/* Clipping from the start keeps the nearest folder; bdi keeps the path's own order. */}
+            <span dir="rtl" className="truncate text-left text-3xs text-muted-foreground">
+              <bdi>{splitPath(label).directory}</bdi>
+            </span>
+          </span>
         ) : (
           <span className="min-w-0 flex-1 truncate">{label}</span>
         )}
@@ -264,24 +282,26 @@ function ContextRow({
       {!item.readable && status !== undefined && (
         <p className="ml-4 text-muted-foreground">{status}</p>
       )}
-      {open && <ItemText threadRef={threadRef} item={item} status={status} />}
+      {open && <ItemText threadRef={threadRef} request={request} item={item} status={status} />}
     </div>
   );
 }
 
 function ItemText({
   threadRef,
+  request,
   item,
   status,
 }: {
   readonly threadRef: ScopedThreadRef;
+  readonly request: DefaultContextGetInput;
   readonly item: DefaultContextItem;
   readonly status: string | undefined;
 }) {
   const query = useEnvironmentQuery(
     threadDefaultContextItem({
       environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, itemId: item.id },
+      input: { ...request, itemId: item.id },
     }),
   );
   const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "text" });

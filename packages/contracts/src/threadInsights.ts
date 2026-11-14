@@ -1,6 +1,14 @@
 import * as Schema from "effect/Schema";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { IsoDateTime, NonNegativeInt, RunId, ThreadId, TurnItemId } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "./baseSchemas.ts";
+import { ProviderInteractionMode } from "./providerPolicy.ts";
 import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
 
 export const InstructionFootprintPart = Schema.Struct({
@@ -144,13 +152,7 @@ export const DefaultContextItem = Schema.Struct({
   category: Schema.Literals(["t3", "app-context", "custom", "files", "tools"]),
   label: Schema.String,
   source: Schema.String,
-  delivery: Schema.Literals([
-    "every-turn",
-    "first-prompt",
-    "session-start",
-    "first-message",
-    "on-demand",
-  ]),
+  delivery: Schema.Literals(["every-turn", "first-prompt", "session-start", "on-demand"]),
   bytes: NonNegativeInt,
   estimatedTokens: NonNegativeInt,
   /** False for text that stays out of the default load, such as deferred tool descriptions. */
@@ -158,16 +160,7 @@ export const DefaultContextItem = Schema.Struct({
   readable: Schema.Boolean,
   depth: Schema.optional(NonNegativeInt),
   status: Schema.optional(
-    Schema.Literals([
-      "expected",
-      "loaded",
-      "not-loaded",
-      "unexpected",
-      "changed",
-      "last-turn-only",
-      "outside-home",
-      "secret",
-    ]),
+    Schema.Literals(["expected", "loaded", "not-loaded", "unexpected", "not-read", "secret"]),
   ),
 });
 export type DefaultContextItem = typeof DefaultContextItem.Type;
@@ -187,6 +180,8 @@ export const DefaultContextPreview = Schema.Struct({
       capturedAt: IsoDateTime,
       model: Schema.String,
       reportsFiles: Schema.Boolean,
+      /** T3, app-context and custom bytes sent that turn. */
+      injectedBytes: NonNegativeInt,
     }),
   ),
   estimateMethod: Schema.String,
@@ -196,6 +191,14 @@ export const DefaultContextGetInput = Schema.Struct({
   threadId: ThreadId,
   providerInstanceId: Schema.optional(ProviderInstanceId),
   model: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+  /** A thread that exists only as a client draft, before its first message. */
+  draft: Schema.optional(
+    Schema.Struct({
+      projectId: ProjectId,
+      worktreePath: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+      interactionMode: ProviderInteractionMode,
+    }),
+  ),
 });
 export type DefaultContextGetInput = typeof DefaultContextGetInput.Type;
 export const DefaultContextItemInput = Schema.Struct({

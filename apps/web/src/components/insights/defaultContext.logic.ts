@@ -15,7 +15,6 @@ export const DELIVERY_LABELS: Record<DefaultContextItem["delivery"], string> = {
   "every-turn": "every turn",
   "first-prompt": "first prompt",
   "session-start": "session start",
-  "first-message": "first message",
   "on-demand": "on demand",
 };
 
@@ -24,10 +23,8 @@ export const STATUS_LABELS: Record<NonNullable<DefaultContextItem["status"]>, st
   loaded: "Loaded last turn",
   "not-loaded": "Expected, not loaded last turn",
   unexpected: "Loaded last turn, not expected",
-  changed: "Changed since last turn",
-  "last-turn-only": "Sent last turn only",
-  "outside-home": "Outside $HOME, not read",
-  secret: "Looks like a secret, not read",
+  "not-read": "Outside the instruction folders, not read",
+  secret: "Credential or state file, not read",
 };
 
 export const TOOL_PREVIEW_COUNT = 20;
@@ -64,10 +61,23 @@ export function defaultContextSummary(preview: DefaultContextPreview) {
     return items.length === 0 ? [] : [{ category, label: CATEGORY_LABELS[category], items }];
   });
   const attention = preview.items.filter(
-    (item) =>
-      item.status === "not-loaded" || item.status === "unexpected" || item.status === "changed",
+    (item) => item.status === "not-loaded" || item.status === "unexpected",
   ).length;
-  return { bytes, tokens, categories, groups, attention };
+  // The same categories a footprint records, compared as one total so relabelled parts never show as changes.
+  const injectedBytes = preview.items
+    .filter((item) => item.category !== "files" && item.category !== "tools")
+    .reduce((sum, item) => sum + item.bytes, 0);
+  const injectedDiff =
+    preview.lastTurn === null ? null : injectedBytes - preview.lastTurn.injectedBytes;
+  return { bytes, tokens, categories, groups, attention, injectedDiff };
+}
+
+/** Splits a path so a narrow row can truncate the folder and keep the file name whole. */
+export function splitPath(path: string) {
+  const slash = path.lastIndexOf("/");
+  return slash < 0
+    ? { directory: "", name: path }
+    : { directory: path.slice(0, slash + 1), name: path.slice(slash + 1) };
 }
 
 export function shortenPath(path: string, home: string | null) {

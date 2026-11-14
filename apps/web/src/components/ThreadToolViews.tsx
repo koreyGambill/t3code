@@ -53,6 +53,11 @@ import {
   type ThreadContextSection,
 } from "../threadContextSidebarStore";
 import { buildThreadRouteParams } from "../threadRoutes";
+import {
+  type DraftId,
+  useComposerDraftModelState,
+  useComposerDraftStore,
+} from "../composerDraftStore";
 import { ThreadInspectPanel, type ThreadInspectSection } from "./insights/ThreadInspectPanel";
 import { ToolHeaderButton } from "./threadToolsHost";
 import { CheckedLabel, ThreadListView } from "./reviews/ThreadListView";
@@ -1030,9 +1035,26 @@ function ThreadWorkspaceSummary({ threadRef }: { threadRef: ScopedThreadRef }) {
   );
 }
 
-function ThreadInspect({ threadRef }: { threadRef: ScopedThreadRef }) {
+export function ThreadInspect({
+  threadRef,
+  draftId,
+}: {
+  threadRef: ScopedThreadRef;
+  /** Set on a draft route, where the composer keys its state by draft. */
+  draftId?: DraftId;
+}) {
   const shell = useThreadShell(threadRef);
   const [section, setSection] = useState<ThreadInspectSection>("loads");
+  const draftSession = useComposerDraftStore((store) =>
+    shell !== null
+      ? null
+      : draftId
+        ? store.getDraftSession(draftId)
+        : store.getDraftSessionByRef(threadRef),
+  );
+  const draftModel = useComposerDraftModelState(draftId ?? threadRef);
+  const provider = draftModel.activeProvider;
+  const model = provider ? draftModel.modelSelectionByProvider[provider]?.model : undefined;
   return (
     <ThreadInspectPanel
       key={`${threadRef.environmentId}:${threadRef.threadId}`}
@@ -1041,6 +1063,19 @@ function ThreadInspect({ threadRef }: { threadRef: ScopedThreadRef }) {
       onSectionChange={setSection}
       visible
       startedThread={shell !== null}
+      draft={
+        draftSession === null
+          ? undefined
+          : {
+              draft: {
+                projectId: draftSession.projectId,
+                worktreePath: draftSession.worktreePath,
+                interactionMode: draftSession.interactionMode,
+              },
+              ...(provider ? { providerInstanceId: provider } : {}),
+              ...(model ? { model } : {}),
+            }
+      }
     />
   );
 }

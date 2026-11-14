@@ -42,7 +42,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.threadInsightsGet]: AuthOrchestrationReadScope,
   [WS_METHODS.threadContextGet]: AuthOrchestrationReadScope,
   [WS_METHODS.threadDefaultContextGet]: AuthOrchestrationReadScope,
-  [WS_METHODS.threadDefaultContextItem]: AuthOrchestrationReadScope,
   [WS_METHODS.threadNotesGet]: AuthOrchestrationReadScope,
   [WS_METHODS.threadNotesSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.threadWorkspaceGet]: AuthOrchestrationReadScope,
@@ -176,6 +175,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListIgnoredFiles]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
+  // Returns instruction file text.
+  [WS_METHODS.threadDefaultContextItem]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsWriteFile]: AuthFilesystemWriteScope,

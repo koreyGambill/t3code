@@ -156,93 +156,39 @@ export const toolExposure = (driver: string): ToolExposure =>
       ? "direct"
       : "all";
 
-export const NOT_VISIBLE: Readonly<Record<string, ReadonlyArray<{ label: string; why: string }>>> =
-  {
-    claudeAgent: [
-      {
-        label: "Claude Code system prompt and built-in tools",
-        why: "Set by the CLI preset; T3 only appends.",
-      },
-      {
-        label: "Skills, plugins, agents and slash commands",
-        why: "Claude Code lists them itself from its config folders.",
-      },
-      {
-        label: "Auto memory and output style",
-        why: "Loaded inside Claude Code, not reported to T3.",
-      },
-      {
-        label: "SessionStart hook context and your own MCP servers",
-        why: "Run by Claude Code from your settings.",
-      },
-    ],
-    codex: [
-      {
-        label: "Codex base instructions and built-in tools",
-        why: "Part of the model's Codex prompt, not sent through T3.",
-      },
-      {
-        label: "Skills and config developer_instructions",
-        why: "Codex reads them from its home and config.",
-      },
-      {
-        label: "Your own MCP servers",
-        why: "Configured in Codex; names show in the last turn's tool list only.",
-      },
-    ],
-    opencode: [
-      {
-        label: "OpenCode system prompt, agents and built-in tools",
-        why: "Chosen by OpenCode per agent and model.",
-      },
-      {
-        label: "instructions globs from opencode.json",
-        why: "Expanded by OpenCode; T3 does not read its config.",
-      },
-    ],
-    cursor: [
-      {
-        label: "User rules and Cursor's system prompt",
-        why: "Stored in Cursor's settings, not in the workspace.",
-      },
-    ],
-    pi: [
-      {
-        label: "Pi base prompt, SYSTEM.md and APPEND_SYSTEM.md",
-        why: "Pi assembles its own system prompt.",
-      },
-      { label: "Skills and other extensions", why: "Loaded by Pi from its agent folder." },
-    ],
-    kiro: [
-      { label: "Kiro system prompt, specs and hooks", why: "Kept inside Kiro." },
-      {
-        label: "fileMatch and manual steering",
-        why: "Loaded only when matching files or a mention bring them in.",
-      },
-    ],
-    grok: [{ label: "Grok system prompt and built-in tools", why: "Kept inside Grok Build." }],
-    antigravity: [
-      {
-        label: "Antigravity system prompt and model_decision rules",
-        why: "Chosen by the agent at run time.",
-      },
-    ],
-    fx: [
-      {
-        label: "fx system prompt and instruction files",
-        why: "fx documents no instruction-file convention.",
-      },
-    ],
-    muse: [
-      {
-        label: "Muse system prompt and instruction files",
-        why: "Muse documents no instruction-file convention.",
-      },
-    ],
-    acpRegistry: [
-      {
-        label: "The registry agent's prompt and instruction files",
-        why: "Each registry agent loads its own; T3 can't know which.",
-      },
-    ],
-  };
+const NOT_VISIBLE_CLAUDE_CODEX: Readonly<
+  Record<string, ReadonlyArray<{ readonly label: string; readonly why: string }>>
+> = {
+  claudeAgent: [
+    {
+      label: "Claude Code system prompt and built-in tools",
+      why: "Set by the CLI preset; T3 only appends.",
+    },
+    {
+      label: "Skills, plugins, agents and slash commands",
+      why: "Claude Code lists them from its config folders.",
+    },
+    {
+      label: "Auto memory, output style, hook context and your own MCP servers",
+      why: "Loaded inside Claude Code, not reported to T3.",
+    },
+  ],
+  codex: [
+    {
+      label: "Codex base instructions and built-in tools",
+      why: "Part of the model's Codex prompt, not sent through T3.",
+    },
+    {
+      label: "Skills, config developer_instructions and your own MCP servers",
+      why: "Codex reads them from its home and config.",
+    },
+  ],
+};
+
+export const notVisibleFor = (driver: string) =>
+  NOT_VISIBLE_CLAUDE_CODEX[driver] ?? [
+    {
+      label: "The provider's own prompt, tools and instruction files",
+      why: "The provider loads them itself; T3 does not resolve them.",
+    },
+  ];

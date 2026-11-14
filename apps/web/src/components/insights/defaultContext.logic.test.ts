@@ -2,7 +2,7 @@ import type { DefaultContextItem, DefaultContextPreview } from "@t3tools/contrac
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultContextSummary, homeOf, shortenPath } from "./defaultContext.logic";
+import { defaultContextSummary, homeOf, shortenPath, splitPath } from "./defaultContext.logic";
 
 const item = (overrides: Partial<DefaultContextItem>): DefaultContextItem => ({
   id: overrides.label ?? "x",
@@ -17,7 +17,10 @@ const item = (overrides: Partial<DefaultContextItem>): DefaultContextItem => ({
   ...overrides,
 });
 
-const preview = (items: ReadonlyArray<DefaultContextItem>): DefaultContextPreview => ({
+const preview = (
+  items: ReadonlyArray<DefaultContextItem>,
+  lastTurn?: { readonly injectedBytes: number },
+): DefaultContextPreview => ({
   threadId: ThreadId.make("thread"),
   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
   driver: "claudeAgent",
@@ -28,48 +31,54 @@ const preview = (items: ReadonlyArray<DefaultContextItem>): DefaultContextPrevie
   notes: [],
   items,
   notVisible: [],
-  lastTurn: null,
+  lastTurn:
+    lastTurn === undefined
+      ? null
+      : { capturedAt: "2026-11-13T00:00:00.000Z", model: "opus", reportsFiles: true, ...lastTurn },
   estimateMethod: "",
 });
 
 describe("defaultContextSummary", () => {
   it("totals only counted items and orders categories and groups", () => {
     const summary = defaultContextSummary(
-      preview([
-        item({ label: "tool", category: "tools", bytes: 400, estimatedTokens: 100 }),
-        item({
-          label: "deferred",
-          category: "tools",
-          bytes: 4000,
-          estimatedTokens: 1000,
-          counted: false,
-        }),
-        item({
-          label: "CLAUDE.md",
-          category: "files",
-          bytes: 400,
-          estimatedTokens: 100,
-          status: "not-loaded",
-        }),
-        item({ label: "runtime", bytes: 800, estimatedTokens: 200, status: "changed" }),
-        item({
-          label: "last",
-          category: "custom",
-          bytes: 9,
-          counted: false,
-          status: "last-turn-only",
-        }),
-      ]),
+      preview(
+        [
+          item({ label: "tool", category: "tools", bytes: 400, estimatedTokens: 100 }),
+          item({
+            label: "deferred",
+            category: "tools",
+            bytes: 4000,
+            estimatedTokens: 1000,
+            counted: false,
+          }),
+          item({
+            label: "CLAUDE.md",
+            category: "files",
+            bytes: 400,
+            estimatedTokens: 100,
+            status: "not-loaded",
+          }),
+          item({ label: "runtime", bytes: 800, estimatedTokens: 200 }),
+          item({ label: "AGENTS.md", category: "files", bytes: 9, status: "unexpected" }),
+          item({ label: "append", category: "custom", bytes: 9, counted: false }),
+        ],
+        { injectedBytes: 800 },
+      ),
     );
-    expect(summary).toMatchObject({ bytes: 1600, tokens: 400, attention: 2 });
+    expect(summary).toMatchObject({
+      bytes: 1609,
+      tokens: 400,
+      attention: 2,
+      injectedDiff: 9,
+    });
     expect(summary.categories.map((category) => [category.category, category.share])).toEqual([
-      ["t3", 0.5],
-      ["files", 0.25],
-      ["tools", 0.25],
+      ["t3", 800 / 1609],
+      ["files", 409 / 1609],
+      ["tools", 400 / 1609],
     ]);
     expect(summary.groups.map((group) => [group.category, group.items.length])).toEqual([
       ["t3", 1],
-      ["files", 1],
+      ["files", 2],
       ["tools", 2],
       ["custom", 1],
     ]);
@@ -83,5 +92,9 @@ describe("paths", () => {
     expect(shortenPath("/home/korey/.claude/CLAUDE.md", home)).toBe("~/.claude/CLAUDE.md");
     expect(shortenPath("/home/koreyx/CLAUDE.md", home)).toBe("/home/koreyx/CLAUDE.md");
     expect(shortenPath("/etc/claude-code/CLAUDE.md", null)).toBe("/etc/claude-code/CLAUDE.md");
+    expect(splitPath("~/.config/wing/AGENT_BOOTSTRAP.md")).toEqual({
+      directory: "~/.config/wing/",
+      name: "AGENT_BOOTSTRAP.md",
+    });
   });
 });

@@ -1,23 +1,29 @@
 import {
+  ClaudeSettings,
+  CodexSettings,
   type DefaultContextGetInput,
   type DefaultContextItem,
   type DefaultContextItemInput,
   type DefaultContextItemText,
   type DefaultContextPreview,
   type InstructionFootprint,
+  type ProviderInstanceId,
   ThreadInsightsError,
 } from "@t3tools/contracts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as McpToolCatalog from "../mcp/McpToolCatalog.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -25,19 +31,23 @@ import { SCRATCH_FOLDER_CONTEXT } from "../orchestration-v2/ProviderTurnStartSer
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { codexDefaultReasoningEffortOverride } from "../provider/CodexProvider.ts";
+import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
+import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { NOT_VISIBLE, t3ContextParts, toolExposure } from "./defaultContextParts.ts";
+import { notVisibleFor, t3ContextParts, toolExposure } from "./defaultContextParts.ts";
 import {
-  childPreambleEntries,
   InstructionFootprints,
+  type PreparedContextPart,
   splitPreparedContext,
 } from "./InstructionFootprints.ts";
 import {
   FILE_CONVENTIONS,
   fileStatus,
   MAX_READ_BYTES,
+  readBounded,
   reconcileFiles,
+  type ResolvedFile,
   resolveInstructionFiles,
 } from "./instructionFiles.ts";
 
@@ -54,7 +64,37 @@ export class DefaultContext extends Context.Service<
 >()("t3/threadInsights/DefaultContext") {}
 
 const DIRECT_TOOLS = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
+const CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
+const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeOption(CodexSettings);
+const FILE_SCOPE_LABELS: Record<ResolvedFile["scope"], string> = {
+  global: "User or managed file",
+  project: "Project file",
+  rule: "Rule file",
+  import: "@ import",
+};
 const tokens = (bytes: number) => Math.ceil(bytes / 4);
+
+/** Whitespace between sections counts toward the total but is not worth its own row. */
+function foldSeparators(parts: ReadonlyArray<PreparedContextPart>) {
+  const folded: PreparedContextPart[] = [];
+  let carry = "";
+  for (const part of parts) {
+    if (part.text.trim() === "") {
+      const previous = folded.pop();
+      if (previous === undefined) carry += part.text;
+      else folded.push(withText(previous, previous.text + part.text));
+      continue;
+    }
+    folded.push(carry ? withText(part, carry + part.text) : part);
+    carry = "";
+  }
+  return folded;
+}
+const withText = (part: PreparedContextPart, text: string): PreparedContextPart => {
+  const bytes = Buffer.byteLength(text, "utf8");
+  return { ...part, text, bytes, estimatedTokens: Math.ceil(bytes / 4) };
+};
 const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
 const failure = (message: string) => (cause: unknown) =>
   new ThreadInsightsError({ message, cause });
@@ -76,22 +116,77 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  const isServerInternal = yield* makeIsServerInternalPath;
+
+  /** The folder the instance launches the provider with, resolved as its driver does. */
+  const providerConfigDir = Effect.fn("DefaultContext.providerConfigDir")(function* (
+    driver: string,
+    instanceId: ProviderInstanceId,
+    home: string,
+  ) {
+    const entry = (yield* settings.getSettings.pipe(Effect.option)).pipe(
+      Option.flatMap((value) => Option.fromNullishOr(value.providerInstances[instanceId])),
+      Option.getOrUndefined,
+    );
+    const env = yield* mergeProviderInstanceEnvironment(
+      entry?.environment,
+      yield* HostProcess.Environment,
+    );
+    if (driver === "claudeAgent") {
+      const config = decodeClaudeSettings(entry?.config ?? {});
+      return yield* resolveClaudeHomePath(
+        { homePath: Option.isSome(config) ? config.value.homePath : "" },
+        env,
+      );
+    }
+    const config = Option.getOrUndefined(decodeCodexSettings(entry?.config ?? {}));
+    if (config === undefined) return env.CODEX_HOME || path.join(home, ".codex");
+    const layout = yield* resolveCodexHomeLayout(
+      !config.homePath.trim() && env.CODEX_HOME?.trim()
+        ? { ...config, homePath: env.CODEX_HOME }
+        : config,
+    );
+    return layout.effectiveHomePath ?? layout.sharedHomePath;
+  });
+
   const resolve = Effect.fn("DefaultContext.resolve")(function* (input: DefaultContextGetInput) {
-    const records = yield* orchestrator
-      .getThreadRecords(input.threadId, ["runs"])
-      .pipe(Effect.mapError(failure("Could not load the thread.")));
-    const thread = records.thread;
-    if (thread.deletedAt !== null)
+    const draft = input.draft;
+    const records =
+      draft === undefined
+        ? yield* orchestrator
+            .getThreadRecords(input.threadId, ["runs"])
+            .pipe(Effect.mapError(failure("Could not load the thread.")))
+        : undefined;
+    const thread = records?.thread;
+    if (thread?.deletedAt != null)
       return yield* new ThreadInsightsError({ message: "This thread was deleted." });
-    const instanceId = input.providerInstanceId ?? thread.providerInstanceId;
-    const sameInstance = instanceId === thread.providerInstanceId;
-    const model = input.model ?? (sameInstance ? thread.modelSelection.model : "");
+    const projectId = thread?.projectId ?? draft!.projectId;
+    const project = yield* projects
+      .getById(projectId, { includeDeleted: true })
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const projectDefault =
+      draft === undefined || input.providerInstanceId !== undefined
+        ? undefined
+        : (yield* settings.getSettings.pipe(Effect.option)).pipe(
+            Option.flatMap((value) =>
+              Option.fromNullishOr(
+                resolveProjectSettings(value, projectId, Option.getOrUndefined(project)).settings
+                  .defaultModelSelection,
+              ),
+            ),
+            Option.getOrUndefined,
+          );
+    const selection = thread?.modelSelection ?? projectDefault;
+    const instanceId = input.providerInstanceId ?? selection?.instanceId;
+    if (instanceId === undefined)
+      return yield* new ThreadInsightsError({ message: "Pick a model to preview its context." });
+    const sameInstance = instanceId === selection?.instanceId;
+    const model = input.model ?? (sameInstance ? selection!.model : "");
     const instance = yield* instances.getInstance(instanceId);
     const driver = instance?.driverKind ?? "";
-    const project = yield* projects
-      .getById(thread.projectId, { includeDeleted: true })
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    const cwd = thread.worktreePath ?? Option.getOrUndefined(project)?.workspaceRoot ?? null;
+    const cwd =
+      (thread?.worktreePath ?? draft?.worktreePath) ||
+      (Option.getOrUndefined(project)?.workspaceRoot ?? null);
 
     const items: DefaultContextItem[] = [];
     const loaders = new Map<string, Loader>();
@@ -101,49 +196,43 @@ const make = Effect.gen(function* () {
       if (load !== undefined) loaders.set(item.id, load);
     };
 
-    const runs = records.runs.toSorted((a, b) => a.ordinal - b.ordinal);
+    const lastRun = records?.runs.toSorted((a, b) => a.ordinal - b.ordinal).at(-1);
     const lastFootprint: InstructionFootprint | undefined =
-      runs.length === 0
+      lastRun === undefined
         ? undefined
         : (yield* footprints
-            .list(input.threadId, runs.at(-1)!.id)
+            .list(input.threadId, lastRun.id)
             .pipe(Effect.orElseSucceed(() => []))).at(-1);
     const footprint = lastFootprint?.driver === driver ? lastFootprint : undefined;
 
-    const session = yield* mcpSessions.read(input.threadId);
+    const session = draft === undefined ? yield* mcpSessions.read(input.threadId) : undefined;
     if (session === undefined)
       notes.push(
         "No live session: assumes T3 tools attach with browser tools and no device tools.",
       );
-    const effort = sameInstance
-      ? getModelSelectionStringOptionValue(thread.modelSelection, "reasoningEffort")
-      : undefined;
+    const effort =
+      sameInstance && selection !== undefined
+        ? getModelSelectionStringOptionValue(selection, "reasoningEffort")
+        : undefined;
     const t3 = t3ContextParts({
       driver,
       model,
       reasoningEffort:
         driver === "codex" ? (effort ?? codexDefaultReasoningEffortOverride(model)) : effort,
-      interactionMode: thread.interactionMode,
+      interactionMode: thread?.interactionMode ?? draft!.interactionMode,
       hasT3Mcp: true,
       browserTools: session?.browserToolsAvailable ?? true,
       deviceTools: session?.capabilities?.has("device") ?? false,
     });
-    const lastParts = new Map(
-      (footprint?.parts ?? []).map((part) => [`${part.category}:${part.key}:${part.label}`, part]),
-    );
-    const seenParts = new Set<string>();
     const addParts = (
       group: { delivery: DefaultContextItem["delivery"]; source: string },
       entries: ReadonlyArray<{ key: string; text: string }>,
       idPrefix: string,
     ) => {
-      for (const part of splitPreparedContext(entries)) {
-        const identity = `${part.category}:${part.key}:${part.label}`;
-        seenParts.add(identity);
-        const last = lastParts.get(identity);
+      for (const part of foldSeparators(splitPreparedContext(entries))) {
         push(
           {
-            id: `${idPrefix}:${identity}`,
+            id: `${idPrefix}:${part.category}:${part.key}:${part.label}`,
             category: part.category,
             label: part.label,
             source: group.source,
@@ -152,9 +241,6 @@ const make = Effect.gen(function* () {
             estimatedTokens: part.estimatedTokens,
             counted: true,
             readable: true,
-            ...(footprint === undefined
-              ? {}
-              : { status: last === undefined || last.bytes !== part.bytes ? "changed" : "loaded" }),
           },
           Effect.succeed(part.text),
         );
@@ -162,82 +248,42 @@ const make = Effect.gen(function* () {
     };
     for (const [index, group] of t3.groups.entries()) addParts(group, group.entries, `t3${index}`);
 
-    const apps = (yield* appContext
-      .forThread(input.threadId)
-      .pipe(Effect.orElseSucceed(() => []))).map((entry) => ({
-      key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
-      text: entry.text,
-    }));
+    const apps =
+      draft === undefined
+        ? (yield* appContext.forThread(input.threadId).pipe(Effect.orElseSucceed(() => []))).map(
+            (entry) => ({
+              key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
+              text: entry.text,
+            }),
+          )
+        : [];
     const scratch =
-      Option.isSome(folders) && (yield* folders.value.isScratchProject(thread.projectId, cwd));
+      Option.isSome(folders) && (yield* folders.value.isScratchProject(projectId, cwd));
     addParts(
       { delivery: "every-turn", source: "App context T3 adds to each turn" },
       [...apps, ...(scratch ? [SCRATCH_FOLDER_CONTEXT] : [])],
       "app",
     );
-    for (const part of footprint?.parts ?? []) {
-      const identity = `${part.category}:${part.key}:${part.label}`;
-      if (seenParts.has(identity)) continue;
-      push({
-        id: `last:${identity}`,
-        category: part.category,
-        label: part.label,
-        source: "Sent last turn; not predicted for the next one",
-        delivery: "every-turn",
-        bytes: part.bytes,
-        estimatedTokens: part.estimatedTokens,
-        counted: false,
-        readable: false,
-        status: "last-turn-only",
-      });
-    }
-
-    if (runs.length > 0) {
-      const first = yield* orchestrator
-        .getThreadRecords(input.threadId, ["messages"], {
-          messageRunIds: [runs[0]!.id],
-          messageRoles: ["user"],
-        })
-        .pipe(Effect.orElseSucceed(() => ({ messages: [] })));
-      for (const [index, entry] of childPreambleEntries(first.messages[0]?.text ?? "").entries()) {
-        const bytes = byteLength(entry.text);
-        push(
-          {
-            id: `preamble:${index}`,
-            category: "app-context",
-            label: "Child preamble",
-            source: "First message from the parent thread",
-            delivery: "first-message",
-            bytes,
-            estimatedTokens: tokens(bytes),
-            counted: true,
-            readable: true,
-          },
-          Effect.succeed(entry.text),
-        );
-      }
-    }
 
     const convention = FILE_CONVENTIONS[driver];
     if (convention !== undefined && cwd !== null) {
-      const base = yield* HostProcess.Environment;
-      const configured = (yield* settings.getSettings.pipe(Effect.option)).pipe(
-        Option.flatMap((value) =>
-          Option.fromNullishOr(value.providerInstances[instanceId]?.environment),
-        ),
-        Option.getOrUndefined,
-      );
-      const env = yield* mergeProviderInstanceEnvironment(configured, base);
-      const resolved = yield* resolveInstructionFiles(convention, cwd, {
-        home: yield* HostProcess.HomeDirectory,
-        platform: yield* HostProcess.Platform,
-        env,
-      }).pipe(
+      const home = yield* HostProcess.HomeDirectory;
+      const resolved = yield* resolveInstructionFiles(
+        convention,
+        cwd,
+        {
+          home,
+          platform: yield* HostProcess.Platform,
+          configDir: yield* providerConfigDir(driver, instanceId, home).pipe(
+            Effect.provideService(Path.Path, path),
+          ),
+        },
+        (file) => isServerInternal(file).pipe(Effect.orElseSucceed(() => true)),
+      ).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
       for (const file of reconcileFiles(resolved.files, footprint?.instructionSources)) {
-        const status = fileStatus(file);
         const readable = file.status === "expected" && !file.unexpected;
         push(
           {
@@ -245,28 +291,36 @@ const make = Effect.gen(function* () {
             category: "files",
             label: file.path,
             source:
-              file.status === "outside-home"
-                ? "Outside $HOME, not read"
+              file.status === "not-read"
+                ? "Outside the instruction folders, not read"
                 : file.status === "secret"
-                  ? "Looks like a secret, not read"
-                  : file.scope === "import"
-                    ? "@ import"
-                    : file.scope === "rule"
-                      ? "Rule file"
-                      : file.scope === "global"
-                        ? "User or managed file"
-                        : "Project file",
+                  ? "Credential or state file, not read"
+                  : FILE_SCOPE_LABELS[file.scope],
             delivery: "session-start",
             bytes: file.bytes,
             estimatedTokens: tokens(file.bytes),
             counted: file.status === "expected",
             readable,
             ...(file.depth > 0 ? { depth: file.depth } : {}),
-            status,
+            status: fileStatus(file),
           },
-          readable ? fs.readFileString(file.path).pipe(Effect.orElseSucceed(() => "")) : undefined,
+          readable
+            ? readBounded(file.realPath).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.orElseSucceed(() => ""),
+              )
+            : undefined,
         );
       }
+      const projectBytes = resolved.files
+        .filter((file) => file.scope === "project")
+        .reduce((sum, file) => sum + file.bytes, 0);
+      if (driver === "codex" && projectBytes > CODEX_PROJECT_DOC_MAX_BYTES)
+        notes.push(
+          `Codex reads only the first 32 KiB of project instructions; these total ${Math.ceil(projectBytes / 1024)} KiB.`,
+        );
+      if (driver === "claudeAgent" && resolved.insideHome)
+        notes.push("Claude Code also reads CLAUDE.md files above $HOME; this preview stops there.");
     }
 
     const exposure = toolExposure(driver);
@@ -324,7 +378,7 @@ const make = Effect.gen(function* () {
         filesSupported: convention !== undefined,
         notes,
         items,
-        notVisible: NOT_VISIBLE[driver] ?? [],
+        notVisible: notVisibleFor(driver),
         lastTurn:
           lastFootprint === undefined
             ? null
@@ -332,6 +386,7 @@ const make = Effect.gen(function* () {
                 capturedAt: lastFootprint.capturedAt,
                 model: lastFootprint.model,
                 reportsFiles: footprint?.instructionSources !== undefined,
+                injectedBytes: lastFootprint.parts.reduce((sum, part) => sum + part.bytes, 0),
               },
         estimateMethod:
           "UTF-8 bytes divided by four, rounded up; not tokenizer counts. Instruction files are what the provider documents loading for this folder, not what it reported.",
@@ -353,7 +408,7 @@ const make = Effect.gen(function* () {
       return {
         itemId: input.itemId,
         text: text.slice(0, MAX_READ_BYTES),
-        truncated: text.length > MAX_READ_BYTES,
+        truncated: Buffer.byteLength(text, "utf8") >= MAX_READ_BYTES,
       };
     }),
   });

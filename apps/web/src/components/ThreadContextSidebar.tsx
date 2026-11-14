@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   BoxesIcon,
@@ -41,7 +42,13 @@ import {
   useThreadToolsTarget,
 } from "./threadToolsHost";
 import { MonitoringStatusButton, useMonitoringSignal } from "./monitoring/MonitoringStatusButton";
-import { FLUSH_THREAD_TOOLS, sidebarWorkspaceGet, ThreadToolSection } from "./ThreadToolViews";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import {
+  FLUSH_THREAD_TOOLS,
+  sidebarWorkspaceGet,
+  ThreadInspect,
+  ThreadToolSection,
+} from "./ThreadToolViews";
 import { Button } from "./ui/button";
 import { Empty, EmptyDescription } from "./ui/empty";
 import {
@@ -473,6 +480,13 @@ function ThreadToolView({
 }) {
   const { actions, setDetails } = useThreadToolsSlots();
   const { title } = tools[view];
+  // Inspect previews a draft's default context before its first message.
+  const { draftId: routeDraftId } = useParams({ strict: false });
+  const draftId = routeDraftId === undefined ? undefined : DraftId.make(routeDraftId);
+  const draftSession = useComposerDraftStore((store) =>
+    threadRef === null && draftId ? store.getDraftSession(draftId) : null,
+  );
+  const draft = draftId && draftSession ? { draftId, session: draftSession } : null;
   return (
     <section
       aria-label={title}
@@ -487,6 +501,11 @@ function ThreadToolView({
           threadRef={threadRef}
           detailsRef={setDetails}
           actions={actions}
+        />
+      ) : view === "inspect" && draft ? (
+        <ThreadInspect
+          threadRef={scopeThreadRef(draft.session.environmentId, draft.session.threadId)}
+          draftId={draft.draftId}
         />
       ) : (
         <Empty size="compact">

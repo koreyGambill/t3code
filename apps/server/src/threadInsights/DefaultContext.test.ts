@@ -26,6 +26,7 @@ import {
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
+import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { DefaultContext, layer as defaultContextLayer } from "./DefaultContext.ts";
 import { t3ContextParts } from "./defaultContextParts.ts";
@@ -34,6 +35,8 @@ import {
   FILE_CONVENTIONS,
   fileStatus,
   importReferences,
+  MAX_READ_BYTES,
+  readBounded,
   reconcileFiles,
   resolveInstructionFiles,
 } from "./instructionFiles.ts";
@@ -109,61 +112,141 @@ const write = (fs: FileSystem.FileSystem, file: string, text: string) =>
   fs
     .makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true })
     .pipe(Effect.andThen(fs.writeFileString(file, text)));
+const notInternal = () => Effect.succeed(false);
 
-it.effect("resolves Claude's hierarchy, rules and imports inside the allowed roots", () =>
+it.effect(
+  "reads only the repository and user-owned instruction files, and walks rules recursively",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }),
+      );
+      const home = path.join(base, "home");
+      const outside = path.join(base, "outside");
+      const repo = path.join(home, "code", "repo");
+      const cwd = path.join(repo, "pkg");
+      yield* write(fs, path.join(home, ".claude", "CLAUDE.md"), "@~/.config/one.md @~/.ssh/config");
+      yield* write(fs, path.join(home, ".ssh", "config"), "Host *");
+      yield* write(fs, path.join(home, ".config", "one.md"), "@two.md");
+      yield* write(fs, path.join(home, ".config", "two.md"), "@three.md");
+      yield* write(fs, path.join(home, ".config", "three.md"), "@four.md");
+      yield* write(fs, path.join(home, ".config", "four.md"), "@five.md");
+      yield* write(fs, path.join(home, ".config", "five.md"), "@six.md @one.md");
+      yield* write(fs, path.join(home, ".config", "six.md"), "too deep");
+      yield* write(fs, path.join(home, "code", "CLAUDE.md"), "ancestor");
+      yield* write(fs, path.join(home, "notes.md"), "private");
+      yield* write(fs, path.join(repo, ".git", "HEAD"), "ref");
+      yield* write(
+        fs,
+        path.join(repo, "CLAUDE.md"),
+        `@.env @${outside}/x.md @~/notes.md @docs/guide.md\n\`\`\`\n@./skipped.md\n\`\`\``,
+      );
+      yield* write(fs, path.join(repo, ".env"), "SECRET=1");
+      yield* write(fs, path.join(repo, "docs", "guide.md"), "guide");
+      yield* write(fs, path.join(repo, "skipped.md"), "fenced");
+      yield* write(fs, path.join(outside, "x.md"), "outside");
+      yield* write(fs, path.join(outside, "planted.md"), "planted");
+      yield* write(fs, path.join(cwd, ".claude", "CLAUDE.md"), "nested");
+      yield* write(fs, path.join(cwd, ".claude", "rules", "always.md"), "# always");
+      yield* write(fs, path.join(cwd, ".claude", "rules", "deep", "nested.md"), "# nested");
+      yield* write(
+        fs,
+        path.join(cwd, ".claude", "rules", "scoped.md"),
+        "---\npaths: src/**\n---\n",
+      );
+      yield* fs.symlink(path.join(outside, "planted.md"), path.join(cwd, "CLAUDE.local.md"));
+
+      const { files } = yield* resolveInstructionFiles(
+        FILE_CONVENTIONS.claudeAgent!,
+        cwd,
+        { home, platform: "linux", configDir: path.join(home, ".claude") },
+        notInternal,
+      );
+      expect(
+        files.map((file) => [path.relative(base, file.path), file.scope, file.depth, file.status]),
+      ).toEqual([
+        ["home/.claude/CLAUDE.md", "global", 0, "expected"],
+        ["home/.config/one.md", "import", 1, "expected"],
+        ["home/.config/two.md", "import", 2, "expected"],
+        ["home/.config/three.md", "import", 3, "expected"],
+        ["home/.config/four.md", "import", 4, "expected"],
+        ["home/.config/five.md", "import", 5, "expected"],
+        ["home/.ssh/config", "import", 1, "secret"],
+        ["home/code/CLAUDE.md", "project", 0, "expected"],
+        ["home/code/repo/CLAUDE.md", "project", 0, "expected"],
+        ["home/code/repo/.env", "import", 1, "secret"],
+        ["outside/x.md", "import", 1, "not-read"],
+        ["home/notes.md", "import", 1, "not-read"],
+        ["home/code/repo/docs/guide.md", "import", 1, "expected"],
+        ["home/code/repo/pkg/.claude/CLAUDE.md", "project", 0, "expected"],
+        ["home/code/repo/pkg/CLAUDE.local.md", "project", 0, "not-read"],
+        ["home/code/repo/pkg/.claude/rules/always.md", "rule", 0, "expected"],
+        ["home/code/repo/pkg/.claude/rules/deep/nested.md", "rule", 0, "expected"],
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("never reads credential or state files a repository imports", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const base = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
-    const home = path.join(base, "home");
-    const outside = path.join(base, "outside");
-    const repo = path.join(home, "code", "repo");
-    const cwd = path.join(repo, "pkg");
-    yield* write(fs, path.join(home, ".claude", "CLAUDE.md"), "@~/.config/one.md");
-    yield* write(fs, path.join(home, ".config", "one.md"), "@two.md");
-    yield* write(fs, path.join(home, ".config", "two.md"), "@three.md");
-    yield* write(fs, path.join(home, ".config", "three.md"), "@four.md");
-    yield* write(fs, path.join(home, ".config", "four.md"), "@five.md");
-    yield* write(fs, path.join(home, ".config", "five.md"), "@six.md @one.md");
-    yield* write(fs, path.join(home, ".config", "six.md"), "too deep");
-    yield* write(fs, path.join(home, "code", "CLAUDE.md"), "ancestor");
+    const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
+    const repo = path.join(home, "code", "evil");
+    const targets = [
+      ".claude/.credentials.json",
+      ".config/gh/hosts.yml",
+      ".git-credentials",
+      ".docker/config.json",
+      ".kube/config",
+      ".ssh/config",
+      ".envrc",
+      ".zsh_history",
+      ".t3/userdata/secrets/server-signing-key",
+      ".aws/credentials",
+      ".ssh/id_ed25519",
+      ".env.local",
+    ];
     yield* write(fs, path.join(repo, ".git", "HEAD"), "ref");
+    for (const target of targets) yield* write(fs, path.join(home, target), `SECRET ${target}`);
+    yield* write(fs, path.join(repo, "CLAUDE.md"), targets.map((t) => `@~/${t}`).join("\n"));
     yield* write(
       fs,
-      path.join(repo, "CLAUDE.md"),
-      `@.env @${outside}/x.md\n\`\`\`\n@./skipped.md\n\`\`\``,
+      path.join(home, ".claude", "CLAUDE.md"),
+      targets.map((t) => `@~/${t}`).join("\n"),
     );
-    yield* write(fs, path.join(repo, ".env"), "SECRET=1");
-    yield* write(fs, path.join(repo, "skipped.md"), "fenced");
-    yield* write(fs, path.join(outside, "x.md"), "outside");
-    yield* write(fs, path.join(cwd, ".claude", "CLAUDE.md"), "nested");
-    yield* write(fs, path.join(cwd, "CLAUDE.local.md"), "local");
-    yield* write(fs, path.join(cwd, ".claude", "rules", "always.md"), "# always");
-    yield* write(fs, path.join(cwd, ".claude", "rules", "scoped.md"), "---\npaths: src/**\n---\n");
-    yield* fs.symlink(path.join(outside, "x.md"), path.join(cwd, "CLAUDE.md"));
+    yield* write(fs, path.join(repo, "state.md"), "internal");
 
-    const { files } = yield* resolveInstructionFiles(FILE_CONVENTIONS.claudeAgent!, cwd, {
-      home,
-      platform: "linux",
-      env: {},
-    });
-    expect(
-      files.map((file) => [path.relative(base, file.path), file.scope, file.depth, file.status]),
-    ).toEqual([
-      ["home/.claude/CLAUDE.md", "global", 0, "expected"],
-      ["home/.config/one.md", "import", 1, "expected"],
-      ["home/.config/two.md", "import", 2, "expected"],
-      ["home/.config/three.md", "import", 3, "expected"],
-      ["home/.config/four.md", "import", 4, "expected"],
-      ["home/.config/five.md", "import", 5, "expected"],
-      ["home/code/CLAUDE.md", "project", 0, "expected"],
-      ["home/code/repo/CLAUDE.md", "project", 0, "expected"],
-      ["home/code/repo/.env", "import", 1, "secret"],
-      ["outside/x.md", "import", 1, "outside-home"],
-      ["home/code/repo/pkg/.claude/CLAUDE.md", "project", 0, "expected"],
-      ["home/code/repo/pkg/CLAUDE.local.md", "project", 0, "expected"],
-      ["home/code/repo/pkg/.claude/rules/always.md", "rule", 0, "expected"],
-    ]);
+    const { files } = yield* resolveInstructionFiles(
+      FILE_CONVENTIONS.claudeAgent!,
+      repo,
+      { home, platform: "linux", configDir: path.join(home, ".claude") },
+      (file) => Effect.succeed(file.endsWith("state.md")),
+    );
+    const imported = files.filter((file) => file.scope === "import");
+    expect(imported.map((file) => path.relative(home, file.path)).toSorted()).toEqual(
+      targets.toSorted(),
+    );
+    expect(imported.filter((file) => file.status === "expected")).toEqual([]);
+    const internal = yield* resolveInstructionFiles(
+      FILE_CONVENTIONS.claudeAgent!,
+      repo,
+      { home, platform: "linux", configDir: path.join(home, ".claude") },
+      (file) => Effect.succeed(file.endsWith("CLAUDE.md")),
+    );
+    expect(internal.files.filter((file) => file.status === "expected")).toEqual([]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads at most 256 KiB of a file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
+    const file = path.join(dir, "big.md");
+    yield* fs.writeFileString(file, "x".repeat(MAX_READ_BYTES + 4096));
+    expect((yield* readBounded(file)).length).toBe(MAX_READ_BYTES);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -181,11 +264,12 @@ it.effect("walks Codex's chain from the git root and reconciles reported sources
     yield* write(fs, path.join(cwd, "AGENTS.md"), "plain");
     yield* write(fs, path.join(cwd, "AGENTS.override.md"), "override");
 
-    const { files } = yield* resolveInstructionFiles(FILE_CONVENTIONS.codex!, cwd, {
-      home,
-      platform: "linux",
-      env: { CODEX_HOME: path.join(home, "codex") },
-    });
+    const { files } = yield* resolveInstructionFiles(
+      FILE_CONVENTIONS.codex!,
+      cwd,
+      { home, platform: "linux", configDir: path.join(home, "codex") },
+      notInternal,
+    );
     expect(files.map((file) => path.relative(home, file.path))).toEqual([
       "codex/AGENTS.md",
       "repo/AGENTS.md",
@@ -202,38 +286,42 @@ it.effect("walks Codex's chain from the git root and reconciles reported sources
       ["repo/app/AGENTS.override.md", "loaded"],
       [path.relative(home, "/elsewhere/AGENTS.md"), "unexpected"],
     ]);
-    expect(reconcileFiles(files, undefined).map(fileStatus)).toEqual([
-      "expected",
-      "expected",
-      "expected",
-    ]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const threadId = ThreadId.make("thread-default-context");
+const inHome = <A, E, R>(home: string, effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.provideService(HostProcess.HomeDirectory, home),
+    Effect.provideService(HostProcess.Environment, {}),
+  );
 const runId = RunId.make("run-1");
+const codex = ProviderInstanceId.make("codex");
 
-const serviceLayer = (home: string, footprint: InstructionFootprint | undefined) =>
+const serviceLayer = (input: {
+  readonly home: string;
+  readonly footprint?: InstructionFootprint;
+  readonly codexHomePath?: string;
+}) =>
   defaultContextLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
-          getThreadRecords: (_threadId, fields) =>
+          getThreadRecords: () =>
             Effect.succeed({
               thread: {
                 deletedAt: null,
-                providerInstanceId: ProviderInstanceId.make("codex"),
-                modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+                providerInstanceId: codex,
+                modelSelection: { instanceId: codex, model: "gpt-5.4" },
                 projectId: ProjectId.make("project"),
-                worktreePath: home,
+                worktreePath: input.home,
                 interactionMode: "default",
               },
-              runs: fields.includes("runs" as never) ? [{ id: runId, ordinal: 1 }] : [],
-              messages: [{ text: "<child_preamble>Use the scratch DB.</child_preamble>\nTask" }],
+              runs: [{ id: runId, ordinal: 1 }],
             } as never),
         }),
         Layer.mock(InstructionFootprints)({
-          list: () => Effect.succeed(footprint === undefined ? [] : [footprint]),
+          list: () => Effect.succeed(input.footprint === undefined ? [] : [input.footprint]),
         }),
         Layer.mock(McpAppModelContext.McpAppModelContext)({
           forThread: () => Effect.succeed([]),
@@ -243,7 +331,12 @@ const serviceLayer = (home: string, footprint: InstructionFootprint | undefined)
           getInstance: () => Effect.succeed({ driverKind: "codex" } as never),
         }),
         Layer.mock(ServerSettingsService)({
-          getSettings: Effect.succeed({ providerInstances: {} } as never),
+          getSettings: Effect.succeed({
+            providerInstances:
+              input.codexHomePath === undefined
+                ? {}
+                : { codex: { driver: "codex", config: { homePath: input.codexHomePath } } },
+          } as never),
         }),
         Layer.mock(McpProviderSessions)({ read: () => Effect.undefined }),
         Layer.succeed(
@@ -255,73 +348,90 @@ const serviceLayer = (home: string, footprint: InstructionFootprint | undefined)
             ]),
           }),
         ),
+        ServerConfig.layerTest(input.home, input.home),
       ),
     ),
     Layer.provide(NodeServices.layer),
   );
 
-it.effect("serves item text only for ids in the resolved preview and flags changed parts", () =>
+it.effect("serves file text only for readable ids, and honours the instance's Codex home", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
     yield* write(fs, path.join(home, ".git", "HEAD"), "ref");
-    yield* write(fs, path.join(home, "AGENTS.md"), "project rules");
+    yield* write(fs, path.join(home, "AGENTS.md"), "x".repeat(40 * 1024));
     yield* write(fs, path.join(home, ".env"), "SECRET=1");
+    yield* write(fs, path.join(home, "work-codex", "AGENTS.md"), "work account rules");
+    yield* write(fs, path.join(home, ".codex", "AGENTS.md"), "personal rules");
     const footprint: InstructionFootprint = {
       threadId,
       runId,
-      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerInstanceId: codex,
       driver: "codex",
       model: "gpt-5.4",
       capturedAt: DateTime.formatIso(DateTime.makeUnsafe(0)),
       source: "test",
-      parts: [
-        {
-          key: "t3:runtime",
-          label: "Runtime identity and output",
-          category: "t3",
-          bytes: 1,
-          estimatedTokens: 1,
-        },
-        {
-          key: "custom_x",
-          label: "Custom prompt append",
-          category: "custom",
-          bytes: 40,
-          estimatedTokens: 10,
-        },
-      ],
-      instructionSources: [{ path: path.join(home, "AGENTS.md"), bytes: 13 }],
+      parts: [{ key: "t3:x", label: "x", category: "t3", bytes: 40, estimatedTokens: 10 }],
+      instructionSources: [{ path: path.join(home, "AGENTS.md"), bytes: 40 * 1024 }],
     };
-    const context = yield* Layer.build(serviceLayer(home, footprint)).pipe(
+    const context = yield* Layer.build(
+      serviceLayer({ home, footprint, codexHomePath: path.join(home, "work-codex") }),
+    ).pipe(
       Effect.provideService(HostProcess.HomeDirectory, home),
-      Effect.provideService(HostProcess.Environment, { CODEX_HOME: path.join(home, "codex") }),
+      Effect.provideService(HostProcess.Environment, {}),
     );
     const service = Context.get(context, DefaultContext);
-    const preview = yield* service.preview({ threadId });
+    const preview = yield* inHome(home, service.preview({ threadId }));
     const byId = new Map(preview.items.map((item) => [item.id, item]));
     expect(preview.support).toBe("exact");
+    expect(preview.lastTurn?.injectedBytes).toBe(40);
     expect(byId.get(`file:${path.join(home, "AGENTS.md")}`)?.status).toBe("loaded");
-    expect(
-      [...byId.values()].find((item) => item.label === "Runtime identity and output")?.status,
-    ).toBe("changed");
-    expect(byId.get("last:custom:custom_x:Custom prompt append")).toMatchObject({
-      status: "last-turn-only",
-      counted: false,
-      readable: false,
-    });
-    expect(byId.get("preamble:0")?.bytes).toBe(19);
-    expect(byId.get("tool:delegate_task")?.counted).toBe(true);
+    expect(byId.has(`file:${path.join(home, "work-codex", "AGENTS.md")}`)).toBe(true);
+    expect(byId.has(`file:${path.join(home, ".codex", "AGENTS.md")}`)).toBe(false);
+    expect(preview.items.some((item) => item.label === "Prompt separators")).toBe(false);
+    expect(preview.notes).toContain(
+      "Codex reads only the first 32 KiB of project instructions; these total 40 KiB.",
+    );
 
-    const file = yield* service.itemText({
-      threadId,
-      itemId: `file:${path.join(home, "AGENTS.md")}`,
-    });
-    expect(file.text).toBe("project rules");
+    const file = yield* inHome(
+      home,
+      service.itemText({ threadId, itemId: `file:${path.join(home, "work-codex", "AGENTS.md")}` }),
+    );
+    expect(file.text).toBe("work account rules");
     const refused = yield* Effect.flip(
-      service.itemText({ threadId, itemId: `file:${path.join(home, ".env")}` }),
+      inHome(home, service.itemText({ threadId, itemId: `file:${path.join(home, ".env")}` })),
     );
     expect(refused.message).toBe("This item has no readable text.");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("previews a draft from its project folder before the thread exists", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
+    yield* write(fs, path.join(home, "AGENTS.md"), "draft rules");
+    const context = yield* Layer.build(serviceLayer({ home })).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, home),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    const preview = yield* inHome(
+      home,
+      Context.get(context, DefaultContext).preview({
+        threadId,
+        providerInstanceId: codex,
+        model: "gpt-5.4",
+        draft: {
+          projectId: ProjectId.make("project"),
+          worktreePath: home,
+          interactionMode: "plan",
+        },
+      }),
+    );
+    expect(preview.lastTurn).toBeNull();
+    expect(preview.items.find((item) => item.category === "files")?.label).toBe(
+      path.join(home, "AGENTS.md"),
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
