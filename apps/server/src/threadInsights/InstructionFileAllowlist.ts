@@ -45,10 +45,14 @@ export const providerConfigDir = Effect.fn("InstructionFileAllowlist.providerCon
   return layout.effectiveHomePath ?? layout.sharedHomePath;
 });
 
+// Credential folders under ~/.config whose files stay read-only even when an instruction file links them.
+const CREDENTIAL_CONFIG = /\/\.config\/(gh|hub|gcloud|op|rclone|sops|age|github-copilot)\//;
+
 /**
  * Host files the Files tile may edit: `.md` files the Default view reads as instruction
- * files for a workspace under some configured provider instance. Nothing else outside
- * the workspace is writable.
+ * files for a workspace, reached at a path under a provider's config folder or
+ * ~/.config. A writable file can link any other, so the fixed roots bound what an edit
+ * can make writable. Nothing else outside the workspace is writable.
  */
 export class InstructionFileAllowlist extends Context.Service<
   InstructionFileAllowlist,
@@ -69,6 +73,35 @@ const make = Effect.gen(function* () {
       const realPath = yield* fs.realPath(file).pipe(Effect.orElseSucceed(() => null));
       if (realPath === null || !/\.md$/i.test(realPath) || !path.isAbsolute(cwd)) return null;
       const home = yield* HostProcess.HomeDirectory;
+      const within = (root: string, target: string) => {
+        const relative = path.relative(root, target);
+        return (
+          relative === "" ||
+          (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        );
+      };
+      const isRepo = (dir: string) =>
+        fs.exists(path.join(dir, ".git")).pipe(Effect.orElseSucceed(() => false));
+      const real = (dir: string) => fs.realPath(dir).pipe(Effect.orElseSucceed(() => dir));
+      // As DefaultContext resolves it: $HOME or a folder above it is never the repository.
+      let workspaceRepo: string | null = null;
+      for (let dir = yield* real(cwd); !within(dir, home); dir = path.dirname(dir)) {
+        if (yield* isRepo(dir)) {
+          workspaceRepo = dir;
+          break;
+        }
+        if (path.dirname(dir) === dir) break;
+      }
+      /** Under a fixed root, and in no repository below it other than this workspace's. */
+      const writableAt = Effect.fnUntraced(function* (documented: string, roots: string[]) {
+        const root = roots.find((candidate) => within(candidate, documented));
+        if (root === undefined || CREDENTIAL_CONFIG.test(documented)) return false;
+        for (let dir = path.dirname(documented); dir !== root; dir = path.dirname(dir)) {
+          if (yield* isRepo(dir))
+            return workspaceRepo !== null && (yield* real(dir)) === workspaceRepo;
+        }
+        return true;
+      });
       const platform = yield* HostProcess.Platform;
       const configured = (yield* settings.getSettings.pipe(Effect.option)).pipe(
         Option.map((value) => value.providerInstances),
@@ -83,22 +116,28 @@ const make = Effect.gen(function* () {
         const driver = entry?.driver ?? id;
         const convention = FILE_CONVENTIONS[driver];
         if (convention === undefined) continue;
+        const configDir = yield* providerConfigDir(driver, entry, home).pipe(
+          Effect.provideService(Path.Path, path),
+        );
         const { files } = yield* resolveInstructionFiles(
           convention,
           cwd,
-          {
-            home,
-            platform,
-            configDir: yield* providerConfigDir(driver, entry, home).pipe(
-              Effect.provideService(Path.Path, path),
-            ),
-          },
+          { home, platform, configDir },
           (candidate) => isServerInternal(candidate).pipe(Effect.orElseSucceed(() => true)),
         ).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         );
-        if (files.some((found) => found.status === "expected" && found.realPath === realPath))
+        const found = files.find(
+          (candidate) => candidate.status === "expected" && candidate.realPath === realPath,
+        );
+        if (
+          found !== undefined &&
+          (yield* writableAt(path.resolve(found.path), [
+            path.resolve(configDir),
+            path.join(home, ".config"),
+          ]))
+        )
           return realPath;
       }
       return null;

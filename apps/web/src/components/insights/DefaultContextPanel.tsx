@@ -11,6 +11,7 @@ import { CheckIcon, ChevronRightIcon, CopyIcon, RefreshCwIcon } from "lucide-rea
 import { useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
@@ -366,7 +367,14 @@ function FileRow({
       {linkable ? (
         <button
           type="button"
-          onClick={() => useRightPanelStore.getState().openFile(threadRef, item.label)}
+          onClick={() => {
+            useRightPanelStore.getState().openFile(threadRef, item.label);
+            // A read-only file has no editor; the request then lapses and focus stays here.
+            requestWorkspaceFocus({
+              area: "document",
+              selector: `[data-file-content-focus][data-file-path="${CSS.escape(item.label)}"]`,
+            });
+          }}
           className={cn(
             rowClass,
             "group/file cursor-pointer hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring",

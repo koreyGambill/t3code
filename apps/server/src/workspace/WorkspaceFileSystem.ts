@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
@@ -167,9 +168,10 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Rewrites an existing host file in place. The open neither creates, follows a final
-   * symlink, nor blocks on a FIFO; the opened file must be the single-link regular file
-   * still at `realPath`, so a swapped path component or hard-linked alias is refused.
+   * Replaces an existing host file through a temp file in its folder, so a failed save
+   * leaves the old text. The check opens without creating, following a final symlink, or
+   * blocking on a FIFO; the file must stay the single-link regular file at `realPath`
+   * until the rename, so a swapped path component or hard-linked alias is refused.
    */
   const writeHostFile = Effect.fn("WorkspaceFileSystem.writeHostFile")(function* (
     input: ProjectWriteFileInput,
@@ -179,29 +181,56 @@ export const make = Effect.gen(function* () {
       try: async () => {
         const handle = await NodeFSP.open(
           realPath,
-          NodeFS.constants.O_WRONLY |
+          NodeFS.constants.O_RDONLY |
             (NodeFS.constants.O_NONBLOCK ?? 0) |
             (NodeFS.constants.O_NOFOLLOW ?? 0),
         );
+        let temp: string | null = null;
         try {
           const opened = await handle.stat();
-          const [current, resolved] = await Promise.all([
-            NodeFSP.stat(realPath),
-            NodeFSP.realpath(realPath),
-          ]);
-          if (
-            !opened.isFile() ||
-            opened.nlink !== 1 ||
-            resolved !== realPath ||
-            current.dev !== opened.dev ||
-            current.ino !== opened.ino
-          ) {
-            throw new Error("The file changed or is not a single regular file.");
+          const unchanged = async () => {
+            const [current, resolved] = await Promise.all([
+              NodeFSP.stat(realPath),
+              NodeFSP.realpath(realPath),
+            ]);
+            if (
+              !opened.isFile() ||
+              opened.nlink !== 1 ||
+              resolved !== realPath ||
+              current.dev !== opened.dev ||
+              current.ino !== opened.ino
+            ) {
+              throw new Error("The file changed or is not a single regular file.");
+            }
+          };
+          await unchanged();
+          const mode = opened.mode & 0o7777;
+          temp = path.join(
+            path.dirname(realPath),
+            `.${path.basename(realPath)}.${NodeCrypto.randomUUID()}.t3-save`,
+          );
+          const output = await NodeFSP.open(
+            temp,
+            NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_EXCL |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
+            mode,
+          );
+          try {
+            await output.writeFile(input.contents);
+            // The umask may have narrowed the mode the open asked for.
+            await output.chmod(mode);
+            await output.sync();
+          } finally {
+            await output.close();
           }
-          await handle.truncate(0);
-          await handle.writeFile(input.contents);
+          await unchanged();
+          await NodeFSP.rename(temp, realPath);
+          temp = null;
         } finally {
           await handle.close();
+          if (temp !== null) await NodeFSP.rm(temp, { force: true });
         }
       },
       catch: (cause) =>

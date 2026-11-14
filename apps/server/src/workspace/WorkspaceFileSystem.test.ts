@@ -873,16 +873,41 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       const wing = path.join(home, ".config", "wing");
       yield* writeTextFile(cwd, ".git/HEAD", "ref");
       yield* writeTextFile(cwd, "CLAUDE.md", "[outside](../../notes.md)");
-      yield* writeTextFile(home, ".claude/CLAUDE.md", "@~/.config/wing/BOOT.md\n[env](~/.env.md)");
+      // A client that can edit the global file links whatever it wants written next.
+      yield* writeTextFile(
+        home,
+        ".claude/CLAUDE.md",
+        [
+          "@~/.config/wing/BOOT.md",
+          "[env](~/.env.md) [vault](~/vault/target.md) [rc](~/.bashrc.md)",
+          "[gh](~/.config/gh/notes.md) [repo](~/code/other/docs/a.md)",
+        ].join("\n"),
+      );
       yield* writeTextFile(
         wing,
         "BOOT.md",
         [
           "[linked](LINKED.md) [pipe](pipe.md) [hard](hard.md) [alias](alias.md)",
           "[keys](~/.ssh/keys.md) [state](~/.t3/userdata/notes.md)",
+          "[memory](MEMORY.md) [clone](../clone/notes.md)",
         ].join("\n"),
       );
       yield* writeTextFile(wing, "LINKED.md", "linked");
+      // Dotfiles keep the real file in a repository and link it into ~/.config.
+      yield* writeTextFile(home, "dotfiles/.git/HEAD", "ref");
+      yield* writeTextFile(home, "dotfiles/MEMORY.md", "memory");
+      yield* fileSystem.symlink(
+        path.join(home, "dotfiles", "MEMORY.md"),
+        path.join(wing, "MEMORY.md"),
+      );
+      yield* writeTextFile(home, ".config/clone/.git/HEAD", "ref");
+      yield* writeTextFile(home, ".config/clone/notes.md", "cloned");
+      yield* writeTextFile(home, ".config/clone/sub/README", "");
+      yield* writeTextFile(home, ".config/gh/notes.md", "gh");
+      yield* writeTextFile(home, "code/other/.git/HEAD", "ref");
+      yield* writeTextFile(home, "code/other/docs/a.md", "other repo");
+      yield* writeTextFile(home, "vault/target.md", "vault");
+      yield* writeTextFile(home, ".bashrc.md", "rc");
       yield* writeTextFile(home, ".ssh/keys.md", "secret");
       yield* writeTextFile(home, ".ssh/authorized_keys", "ssh-ed25519 KEY");
       yield* writeTextFile(home, ".env.md", "TOKEN=1");
@@ -927,6 +952,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             "~/.config/wing/../../notes.md",
             "~/.claude/missing.md",
             "/etc/passwd",
+            "~/vault/target.md",
+            "~/.bashrc.md",
+            "~/.config/gh/notes.md",
+            "~/code/other/docs/a.md",
+            "~/.config/clone/notes.md",
           ];
           for (const relativePath of refused) {
             const read = yield* inHome(
@@ -938,16 +968,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             ).pipe(Effect.flip);
             expect(error.message).not.toBe("");
           }
-          // The linked file first: editing CLAUDE.md drops the import that reaches it.
-          for (const relativePath of [path.join(wing, "LINKED.md"), "~/.claude/CLAUDE.md"]) {
-            const read = yield* inHome(workspaceFileSystem.readFile({ cwd, relativePath }));
+          // CLAUDE.md last: editing it drops the import that reaches the others.
+          const editable = [
+            [cwd, path.join(wing, "LINKED.md")],
+            [cwd, "~/.config/wing/MEMORY.md"],
+            // A repository's file is writable while that repository is the workspace.
+            [path.join(home, ".config", "clone", "sub"), "~/.config/clone/notes.md"],
+            [cwd, "~/.claude/CLAUDE.md"],
+          ] as const;
+          for (const [workspace, relativePath] of editable) {
+            const read = yield* inHome(
+              workspaceFileSystem.readFile({ cwd: workspace, relativePath }),
+            );
             expect(read.writable).toBe(true);
-            yield* inHome(workspaceFileSystem.writeFile({ cwd, relativePath, contents: "edited" }));
+            yield* inHome(
+              workspaceFileSystem.writeFile({ cwd: workspace, relativePath, contents: "edited" }),
+            );
             const written = relativePath.startsWith("~/")
               ? path.join(home, relativePath.slice(2))
               : relativePath;
             expect(yield* fileSystem.readFileString(written)).toBe("edited");
           }
+          expect(yield* fileSystem.readLink(path.join(wing, "MEMORY.md"))).toBe(
+            path.join(home, "dotfiles", "MEMORY.md"),
+          );
 
           expect(yield* fileSystem.readFileString(path.join(home, "notes.md"))).toBe("private");
           expect(yield* fileSystem.readFileString(path.join(home, ".ssh", "keys.md"))).toBe(
@@ -957,6 +1001,14 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             "ssh-ed25519 KEY",
           );
           expect(yield* fileSystem.readFileString(path.join(home, ".env.md"))).toBe("TOKEN=1");
+          for (const [file, text] of [
+            ["vault/target.md", "vault"],
+            [".bashrc.md", "rc"],
+            [".config/gh/notes.md", "gh"],
+            ["code/other/docs/a.md", "other repo"],
+          ] as const) {
+            expect(yield* fileSystem.readFileString(path.join(home, file))).toBe(text);
+          }
           expect(yield* fileSystem.exists(path.join(home, ".claude", "missing.md"))).toBe(false);
 
           const unknown = yield* fileSystem.makeTempDirectoryScoped({
@@ -1021,8 +1073,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               await NodeFSP.writeFile(target, "original");
             });
             let swapped = false;
+            // Swap while the new text is written, after the first check passed.
             vi.mocked(NodeFSP.open).mockImplementation(async (file, flags, mode) => {
-              if (!swapped && file === target && typeof flags === "number" && flags & 1) {
+              if (!swapped && String(file).endsWith(".t3-save")) {
                 swapped = true;
                 await swap();
               }
@@ -1038,7 +1091,60 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             expect(swapped).toBe(true);
             expect(yield* fileSystem.readFileString(secret)).toBe("ssh-ed25519 KEY");
             expect(yield* fileSystem.readFileString(path.join(decoy, "CLAUDE.md"))).toBe("decoy");
+            for (const dir of [decoy, claudeDir, `${claudeDir}.old`]) {
+              const names = yield* fileSystem
+                .readDirectory(dir)
+                .pipe(Effect.orElseSucceed(() => []));
+              expect(names.filter((name) => name.endsWith(".t3-save"))).toEqual([]);
+            }
           }
+          expect(yield* fileSystem.readFileString(path.join(`${claudeDir}.old`, "CLAUDE.md"))).toBe(
+            "original",
+          );
+        }).pipe(Effect.provide(layerInstructionWrites)),
+    );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps the file's mode, and its old text when a save fails",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { home, cwd } = yield* setup;
+          const claudeDir = path.join(home, ".claude");
+          const target = path.join(claudeDir, "CLAUDE.md");
+          const save = (contents: string) =>
+            asHome(home)(
+              workspaceFileSystem.writeFile({ cwd, relativePath: "~/.claude/CLAUDE.md", contents }),
+            );
+          yield* Effect.promise(() => NodeFSP.chmod(target, 0o640));
+          const before = yield* fileSystem.readFileString(target);
+          yield* save(before);
+          expect((yield* Effect.promise(() => NodeFSP.stat(target))).mode & 0o777).toBe(0o640);
+
+          const native = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => vi.mocked(NodeFSP.open).mockImplementation(native.open)),
+          );
+          vi.mocked(NodeFSP.open).mockImplementation(async (file, flags, mode) => {
+            const handle = await native.open(file, flags, mode);
+            if (String(file).endsWith(".t3-save")) {
+              Object.defineProperty(handle, "writeFile", {
+                value: () => Promise.reject(new Error("ENOSPC: no space left on device")),
+              });
+            }
+            return handle;
+          });
+          yield* save("lost").pipe(Effect.flip);
+          expect(yield* fileSystem.readFileString(target)).toBe(before);
+          expect(
+            (yield* fileSystem.readDirectory(claudeDir)).filter((name) =>
+              name.endsWith(".t3-save"),
+            ),
+          ).toEqual([]);
         }).pipe(Effect.provide(layerInstructionWrites)),
     );
   });
