@@ -20,6 +20,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -27,6 +28,17 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 export const RATE_LIMIT_PER_HOUR = 10;
+const WAKE_RETRY = Duration.minutes(1);
+
+/** A raise whose fields a notification cannot hold, refused before anything is written. */
+export class NotificationInvalidError extends Schema.TaggedError<NotificationInvalidError>()(
+  "NotificationInvalidError",
+  { detail: Schema.String },
+) {
+  override get message() {
+    return `Invalid notification: ${this.detail}`;
+  }
+}
 const HOUR_MS = 60 * 60 * 1000;
 const DEDUPE_WINDOW_MS = 24 * HOUR_MS;
 const SNAPSHOT_LIMIT = 200;
@@ -57,7 +69,10 @@ export class NotificationService extends Context.Service<
   {
     readonly raise: (
       input: RaiseInput,
-    ) => Effect.Effect<RaiseResult, NotificationError | NotificationRateLimitedError>;
+    ) => Effect.Effect<
+      RaiseResult,
+      NotificationError | NotificationRateLimitedError | NotificationInvalidError
+    >;
     readonly update: (
       input: NotificationUpdateInput,
     ) => Effect.Effect<NotificationUpdateResult, NotificationError>;
@@ -146,7 +161,19 @@ const make = Effect.gen(function* () {
       repeatCount: row.repeat_count,
     });
   });
-  const toNotifications = (rows: ReadonlyArray<Row>) => Effect.forEach(rows, toNotification);
+  // One row that no longer decodes must not hide the others, so it is logged and left out.
+  const toNotifications = (rows: ReadonlyArray<Row>) =>
+    Effect.forEach(rows, (row) =>
+      toNotification(row).pipe(
+        Effect.asSome,
+        Effect.catch((cause) =>
+          Effect.logWarning("Skipping a notification row that does not decode", {
+            id: row.id,
+            cause,
+          }).pipe(Effect.as(Option.none<Notification>())),
+        ),
+      ),
+    ).pipe(Effect.map((decoded) => decoded.flatMap(Option.toArray)));
 
   const delivered = sql`(verification_json IS NULL OR json_extract(verification_json, '$.status') IN ('confirmed', 'unverified'))`;
   const severityRank = sql`(CASE severity WHEN 'critical' THEN 2 WHEN 'warning' THEN 1 ELSE 0 END)`;
@@ -202,35 +229,81 @@ const make = Effect.gen(function* () {
 
   const wakes = yield* FiberHandle.make<void, never>();
   // Snooze ends need no polling worker: one timer sleeps to the earliest end, then publishes the
-  // woken rows and fresh counts so badges never go stale.
+  // rows woken since its last publish with fresh counts, so badges never go stale. A failed pass
+  // keeps that point and retries, so no wake is lost.
   const wakeLoop = Effect.gen(function* () {
+    let since = DateTime.formatIso(yield* DateTime.now);
     while (true) {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      const next = yield* sql<{
-        delayMs: number | null;
-      }>`SELECT (julianday(min(snoozed_until)) - julianday(${now})) * 86400000 AS delayMs FROM notifications
-        WHERE ${delivered} AND dismissed_at IS NULL AND julianday(snoozed_until) > julianday(${now})`;
-      const delayMs = next[0]?.delayMs;
-      if (delayMs === null || delayMs === undefined) return;
-      yield* Effect.sleep(Duration.millis(Math.max(1, Math.ceil(delayMs))));
-      yield* serialized(
-        Effect.gen(function* () {
-          const woke = DateTime.formatIso(yield* DateTime.now);
-          const items = yield* sql<Row>`SELECT * FROM notifications WHERE ${delivered}
-            AND julianday(snoozed_until) > julianday(${now}) AND julianday(snoozed_until) <= julianday(${woke})
-            ORDER BY updated_at DESC, rowid DESC LIMIT ${SNAPSHOT_LIMIT}`.pipe(
-            Effect.flatMap(toNotifications),
-          );
-          yield* publish(items, true);
-        }),
+      const pass = Effect.gen(function* () {
+        const wokeAt = yield* DateTime.now;
+        const woke = DateTime.formatIso(wokeAt);
+        // Publishing last keeps the step from it to the next sleep free of I/O.
+        const delayMs = yield* serialized(
+          Effect.gen(function* () {
+            const rows = yield* sql<Row>`SELECT * FROM notifications WHERE ${delivered}
+              AND julianday(snoozed_until) > julianday(${since}) AND julianday(snoozed_until) <= julianday(${woke})
+              ORDER BY updated_at DESC, rowid DESC LIMIT ${SNAPSHOT_LIMIT}`;
+            const items = yield* toNotifications(rows);
+            const next = yield* sql<{
+              at: string | null;
+            }>`SELECT min(snoozed_until) AS at FROM notifications
+              WHERE ${delivered} AND dismissed_at IS NULL AND julianday(snoozed_until) > julianday(${woke})`;
+            const at = Option.flatMap(Option.fromNullishOr(next[0]?.at), DateTime.make);
+            if (rows.length > 0) yield* publish(items, true);
+            return Option.isNone(at)
+              ? null
+              : DateTime.toEpochMillis(at.value) - DateTime.toEpochMillis(wokeAt);
+          }),
+        );
+        since = woke;
+        return delayMs;
+      });
+      const delayMs = yield* pass.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Notification snooze wake failed; retrying", { cause }).pipe(
+            Effect.as(Duration.toMillis(WAKE_RETRY)),
+          ),
+        ),
       );
+      if (delayMs === null) return;
+      yield* Effect.sleep(Duration.millis(Math.max(1, Math.ceil(delayMs))));
     }
-  }).pipe(Effect.catch((cause) => Effect.logWarning("Notification snooze wake failed", { cause })));
+  });
   const scheduleWake = FiberHandle.run(wakes, wakeLoop).pipe(Effect.asVoid);
   yield* scheduleWake;
 
+  const validate = Effect.fn("NotificationService.validate")(function* (input: RaiseInput) {
+    const checked = yield* decodeNotification({
+      id: "notification:candidate",
+      createdAt: "",
+      updatedAt: "",
+      severity: input.severity,
+      title: input.title,
+      ...(input.body === undefined ? {} : { body: input.body }),
+      source: input.source,
+      threadId: input.threadId,
+      projectId: input.projectId,
+      readAt: null,
+      dismissedAt: null,
+      snoozedUntil: null,
+      ...(input.verification === undefined ? {} : { verification: input.verification }),
+      repeatCount: 0,
+    }).pipe(Effect.mapError((cause) => new NotificationInvalidError({ detail: cause.message })));
+    return {
+      severity: checked.severity,
+      title: checked.title,
+      body: checked.body,
+      source: checked.source,
+      threadId: checked.threadId,
+      projectId: checked.projectId,
+      dedupeKey: input.dedupeKey,
+      verification: checked.verification,
+    } satisfies RaiseInput;
+  });
+
   const raise = Effect.fn("NotificationService.raise")(
-    function* (input: RaiseInput) {
+    function* (raw: RaiseInput) {
+      const input = yield* validate(raw);
       yield* reserveRaise(input.source);
       const now = yield* DateTime.now;
       const nowIso = DateTime.formatIso(now);
@@ -273,10 +346,7 @@ const make = Effect.gen(function* () {
               : "pending_verification",
       } satisfies RaiseResult;
     },
-    (effect) =>
-      serialized(effect).pipe(
-        Effect.catchTags({ SqlError: raiseFailed, SchemaError: raiseFailed }),
-      ),
+    (effect) => serialized(effect).pipe(Effect.catchTags({ SqlError: raiseFailed })),
   );
 
   const update = Effect.fn("NotificationService.update")(
