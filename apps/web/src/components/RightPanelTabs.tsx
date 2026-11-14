@@ -143,9 +143,7 @@ export interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddReviews?: (() => void) | undefined;
   onAddNotes?: (() => void) | undefined;
-  onAddInspect?: (() => void) | undefined;
   /** Absent where the environment cannot list Xwing environments. */
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -328,9 +326,7 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddReviews?: (() => void) | undefined;
   onAddNotes?: (() => void) | undefined;
-  onAddInspect?: (() => void) | undefined;
   /** Absent where the environment cannot list Xwing environments. */
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -407,18 +403,6 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
-    ...(props.onAddReviews
-      ? [
-          {
-            label: "Artifacts",
-            icon: Zap,
-            shortcut: "R",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddReviews,
-          },
-        ]
-      : []),
     ...(props.onAddNotes
       ? [
           {
@@ -428,18 +412,6 @@ function RightPanelEmptyState(props: {
             available: true,
             disabledReason: "",
             onClick: props.onAddNotes,
-          },
-        ]
-      : []),
-    ...(props.onAddInspect
-      ? [
-          {
-            label: "Inspect",
-            icon: ScanSearch,
-            shortcut: "I",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddInspect,
           },
         ]
       : []),
@@ -1213,18 +1185,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
-    ...(props.onAddReviews
-      ? [
-          {
-            label: "Artifacts",
-            icon: Zap,
-            shortcut: "R",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddReviews,
-          },
-        ]
-      : []),
     ...(props.onAddNotes
       ? [
           {
@@ -1234,18 +1194,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             available: true,
             disabledReason: "",
             onClick: props.onAddNotes,
-          },
-        ]
-      : []),
-    ...(props.onAddInspect
-      ? [
-          {
-            label: "Inspect",
-            icon: ScanSearch,
-            shortcut: "I",
-            available: true,
-            disabledReason: "",
-            onClick: props.onAddInspect,
           },
         ]
       : []),
@@ -1640,9 +1588,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
-            onAddReviews={props.onAddReviews}
             onAddNotes={props.onAddNotes}
-            onAddInspect={props.onAddInspect}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}

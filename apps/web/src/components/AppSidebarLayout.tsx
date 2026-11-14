@@ -68,7 +68,12 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
-import { ThreadToolsDetailsHost, ThreadToolsFrame } from "./ThreadContextSidebar";
+import {
+  ThreadToolsAttentionDot,
+  ThreadToolsDetailsHost,
+  ThreadToolsFrame,
+  useThreadToolsAttention,
+} from "./ThreadContextSidebar";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
@@ -325,6 +330,8 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const { toggleSidebar } = useSidebar();
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const isSidebarVisible = useSidebarVisibility();
+  const toolsAttention = useThreadToolsAttention();
+  const collapsedAttention = showSidebar && !isSidebarVisible ? toolsAttention : null;
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
@@ -399,15 +406,23 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
                   "pointer-events-auto",
                   isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                 )}
-                aria-label="Toggle main sidebar"
+                aria-label={
+                  collapsedAttention
+                    ? `Toggle main sidebar, ${collapsedAttention.summary}`
+                    : "Toggle main sidebar"
+                }
               />
             }
           />
           <TooltipPopup side="bottom">
             Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            {collapsedAttention ? (
+              <span className="block text-muted-foreground">{collapsedAttention.summary}</span>
+            ) : null}
           </TooltipPopup>
         </Tooltip>
       ) : null}
+      {collapsedAttention ? <ThreadToolsAttentionDot tone={collapsedAttention.tone} /> : null}
     </div>
   );
 }

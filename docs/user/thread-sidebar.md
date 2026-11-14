@@ -55,15 +55,17 @@ Pick a recent folder, a project, or a linked Xwing environment, or enter a path.
 The thread keeps its history. Its next turn starts a new agent session in that
 folder with the conversation carried over. Finish or stop any work before moving.
 
-The strip at the left edge of the sidebar switches it between your threads and
-tools for the current thread: List, Artifacts, Marks, Related threads, Details,
-Environments, Context and Ticket. Badges on the strip show open list items,
-unanswered questions and a linked ticket. Select the active tool again to return
-to your threads. `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows and Linux switches
-between your threads and the last tool. The tools follow the focused tile. Pin one
-to keep its thread while you move between tiles or conversations. The last view
-stays on this device. Status and watcher alerts sit at the top of the strip.
-Artifacts can also open in a tile.
+The strip at the left edge of the sidebar switches it from your threads to tools
+for the current thread: Status, Todos, Artifacts, Links, Related, Details,
+Environments and Inspect. Select the Weavewing mark at the top of the sidebar, or
+the active tool again, to return to your threads. Each tool's ⓘ explains what it
+shows. Badges show open todos, unanswered questions and a linked ticket. While the
+sidebar is hidden, a dot on its toggle shows the most urgent of these, and the
+toggle's tooltip lists them. `Cmd+Alt+I` on macOS or `Ctrl+Alt+I` on Windows and
+Linux switches between your threads and the last tool. The tools follow the
+focused tile. Pin one to keep its thread while you move between tiles or
+conversations. Use the button at the bottom of the strip to hide tools you don't
+use. The last view and hidden tools stay on this device.
 
 The sidebar's **Environments** view shows Xwing environments used by the thread
 and its delegated children. Open an environment to see its repositories and apps,

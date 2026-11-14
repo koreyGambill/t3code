@@ -221,7 +221,7 @@ export function ThreadListView({
           <div className="flex items-center gap-2">
             <Input
               ref={newItemRef}
-              aria-label="New list item"
+              aria-label="New todo"
               placeholder="Add an item…"
               value={text}
               disabled={!canWrite || busy}
@@ -231,7 +231,7 @@ export function ThreadListView({
               type="submit"
               size="icon"
               variant="outline"
-              aria-label="Add list item"
+              aria-label="Add todo"
               disabled={!canWrite || busy || !text.trim()}
             >
               <PlusIcon />
@@ -520,10 +520,10 @@ export function ThreadListSummary({ threadRef }: { threadRef: ScopedThreadRef })
   return (
     <button
       className="flex w-full min-w-0 gap-2 px-3 py-2 text-left text-xs hover:bg-muted"
-      onClick={() => useThreadContextSidebarStore.getState().openList(threadRef)}
+      onClick={() => useThreadContextSidebarStore.getState().openTodos(threadRef)}
     >
       <span className="shrink-0">
-        List · {entry.items.filter((item) => item.state === "done").length}/{entry.items.length}
+        Todos · {entry.items.filter((item) => item.state === "done").length}/{entry.items.length}
       </span>
       <span className="truncate text-muted-foreground">· next: {next}</span>
     </button>

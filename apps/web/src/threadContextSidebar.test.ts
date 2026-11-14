@@ -1,9 +1,13 @@
 import { EnvironmentId, ThreadId, type ThreadWorkspace } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  firstVisibleThreadTool,
+  migrateThreadToolsView,
   nextSidebarView,
   selectContextThread,
   summarizeThreadTools,
+  talkedWithThreads,
+  threadToolsAttention,
   toggleThreadToolsView,
 } from "./threadContextSidebar";
 import { applyTileAction, syncTileLayout } from "./threadTileLayout";
@@ -52,7 +56,7 @@ describe("thread context sidebar selection", () => {
 
 describe("sidebar views", () => {
   it("returns to threads from the active tool and remembers the last tool", () => {
-    const tools = { view: "threads", lastTool: "list" } as const;
+    const tools = { view: "threads", lastTool: "todos" } as const;
     const artifacts = nextSidebarView(tools, "artifacts");
     expect(artifacts).toEqual({ view: "artifacts", lastTool: "artifacts" });
     expect(nextSidebarView(artifacts, "artifacts")).toEqual({
@@ -66,24 +70,24 @@ describe("sidebar views", () => {
   });
 
   it("toggles between threads and the last tool, opening a hidden sidebar on a tool", () => {
-    const threads = { view: "threads", lastTool: "marks" } as const;
+    const threads = { view: "threads", lastTool: "links" } as const;
     expect(toggleThreadToolsView(threads, true)).toEqual({
-      view: "marks",
-      lastTool: "marks",
+      view: "links",
+      lastTool: "links",
       revealPending: false,
     });
-    expect(toggleThreadToolsView({ view: "marks", lastTool: "marks" }, true)).toEqual({
+    expect(toggleThreadToolsView({ view: "links", lastTool: "links" }, true)).toEqual({
       view: "threads",
-      lastTool: "marks",
+      lastTool: "links",
       revealPending: false,
     });
     expect(toggleThreadToolsView(threads, false)).toEqual({
-      view: "marks",
-      lastTool: "marks",
+      view: "links",
+      lastTool: "links",
       revealPending: true,
     });
-    expect(toggleThreadToolsView({ view: "ticket", lastTool: "ticket" }, false)).toMatchObject({
-      view: "ticket",
+    expect(toggleThreadToolsView({ view: "inspect", lastTool: "inspect" }, false)).toMatchObject({
+      view: "inspect",
       revealPending: true,
     });
   });
@@ -175,5 +179,90 @@ describe("thread tool signals", () => {
       questionCount: 0,
       ticketState: null,
     });
+  });
+});
+
+describe("thread tools attention", () => {
+  const quiet = { listCount: 0, questionCount: 0, ticketState: null } as const;
+  const calm = { state: "ok", unread: 0 } as const;
+
+  it("shows nothing when nothing needs the user", () => {
+    expect(threadToolsAttention(quiet, calm)).toBeNull();
+    expect(
+      threadToolsAttention({ ...quiet, ticketState: "open" }, { ...calm, state: "unknown" }),
+    ).toBeNull();
+  });
+
+  it("takes its tone from the most urgent signal and lists every one", () => {
+    expect(
+      threadToolsAttention(
+        { listCount: 3, questionCount: 2, ticketState: "needs_review" },
+        { state: "fail", unread: 1 },
+      ),
+    ).toEqual({
+      tone: "alert",
+      summary:
+        "Status alert · 2 unanswered questions · 1 unread watcher alert · Ticket needs review · 3 open todos",
+    });
+    expect(
+      threadToolsAttention(
+        { ...quiet, questionCount: 1, listCount: 1 },
+        { ...calm, state: "warn" },
+      ),
+    ).toEqual({
+      tone: "question",
+      summary: "1 unanswered question · Status warning · 1 open todo",
+    });
+    expect(threadToolsAttention({ ...quiet, ticketState: "needs_review" }, calm)?.tone).toBe(
+      "review",
+    );
+    expect(threadToolsAttention({ ...quiet, listCount: 4 }, calm)?.tone).toBe("todo");
+  });
+});
+
+describe("thread tool views", () => {
+  it("maps the retired right panel's views onto the sidebar's", () => {
+    expect(migrateThreadToolsView("list")).toBe("todos");
+    expect(migrateThreadToolsView("marks")).toBe("links");
+    expect(migrateThreadToolsView("ticket")).toBe("links");
+    expect(migrateThreadToolsView("context")).toBe("inspect");
+    expect(migrateThreadToolsView("environments")).toBe("environments");
+    expect(migrateThreadToolsView(undefined)).toBe("todos");
+    expect(firstVisibleThreadTool(["todos", "artifacts"])).toBe("links");
+  });
+
+  it("lists threads this one talked with, not siblings", () => {
+    const shell = (id: string, parent: string | null = null, forkOf?: string) => ({
+      id,
+      title: id,
+      lineage: { parentThreadId: parent },
+      forkedFrom: forkOf ? { type: "run", threadId: forkOf } : null,
+    });
+    const self = shell("self", "lead", "origin");
+    const related = talkedWithThreads({
+      threadId: "self",
+      self,
+      shells: [
+        self,
+        shell("lead"),
+        shell("origin"),
+        shell("worker", "self"),
+        shell("sibling", "lead"),
+        shell("copy", null, "self"),
+        shell("asker"),
+        shell("peer"),
+        shell("stranger"),
+      ],
+      messagedBy: new Set(["asker"]),
+      transfers: [{ sourceThreadId: "self", targetThreadId: "peer" }],
+    });
+    expect(related.map(({ entry, relation }) => [entry.id, relation])).toEqual([
+      ["lead", "Delegated this thread"],
+      ["origin", "Forked from"],
+      ["worker", "Delegated to"],
+      ["copy", "Fork"],
+      ["asker", "Messaged this thread"],
+      ["peer", "Shared context"],
+    ]);
   });
 });

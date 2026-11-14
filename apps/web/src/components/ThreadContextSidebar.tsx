@@ -1,74 +1,105 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { AuthOrchestrationReadScope, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
-import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contracts";
 import {
+  BoxesIcon,
+  FilesIcon,
+  IdCardIcon,
+  InfoIcon,
+  LinkIcon,
+  ListChecksIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
-  ListChecksIcon,
-  FilesIcon,
-  BookmarkIcon,
-  NetworkIcon,
-  InfoIcon,
-  BoxesIcon,
-  BrainIcon,
-  TicketIcon,
-  MessagesSquareIcon,
-  RefreshCwIcon,
+  ScanSearchIcon,
+  Settings2Icon,
   type LucideIcon,
 } from "lucide-react";
-import { createPortal } from "react-dom";
-import { Empty, EmptyMedia, EmptyDescription } from "./ui/empty";
-import { useEffect, useState, type ReactNode } from "react";
-import { connectionAtomRuntime } from "../connection/runtime";
+import { useEffect, type ReactNode } from "react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
 import { selectThreadTileLayout, useRightPanelStore } from "../rightPanelStore";
 import { registerCommands } from "../shortcuts/dispatcher";
-import {
-  useThreadProjection,
-  useThreadShell,
-  useThreadRelationshipShells,
-} from "../state/entities";
+import { useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentScope } from "../state/session";
-import { threadMarksGet } from "../state/threadMarks";
-import { selectContextThread, summarizeThreadTools } from "../threadContextSidebar";
+import {
+  selectContextThread,
+  summarizeThreadTools,
+  THREAD_TOOL_ORDER,
+  threadToolsAttention,
+  type ThreadToolsAttentionTone,
+} from "../threadContextSidebar";
 import {
   useThreadContextSidebarStore,
   type SidebarView,
+  type StripItem,
   type ThreadContextSection,
 } from "../threadContextSidebarStore";
-import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import { resolveThreadRouteRef } from "../threadRoutes";
 import { ThreadDetailsDestination } from "./chat/ThreadDetailsDestination";
-import { ThreadContextPanel } from "./insights/ThreadContextPanel";
+import { MonitoringStatusButton, useMonitoringSignal } from "./monitoring/MonitoringStatusButton";
+import { FLUSH_THREAD_TOOLS, sidebarWorkspaceGet, ThreadToolSection } from "./ThreadToolViews";
 import { Button } from "./ui/button";
+import { Empty, EmptyDescription } from "./ui/empty";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuTrigger,
+} from "./ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { useSidebar, useSidebarVisibility } from "./ui/sidebar";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
-import { ThreadListView } from "./reviews/ThreadListView";
-import { ArtifactsPanel } from "./reviews/ThreadWorkspacePanel";
-import { Badge } from "./ui/badge";
-import { MonitoringStatusButton } from "./monitoring/MonitoringStatusButton";
-import { XwingEnvironmentsPanel } from "./xwing/XwingEnvironmentsPanel";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { WeavewingMark } from "./WeavewingMark";
 
-const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
-  label: "thread-context:workspace",
-  tag: WS_METHODS.threadWorkspaceGet,
-  staleTimeMs: 0,
-  idleTtlMs: 0,
-});
-
-const sections: ReadonlyArray<readonly [ThreadContextSection, string, LucideIcon]> = [
-  ["list", "List", ListChecksIcon],
-  ["artifacts", "Artifacts", FilesIcon],
-  ["marks", "Marks", BookmarkIcon],
-  ["related", "Related threads", NetworkIcon],
-  ["details", "Details", InfoIcon],
-  ["environments", "Environments", BoxesIcon],
-  ["context", "Context", BrainIcon],
-  ["ticket", "Ticket", TicketIcon],
-];
+const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; about: string }> = {
+  todos: {
+    title: "Todos",
+    icon: ListChecksIcon,
+    about:
+      "Commitments agents and you track for this thread. Agents update it with list_update; you can add and check items here.",
+  },
+  artifacts: {
+    title: "Artifacts",
+    icon: FilesIcon,
+    about:
+      "Documents and pages agents publish for this thread, with any questions they ask you. Agents write them with artifact_write; you answer here.",
+  },
+  links: {
+    title: "Links",
+    icon: LinkIcon,
+    about:
+      "The thread's ticket and pull requests, then web links found in the conversation. It fills as agents link work and post URLs.",
+  },
+  related: {
+    title: "Related",
+    icon: NetworkIcon,
+    about:
+      "Threads this one delegated to, forked, messaged or heard from. Agent suggestions will appear under Suggested.",
+  },
+  details: {
+    title: "Details",
+    icon: IdCardIcon,
+    about:
+      "The conversation's details card: workspace, branch, scripts and automations. It is the same card the thread view shows.",
+  },
+  environments: {
+    title: "Environments",
+    icon: BoxesIcon,
+    about:
+      "Where this thread's code lives: the Xwing environments it and its delegated work use, or else its worktree and branch.",
+  },
+  inspect: {
+    title: "Inspect",
+    icon: ScanSearchIcon,
+    about:
+      "What the agent loaded and spent: file and skill reads, context per turn, and tokens. T3 records it as turns run.",
+  },
+};
 
 function useThreadToolsTarget(): ScopedThreadRef | null {
   const owner = useRouterState({
@@ -84,8 +115,25 @@ function useThreadToolsTarget(): ScopedThreadRef | null {
   return selectContextThread(owner, layout, surfaces ?? [], pinned);
 }
 
-const setDetailsElement = (detailsElement: HTMLDivElement | null) =>
+function useThreadToolSignals(threadRef: ScopedThreadRef | null) {
+  const canRead = useEnvironmentScope(threadRef?.environmentId ?? null, AuthOrchestrationReadScope);
+  const workspace = useEnvironmentQuery(
+    threadRef && canRead
+      ? sidebarWorkspaceGet({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        })
+      : null,
+  );
+  return summarizeThreadTools(workspace.data ?? null);
+}
+
+const setDetailsElement = (detailsElement: HTMLDivElement | null) => {
   useThreadContextSidebarStore.setState({ detailsElement });
+};
+const setActionsElement = (actionsElement: HTMLDivElement | null) => {
+  useThreadContextSidebarStore.setState({ actionsElement });
+};
 
 /** Lets the conversation move its details card into the sidebar's Details view. */
 export function ThreadToolsDetailsHost({ children }: { children: ReactNode }) {
@@ -117,7 +165,6 @@ export function ThreadToolsFrame({ children }: { children: ReactNode }) {
           key={threadRef ? `${threadRef.environmentId}:${threadRef.threadId}:${view}` : view}
           view={view}
           threadRef={threadRef}
-          detailsRef={setDetailsElement}
         />
       ) : null}
       <ThreadToolsCommands />
@@ -147,7 +194,7 @@ function ThreadToolsCommands() {
       ),
     [visible],
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Tool requests from outside the sidebar (palette, list summary, shortcut) open the sidebar's own store.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Tool requests from outside the sidebar (palette, todo summary, shortcut) open the sidebar's own store.
   useEffect(() => {
     if (!revealPending) return;
     useThreadContextSidebarStore.getState().consumeReveal();
@@ -157,67 +204,205 @@ function ThreadToolsCommands() {
   return null;
 }
 
-function useThreadToolSignals(threadRef: ScopedThreadRef | null) {
-  const canRead = useEnvironmentScope(threadRef?.environmentId ?? null, AuthOrchestrationReadScope);
-  const workspace = useEnvironmentQuery(
-    threadRef && canRead
-      ? sidebarWorkspaceGet({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
-  return summarizeThreadTools(workspace.data ?? null);
-}
-
-function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) {
+function useShortcutTooltip() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "threadContext.toggle");
   const view = useThreadContextSidebarStore((state) => state.view);
   const lastTool = useThreadContextSidebarStore((state) => state.lastTool);
-  const signals = useThreadToolSignals(threadRef);
   // The shortcut flips to whichever view this names, so its tooltip carries the label.
   const shortcutTarget: SidebarView = view === "threads" ? lastTool : "threads";
-  const tooltip = (id: SidebarView, title: string) =>
+  return (id: SidebarView, title: string) =>
     `${view === id && id !== "threads" ? "Back to thread list" : title}${
       shortcut && shortcutTarget === id ? ` · ${shortcut}` : ""
     }`;
+}
+
+/** The header's lockup: the mark opens the thread list, then the wordmark or the open tool's title. */
+export function ThreadToolsBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  const view = useThreadContextSidebarStore((state) => state.view);
+  const tooltip = useShortcutTooltip();
+  return (
+    <div className="flex min-w-0 items-center gap-1 [-webkit-app-region:no-drag] md:ml-[calc(var(--workspace-titlebar-content-left)-0.5rem)]">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant={onBackdrop ? "media-navigation" : view === "threads" ? "secondary" : "ghost"}
+              size="icon-sm"
+              className={onBackdrop ? "relative top-auto translate-y-0" : undefined}
+              data-pressed={onBackdrop && view === "threads" ? "" : undefined}
+              aria-label="Thread list"
+              aria-pressed={view === "threads"}
+              onClick={() => useThreadContextSidebarStore.getState().selectView("threads")}
+            />
+          }
+        >
+          <WeavewingMark aria-hidden className="size-5" />
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">{tooltip("threads", "Thread list")}</TooltipPopup>
+      </Tooltip>
+      {view === "threads" ? (
+        <Link
+          to="/"
+          aria-label="Weavewing home"
+          className="shrink-0 rounded-md text-sm font-medium tracking-tight outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset"
+        >
+          <span className={onBackdrop ? "text-white/70" : "text-muted-foreground"}>weave</span>
+          <span className="text-(--weavewing-yellow)">wing</span>
+        </Link>
+      ) : (
+        <>
+          <h2
+            className={cn(
+              "min-w-0 truncate text-sm font-medium",
+              onBackdrop ? "text-white" : "text-foreground",
+            )}
+          >
+            {tools[view].title}
+          </h2>
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant={onBackdrop ? "media-navigation" : "ghost"}
+                  size="icon-xs"
+                  className={onBackdrop ? "relative top-auto translate-y-0" : undefined}
+                  aria-label={`About ${tools[view].title}`}
+                />
+              }
+            >
+              <InfoIcon />
+            </PopoverTrigger>
+            <PopoverPopup side="bottom" align="start">
+              <p className="max-w-64 text-xs leading-5">{tools[view].about}</p>
+            </PopoverPopup>
+          </Popover>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The header's right end: navigation on the thread list, the open tool's own buttons otherwise. */
+export function ThreadToolsHeaderEnd({
+  onBackdrop,
+  children,
+}: {
+  onBackdrop: boolean;
+  children: ReactNode;
+}) {
+  const view = useThreadContextSidebarStore((state) => state.view);
+  const pinned = useThreadContextSidebarStore((state) => state.pinned);
+  const threadRef = useThreadToolsTarget();
+  const shell = useThreadShell(threadRef);
+  if (view === "threads") return children;
+  return (
+    <>
+      <div ref={setActionsElement} className="flex items-center" />
+      {threadRef ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant={onBackdrop ? "media-navigation" : "ghost"}
+                size="icon-sm"
+                className={onBackdrop ? "relative top-auto translate-y-0" : undefined}
+                aria-label={pinned ? "Unpin thread tools" : "Pin thread tools"}
+                aria-pressed={pinned !== null}
+                onClick={() =>
+                  useThreadContextSidebarStore.getState().pin(pinned ? null : threadRef)
+                }
+              />
+            }
+          >
+            {pinned ? <PinOffIcon /> : <PinIcon />}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {pinned
+              ? `Pinned to ${shell?.title ?? "this thread"} · follow the focused tile`
+              : `Showing ${shell?.title ?? "the focused tile"} · pin this thread`}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </>
+  );
+}
+
+const attentionToneClass: Record<ThreadToolsAttentionTone, string> = {
+  alert: "bg-destructive",
+  question: "bg-primary",
+  warn: "bg-warning",
+  review: "bg-info",
+  todo: "bg-muted-foreground",
+};
+
+/** What the hidden sidebar would flag, for the sidebar toggle. */
+export function useThreadToolsAttention() {
+  const signals = useThreadToolSignals(useThreadToolsTarget());
+  const monitoring = useMonitoringSignal();
+  return threadToolsAttention(signals, monitoring);
+}
+
+export function ThreadToolsAttentionDot({ tone }: { tone: ThreadToolsAttentionTone }) {
+  return (
+    <span
+      aria-hidden
+      data-attention={tone}
+      className={cn(
+        "pointer-events-none absolute left-[calc(var(--workspace-titlebar-control-size)-0.375rem)] top-[calc(50%-var(--workspace-titlebar-control-size)/2)] size-2 rounded-full ring-2 ring-background",
+        attentionToneClass[tone],
+      )}
+    />
+  );
+}
+
+const stripLabels: Record<StripItem, string> = {
+  status: "Status",
+  ...Object.fromEntries(THREAD_TOOL_ORDER.map((id) => [id, tools[id].title])),
+} as Record<StripItem, string>;
+
+function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) {
+  const view = useThreadContextSidebarStore((state) => state.view);
+  const hidden = useThreadContextSidebarStore((state) => state.hidden);
+  const signals = useThreadToolSignals(threadRef);
+  const tooltip = useShortcutTooltip();
   return (
     <nav
       aria-label="Sidebar views"
       className="flex w-11 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-sidebar-border py-2 [-webkit-app-region:no-drag] [scrollbar-width:none]"
     >
-      <MonitoringStatusButton />
-      <span aria-hidden className="my-0.5 h-px w-5 shrink-0 bg-sidebar-border" />
-      <StripButton
-        id="threads"
-        title="Thread list"
-        icon={MessagesSquareIcon}
-        active={view === "threads"}
-        tooltip={tooltip("threads", "Thread list")}
-      />
-      {sections.map(([id, title, Icon]) => {
+      {hidden.includes("status") ? null : (
+        <>
+          <MonitoringStatusButton />
+          <span aria-hidden className="my-0.5 h-px w-5 shrink-0 bg-sidebar-border" />
+        </>
+      )}
+      {THREAD_TOOL_ORDER.filter((id) => !hidden.includes(id)).map((id) => {
+        const { title, icon: Icon } = tools[id];
         const count =
-          id === "list" ? signals.listCount : id === "artifacts" ? signals.questionCount : 0;
+          id === "todos" ? signals.listCount : id === "artifacts" ? signals.questionCount : 0;
+        const ticket = id === "links" ? signals.ticketState : null;
         return (
           <StripButton
             key={id}
             id={id}
             title={title}
-            icon={Icon}
             active={view === id}
             tooltip={tooltip(id, title)}
-            {...(count
-              ? { badge: `${count} ${id === "list" ? "open" : "unanswered"}` }
-              : id === "ticket" && signals.ticketState
-                ? { badge: `ticket ${signals.ticketState.replace("_", " ")}` }
-                : {})}
+            badge={
+              count
+                ? `${count} ${id === "todos" ? "open" : "unanswered"}`
+                : ticket
+                  ? `ticket ${ticket.replace("_", " ")}`
+                  : undefined
+            }
+            icon={<Icon />}
           >
-            {id === "ticket" && signals.ticketState ? (
+            {ticket ? (
               <span
                 className={cn(
                   "pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full ring-2 ring-sidebar",
-                  signals.ticketState === "closed" ? "bg-success" : "bg-info",
+                  ticket === "closed" ? "bg-success" : "bg-info",
                 )}
               />
             ) : null}
@@ -237,6 +422,40 @@ function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) 
           </StripButton>
         );
       })}
+      <div className="mt-auto pt-1">
+        <Menu>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <MenuTrigger
+                  render={
+                    <Button variant="ghost" size="icon-sm" aria-label="Choose sidebar views" />
+                  }
+                />
+              }
+            >
+              <Settings2Icon />
+            </TooltipTrigger>
+            <TooltipPopup side="right">Choose sidebar views</TooltipPopup>
+          </Tooltip>
+          <MenuPopup side="right" align="end">
+            <MenuGroup>
+              <MenuGroupLabel>Show in the strip</MenuGroupLabel>
+              {(["status", ...THREAD_TOOL_ORDER] as const).map((item) => (
+                <MenuCheckboxItem
+                  key={item}
+                  checked={!hidden.includes(item)}
+                  onCheckedChange={(checked) =>
+                    useThreadContextSidebarStore.getState().setHidden(item, !checked)
+                  }
+                >
+                  {stripLabels[item]}
+                </MenuCheckboxItem>
+              ))}
+            </MenuGroup>
+          </MenuPopup>
+        </Menu>
+      </div>
     </nav>
   );
 }
@@ -244,13 +463,12 @@ function ThreadToolsStrip({ threadRef }: { threadRef: ScopedThreadRef | null }) 
 function StripButton(props: {
   id: SidebarView;
   title: string;
-  icon: LucideIcon;
+  icon: ReactNode;
   active: boolean;
   tooltip: string;
-  badge?: string;
+  badge?: string | undefined;
   children?: ReactNode;
 }) {
-  const Icon = props.icon;
   return (
     <div className="relative">
       {props.active ? (
@@ -271,7 +489,7 @@ function StripButton(props: {
             />
           }
         >
-          <Icon />
+          {props.icon}
         </TooltipTrigger>
         <TooltipPopup side="right">{props.tooltip}</TooltipPopup>
       </Tooltip>
@@ -283,383 +501,32 @@ function StripButton(props: {
 function ThreadToolView({
   view,
   threadRef,
-  detailsRef,
 }: {
   view: ThreadContextSection;
   threadRef: ScopedThreadRef | null;
-  detailsRef: (element: HTMLDivElement | null) => void;
 }) {
-  const shell = useThreadShell(threadRef);
-  const pinned = useThreadContextSidebarStore((state) => state.pinned);
-  const [actions, setActions] = useState<HTMLDivElement | null>(null);
-  const title = sections.find(([id]) => id === view)?.[1] ?? "";
+  const actions = useThreadContextSidebarStore((state) => state.actionsElement);
+  const { title } = tools[view];
   return (
-    <section aria-label={title} className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header className="flex h-10 shrink-0 items-center gap-1 border-b border-sidebar-border pl-3 pr-1.5">
-        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm">
-          <span className="shrink-0 font-medium">{title}</span>
-          {shell ? (
-            <span className="truncate text-xs text-muted-foreground">{shell.title}</span>
-          ) : null}
-        </p>
-        <div ref={setActions} className="flex items-center" />
-        {threadRef ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={pinned ? "Unpin thread tools" : "Pin thread tools"}
-                  aria-pressed={pinned !== null}
-                  onClick={() =>
-                    useThreadContextSidebarStore.getState().pin(pinned ? null : threadRef)
-                  }
-                />
-              }
-            >
-              {pinned ? <PinOffIcon /> : <PinIcon />}
-            </TooltipTrigger>
-            <TooltipPopup>{pinned ? "Follow focused tile" : "Pin this thread"}</TooltipPopup>
-          </Tooltip>
-        ) : null}
-      </header>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto px-2.5 py-2.5">
-        {threadRef ? (
-          <SidebarSection
-            section={view}
-            threadRef={threadRef}
-            detailsRef={detailsRef}
-            actions={actions}
-          />
-        ) : (
-          <Empty size="compact">
-            <EmptyDescription>Open a thread to see its {title.toLowerCase()}.</EmptyDescription>
-          </Empty>
-        )}
-      </div>
+    <section
+      aria-label={title}
+      className={cn(
+        "flex min-h-0 min-w-0 flex-1 flex-col",
+        !FLUSH_THREAD_TOOLS.has(view) && "overflow-auto px-2.5 py-2.5",
+      )}
+    >
+      {threadRef ? (
+        <ThreadToolSection
+          section={view}
+          threadRef={threadRef}
+          detailsRef={setDetailsElement}
+          actions={actions}
+        />
+      ) : (
+        <Empty size="compact">
+          <EmptyDescription>Open a thread to see its {title.toLowerCase()}.</EmptyDescription>
+        </Empty>
+      )}
     </section>
-  );
-}
-
-function SidebarSection({
-  section,
-  threadRef,
-  detailsRef,
-  actions,
-}: {
-  section: ThreadContextSection;
-  threadRef: ScopedThreadRef;
-  detailsRef: (element: HTMLDivElement | null) => void;
-  actions: HTMLDivElement | null;
-}) {
-  switch (section) {
-    case "list":
-      return (
-        <ThreadListView
-          key={`${threadRef.environmentId}:${threadRef.threadId}`}
-          threadRef={threadRef}
-        />
-      );
-    case "artifacts":
-      return (
-        <ArtifactsPanel
-          inSidebar
-          threadRef={threadRef}
-          selectedId={null}
-          workspaceMutationId={null}
-          composerDraftTarget={threadRef}
-        />
-      );
-    case "marks":
-      return <SidebarMarks threadRef={threadRef} actions={actions} />;
-    case "related":
-      return <SidebarRelated threadRef={threadRef} />;
-    case "details":
-      return (
-        <div
-          ref={detailsRef}
-          className="@container group/details-destination mx-auto w-full max-w-4xl"
-        >
-          <div className="text-xs group-has-[[data-context-thread-details]]/details-destination:hidden">
-            <SidebarThreadSummary threadRef={threadRef} />
-          </div>
-        </div>
-      );
-    case "environments":
-      return <SidebarEnvironments threadRef={threadRef} />;
-    case "context":
-      return (
-        <ThreadContextPanel threadRef={threadRef} visible tabs={null} headerActions={actions} />
-      );
-    case "ticket":
-      return <SidebarTickets threadRef={threadRef} />;
-  }
-}
-
-function SidebarTickets({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
-  const workspace = useEnvironmentQuery(
-    canRead
-      ? sidebarWorkspaceGet({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
-  const tickets = [
-    ...new Set(
-      workspace.data?.items.flatMap((item) =>
-        item.links.filter((link) => link.type === "ticket").map((link) => link.target),
-      ) ?? [],
-    ),
-  ];
-  return tickets.length ? (
-    <ul className="space-y-2 text-xs">
-      {tickets.map((ticket) => {
-        const state = workspace.data?.items
-          .flatMap((item) => item.linkStates ?? [])
-          .find((link) => link.type === "ticket" && link.target === ticket);
-        return (
-          <li key={ticket} className="space-y-1 rounded-lg border border-border/60 p-2">
-            <div className="flex items-center justify-between gap-2">
-              <a
-                href={state?.url ?? ticket}
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-primary hover:underline"
-              >
-                {ticket}
-              </a>
-              <Badge
-                size="sm"
-                variant={
-                  state?.state === "closed"
-                    ? "success"
-                    : state?.state === "open"
-                      ? "info"
-                      : "outline"
-                }
-              >
-                {state?.label ?? "Unavailable"}
-              </Badge>
-            </div>
-            <p className="break-words leading-5 text-muted-foreground">
-              {state?.title ?? "Ticket details unavailable"}
-            </p>
-          </li>
-        );
-      })}
-    </ul>
-  ) : (
-    <Empty size="compact">
-      <EmptyMedia variant="icon">
-        <TicketIcon />
-      </EmptyMedia>
-      <EmptyDescription>Tickets linked from List items appear here.</EmptyDescription>
-    </Empty>
-  );
-}
-
-function SidebarEnvironments({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const selection = useThreadContextSidebarStore((state) => state.environmentSelection);
-  const selectedId =
-    selection?.thread.environmentId === threadRef.environmentId &&
-    selection.thread.threadId === threadRef.threadId
-      ? selection.id
-      : undefined;
-  return (
-    <XwingEnvironmentsPanel
-      threadRef={threadRef}
-      selectedId={selectedId}
-      visible
-      onSelect={(id) => useThreadContextSidebarStore.getState().selectEnvironment(threadRef, id)}
-    />
-  );
-}
-
-function SidebarMarks({
-  threadRef,
-  actions,
-}: {
-  threadRef: ScopedThreadRef;
-  actions: HTMLDivElement | null;
-}) {
-  const canRead = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope);
-  const marks = useEnvironmentQuery(
-    canRead
-      ? threadMarksGet({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
-  const rows = marks.data ?? [];
-  return (
-    <div className="space-y-2 text-xs">
-      {actions
-        ? createPortal(
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Refresh marks"
-                    disabled={!canRead}
-                    onClick={() => marks.refresh()}
-                  />
-                }
-              >
-                <RefreshCwIcon />
-              </TooltipTrigger>
-              <TooltipPopup>Refresh marks</TooltipPopup>
-            </Tooltip>,
-            actions,
-          )
-        : null}
-      {!canRead ? (
-        <p className="text-muted-foreground">This connection cannot read marks.</p>
-      ) : null}
-      {marks.error ? <p role="alert">Could not load marks.</p> : null}
-      {!rows.length ? (
-        <Empty size="compact">
-          <EmptyMedia variant="icon">
-            <BookmarkIcon />
-          </EmptyMedia>
-          <EmptyDescription>
-            {marks.isPending ? "Loading marks…" : "Saved thread marks appear here."}
-          </EmptyDescription>
-        </Empty>
-      ) : null}
-      {rows.map((mark) => (
-        <div key={mark.url} className="min-w-0 break-words">
-          {"contextSource" in mark && mark.contextSource ? (
-            <Link
-              to="/$environmentId/$threadId"
-              params={buildThreadRouteParams({
-                environmentId: threadRef.environmentId,
-                threadId: mark.contextSource.threadId,
-              })}
-              className="text-primary hover:underline"
-            >
-              {mark.name ?? mark.url}
-            </Link>
-          ) : mark.url.startsWith("xwing-environment:") ? (
-            <Button
-              variant="link"
-              size="xs"
-              onClick={() =>
-                useThreadContextSidebarStore
-                  .getState()
-                  .openEnvironments(threadRef, mark.url.slice("xwing-environment:".length))
-              }
-            >
-              {mark.url}
-            </Button>
-          ) : (
-            <a
-              href={mark.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              {"name" in mark ? (mark.name ?? mark.url) : mark.url}
-            </a>
-          )}
-          {mark.description ? <p className="text-muted-foreground">{mark.description}</p> : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SidebarRelated({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const shell = useThreadShell(threadRef);
-  const shells = useThreadRelationshipShells(threadRef);
-  const projection = useThreadProjection(threadRef)?.projection;
-  const parent =
-    shell?.forkedFrom?.type === "run" ? shell.forkedFrom.threadId : shell?.lineage.parentThreadId;
-  const parentOf = (entry: (typeof shells)[number]) =>
-    entry.forkedFrom?.type === "run" ? entry.forkedFrom.threadId : entry.lineage.parentThreadId;
-  const transfers = projection?.contextTransfers ?? [];
-  const replyTargets = new Set(
-    projection?.messages.flatMap((message) => [
-      ...(message.origin &&
-      "threadId" in message.origin &&
-      message.origin.environmentId === threadRef.environmentId
-        ? [message.origin.threadId]
-        : []),
-      ...(message.notification?.source.kind === "thread_reply" &&
-      (message.notification.source.environmentId === undefined ||
-        message.notification.source.environmentId === threadRef.environmentId)
-        ? [message.notification.source.threadId]
-        : []),
-    ]),
-  );
-  const related = shells
-    .filter((entry) => entry.id !== threadRef.threadId)
-    .flatMap((entry) => {
-      const relation =
-        entry.id === parent
-          ? "Parent"
-          : parentOf(entry) === threadRef.threadId
-            ? "Child"
-            : parent && parentOf(entry) === parent
-              ? "Sibling"
-              : replyTargets.has(entry.id)
-                ? "Reply target"
-                : transfers.some(
-                      (transfer) =>
-                        transfer.sourceThreadId === entry.id ||
-                        transfer.targetThreadId === entry.id,
-                    )
-                  ? "Context / reply target"
-                  : null;
-      return relation ? [{ entry, relation }] : [];
-    });
-  return (
-    <div className="space-y-2 text-xs">
-      {related.map(({ entry, relation }) => (
-        <Link
-          key={entry.id}
-          to="/$environmentId/$threadId"
-          params={buildThreadRouteParams({
-            environmentId: threadRef.environmentId,
-            threadId: entry.id,
-          })}
-          className="block"
-        >
-          <span className="block text-3xs text-muted-foreground">{relation}</span>
-          <span className="text-primary hover:underline">{entry.title}</span>
-        </Link>
-      ))}
-      {!related.length ? (
-        <Empty size="compact">
-          <EmptyMedia variant="icon">
-            <NetworkIcon />
-          </EmptyMedia>
-          <EmptyDescription>Forked threads and reply targets appear here.</EmptyDescription>
-        </Empty>
-      ) : null}
-    </div>
-  );
-}
-
-function SidebarThreadSummary({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const shell = useThreadShell(threadRef);
-  return (
-    <div className="space-y-2 break-words">
-      <p>{shell?.title ?? "Thread unavailable"}</p>
-      <p className="text-muted-foreground">{shell?.worktreePath}</p>
-      <p>{shell?.branch}</p>
-      <Link
-        to="/$environmentId/$threadId"
-        params={buildThreadRouteParams(threadRef)}
-        className="text-primary hover:underline"
-      >
-        Open conversation details
-      </Link>
-    </div>
   );
 }

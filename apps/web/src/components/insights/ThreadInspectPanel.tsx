@@ -15,12 +15,15 @@ export function ThreadInspectPanel({
   section,
   visible,
   startedThread,
+  onSectionChange,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly surfaceId?: string;
   readonly section: ThreadInspectSection;
   readonly visible: boolean;
   readonly startedThread: boolean;
+  /** Keeps the section locally instead of on a tile's surface. */
+  readonly onSectionChange?: (section: ThreadInspectSection) => void;
 }) {
   const tabs = (
     <div role="tablist" aria-label="Inspect sections" className="flex shrink-0 gap-0.5">
@@ -31,7 +34,11 @@ export function ThreadInspectPanel({
           role="tab"
           aria-selected={section === id}
           className="shrink-0 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
-          onClick={() => useRightPanelStore.getState().setInspectSection(threadRef, id, surfaceId)}
+          onClick={() =>
+            onSectionChange
+              ? onSectionChange(id)
+              : useRightPanelStore.getState().setInspectSection(threadRef, id, surfaceId)
+          }
         >
           {label}
         </button>

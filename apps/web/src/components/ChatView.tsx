@@ -4006,14 +4006,6 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread && activeThreadRef && reviewsSupported
         ? () => useRightPanelStore.getState().add(activeThreadRef, "notes")
         : undefined,
-    onAddInspect:
-      isServerThread && activeThreadRef
-        ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
-        : undefined,
-    onAddReviews:
-      isServerThread && activeThreadRef && reviewsSupported
-        ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
-        : undefined,
     onAddPullRequest: addPullRequestSurfaceStable,
     onAddPullRequests: addPullRequestsSurfaceStable,
     onAddDevice: addDeviceSurfaceStable,
@@ -4106,16 +4098,6 @@ export default function ChatView(props: ChatViewProps) {
           onAddNotes={
             isServerThread && activeThreadRef && reviewsSupported
               ? () => useRightPanelStore.getState().add(activeThreadRef, "notes")
-              : undefined
-          }
-          onAddInspect={
-            isServerThread && activeThreadRef
-              ? () => useRightPanelStore.getState().add(activeThreadRef, "inspect")
-              : undefined
-          }
-          onAddReviews={
-            isServerThread && activeThreadRef && reviewsSupported
-              ? () => useRightPanelStore.getState().add(activeThreadRef, "reviews")
               : undefined
           }
           onAddPullRequest={addPullRequestSurfaceStable}
