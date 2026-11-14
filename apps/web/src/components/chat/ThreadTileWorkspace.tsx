@@ -951,7 +951,7 @@ export function ThreadTileWorkspace(props: {
               tabIndex={-1}
             >
               <div
-                className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center gap-0.5 px-1 active:cursor-grabbing"
+                className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center justify-end gap-0.5 px-1 active:cursor-grabbing"
                 role="toolbar"
                 aria-label={`Move tile: ${title(group.activeTabId)}`}
                 draggable={!maximized && !group.floating}
