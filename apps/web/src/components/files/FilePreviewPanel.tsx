@@ -1,6 +1,8 @@
 import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { Badge } from "~/components/ui/badge";
 import { Spinner } from "~/components/ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   AuthPreviewOperateScope,
   type EditorId,
@@ -45,7 +47,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { FolderTree, Globe2, LockIcon, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -1165,6 +1167,8 @@ export default function FilePreviewPanel({
     attachment === undefined &&
     (file.isNotFile || (folderTrail !== undefined && file.data === null && file.error === null));
   const hostFolderPath = isFolder && isHostFile ? relativePath : null;
+  // The server marks the host files a workspace may edit: instruction files it loads.
+  const readOnlyHost = isHostFile && file.data?.writable !== true;
   // A chat-linked folder reads as a file until its read settles, and revealing a
   // folder selects it in its parent instead of opening it, so reveal waits.
   const revealsInFileManager =
@@ -1236,7 +1240,7 @@ export default function FilePreviewPanel({
     !isDocument;
   const mayOpenEditor =
     previewPath !== null &&
-    !isHostFile &&
+    !readOnlyHost &&
     canWriteFiles &&
     file.error === null &&
     !file.data?.truncated &&
@@ -1423,6 +1427,22 @@ export default function FilePreviewPanel({
               />
             </div>
           </ScrollArea>
+          {readOnlyHost && attachment === undefined && file.data !== null && !isFolder ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Badge variant="outline" size="sm" tabIndex={0}>
+                    <LockIcon aria-hidden="true" />
+                    Read-only
+                  </Badge>
+                }
+              />
+              <TooltipPopup>
+                Outside this workspace, only instruction files under a provider's config folder or
+                ~/.config can be edited.
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           {absolutePath &&
           (environmentId === primaryEnvironmentId ||
             environmentId === hostEnvironmentId ||
@@ -1486,7 +1506,7 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+      {relativePath && !attachment && !readOnlyHost && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
           Read-only connection. Unsaved edits are kept until write access returns.
         </div>
@@ -1514,6 +1534,7 @@ export default function FilePreviewPanel({
               tabIndex={-1}
               data-workspace-focus-default
               data-file-content-focus
+              data-file-path={relativePath ?? undefined}
               aria-label="File contents"
               className="sr-only"
               onFocus={() => queueMicrotask(focusEditorFromContent)}
@@ -1654,7 +1675,7 @@ export default function FilePreviewPanel({
                 threadRef={threadRef}
                 contents={file.data.contents}
                 workspaceMutationId={workspaceMutationId}
-                readOnly={file.data.truncated || isHostFile || !canWriteFiles}
+                readOnly={file.data.truncated || readOnlyHost || !canWriteFiles}
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (
@@ -1664,7 +1685,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
+            ) : file.data.truncated || readOnlyHost || !canWriteFiles ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

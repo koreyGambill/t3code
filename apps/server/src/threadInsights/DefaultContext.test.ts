@@ -39,6 +39,7 @@ import {
   FILE_CONVENTIONS,
   fileStatus,
   importReferences,
+  markdownLinks,
   MAX_READ_BYTES,
   readBounded,
   reconcileFiles,
@@ -110,6 +111,20 @@ it("finds @ imports outside code and ignores fenced or inline ones", () => {
       "See @./a.md and @~/b.md.\nmail korey@example.com\n`@skip.md`\n```\n@fenced.md\n```\n@docs/c.md @/abs.md @...",
     ),
   ).toEqual(["./a.md", "~/b.md", "docs/c.md", "/abs.md"]);
+});
+
+it("finds local markdown links outside code and drops URLs and anchors", () => {
+  expect(
+    markdownLinks(
+      [
+        "See [guide](docs/guide.md#setup), [same](docs/guide.md) and [home](<~/a b.md>).",
+        "[web](https://example.com/x.md) [mail](mailto:a@b.md) [code](src/x.ts) [enc](my%20notes.md)",
+        "`[skip](inline.md)`",
+        "```\n[fenced](fenced.md)\n```",
+        '[ref]: ../shared/ref.md "Title"',
+      ].join("\n"),
+    ),
+  ).toEqual(["docs/guide.md", "~/a b.md", "my notes.md", "../shared/ref.md"]);
 });
 
 const write = (fs: FileSystem.FileSystem, file: string, text: string) =>
@@ -190,6 +205,69 @@ it.effect(
         ["home/code/repo/pkg/.claude/rules/deep/nested.md", "rule", 0, "expected"],
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lists linked files under the file that links them, two levels deep", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "default-ctx-" }));
+    const repo = path.join(home, "code", "repo");
+    const wing = path.join(home, ".config", "wing");
+    yield* write(fs, path.join(home, ".claude", "CLAUDE.md"), "@~/.config/wing/BOOT.md");
+    yield* write(
+      fs,
+      path.join(wing, "BOOT.md"),
+      "[memory](MEMORY.md) [boot again](BOOT.md) [keys](~/.ssh/keys.md) [repo](~/code/repo/CLAUDE.md)",
+    );
+    yield* write(fs, path.join(wing, "MEMORY.md"), "[deeper](deep/one.md)");
+    yield* write(fs, path.join(wing, "deep", "one.md"), "[too deep](two.md) [back](../MEMORY.md)");
+    yield* write(fs, path.join(wing, "deep", "two.md"), "never listed");
+    yield* write(fs, path.join(home, ".ssh", "keys.md"), "secret");
+    yield* write(fs, path.join(repo, ".git", "HEAD"), "ref");
+    for (const name of ["CLAUDE.md", "AGENTS.md"])
+      yield* write(fs, path.join(repo, name), "[docs](docs/a.md) [escape](../../notes.md)");
+    yield* write(fs, path.join(repo, "docs", "a.md"), "[loop](../CLAUDE.md) [b](b.md)");
+    yield* write(fs, path.join(repo, "docs", "b.md"), "b");
+    yield* write(fs, path.join(home, "notes.md"), "private");
+
+    for (const [convention, configDir] of [
+      [FILE_CONVENTIONS.claudeAgent!, path.join(home, ".claude")],
+      [FILE_CONVENTIONS.codex!, path.join(home, ".codex")],
+    ] as const) {
+      const { files } = yield* resolveInstructionFiles(
+        convention,
+        repo,
+        { home, platform: "linux", configDir },
+        notInternal,
+      );
+      const links = files.filter((file) => file.scope === "link");
+      expect(
+        links.map((file) => [
+          path.relative(home, file.path),
+          path.relative(home, file.linkedFrom ?? ""),
+          file.depth,
+          file.status,
+        ]),
+      ).toEqual(
+        convention.imports
+          ? [
+              [".config/wing/MEMORY.md", ".config/wing/BOOT.md", 1, "expected"],
+              [".config/wing/deep/one.md", ".config/wing/MEMORY.md", 2, "expected"],
+              [".ssh/keys.md", ".config/wing/BOOT.md", 1, "secret"],
+              ["code/repo/docs/a.md", "code/repo/CLAUDE.md", 1, "expected"],
+              ["code/repo/docs/b.md", "code/repo/docs/a.md", 2, "expected"],
+              ["notes.md", "code/repo/CLAUDE.md", 1, "not-read"],
+            ]
+          : [
+              ["code/repo/docs/a.md", "code/repo/AGENTS.md", 1, "expected"],
+              ["code/repo/CLAUDE.md", "code/repo/docs/a.md", 2, "expected"],
+              ["code/repo/docs/b.md", "code/repo/docs/a.md", 2, "expected"],
+              ["notes.md", "code/repo/AGENTS.md", 1, "not-read"],
+            ],
+      );
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("never reads credential or state files a repository imports", () =>
@@ -438,7 +516,8 @@ it.effect("serves file text only for readable ids, and honours the instance's Co
     yield* write(fs, path.join(home, ".git", "HEAD"), "ref");
     yield* write(fs, path.join(home, "AGENTS.md"), "x".repeat(40 * 1024));
     yield* write(fs, path.join(home, ".env"), "SECRET=1");
-    yield* write(fs, path.join(home, "work-codex", "AGENTS.md"), "work account rules");
+    yield* write(fs, path.join(home, "work-codex", "AGENTS.md"), "work rules [more](more.md)");
+    yield* write(fs, path.join(home, "work-codex", "more.md"), "read on demand");
     yield* write(fs, path.join(home, ".codex", "AGENTS.md"), "personal rules");
     const footprint: InstructionFootprint = {
       threadId,
@@ -474,7 +553,15 @@ it.effect("serves file text only for readable ids, and honours the instance's Co
       home,
       service.itemText({ threadId, itemId: `file:${path.join(home, "work-codex", "AGENTS.md")}` }),
     );
-    expect(file.text).toBe("work account rules");
+    expect(file.text).toBe("work rules [more](more.md)");
+    const linked = byId.get(`file:${path.join(home, "work-codex", "more.md")}`);
+    expect(linked).toMatchObject({
+      parentId: `file:${path.join(home, "work-codex", "AGENTS.md")}`,
+      delivery: "on-demand",
+      counted: false,
+      readable: true,
+    });
+    expect(linked?.status).toBeUndefined();
     const refused = yield* Effect.flip(
       inHome(home, service.itemText({ threadId, itemId: `file:${path.join(home, ".env")}` })),
     );

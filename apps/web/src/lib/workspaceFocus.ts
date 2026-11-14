@@ -20,6 +20,7 @@ export function workspaceAreaProps(name: string, order: number, label: string) {
 }
 
 export interface WorkspaceFocusTarget {
+  /** `document` finds `selector` anywhere, for surfaces such as tiles that sit in no area. */
   area: string;
   selector?: string;
   restore?: boolean;
@@ -210,6 +211,12 @@ export function createWorkspaceFocusController(doc: Document) {
     return false;
   };
   const focus = (name: string, restore = true, selector?: string) => {
+    if (name === "document" && selector) {
+      const target = doc.querySelector<HTMLElement>(selector);
+      if (!target || !isWorkspaceElementVisible(target)) return false;
+      target.focus({ preventScroll: true });
+      return doc.activeElement === target;
+    }
     const areas = Array.from(doc.querySelectorAll<HTMLElement>(AREA_SELECTOR)).filter(
       isWorkspaceElementVisible,
     );

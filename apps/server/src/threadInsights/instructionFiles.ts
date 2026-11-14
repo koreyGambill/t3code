@@ -57,24 +57,50 @@ const SECRET_NAME =
 const SECRET_PATH = /\/\.(ssh|gnupg|aws|docker|kube|t3|git)\//;
 const MAX_FILES = 64;
 const MAX_IMPORT_DEPTH = 5;
+const MAX_LINK_DEPTH = 2;
 export const MAX_READ_BYTES = 256 * 1024;
 
 export interface ResolvedFile {
   /** The documented path, before symlinks resolve. */
   readonly path: string;
   readonly realPath: string;
-  readonly scope: "global" | "project" | "rule" | "import";
+  /** `link`: a markdown link an agent reads on demand, so it never loads by default. */
+  readonly scope: "global" | "project" | "rule" | "import" | "link";
   readonly bytes: number;
   readonly depth: number;
   readonly status: "expected" | "not-read" | "secret";
+  /** The documented path of the file whose link reached this one. */
+  readonly linkedFrom?: string;
 }
+
+const proseOf = (text: string) =>
+  text.replace(/^(```|~~~)[\s\S]*?^\1/gm, "").replace(/`[^`\n]*`/g, "");
 
 /** `@path` references outside code spans and fences, as Claude Code resolves imports. */
 export function importReferences(text: string): ReadonlyArray<string> {
-  const prose = text.replace(/^(```|~~~)[\s\S]*?^\1/gm, "").replace(/`[^`\n]*`/g, "");
+  const prose = proseOf(text);
   return [...prose.matchAll(/(?:^|\s)@((?:~\/|\.{1,2}\/|\/)?[\w.\-/]+)/g)].flatMap((match) =>
     match[1] === undefined || /^[.\-/]*$/.test(match[1]) ? [] : [match[1].replace(/\.+$/, "")],
   );
+}
+
+/** Local `.md` targets of inline and reference markdown links outside code, without anchors. */
+export function markdownLinks(text: string): ReadonlyArray<string> {
+  const prose = proseOf(text);
+  const targets = [
+    ...prose.matchAll(/\]\(\s*(?:<([^>\n]+)>|([^)\s]+))(?:\s+["'(][^)]*)?\)/g),
+    ...prose.matchAll(/^\s{0,3}\[[^\]\n]+\]:\s*(?:<([^>\n]+)>|(\S+))/gm),
+  ].flatMap((match) => {
+    const target = (match[1] ?? match[2] ?? "").split("#")[0] ?? "";
+    // Scheme-qualified targets are URLs, not files an agent opens.
+    if (!/\.md$/i.test(target) || /^[a-z][\w+.-]*:/i.test(target)) return [];
+    try {
+      return [decodeURIComponent(target)];
+    } catch {
+      return [target];
+    }
+  });
+  return [...new Set(targets)];
 }
 
 /** Reads at most MAX_READ_BYTES of a regular file, opened without following a symlink or blocking on a FIFO. */
@@ -154,28 +180,43 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
 
     const files: ResolvedFile[] = [];
     const seen = new Set<string>();
+    const trust = new Map<ResolvedFile, boolean>();
+    let linkCount = 0;
     /** `trusted`: the file sits outside the repository, where the repository cannot plant it. */
     const add: (
       file: string,
       scope: ResolvedFile["scope"],
       depth: number,
       trusted: boolean,
+      linkedFrom?: string,
     ) => Effect.Effect<boolean, never, never> = Effect.fnUntraced(
-      function* (file, scope, depth, trusted) {
+      function* (file, scope, depth, trusted, linkedFrom) {
         const info = yield* statOf(file);
         if (info === null) return false;
         const bytes = info.type === "File" ? info.size : 0;
         const resolved = yield* real(file);
-        if (seen.has(resolved) || files.length >= MAX_FILES) return true;
+        const link = linkedFrom !== undefined;
+        if (seen.has(resolved) || (link ? linkCount : files.length) >= MAX_FILES) return true;
         seen.add(resolved);
+        if (link) linkCount += 1;
         const status: ResolvedFile["status"] =
           blocked(file) || blocked(resolved) || (yield* isServerInternal(resolved))
             ? "secret"
             : info.type === "File" && (inRepo(resolved) || (trusted && resolved.endsWith(".md")))
               ? "expected"
               : "not-read";
-        files.push({ path: file, realPath: resolved, scope, bytes, depth, status });
-        if (convention.imports && status === "expected" && depth < MAX_IMPORT_DEPTH) {
+        const entry: ResolvedFile = {
+          path: file,
+          realPath: resolved,
+          scope,
+          bytes,
+          depth,
+          status,
+          ...(link ? { linkedFrom } : {}),
+        };
+        files.push(entry);
+        trust.set(entry, trusted);
+        if (!link && convention.imports && status === "expected" && depth < MAX_IMPORT_DEPTH) {
           for (const reference of importReferences(yield* readText(resolved))) {
             const target = reference.startsWith("~/")
               ? path.join(dirs.home, reference.slice(2))
@@ -227,6 +268,25 @@ export const resolveInstructionFiles = Effect.fn("DefaultContext.resolveInstruct
       }
     }
     if (convention.ruleDir) yield* addRules(path.join(workspace, convention.ruleDir), false);
+
+    // After every always-loaded file, so a link never claims a file the provider loads itself.
+    const addLinks: (parent: ResolvedFile, depth: number) => Effect.Effect<void> =
+      Effect.fnUntraced(function* (parent, depth) {
+        const trusted = (trust.get(parent) ?? false) && !inRepo(parent.realPath);
+        for (const reference of markdownLinks(yield* readText(parent.realPath))) {
+          const target = reference.startsWith("~/")
+            ? path.join(dirs.home, reference.slice(2))
+            : path.resolve(path.dirname(parent.path), reference);
+          const before = files.length;
+          yield* add(target, "link", depth, trusted, parent.path);
+          const child = files[before];
+          if (child?.status === "expected" && depth < MAX_LINK_DEPTH)
+            yield* addLinks(child, depth + 1);
+        }
+      });
+    for (const file of files.filter((entry) => entry.status === "expected")) {
+      yield* addLinks(file, 1);
+    }
     return { files, cwd: workspace, insideHome: within(home, workspace) };
   },
 );

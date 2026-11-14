@@ -134,6 +134,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as InstructionFileAllowlist from "./threadInsights/InstructionFileAllowlist.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
@@ -534,6 +535,7 @@ const layerXwingEnvironments = XwingEnvironments.layer.pipe(Layer.provide(Proces
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(InstructionFileAllowlist.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(layerWorkspaceEntries),
   Layer.provide(layerKnownWorkspaces),

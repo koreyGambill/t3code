@@ -1,16 +1,12 @@
 import {
-  ClaudeSettings,
-  CodexSettings,
   type DefaultContextGetInput,
   type DefaultContextItem,
   type DefaultContextItemInput,
   type DefaultContextItemText,
   type DefaultContextPreview,
   type InstructionFootprint,
-  type ProviderInstanceId,
   ThreadInsightsError,
 } from "@t3tools/contracts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -21,7 +17,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -32,13 +27,9 @@ import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { codexDefaultReasoningEffortOverride } from "../provider/CodexProvider.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import {
-  resolveCodexHomeLayout,
-  withEnvironmentCodexHome,
-} from "../provider/Drivers/CodexHomeLayout.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { providerConfigDir } from "./InstructionFileAllowlist.ts";
 import { notVisibleFor, t3ContextParts, toolExposure } from "./defaultContextParts.ts";
 import {
   InstructionFootprints,
@@ -69,13 +60,12 @@ export class DefaultContext extends Context.Service<
 
 const DIRECT_TOOLS = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
 const CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
-const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
-const decodeCodexSettings = Schema.decodeOption(CodexSettings);
 const FILE_SCOPE_LABELS: Record<ResolvedFile["scope"], string> = {
   global: "User or managed file",
   project: "Project file",
   rule: "Rule file",
   import: "@ import",
+  link: "Linked, read on demand",
 };
 const tokens = (bytes: number) => Math.ceil(bytes / 4);
 
@@ -122,33 +112,6 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const isServerInternal = yield* makeIsServerInternalPath;
-
-  /** The folder the instance launches the provider with, resolved as its driver does. */
-  const providerConfigDir = Effect.fn("DefaultContext.providerConfigDir")(function* (
-    driver: string,
-    instanceId: ProviderInstanceId,
-    home: string,
-  ) {
-    const entry = (yield* settings.getSettings.pipe(Effect.option)).pipe(
-      Option.flatMap((value) => Option.fromNullishOr(value.providerInstances[instanceId])),
-      Option.getOrUndefined,
-    );
-    const env = yield* mergeProviderInstanceEnvironment(
-      entry?.environment,
-      yield* HostProcess.Environment,
-    );
-    if (driver === "claudeAgent") {
-      const config = decodeClaudeSettings(entry?.config ?? {});
-      return yield* resolveClaudeHomePath(
-        { homePath: Option.isSome(config) ? config.value.homePath : "" },
-        env,
-      );
-    }
-    const config = Option.getOrUndefined(decodeCodexSettings(entry?.config ?? {}));
-    if (config === undefined) return env.CODEX_HOME || path.join(home, ".codex");
-    const layout = yield* resolveCodexHomeLayout(withEnvironmentCodexHome(config, env));
-    return layout.effectiveHomePath ?? layout.sharedHomePath;
-  });
 
   const resolve = Effect.fn("DefaultContext.resolve")(function* (input: DefaultContextGetInput) {
     const draft = input.draft;
@@ -289,9 +252,14 @@ const make = Effect.gen(function* () {
         {
           home,
           platform: yield* HostProcess.Platform,
-          configDir: yield* providerConfigDir(driver, instanceId, home).pipe(
-            Effect.provideService(Path.Path, path),
-          ),
+          configDir: yield* providerConfigDir(
+            driver,
+            (yield* settings.getSettings.pipe(Effect.option)).pipe(
+              Option.flatMap((value) => Option.fromNullishOr(value.providerInstances[instanceId])),
+              Option.getOrUndefined,
+            ),
+            home,
+          ).pipe(Effect.provideService(Path.Path, path)),
         },
         (file) => isServerInternal(file).pipe(Effect.orElseSucceed(() => true)),
       ).pipe(
@@ -300,6 +268,8 @@ const make = Effect.gen(function* () {
       );
       for (const file of reconcileFiles(resolved.files, footprint?.instructionSources)) {
         const readable = file.status === "expected" && !file.unexpected;
+        const linked = file.linkedFrom !== undefined;
+        const status = fileStatus(file);
         push(
           {
             id: `file:${file.path}`,
@@ -311,13 +281,15 @@ const make = Effect.gen(function* () {
                 : file.status === "secret"
                   ? "Credential or state file, not read"
                   : FILE_SCOPE_LABELS[file.scope],
-            delivery: "session-start",
+            delivery: linked ? "on-demand" : "session-start",
             bytes: file.bytes,
             estimatedTokens: tokens(file.bytes),
-            counted: file.status === "expected",
+            counted: file.status === "expected" && !linked,
             readable,
             ...(file.depth > 0 ? { depth: file.depth } : {}),
-            status: fileStatus(file),
+            ...(linked ? { parentId: `file:${file.linkedFrom}` } : {}),
+            // A file read on demand is never expected to load with the session.
+            ...(linked && (status === "expected" || status === "not-loaded") ? {} : { status }),
           },
           readable ? readBounded(file.realPath).pipe(Effect.orElseSucceed(() => "")) : undefined,
         );

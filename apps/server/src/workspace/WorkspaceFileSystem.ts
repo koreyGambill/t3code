@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
@@ -13,15 +14,17 @@ import type {
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isNetworkPath } from "@t3tools/shared/path";
+import { isHostPath, isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import { InstructionFileAllowlist } from "../threadInsights/InstructionFileAllowlist.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -121,7 +124,7 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
-    /** Writes inside a known workspace only. */
+    /** Writes inside a known workspace, or to an existing instruction file on its allowlist. */
     readonly writeFile: (
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
@@ -141,6 +144,137 @@ export const make = Effect.gen(function* () {
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const isServerInternalPath = yield* makeIsServerInternalPath;
+  const instructionFiles = yield* Effect.serviceOption(InstructionFileAllowlist);
+
+  /** The real path of a host file the Files tile may edit, or null. */
+  const editableHostPath = Effect.fn("WorkspaceFileSystem.editableHostPath")(function* (
+    cwd: string,
+    requestedPath: string,
+  ) {
+    if (Option.isNone(instructionFiles) || !isHostPath(requestedPath)) return null;
+    const hostPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
+    if (!path.isAbsolute(hostPath) || isNetworkPath(hostPath)) return null;
+    if (!(yield* knownWorkspaces.assertContains(cwd).pipe(Effect.isSuccess))) return null;
+    const realPath = yield* instructionFiles.value.editablePath(cwd, hostPath);
+    if (realPath === null || (yield* isServerInternalPath(realPath))) return null;
+    // A hard link aliases another file, which may be a credential.
+    const links = yield* Effect.promise(() =>
+      NodeFSP.lstat(realPath).then(
+        (stat) => (stat.isFile() ? stat.nlink : 0),
+        () => 0,
+      ),
+    );
+    return links === 1 ? realPath : null;
+  });
+
+  /**
+   * Replaces an existing host file through a temp file in its folder, so a failed save
+   * leaves the old text; a folder that takes no new entries gets an in-place write. The check opens without creating, following a final symlink, or
+   * blocking on a FIFO; the file must stay the single-link regular file at `realPath`
+   * until the rename, so a swapped path component or hard-linked alias is refused.
+   */
+  const writeHostFile = Effect.fn("WorkspaceFileSystem.writeHostFile")(function* (
+    input: ProjectWriteFileInput,
+    realPath: string,
+  ) {
+    yield* Effect.tryPromise({
+      try: async () => {
+        const handle = await NodeFSP.open(
+          realPath,
+          NodeFS.constants.O_RDONLY |
+            (NodeFS.constants.O_NONBLOCK ?? 0) |
+            (NodeFS.constants.O_NOFOLLOW ?? 0),
+        );
+        let temp: string | null = null;
+        try {
+          const opened = await handle.stat();
+          const unchanged = async () => {
+            const [current, resolved] = await Promise.all([
+              NodeFSP.stat(realPath),
+              NodeFSP.realpath(realPath),
+            ]);
+            if (
+              !opened.isFile() ||
+              opened.nlink !== 1 ||
+              resolved !== realPath ||
+              current.dev !== opened.dev ||
+              current.ino !== opened.ino
+            ) {
+              throw new Error("The file changed or is not a single regular file.");
+            }
+          };
+          await unchanged();
+          const mode = opened.mode & 0o7777;
+          const folder = path.dirname(realPath);
+          const name = path.join(
+            folder,
+            `.${path.basename(realPath)}.${NodeCrypto.randomUUID()}.t3-save`,
+          );
+          const output = await NodeFSP.open(
+            name,
+            NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_EXCL |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
+            mode,
+          ).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "EACCES" || error.code === "EPERM") return null;
+            throw error;
+          });
+          if (output === null) {
+            // The folder takes no new entries, so rewrite the checked file in place.
+            const inPlace = await NodeFSP.open(
+              realPath,
+              NodeFS.constants.O_WRONLY |
+                (NodeFS.constants.O_NONBLOCK ?? 0) |
+                (NodeFS.constants.O_NOFOLLOW ?? 0),
+            );
+            try {
+              const target = await inPlace.stat();
+              if (target.dev !== opened.dev || target.ino !== opened.ino) {
+                throw new Error("The file changed or is not a single regular file.");
+              }
+              await unchanged();
+              await inPlace.truncate(0);
+              await inPlace.writeFile(input.contents);
+              await inPlace.sync();
+            } finally {
+              await inPlace.close();
+            }
+            return;
+          }
+          temp = name;
+          try {
+            await output.writeFile(input.contents);
+            // The umask may have narrowed the mode the open asked for.
+            await output.chmod(mode);
+            await output.sync();
+          } finally {
+            await output.close();
+          }
+          await unchanged();
+          await NodeFSP.rename(temp, realPath);
+          temp = null;
+          // Best effort: the rename already replaced the file; this only makes it durable sooner.
+          await NodeFSP.open(folder, NodeFS.constants.O_RDONLY)
+            .then((directory) => directory.sync().finally(() => directory.close()))
+            .catch(() => undefined);
+        } finally {
+          await handle.close();
+          if (temp !== null) await NodeFSP.rm(temp, { force: true });
+        }
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: realPath,
+          operationPath: realPath,
+          operation: "write-file",
+          cause,
+        }),
+    });
+  });
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
@@ -357,7 +491,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    return yield* Effect.acquireUseRelease(
+    const result = yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking opens prevent FIFO hangs before stat rejects them; Windows lacks the flag.
         try: () =>
@@ -457,6 +591,9 @@ export const make = Effect.gen(function* () {
                 }),
             }),
     );
+    if ("exists" in result || !isHostPath(input.relativePath)) return result;
+    const writable = (yield* editableHostPath(input.cwd, input.relativePath)) === realTargetPath;
+    return writable ? { ...result, writable } : result;
   });
 
   // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
@@ -545,6 +682,17 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
     yield* knownWorkspaces.assertContains(input.cwd);
+    if (isHostPath(input.relativePath)) {
+      const realPath = yield* editableHostPath(input.cwd, input.relativePath);
+      if (realPath === null) {
+        return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+      }
+      yield* writeHostFile(input, realPath);
+      return { relativePath: input.relativePath };
+    }
     const target = yield* resolveWriteTarget(input);
     const realTargetPath = target.realTargetPath;
     const replacesFile = yield* fileSystem
