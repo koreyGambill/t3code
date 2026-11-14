@@ -17,13 +17,13 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   dispatchFailure,
-  loadCaller,
   newCommandId,
   readCaller,
   readThread,
   threadNotFound,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -133,25 +133,21 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_notify: McpToolAccess.actsAsCaller(({ threadId, severity, ...input }) =>
     Effect.gen(function* () {
-      const { caller, threads } = yield* loadCaller();
-      if (caller === undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: "Notifications require a thread-scoped caller.",
-        });
-      let target = caller;
-      if (threadId !== undefined && threadId !== caller.id) {
-        const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
-        if (shell === null || shell.deletedAt !== null)
-          return yield* threadNotFound(threads, threadId, "The thread was not found.");
-        target = shell;
-      }
+      const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
+        Effect.flatMap((context) => McpInvocationContext.requireThreadScope(context, "t3_notify")),
+      );
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const callerId = scope.thread.threadId;
+      const targetId = threadId ?? callerId;
+      const target = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
+      if (target === null || target.deletedAt !== null)
+        return yield* threadNotFound(threads, targetId, "The thread was not found.");
       const notifications = yield* NotificationService.NotificationService;
       const { notification, status } = yield* notifications
         .raise({
           ...input,
           severity: severity ?? "info",
-          source: { kind: "agent", threadId: caller.id },
+          source: { kind: "agent", threadId: callerId },
           threadId: target.id,
           projectId: target.projectId,
         })

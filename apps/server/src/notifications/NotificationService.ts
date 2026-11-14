@@ -16,7 +16,9 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
@@ -36,8 +38,12 @@ export interface RaiseInput {
   readonly source: NotificationSource;
   readonly threadId: ThreadId | null;
   readonly projectId: ProjectId | null;
-  /** Defaults to the title. Scoped to the source, so two threads never share a key. */
+  /** Defaults to the target thread and title. Scoped to the source, so two threads never share a key. */
   readonly dedupeKey?: string | undefined;
+  /**
+   * Only delivered notifications take repeats, so a raise behind a pending or rejected one makes a
+   * new row. A repeat keeps the delivered row's verification.
+   */
   readonly verification?: NotificationVerification | undefined;
 }
 
@@ -143,6 +149,7 @@ const make = Effect.gen(function* () {
   const toNotifications = (rows: ReadonlyArray<Row>) => Effect.forEach(rows, toNotification);
 
   const delivered = sql`(verification_json IS NULL OR json_extract(verification_json, '$.status') IN ('confirmed', 'unverified'))`;
+  const severityRank = sql`(CASE severity WHEN 'critical' THEN 2 WHEN 'warning' THEN 1 ELSE 0 END)`;
   const unread = (now: string) =>
     sql`${delivered} AND read_at IS NULL AND dismissed_at IS NULL AND (snoozed_until IS NULL OR julianday(snoozed_until) <= julianday(${now}))`;
 
@@ -168,9 +175,10 @@ const make = Effect.gen(function* () {
 
   const publish = Effect.fn("NotificationService.publish")(function* (
     items: ReadonlyArray<Notification>,
+    countsChanged = false,
   ) {
     const visible = items.filter((item) => isDelivered(item.verification));
-    if (visible.length === 0) return;
+    if (visible.length === 0 && !countsChanged) return;
     yield* PubSub.publish(changes, { type: "upsert", ...(yield* counts()), items: visible });
   });
 
@@ -188,7 +196,38 @@ const make = Effect.gen(function* () {
       });
     }
     raises.set(key, [...recent, now]);
+    for (const [other, times] of raises)
+      if (times.every((at) => at <= now - HOUR_MS)) raises.delete(other);
   });
+
+  const wakes = yield* FiberHandle.make<void, never>();
+  // Snooze ends need no polling worker: one timer sleeps to the earliest end, then publishes the
+  // woken rows and fresh counts so badges never go stale.
+  const wakeLoop = Effect.gen(function* () {
+    while (true) {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const next = yield* sql<{
+        delayMs: number | null;
+      }>`SELECT (julianday(min(snoozed_until)) - julianday(${now})) * 86400000 AS delayMs FROM notifications
+        WHERE ${delivered} AND dismissed_at IS NULL AND julianday(snoozed_until) > julianday(${now})`;
+      const delayMs = next[0]?.delayMs;
+      if (delayMs === null || delayMs === undefined) return;
+      yield* Effect.sleep(Duration.millis(Math.max(1, Math.ceil(delayMs))));
+      yield* serialized(
+        Effect.gen(function* () {
+          const woke = DateTime.formatIso(yield* DateTime.now);
+          const items = yield* sql<Row>`SELECT * FROM notifications WHERE ${delivered}
+            AND julianday(snoozed_until) > julianday(${now}) AND julianday(snoozed_until) <= julianday(${woke})
+            ORDER BY updated_at DESC, rowid DESC LIMIT ${SNAPSHOT_LIMIT}`.pipe(
+            Effect.flatMap(toNotifications),
+          );
+          yield* publish(items, true);
+        }),
+      );
+    }
+  }).pipe(Effect.catch((cause) => Effect.logWarning("Notification snooze wake failed", { cause })));
+  const scheduleWake = FiberHandle.run(wakes, wakeLoop).pipe(Effect.asVoid);
+  yield* scheduleWake;
 
   const raise = Effect.fn("NotificationService.raise")(
     function* (input: RaiseInput) {
@@ -198,7 +237,7 @@ const make = Effect.gen(function* () {
       const windowStart = DateTime.formatIso(
         DateTime.subtract(now, { milliseconds: DEDUPE_WINDOW_MS }),
       );
-      const dedupeKey = `${sourceKey(input.source)}\n${input.dedupeKey ?? input.title}`;
+      const dedupeKey = `${sourceKey(input.source)}\n${input.dedupeKey ?? `${input.threadId ?? ""}\n${input.title}`}`;
       const sourceJson = yield* encodeSource(input.source).pipe(Effect.mapError(failed("encode")));
       const verificationJson =
         input.verification === undefined
@@ -206,21 +245,24 @@ const make = Effect.gen(function* () {
           : yield* encodeVerification(input.verification).pipe(Effect.mapError(failed("encode")));
       const existing = yield* sql<{
         id: string;
-      }>`SELECT id FROM notifications WHERE dedupe_key = ${dedupeKey} AND created_at > ${windowStart} ORDER BY created_at DESC LIMIT 1`;
+      }>`SELECT id FROM notifications WHERE dedupe_key = ${dedupeKey} AND created_at > ${windowStart} AND ${delivered} ORDER BY created_at DESC LIMIT 1`;
       const id = existing[0]?.id ?? `notification:${yield* random.uuidV4()}`;
       if (existing[0] === undefined) {
         yield* sql`INSERT INTO notifications (id, created_at, updated_at, severity, title, body, source_json, thread_id, project_id, verification_json, dedupe_key, repeat_count)
         VALUES (${id}, ${nowIso}, ${nowIso}, ${input.severity}, ${input.title}, ${input.body ?? null}, ${sourceJson}, ${input.threadId}, ${input.projectId}, ${verificationJson}, ${dedupeKey}, 0)`;
       } else {
-        // A repeat keeps the user's dismiss and snooze, but asks to be read again.
-        yield* sql`UPDATE notifications SET updated_at = ${nowIso}, severity = ${input.severity}, title = ${input.title},
-        body = coalesce(${input.body ?? null}, body), thread_id = ${input.threadId}, project_id = ${input.projectId},
-        read_at = NULL, repeat_count = repeat_count + 1 WHERE id = ${id}`;
+        // New activity resurfaces a dismissed one but keeps a snooze; unread, it keeps its highest severity.
+        yield* sql`UPDATE notifications SET updated_at = ${nowIso},
+        severity = CASE WHEN read_at IS NULL AND ${severityRank} > ${SEVERITY_RANK[input.severity]} THEN severity ELSE ${input.severity} END,
+        title = ${input.title}, body = coalesce(${input.body ?? null}, body), source_json = ${sourceJson},
+        thread_id = ${input.threadId}, project_id = ${input.projectId},
+        read_at = NULL, dismissed_at = NULL, repeat_count = repeat_count + 1 WHERE id = ${id}`;
       }
       const rows = yield* sql<Row>`SELECT * FROM notifications WHERE id = ${id}`;
       const [notification] = yield* toNotifications(rows);
       if (notification === undefined) return yield* new NotificationError({ operation: "raise" });
       yield* publish([notification]);
+      if (existing[0] !== undefined) yield* scheduleWake;
       return {
         notification,
         status:
@@ -268,6 +310,7 @@ const make = Effect.gen(function* () {
           Effect.flatMap(toNotifications),
         );
       yield* publish(items);
+      yield* scheduleWake;
       return { items };
     },
     (effect) => serialized(effect).pipe(Effect.mapError(failed("update"))),
@@ -276,12 +319,16 @@ const make = Effect.gen(function* () {
   const markAllRead = Effect.fn("NotificationService.markAllRead")(
     function* () {
       const now = DateTime.formatIso(yield* DateTime.now);
+      const touched = yield* sql<{
+        id: string;
+      }>`UPDATE notifications SET read_at = ${now} WHERE ${unread(now)} RETURNING id`;
+      // Only rows a client's snapshot window holds; the counts cover the rest.
       const items =
-        yield* sql<Row>`UPDATE notifications SET read_at = ${now} WHERE ${unread(now)} RETURNING *`.pipe(
+        yield* sql<Row>`SELECT * FROM (SELECT * FROM notifications WHERE ${delivered} ORDER BY updated_at DESC, rowid DESC LIMIT ${SNAPSHOT_LIMIT}) WHERE read_at = ${now}`.pipe(
           Effect.flatMap(toNotifications),
         );
-      yield* publish(items);
-      return { count: items.length };
+      yield* publish(items, touched.length > 0);
+      return { count: touched.length };
     },
     (effect) => serialized(effect).pipe(Effect.mapError(failed("mark all read"))),
   );

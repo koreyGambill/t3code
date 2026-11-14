@@ -296,8 +296,12 @@ const NotifyTool = Tool.make("t3_notify", {
     title: NotificationTitle,
     body: Schema.optional(NotificationBody),
     severity: Schema.optional(NotificationSeverity),
-    threadId: Schema.optional(ThreadId),
-    dedupeKey: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+    threadId: Schema.optional(ThreadId).annotate({
+      description: "Thread it opens. Default: this thread.",
+    }),
+    dedupeKey: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).annotate({
+      description: "Same key within a day updates one item. Default: thread and title.",
+    }),
   }),
   success: Schema.Struct({
     notificationId: NotificationId,

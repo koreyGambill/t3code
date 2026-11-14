@@ -73,39 +73,71 @@ it.effect(
       assert.isNotNull((yield* update({ type: "dismiss" })).dismissedAt);
       assert.strictEqual((yield* Queue.take(events)).unreadCount, 0);
 
-      // A repeat while dismissed bumps the count and asks to be read, but leaves the dismissal.
+      // A repeat resurfaces a dismissed one, asks to be read and, unread, keeps its highest severity.
       yield* update({ type: "read" });
       yield* Queue.take(events);
       const repeat = yield* service.raise({
         ...raiseInput(agent("t1"), "Lands ran from bash"),
+        severity: "info",
         body: "two",
       });
       assert.strictEqual(repeat.status, "repeat");
       assert.strictEqual(repeat.notification.id, id);
       assert.strictEqual(repeat.notification.repeatCount, 1);
       assert.strictEqual(repeat.notification.body, "two");
+      assert.strictEqual(repeat.notification.severity, "info");
       assert.isNull(repeat.notification.readAt);
-      assert.isNotNull(repeat.notification.dismissedAt);
+      assert.isNull(repeat.notification.dismissedAt);
+      assert.deepInclude(yield* Queue.take(events), { unreadCount: 1, maxUnreadSeverity: "info" });
+      const louder = yield* service.raise({ ...raiseInput(agent("t1"), "Lands ran from bash") });
+      assert.strictEqual(louder.notification.severity, "warning");
+      yield* Queue.take(events);
+      const quieter = yield* service.raise({
+        ...raiseInput(agent("t1"), "Lands ran from bash"),
+        severity: "info",
+      });
+      assert.strictEqual(quieter.notification.severity, "warning");
+      yield* Queue.take(events);
+      assert.isNotNull((yield* update({ type: "dismiss" })).dismissedAt);
       yield* Queue.take(events);
       assert.isNull((yield* update({ type: "restore" })).dismissedAt);
       assert.strictEqual((yield* Queue.take(events)).unreadCount, 1);
 
-      // Snooze expiry is a read-time filter: the next read after `until` counts it again.
+      // A snooze ending publishes the woken item and fresh counts without any other change.
       const until = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 }));
       assert.strictEqual((yield* update({ type: "snooze", until })).snoozedUntil, until);
       assert.strictEqual((yield* Queue.take(events)).unreadCount, 0);
       assert.deepStrictEqual(yield* service.markAllRead(), { count: 0 });
       yield* TestClock.adjust("1 hour");
-      assert.strictEqual((yield* Queue.take(yield* subscribe)).unreadCount, 1);
+      const woke = yield* Queue.take(events);
+      assert.deepInclude(woke, { type: "upsert", unreadCount: 1 });
+      assert.deepStrictEqual(
+        woke.items.map((item) => item.id),
+        [id],
+      );
+      // A repeat keeps the snooze.
       yield* update({
         type: "snooze",
         until: DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 })),
       });
       yield* Queue.take(events);
+      const snoozedRepeat = yield* service.raise(raiseInput(agent("t1"), "Lands ran from bash"));
+      assert.isNotNull(snoozedRepeat.notification.snoozedUntil);
+      assert.strictEqual((yield* Queue.take(events)).unreadCount, 0);
       assert.isNull((yield* update({ type: "unsnooze" })).snoozedUntil);
       assert.strictEqual((yield* Queue.take(events)).unreadCount, 1);
       assert.deepStrictEqual(yield* service.markAllRead(), { count: 1 });
       assert.strictEqual((yield* Queue.take(events)).unreadCount, 0);
+
+      // The same title for another target thread is its own notification.
+      const elsewhere = yield* service.raise({
+        ...raiseInput(agent("t1"), "Lands ran from bash"),
+        threadId: ThreadId.make("t1-child"),
+      });
+      assert.notStrictEqual(elsewhere.notification.id, id);
+      yield* Queue.take(events);
+      yield* service.update({ ids: [elsewhere.notification.id], action: { type: "dismiss" } });
+      yield* Queue.take(events);
 
       // Another thread's identical title is its own notification.
       const other = yield* service.raise({
@@ -127,10 +159,20 @@ it.effect(
       });
       assert.strictEqual(pending.status, "pending_verification");
       yield* service.update({ ids: [pending.notification.id], action: { type: "read" } });
+      // A hidden row takes no repeats, so the next raise is verified on its own.
+      const again = yield* service.raise({
+        ...raiseInput(
+          { kind: "automation", scheduledTaskId: ScheduledTaskId.make("task"), runId: "run-2" },
+          "Exposure",
+        ),
+        verification: { status: "pending" },
+      });
+      assert.strictEqual(again.status, "pending_verification");
+      assert.notStrictEqual(again.notification.id, pending.notification.id);
       const snapshot = yield* Queue.take(yield* subscribe);
       assert.deepStrictEqual(
         snapshot.items.map((item) => item.id),
-        [other.notification.id, id],
+        [other.notification.id, elsewhere.notification.id, id],
       );
       assert.strictEqual(snapshot.unreadCount, 1);
       assert.strictEqual(yield* Queue.size(events), 0);
@@ -170,6 +212,7 @@ it.effect("limits each thread or automation to ten raises an hour and dedupes wi
     const repeat = yield* service.raise(raiseInput({ ...task, runId: "later" }, "same finding"));
     assert.strictEqual(repeat.status, "repeat");
     assert.strictEqual(repeat.notification.repeatCount, Service.RATE_LIMIT_PER_HOUR);
+    assert.deepInclude(repeat.notification.source, { runId: "later" });
     yield* TestClock.adjust("23 hours");
     assert.strictEqual(
       (yield* service.raise(raiseInput({ ...task, runId: "next-day" }, "same finding"))).status,
