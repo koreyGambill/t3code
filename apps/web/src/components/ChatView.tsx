@@ -2050,6 +2050,7 @@ export default function ChatView(props: ChatViewProps) {
     closeOtherSurfaces: closeOtherRightPanelSurfacesStable,
     closeSurfacesToRight: closeRightPanelSurfacesToRightStable,
     closeAllSurfaces: closeAllRightPanelSurfacesStable,
+    closeSurfacesWithoutTerminalPrompt: closeTileSurfacesStable,
   } = useRightPanelSurfaceClose({
     threadRef: activeThreadRef,
     terminalLabelsById: activeTerminalLabelsById,
@@ -4050,6 +4051,8 @@ export default function ChatView(props: ChatViewProps) {
             header={conversationHeader}
             conversation={conversationColumn}
             panels={tiledPanels}
+            runningTerminalIds={runningTerminalIds}
+            onCloseTileSurfaces={closeTileSurfacesStable}
             renderSurface={renderPanelSurface}
           />
         </>

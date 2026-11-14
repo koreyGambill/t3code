@@ -13,6 +13,31 @@ export function boundFloatingTile(rect: FloatingTileRect): FloatingTileRect {
   };
 }
 
+export type FloatingTileEdges = { left?: true; right?: true; top?: true; bottom?: true };
+
+/** Moves the dragged edges by `delta` while the opposite edges stay put. */
+export function resizeFloatingTile(
+  rect: FloatingTileRect,
+  edges: FloatingTileEdges,
+  delta: { x: number; y: number },
+): FloatingTileRect {
+  const min = 0.2;
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+  const left = edges.left ? Math.max(0, Math.min(right - min, rect.x + delta.x)) : rect.x;
+  const top = edges.top ? Math.max(0, Math.min(bottom - min, rect.y + delta.y)) : rect.y;
+  const nextRight = edges.right ? Math.min(1, Math.max(left + min, right + delta.x)) : right;
+  const nextBottom = edges.bottom ? Math.min(1, Math.max(top + min, bottom + delta.y)) : bottom;
+  return { x: left, y: top, width: nextRight - left, height: nextBottom - top };
+}
+
+export const DEFAULT_FLOATING_TILE: FloatingTileRect = {
+  x: 0.15,
+  y: 0.12,
+  width: 0.65,
+  height: 0.7,
+};
+
 export type TileGroup = {
   kind: "group";
   id: string;
@@ -20,6 +45,8 @@ export type TileGroup = {
   activeTabId: string;
   colorIndex?: number;
   floating?: FloatingTileRect;
+  /** Where the tile floated last, so floating it again puts it back there. */
+  lastFloating?: FloatingTileRect;
 };
 export type TileSplit = {
   kind: "split";
@@ -34,16 +61,15 @@ export type ThreadTileLayout = {
   root: TileNode;
   focusedGroupId: string;
   maximizedGroupId: string | null;
-  focusPairGroupId?: string | null;
-  focusPairRightTabId?: string | null;
-  focusPairLeftTabId?: string | null;
+  /** Shown to the right of the maximized tile; only meaningful while one is maximized. */
+  besideGroupId?: string | null;
   focusPairRatio?: number;
 };
 export type TileAction =
   | { type: "float-group"; groupId: string; rect: FloatingTileRect }
   | { type: "restore-group"; groupId: string }
-  | { type: "focus-pair"; groupId: string | null }
-  | { type: "focus-left"; tabId: string | null }
+  | { type: "show-beside"; groupId: string | null }
+  | { type: "swap-beside" }
   | { type: "resize-focus-pair"; ratio: number }
   | { type: "activate"; groupId: string; tabId: string }
   | { type: "focus"; groupId: string }
@@ -66,6 +92,7 @@ export type TileAction =
       splitId: string;
     }
   | { type: "close-group"; groupId: string }
+  | { type: "close-tab"; tabId: string }
   | { type: "merge-groups"; groupId: string; targetGroupId: string }
   | { type: "swap-groups"; firstGroupId: string; secondGroupId: string }
   | {
@@ -131,7 +158,18 @@ function prune(
   return first && second ? { ...node, first, second } : (first ?? second);
 }
 
-function settle(layout: ThreadTileLayout): ThreadTileLayout {
+function settle(input: ThreadTileLayout): ThreadTileLayout {
+  // Floating tiles hover over the docked ones, so at least one tile stays docked.
+  const { floating, ...firstGroup } = getTileGroups(input)[0]!;
+  const layout =
+    floating && getTileGroups(input).every((group) => group.floating)
+      ? {
+          ...input,
+          root: mapNode(input.root, (node) =>
+            node.id === firstGroup.id ? { ...firstGroup, lastFloating: floating } : node,
+          ),
+        }
+      : input;
   const groups = getTileGroups(layout);
   const occupiedColors = new Set(
     groups.flatMap((group) => (group.colorIndex !== undefined ? [group.colorIndex] : [])),
@@ -145,49 +183,25 @@ function settle(layout: ThreadTileLayout): ThreadTileLayout {
     occupiedColors.add(colorIndex);
     return { ...node, colorIndex };
   });
-  const rightTabId =
-    layout.focusPairRightTabId ??
-    groups.find((group) => group.id === layout.focusPairGroupId)?.activeTabId;
-  const right = layout.focusPairGroupId
-    ? groups.find((group) => group.tabs.includes(rightTabId ?? ""))
-    : undefined;
-  const leftTabId =
-    layout.focusPairLeftTabId &&
-    layout.focusPairLeftTabId !== rightTabId &&
-    groups.some((group) => group.tabs.includes(layout.focusPairLeftTabId!))
-      ? layout.focusPairLeftTabId
+  const ids = new Set(groups.map((group) => group.id));
+  const maximizedGroupId =
+    layout.maximizedGroupId && ids.has(layout.maximizedGroupId) ? layout.maximizedGroupId : null;
+  const besideGroupId =
+    maximizedGroupId &&
+    layout.besideGroupId &&
+    layout.besideGroupId !== maximizedGroupId &&
+    ids.has(layout.besideGroupId)
+      ? layout.besideGroupId
       : null;
-  const virtualLeftId = leftTabId ? "focus-left-group" : "focus-left-chooser";
-  const virtual = (id: string | null) =>
-    right && (id === "focus-left-group" || id === "focus-left-chooser");
+  const { besideGroupId: _beside, ...rest } = layout;
   return {
-    ...layout,
+    ...rest,
     root,
-    ...(layout.focusPairGroupId !== undefined
-      ? {
-          focusPairGroupId: right?.id ?? null,
-          focusPairRightTabId: right ? (rightTabId ?? null) : null,
-          focusPairLeftTabId: right ? leftTabId : null,
-        }
-      : {}),
-    focusedGroupId: virtual(layout.focusedGroupId)
-      ? leftTabId
-        ? virtualLeftId
-        : right!.id
-      : right && layout.focusedGroupId !== right.id
-        ? right.id
-        : groups.some((group) => group.id === layout.focusedGroupId)
-          ? layout.focusedGroupId
-          : (right?.id ?? groups[0]!.id),
-    maximizedGroupId: virtual(layout.maximizedGroupId)
-      ? leftTabId
-        ? virtualLeftId
-        : null
-      : right && layout.maximizedGroupId !== right.id
-        ? null
-        : groups.some((group) => group.id === layout.maximizedGroupId)
-          ? layout.maximizedGroupId
-          : null,
+    ...(besideGroupId ? { besideGroupId } : {}),
+    focusedGroupId: ids.has(layout.focusedGroupId)
+      ? layout.focusedGroupId
+      : (maximizedGroupId ?? groups[0]!.id),
+    maximizedGroupId,
   };
 }
 
@@ -242,8 +256,12 @@ export function syncTileLayout(
       .filter((group) => !group.tabs.length)
       .map((group) => group.id),
   );
-  const root = prune(layout.root, valid, emptyGroupIds);
-  if (!root) return syncTileLayout(undefined, [], surfaceIds, activeSurfaceId, activate);
+  const root = prune(layout.root, valid, emptyGroupIds) ?? {
+    kind: "group",
+    id: "root-group",
+    tabs: [],
+    activeTabId: "",
+  };
   let next = settle({ ...layout, root });
   if (
     activate &&
@@ -258,21 +276,8 @@ export function syncTileLayout(
     });
   }
   const present = new Set(getTileGroups(next).flatMap((group) => group.tabs));
-  const missing = [...valid].filter((id) => !present.has(id));
+  const missing = surfaceIds.filter((id) => !present.has(id));
   if (missing.length) {
-    if (
-      next.focusPairGroupId &&
-      (next.focusedGroupId === "focus-left-group" || next.focusedGroupId === "focus-left-chooser")
-    ) {
-      next = {
-        ...next,
-        focusedGroupId: next.focusPairGroupId,
-        focusPairGroupId: null,
-        focusPairRightTabId: null,
-        focusPairLeftTabId: null,
-        maximizedGroupId: null,
-      };
-    }
     next = {
       ...next,
       root: mapNode(next.root, (node) =>
@@ -299,25 +304,10 @@ export function syncTileLayout(
 
 export function applyTileAction(layout: ThreadTileLayout, action: TileAction): ThreadTileLayout {
   const groups = getTileGroups(layout);
-  const virtualLeft = (groupId: string | null) =>
-    Boolean(
-      layout.focusPairGroupId &&
-      (groupId === "focus-left-group" || groupId === "focus-left-chooser"),
-    );
-  const rightSelection = (
-    group: TileGroup,
-    tabId = group.id === layout.focusPairGroupId
-      ? (layout.focusPairRightTabId ?? group.activeTabId)
-      : group.activeTabId,
-  ) =>
-    layout.focusPairGroupId && tabId
-      ? {
-          focusPairGroupId: group.id,
-          focusPairRightTabId: tabId,
-          focusPairLeftTabId:
-            layout.focusPairLeftTabId === tabId ? null : (layout.focusPairLeftTabId ?? null),
-        }
-      : {};
+  const zoomed = (group: TileGroup) =>
+    Boolean(group.floating) ||
+    group.id === layout.maximizedGroupId ||
+    group.id === layout.besideGroupId;
   if (action.type === "float-group" || action.type === "restore-group") {
     if (!groups.some((group) => group.id === action.groupId)) return layout;
     if (action.type === "float-group" && !Object.values(action.rect).every(Number.isFinite))
@@ -326,57 +316,45 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       ...layout,
       root: mapNode(layout.root, (node) => {
         if (node.kind !== "group" || node.id !== action.groupId) return node;
-        const { floating: _floating, ...group } = node;
+        const { floating, lastFloating: _lastFloating, ...group } = node;
         return action.type === "float-group"
           ? { ...group, floating: boundFloatingTile(action.rect) }
-          : group;
+          : { ...group, ...(floating ? { lastFloating: floating } : {}) };
       }),
       focusedGroupId: action.groupId,
-      focusPairGroupId: null,
       maximizedGroupId: null,
     });
   }
-  if (action.type === "focus-pair") {
-    const group = groups.find((entry) => entry.id === action.groupId);
-    if (action.groupId !== null && !group?.tabs.length) return layout;
-    return {
-      ...layout,
-      focusPairGroupId: group?.id ?? null,
-      focusPairRightTabId: group?.activeTabId ?? null,
-      focusPairLeftTabId: null,
-      focusPairRatio: layout.focusPairRatio ?? 0.55,
-      focusedGroupId:
-        group?.id ??
-        (virtualLeft(layout.focusedGroupId) ? layout.focusPairGroupId! : layout.focusedGroupId),
-      maximizedGroupId: null,
-    };
-  }
-  if (action.type === "focus-left") {
+  if (action.type === "show-beside") {
+    if (action.groupId === null) return settle({ ...layout, besideGroupId: null });
     if (
-      !layout.focusPairGroupId ||
-      (action.tabId !== null &&
-        (action.tabId === layout.focusPairRightTabId ||
-          !groups.some((group) => group.tabs.includes(action.tabId!))))
+      !layout.maximizedGroupId ||
+      action.groupId === layout.maximizedGroupId ||
+      !groups.some((group) => group.id === action.groupId)
     )
       return layout;
-    return {
-      ...layout,
-      focusPairLeftTabId: action.tabId,
-      focusedGroupId: action.tabId ? "focus-left-group" : layout.focusPairGroupId,
-      maximizedGroupId: null,
-    };
+    return { ...layout, besideGroupId: action.groupId, focusedGroupId: action.groupId };
   }
+  if (action.type === "swap-beside")
+    return layout.maximizedGroupId && layout.besideGroupId
+      ? {
+          ...layout,
+          maximizedGroupId: layout.besideGroupId,
+          besideGroupId: layout.maximizedGroupId,
+        }
+      : layout;
   if (action.type === "resize-focus-pair")
     return Number.isFinite(action.ratio)
       ? { ...layout, focusPairRatio: Math.min(0.9, Math.max(0.1, action.ratio)) }
       : layout;
   if (action.type === "maximize") {
     const group = groups.find((entry) => entry.id === action.groupId);
-    return {
+    return settle({
       ...layout,
-      ...(group ? rightSelection(group) : {}),
-      maximizedGroupId: virtualLeft(action.groupId) ? action.groupId : (group?.id ?? null),
-    };
+      besideGroupId: null,
+      maximizedGroupId: group?.id ?? null,
+      focusedGroupId: group?.id ?? layout.focusedGroupId,
+    });
   }
   if (action.type === "resize")
     return Number.isFinite(action.ratio)
@@ -390,32 +368,12 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
         }
       : layout;
   if (action.type === "focus" || action.type === "activate") {
-    if (
-      virtualLeft(action.groupId) ||
-      (action.type === "activate" &&
-        layout.focusPairGroupId &&
-        action.tabId === layout.focusPairLeftTabId)
-    ) {
-      if (
-        action.type === "activate" &&
-        (action.tabId === layout.focusPairRightTabId ||
-          !groups.some((group) => group.tabs.includes(action.tabId)))
-      )
-        return layout;
-      return {
-        ...layout,
-        ...(action.type === "activate" ? { focusPairLeftTabId: action.tabId } : {}),
-        focusedGroupId: action.type === "activate" ? "focus-left-group" : action.groupId,
-        maximizedGroupId: layout.maximizedGroupId === action.groupId ? action.groupId : null,
-      };
-    }
     const group = groups.find((entry) => entry.id === action.groupId);
     if (!group || (action.type === "activate" && !group.tabs.includes(action.tabId))) return layout;
-    return {
+    return settle({
       ...layout,
       focusedGroupId: group.id,
-      ...rightSelection(group, action.type === "activate" ? action.tabId : undefined),
-      maximizedGroupId: layout.maximizedGroupId === group.id ? group.id : null,
+      ...(zoomed(group) ? {} : { maximizedGroupId: null }),
       root:
         action.type === "activate"
           ? mapNode(layout.root, (node) =>
@@ -424,13 +382,34 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
                 : node,
             )
           : layout.root,
-    };
+    });
   }
   if (action.type === "close-group") {
     const group = groups.find((entry) => entry.id === action.groupId);
-    if (!group || group.tabs.length) return layout;
+    if (!group || (groups.length === 1 && !group.tabs.length)) return layout;
     const root = removeGroup(layout.root, group.id);
-    return root ? settle({ ...layout, root }) : layout;
+    return settle({
+      ...layout,
+      root: root ?? { kind: "group", id: group.id, tabs: [], activeTabId: "" },
+      focusedGroupId: root ? layout.focusedGroupId : group.id,
+      maximizedGroupId: null,
+    });
+  }
+  if (action.type === "close-tab") {
+    const owner = groups.find((group) => group.tabs.includes(action.tabId));
+    if (!owner) return layout;
+    const tabs = owner.tabs.filter((id) => id !== action.tabId);
+    if (!tabs.length) return applyTileAction(layout, { type: "close-group", groupId: owner.id });
+    const activeTabId =
+      owner.activeTabId === action.tabId
+        ? tileCloseFallback(layout, action.tabId)!
+        : owner.activeTabId;
+    return settle({
+      ...layout,
+      root: mapNode(layout.root, (node) =>
+        node.id === owner.id ? { ...owner, tabs, activeTabId } : node,
+      ),
+    });
   }
   if (action.type === "new-group") {
     if (
@@ -449,7 +428,6 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     const added: TileGroup = { kind: "group", id: action.groupId, tabs: [], activeTabId: "" };
     return settle({
       ...layout,
-      ...(layout.focusPairGroupId ? { focusPairGroupId: null } : {}),
       root: mapNode(layout.root, (node) =>
         node.id === action.targetGroupId
           ? {
@@ -524,8 +502,24 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       maximizedGroupId: null,
     });
   }
-  const source = groups.find((group) => group.tabs.includes(action.tabId));
   const target = groups.find((group) => group.id === action.targetGroupId);
+  if (
+    target &&
+    action.type === "move" &&
+    action.tabId === CONVERSATION_TAB_ID &&
+    !groups.some((group) => group.tabs.includes(CONVERSATION_TAB_ID))
+  )
+    return settle({
+      ...layout,
+      root: mapNode(layout.root, (node) =>
+        node.id === target.id && node.kind === "group"
+          ? { ...node, tabs: [...node.tabs, CONVERSATION_TAB_ID], activeTabId: CONVERSATION_TAB_ID }
+          : node,
+      ),
+      focusedGroupId: target.id,
+      maximizedGroupId: null,
+    });
+  const source = groups.find((group) => group.tabs.includes(action.tabId));
   if (!source || !target) return layout;
   if (action.type === "split" && source.id === target.id && source.tabs.length === 1) return layout;
   if (action.type === "split") {
@@ -575,11 +569,26 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
   )!;
   return settle({
     ...layout,
-    ...(action.type === "split" && layout.focusPairGroupId ? { focusPairGroupId: null } : {}),
     root,
     focusedGroupId: action.type === "split" ? action.groupId : target.id,
     maximizedGroupId: null,
   });
+}
+
+function parseFloatingRect(raw: unknown): FloatingTileRect | undefined {
+  return raw &&
+    typeof raw === "object" &&
+    "x" in raw &&
+    typeof raw.x === "number" &&
+    "y" in raw &&
+    typeof raw.y === "number" &&
+    "width" in raw &&
+    typeof raw.width === "number" &&
+    "height" in raw &&
+    typeof raw.height === "number" &&
+    [raw.x, raw.y, raw.width, raw.height].every(Number.isFinite)
+    ? boundFloatingTile({ x: raw.x, y: raw.y, width: raw.width, height: raw.height })
+    : undefined;
 }
 
 export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
@@ -621,26 +630,11 @@ export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
       return {
         kind: "group",
         id: raw.id,
-        ...("floating" in raw &&
-        raw.floating &&
-        typeof raw.floating === "object" &&
-        "x" in raw.floating &&
-        typeof raw.floating.x === "number" &&
-        "y" in raw.floating &&
-        typeof raw.floating.y === "number" &&
-        "width" in raw.floating &&
-        typeof raw.floating.width === "number" &&
-        "height" in raw.floating &&
-        typeof raw.floating.height === "number" &&
-        Object.values(raw.floating).every(Number.isFinite)
-          ? {
-              floating: boundFloatingTile({
-                x: raw.floating.x,
-                y: raw.floating.y,
-                width: raw.floating.width,
-                height: raw.floating.height,
-              }),
-            }
+        ...("floating" in raw && parseFloatingRect(raw.floating)
+          ? { floating: parseFloatingRect(raw.floating)! }
+          : {}),
+        ...("lastFloating" in raw && parseFloatingRect(raw.lastFloating)
+          ? { lastFloating: parseFloatingRect(raw.lastFloating)! }
           : {}),
         tabs: raw.tabs,
         activeTabId: raw.activeTabId,
@@ -681,17 +675,8 @@ export function parseTileLayout(value: unknown): ThreadTileLayout | undefined {
   return root
     ? settle({
         root,
-        ...("focusPairGroupId" in value &&
-        (typeof value.focusPairGroupId === "string" || value.focusPairGroupId === null)
-          ? { focusPairGroupId: value.focusPairGroupId }
-          : {}),
-        ...("focusPairRightTabId" in value &&
-        (typeof value.focusPairRightTabId === "string" || value.focusPairRightTabId === null)
-          ? { focusPairRightTabId: value.focusPairRightTabId }
-          : {}),
-        ...("focusPairLeftTabId" in value &&
-        (typeof value.focusPairLeftTabId === "string" || value.focusPairLeftTabId === null)
-          ? { focusPairLeftTabId: value.focusPairLeftTabId }
+        ...("besideGroupId" in value && typeof value.besideGroupId === "string"
+          ? { besideGroupId: value.besideGroupId }
           : {}),
         ...("focusPairRatio" in value &&
         typeof value.focusPairRatio === "number" &&

@@ -166,5 +166,14 @@ export function useRightPanelSurfaceClose(input: {
   });
   const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
 
-  return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
+  // A tile close asks its own question first, so terminals skip their per-terminal prompt.
+  const closeSurfacesWithoutTerminalPrompt = useStableCallback(closeSurfaces);
+
+  return {
+    closeSurface,
+    closeOtherSurfaces,
+    closeSurfacesToRight,
+    closeAllSurfaces,
+    closeSurfacesWithoutTerminalPrompt,
+  };
 }

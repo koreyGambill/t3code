@@ -269,6 +269,8 @@ import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog"
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
+import { dispatchMenuAction } from "../shortcuts/dispatcher";
+import { TILE_PALETTE_COMMANDS } from "./chat/ThreadTileWorkspace.logic";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -1748,6 +1750,19 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (activeThread)
+    for (const { command, title } of TILE_PALETTE_COMMANDS)
+      actionItems.push({
+        kind: "action",
+        value: `action:${command}`,
+        title,
+        searchTerms: [title, "tile", "workspace"],
+        icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: command,
+        // The palette's focus restoration would close a tile menu opened in the same frame.
+        run: async () => void setTimeout(() => dispatchMenuAction(command), 0),
+      });
 
   for (const direction of [1, -1] as const) {
     const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";

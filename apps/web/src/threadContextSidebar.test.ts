@@ -23,9 +23,12 @@ describe("thread context sidebar selection", () => {
     expect(selectContextThread(owner, floating, surfaces, null)).toEqual(child);
     const maximized = applyTileAction(floating, { type: "maximize", groupId: "panels-group" });
     expect(selectContextThread(owner, maximized, surfaces, null)).toEqual(child);
-    const focus = applyTileAction(split, { type: "focus-pair", groupId: "panels-group" });
-    expect(selectContextThread(owner, focus, surfaces, null)).toEqual(child);
-    const left = applyTileAction(focus, { type: "focus", groupId: "focus-left-group" });
+    const paired = applyTileAction(
+      applyTileAction(split, { type: "maximize", groupId: mainGroup }),
+      { type: "show-beside", groupId: "panels-group" },
+    );
+    expect(selectContextThread(owner, paired, surfaces, null)).toEqual(child);
+    const left = applyTileAction(paired, { type: "focus", groupId: mainGroup });
     expect(selectContextThread(owner, left, surfaces, null)).toEqual(owner);
   });
 
