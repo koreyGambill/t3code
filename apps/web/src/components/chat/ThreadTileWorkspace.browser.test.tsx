@@ -343,7 +343,11 @@ it("resizes, shows tiles beside a maximized one and opens independent area views
     notesChooser.id,
   ]);
   expect(screen.getByRole("textbox", { name: "Editor notes" }).element()).toBe(notesElement);
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect([layout().maximizedGroupId, layout().besideGroupId]).toEqual([null, undefined]);
   await userEvent.click(screen.getByRole("textbox", { name: "Editor notes" }));
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(layout().maximizedGroupId).toBe(notesChooser.id);
   await userEvent.keyboard("{Escape}");
   expect(layout().maximizedGroupId).toBeNull();
   expect(JSON.stringify(layout().root)).toBe(fullTree);
@@ -433,6 +437,10 @@ it("moves and resizes floating tiles without docking, and drives the empty choos
     splitId: "chooser-split",
   });
   await expect.element(screen.getByRole("button", { name: "Chat", exact: true })).toBeVisible();
+  // Focus is still on the other tile's Dock button, which keeps its keys.
+  await userEvent.keyboard("n");
+  expect(getTileGroups(layout()).find((group) => group.id === "chooser")?.tabs).toEqual([]);
+  await userEvent.click(screen.getByText("Choose an area", { exact: true }));
   await userEvent.keyboard("{ArrowRight}{ArrowLeft}n");
   expect(getTileGroups(layout()).find((group) => group.id === "chooser")?.tabs[0]).toMatch(
     /^notes:/,

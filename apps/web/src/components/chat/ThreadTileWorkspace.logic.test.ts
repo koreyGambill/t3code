@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { RightPanelSurface } from "../../rightPanelStore";
+import { newTabId } from "../../threadTileLayout";
 import { tileCloseConfirmation } from "./ThreadTileWorkspace.logic";
 
 const terminal = (id: string, terminalIds: string[]): RightPanelSurface => ({
@@ -24,6 +25,7 @@ describe("tileCloseConfirmation", () => {
     ["an empty tile", [], [], null],
     ["one idle tab", ["diff"], ["t1"], null],
     ["one idle terminal", ["terminal:a"], [], null],
+    ["chat beside an empty new tab", ["conversation", newTabId("x")], [], null],
     [
       "several tabs",
       ["diff", "conversation"],

@@ -64,6 +64,9 @@ import {
   MenuPopup,
   MenuSeparator,
   MenuShortcut,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
 import {
@@ -322,19 +325,37 @@ export function ThreadTileWorkspace(props: {
         ?.querySelector<HTMLElement>(`[data-tile-chooser="${CSS.escape(groupId)}"]`)
         ?.focus({ preventScroll: true }),
     );
-  const split = (group: TileGroup, axis: "horizontal" | "vertical") => {
+  const split = (
+    group: TileGroup,
+    axis: "horizontal" | "vertical",
+    side: "before" | "after" = "after",
+  ) => {
     const groupId = randomUUID();
     apply({
       type: "new-group",
       targetGroupId: group.id,
       axis,
-      side: "after",
+      side,
       groupId,
       splitId: randomUUID(),
     });
     focusChooser(groupId);
   };
-  const toggleFloat = (group: TileGroup) =>
+  const moveTabToNewTile = (group: TileGroup, axis: "horizontal" | "vertical") =>
+    apply({
+      type: "split",
+      tabId: group.activeTabId,
+      targetGroupId: group.id,
+      axis,
+      side: "after",
+      groupId: randomUUID(),
+      splitId: randomUUID(),
+    });
+  const canFloat = (group: TileGroup) =>
+    Boolean(group.floating) ||
+    getTileGroups(currentLayout()).filter((entry) => !entry.floating).length > 1;
+  const toggleFloat = (group: TileGroup) => {
+    if (!canFloat(group)) return;
     apply(
       group.floating
         ? { type: "restore-group", groupId: group.id }
@@ -344,6 +365,7 @@ export function ThreadTileWorkspace(props: {
             rect: group.lastFloating ?? DEFAULT_FLOATING_TILE,
           },
     );
+  };
   const closeTileNow = (groupId: string) => {
     const group = getTileGroups(currentLayout()).find((entry) => entry.id === groupId);
     if (!group) return;
@@ -470,23 +492,14 @@ export function ThreadTileWorkspace(props: {
       const next = directionalTile(visibleGeometry(), group.id, direction);
       if (next) focus(next);
     };
-    const moveTab = (direction: "left" | "right" | "up" | "down") => {
+    const newTile = (direction: "left" | "right" | "up" | "down") => {
       const group = currentGroup();
       if (!group) return;
-      const axis = direction === "left" || direction === "right" ? "horizontal" : "vertical";
-      const side = direction === "left" || direction === "up" ? "before" : "after";
-      const groupId = randomUUID();
-      // A lone tab cannot leave its own tile, so the chord opens an empty tile on that side.
-      apply({
-        type: group.tabs.length > 1 ? "split" : "new-group",
-        tabId: group.activeTabId,
-        targetGroupId: group.id,
-        axis,
-        side,
-        groupId,
-        splitId: randomUUID(),
-      });
-      if (group.tabs.length <= 1) focusChooser(groupId);
+      split(
+        group,
+        direction === "left" || direction === "right" ? "horizontal" : "vertical",
+        direction === "left" || direction === "up" ? "before" : "after",
+      );
     };
     const nextTab = (offset: number) => {
       const group = currentGroup();
@@ -501,7 +514,8 @@ export function ThreadTileWorkspace(props: {
     const actions = {
       "workspace.tile.focusPair": () => {
         const current = currentLayout();
-        if (current.maximizedGroupId)
+        if (current.besideGroupId) apply({ type: "maximize", groupId: null });
+        else if (current.maximizedGroupId)
           setOpenMenu({ kind: "actions", groupId: current.maximizedGroupId });
         else apply({ type: "maximize", groupId: current.focusedGroupId });
       },
@@ -528,10 +542,10 @@ export function ThreadTileWorkspace(props: {
       "workspace.tile.focusRight": () => moveFocus("right"),
       "workspace.tile.focusUp": () => moveFocus("up"),
       "workspace.tile.focusDown": () => moveFocus("down"),
-      "workspace.tile.splitLeft": () => moveTab("left"),
-      "workspace.tile.splitRight": () => moveTab("right"),
-      "workspace.tile.splitUp": () => moveTab("up"),
-      "workspace.tile.splitDown": () => moveTab("down"),
+      "workspace.tile.splitLeft": () => newTile("left"),
+      "workspace.tile.splitRight": () => newTile("right"),
+      "workspace.tile.splitUp": () => newTile("up"),
+      "workspace.tile.splitDown": () => newTile("down"),
       "workspace.tile.maximize": () => {
         const current = currentLayout();
         apply({
@@ -577,7 +591,12 @@ export function ThreadTileWorkspace(props: {
         (event.target.isContentEditable ||
           /^(?:INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) ||
           event.target.closest('[role="textbox"]') !== null);
-      if (group && (!group.tabs.length || isNewTab(group.activeTabId)) && !editing) {
+      // Keys reach the chooser only from inside its tile, or when nothing else has focus.
+      const inTile =
+        event.target === document.body ||
+        (event.target instanceof Element &&
+          event.target.closest("[data-tile-group]")?.getAttribute("data-tile-group") === group?.id);
+      if (group && (!group.tabs.length || isNewTab(group.activeTabId)) && !editing && inTile) {
         const choices = areaChoices;
         const index = chooserIndex?.groupId === group.id ? chooserIndex.index : 0;
         const key = event.key.toLowerCase();
@@ -758,7 +777,11 @@ export function ThreadTileWorkspace(props: {
       handle.removeEventListener("pointerup", stop);
       handle.removeEventListener("pointercancel", stop);
       handle.removeEventListener("lostpointercapture", stop);
-      if (next.type === "pointerup") apply({ type: "float-group", groupId: group.id, rect });
+      const moved = (["x", "y", "width", "height"] as const).some(
+        (key) => rect[key] !== initial[key],
+      );
+      if (next.type === "pointerup" && moved)
+        apply({ type: "float-group", groupId: group.id, rect });
       setFloatingOverride(null);
       setResizing(false);
     };
@@ -907,6 +930,7 @@ export function ThreadTileWorkspace(props: {
               )}
               data-focused={focusedGroupId === id}
               aria-label={`Tile: ${title(group.activeTabId)}`}
+              data-tile-group={id}
             >
               <div
                 className="workspace-tile-titlebar flex min-w-0 cursor-grab items-center gap-0.5 px-1 active:cursor-grabbing"
@@ -946,6 +970,7 @@ export function ThreadTileWorkspace(props: {
                 <div className="flex min-w-0 flex-1 items-center">
                   <div
                     className="workspace-tile-tabs flex min-w-0 items-center overflow-x-auto px-1"
+                    onScroll={(event) => markTabOverflow(event.currentTarget)}
                     role="tablist"
                     aria-label="Tile tabs"
                   >
@@ -1143,8 +1168,25 @@ export function ThreadTileWorkspace(props: {
                     </MenuItem>
                     <MenuItem onClick={() => split(group, "horizontal")}>
                       New tile to the right
+                      <TileMenuShortcut keys={shortcut("workspace.tile.splitRight")} />
                     </MenuItem>
-                    <MenuItem onClick={() => split(group, "vertical")}>New tile below</MenuItem>
+                    <MenuItem onClick={() => split(group, "vertical")}>
+                      New tile below
+                      <TileMenuShortcut keys={shortcut("workspace.tile.splitDown")} />
+                    </MenuItem>
+                    <MenuSub>
+                      <MenuSubTrigger disabled={group.tabs.length < 2}>
+                        Move tab to new tile
+                      </MenuSubTrigger>
+                      <MenuSubPopup>
+                        <MenuItem onClick={() => moveTabToNewTile(group, "horizontal")}>
+                          Right
+                        </MenuItem>
+                        <MenuItem onClick={() => moveTabToNewTile(group, "vertical")}>
+                          Below
+                        </MenuItem>
+                      </MenuSubPopup>
+                    </MenuSub>
                     <MenuItem
                       disabled={!group.tabs.length}
                       onClick={() => closeTab(group.activeTabId)}
@@ -1426,8 +1468,9 @@ export function ThreadTileWorkspace(props: {
           </TooltipTrigger>
           <TooltipPopup>
             Ctrl+Alt+arrows or H/J/K/L: focus tile. Hold Ctrl+Alt+R and move the mouse: resize. Add
-            Shift: split tab. Ctrl+Alt+Enter: maximize. Ctrl+Alt+[ or ] / Ctrl+Tab: switch tab. Drag
-            a tab to group it or split at an edge. Drag the title bar to move the whole tile.
+            Shift: new tile on that side. Ctrl+Alt+Enter: maximize. Ctrl+Alt+[ or ] / Ctrl+Tab:
+            switch tab. Drag a tab to group it or split at an edge. Drag the title bar to move the
+            whole tile.
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -1435,14 +1478,26 @@ export function ThreadTileWorkspace(props: {
   );
 }
 
-// Scrolls only the tab strip, so an overflow-hidden workspace never shifts.
+function markTabOverflow(strip: HTMLElement) {
+  strip.dataset.overflowStart = String(strip.scrollLeft > 1);
+  strip.dataset.overflowEnd = String(strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1);
+}
+
+// Scrolls only the tab strip, to a whole-tab boundary, so no cut-off tab sits at its start
+// and an overflow-hidden workspace never shifts.
 function revealTab(tab: HTMLElement | null) {
   const strip = tab?.parentElement;
   if (!tab || !strip) return;
-  const offset = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
-  if (offset < 0) strip.scrollLeft += offset;
-  else if (offset + tab.offsetWidth > strip.clientWidth)
-    strip.scrollLeft += offset + tab.offsetWidth - strip.clientWidth;
+  const origin = strip.getBoundingClientRect().left - strip.scrollLeft;
+  const pad = Number.parseFloat(getComputedStyle(strip).paddingLeft) || 0;
+  const startOf = (element: Element) => element.getBoundingClientRect().left - origin - pad;
+  const start = startOf(tab);
+  const end = start + tab.offsetWidth + 2 * pad;
+  if (start < strip.scrollLeft) strip.scrollLeft = start;
+  else if (end > strip.scrollLeft + strip.clientWidth)
+    strip.scrollLeft =
+      [...strip.children].map(startOf).find((edge) => edge >= end - strip.clientWidth) ?? start;
+  markTabOverflow(strip);
 }
 
 function TileMenuShortcut(props: { keys: string | null }) {
