@@ -115,17 +115,34 @@ try {
     $calls.operations += $label
     Assert ($seconds -gt 0 -and $seconds -le 5) 'Probe exceeded its operation budget'
     if ($label -eq 'health') { @{ healthy = $true } }
-  }
+  } { throw 'A responsive distro must not wait' }
   Assert ($result.healthy -and ($calls.operations -join ',') -eq 'wsl-responsive,health') 'WSL operation ran without its responsiveness probe'
-  $calls.operations = @()
-  Must-Fail {
+  # Probes that hang for a while, as during the 44e6918b0d install, must wait it out rather than refuse.
+  $clock = @{ now = [DateTime]'2026-01-01T00:00:00Z'; delays = @() }
+  $calls = @{ operations = @(); budget = 0 }
+  $result = Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'stopped' 5 {
+    param($executable, $arguments, $label, $seconds)
+    $calls.operations += $label
+    if ($label -eq 'wsl-responsive') { $clock.now = $clock.now.AddSeconds(3); if ($calls.operations.Count -le 4) { throw 'wsl-responsive exceeded 3s' } }
+    else { $calls.budget = $seconds; @{ stopped = $true } }
+  } { param($seconds, $failure) Assert ($failure -match 'exceeded') 'Retry lost its failure'; $clock.delays += $seconds; $clock.now = $clock.now.AddSeconds($seconds) } 180 { $clock.now }
+  Assert ($result.stopped -and ($calls.operations -join ',') -eq 'wsl-responsive,wsl-responsive,wsl-responsive,wsl-responsive,wsl-responsive,stopped') 'Transient WSL hangs refused the operation'
+  Assert (($clock.delays -join ',') -eq '1,2,4,8' -and $calls.budget -eq 5) 'Retries did not back off or shortened the operation budget'
+  $clock = @{ now = [DateTime]'2026-01-01T00:00:00Z'; delays = @() }
+  $calls = @{ operations = @() }
+  $failure = $null
+  try {
     Invoke-LocalUpdateWsl 'fixture-distro' @('fixture-command') 'health' 5 {
       param($executable, $arguments, $label, $seconds)
       $calls.operations += $label
+      $clock.now = $clock.now.AddSeconds(3)
       throw 'Wsl/Service/WSAETIMEDOUT'
-    }
-  }
-  Assert (($calls.operations -join ',') -eq 'wsl-responsive') 'Unresponsive WSL still received the operation'
+    } { param($seconds) $clock.delays += $seconds; $clock.now = $clock.now.AddSeconds($seconds) } 180 { $clock.now }
+  } catch { $failure = $_.Exception.Message }
+  Assert ($failure -match "'fixture-distro' is unresponsive; refusing runtime operations" -and $failure -match 'WSAETIMEDOUT') 'Hung WSL was not refused with its last failure'
+  Assert (@($calls.operations | Where-Object { $_ -ne 'wsl-responsive' }).Count -eq 0) 'Unresponsive WSL still received the operation'
+  Assert ($calls.operations.Count -ge 10 -and $calls.operations.Count -le 20 -and ($clock.now - [DateTime]'2026-01-01T00:00:00Z').TotalSeconds -le 190) 'Unresponsive window was not bounded'
+  Write-Host 'PASS case: wsl-responsive-window'
   foreach ($case in @('healthy', 'unhealthy', 'stop-failed', 'promotion-failed')) {
     $fixture = Join-Path $root ('runtime-' + $case)
     $resources = Join-Path $fixture 'resources'
@@ -157,7 +174,7 @@ try {
     Assert ($calls.recoveries -eq $(if ($case -in @('unhealthy', 'stop-failed')) { 1 } else { 0 })) 'Runtime recovery was skipped after stopping'
     Write-Host "PASS case: runtime-selection-$case"
   }
-  foreach ($case in @('stopped-throws', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
+  foreach ($case in @('stopped-throws', 'stopped-transient', 'close-late-exit', 'health-transient', 'desktop-exits', 'desktop-handoff', 'runtime-no-desktop', 'runtime-backup', 'runtime-recovery', 'runtime-recovery-late-exit')) {
     $fixture = Join-Path $root ('activation-' + $case)
     $install = Join-Path $fixture 'installed'
     $resources = Join-Path $install 'resources'
@@ -197,9 +214,10 @@ try {
     $config = @{ install = $install; updatePath = $(if ($runtimeOnly) { 'wsl-only' } else { 'full' }); archive = (Join-Path $payload 'resources/wsl-runtime.tar.gz'); digest = $digest; exeHash = (Get-FileHash (Join-Path $payload 'Weavewing.exe') -Algorithm SHA256).Hash.ToLowerInvariant(); checkOnly = $false; drainMinutes = 0; healthSeconds = 0.1; backupRootWindows = $backupRoot; clientSource = $clientSource; clientCommit = 'client-head'; clientAssetsDirectory = 'resources/client' }
     if ($case -in @('close-late-exit', 'runtime-recovery-late-exit')) { $config.closeSeconds = 0 }
     if ($case -eq 'desktop-exits') { $config.healthSeconds = 3 }
+    if ($case -in @('stopped-throws', 'stopped-transient')) { $config.notifyThread = 'fixture-thread'; $config.commit = 'fixture-commit' }
     $config | ConvertTo-Json | Set-Content $configPath
     $invokeWsl = (Get-Item Function:Invoke-LocalUpdateWsl).ScriptBlock
-    $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0; crashedHealth = 0; launcherVariables = @() }
+    $calls = @{ operations = @(); starts = 0; sleeps = 0; closed = 0; health = 0; crashedHealth = 0; stopped = 0; notify = $null; launcherVariables = @() }
     $tmp = $env:TMP
     $env:TMP = $fixture
     function Get-Process {
@@ -245,7 +263,12 @@ try {
         if ($case -eq 'desktop-exits' -and $calls.starts -eq 1) { $calls.crashedHealth++; return @{ healthy = $false; pid = 123 } }
         return @{ healthy = ($case -notin @('runtime-recovery', 'runtime-recovery-late-exit') -or $calls.health -eq 1 -or $calls.starts -gt 0); pid = 123; environmentId = 'fixture' }
       }
-      if ($label -eq 'stopped' -and $case -eq 'stopped-throws') { throw 'WSL responsiveness failed after close' }
+      if ($label -eq 'stopped' -and $case -eq 'stopped-throws') { throw "WSL distribution 'fixture' is unresponsive; refusing runtime operations. No probe answered." }
+      if ($label -eq 'stopped' -and $case -eq 'stopped-transient' -and ++$calls.stopped -eq 1) { throw 'stopped exceeded 5s; captured helper stopped.' }
+      if ($label -eq 'notify') {
+        $calls.notify = $arguments[-1]
+        if ($case -eq 'stopped-transient') { throw 'notify exceeded 30s' }
+      }
       if ($label -eq 'capture-links') { throw 'No links in fixture' }
       return @{ installed = $true; backedUp = $true; stopped = $true; path = 'fixture-wsl-backup' }
     }
@@ -267,6 +290,13 @@ try {
       Assert (-not (Test-Path $backupRoot)) 'Failed update left a retry-blocking Windows backup'
       Assert (Test-Path (Join-Path $rollback 'app/previous')) 'Failure removed the existing rollback app'
       Assert (@(Get-ChildItem $rollback -Recurse -Filter 'saved').Count -eq 1) 'Failure lost the owned state backup'
+      $statuses = @(Get-Content (Join-Path $fixture 'activation.log') | ForEach-Object { try { ($_ | ConvertFrom-Json).status } catch {} } | Where-Object { $_ })
+      $recovering = [Array]::IndexOf($statuses, 'recovering')
+      Assert ($recovering -gt [Array]::IndexOf($statuses, 'waiting-previous-runtime') -and $recovering -lt [Array]::LastIndexOf($statuses, 'failed')) 'Recovery kept showing the phase that failed'
+      Assert ($receipt.notification.sent -and $calls.notify -match 'result: failed\. Commit fixture-commit\. Error: WSL distribution .fixture. is unresponsive') 'Failure notification lost its cause'
+    } elseif ($case -eq 'stopped-transient') {
+      Assert ($receipt.status -eq 'verified' -and $calls.stopped -eq 2 -and $calls.starts -eq 1) 'One slow stopped probe failed the update'
+      Assert ($receipt.notification.sent -eq $false -and $receipt.notification.error -match 'notify exceeded') 'Receipt did not record the failed notification'
     } elseif ($case -eq 'close-late-exit') {
       Assert ($receipt.status -eq 'failed' -and $receipt.closeRequested -and $calls.sleeps -ge 3) 'Late desktop exit was not awaited'
       Assert ($calls.starts -eq 1 -and $receipt.rollbackHealthy) 'Desktop that exited after the close deadline was not relaunched'

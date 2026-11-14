@@ -65,13 +65,23 @@ function Invoke-LocalUpdateSwap($install, $payload, $rollback, [scriptblock]$Sta
   }
 }
 
-function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$seconds, [scriptblock]$Invoke) {
-  $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
-  try { & $Invoke 'wsl.exe' @('-d', $distro, '--exec', '/bin/true') 'wsl-responsive' ([Math]::Min(3, $seconds)) | Out-Null }
-  catch { throw "WSL distribution '$distro' is unresponsive; refusing runtime operations. $($_.Exception.Message)" }
-  $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
-  if ($remaining -le 0) { throw 'WSL responsiveness probe exhausted the operation deadline.' }
-  return & $Invoke 'wsl.exe' $arguments $label $remaining
+# A fragmented WSL kernel fails some hvsock channel setups, so wsl.exe launches hang 30s each for minutes
+# (over 3 minutes observed) while a few pass. Only a distro that answers no probe in the whole window counts as hung.
+function Invoke-LocalUpdateWsl($distro, [string[]]$arguments, $label, [double]$seconds, [scriptblock]$Invoke, [scriptblock]$Delay = { param($seconds, $failure) Start-Sleep -Seconds $seconds }, [double]$ResponsiveSeconds = 300, [scriptblock]$Now = { [DateTime]::UtcNow }) {
+  $deadline = (& $Now).AddSeconds($ResponsiveSeconds)
+  $attempts = 0
+  $wait = 1
+  while ($true) {
+    $attempts++
+    try { & $Invoke 'wsl.exe' @('-d', $distro, '--exec', '/bin/true') 'wsl-responsive' 3 | Out-Null; break }
+    catch {
+      $remaining = ($deadline - (& $Now)).TotalSeconds
+      if ($remaining -le 0) { throw "WSL distribution '$distro' is unresponsive; refusing runtime operations. No probe answered in $attempts attempts over ${ResponsiveSeconds}s. Last: $($_.Exception.Message)" }
+      & $Delay ([Math]::Min($wait, $remaining)) $_.Exception.Message
+      $wait = [Math]::Min(10, $wait * 2)
+    }
+  }
+  return & $Invoke 'wsl.exe' $arguments $label $seconds
 }
 
 function Invoke-LocalRuntimeUpdate($resources, $archive, $digest, $rollback, [scriptblock]$Stop, [scriptblock]$Healthy, [scriptblock]$Recover, $clientSource) {
@@ -174,6 +184,10 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       return Invoke-LocalUpdateWsl $config.distro (@('-d', $config.distro, '--exec', $config.node, ($config.output + '/worker.mjs'), '--worker', $operation, ($config.output + '/config.json')) + $extra) $operation $seconds {
         param($executable, $arguments, $label, $remaining)
         Invoke-UpdateProcess $executable $arguments $label $remaining
+      } {
+        param($seconds, $failure)
+        Add-Content -LiteralPath $log -Value (@{ operation = 'wsl-responsive-retry'; target = $operation; delaySeconds = $seconds; error = $failure; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)
+        Start-Sleep -Seconds $seconds
       }
     }
 
@@ -257,15 +271,27 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
       } while ([DateTime]::UtcNow -lt $deadline)
       return $false
     }
+    # Only answers count toward the 60s exit deadline; failed calls are bounded by the probe window and 600s overall.
     function Wait-UpdateStopped($processId) {
-      $deadline = [DateTime]::UtcNow.AddSeconds(30)
-      do {
-        $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
-        if ($remaining -le 0) { throw 'WSL server did not exit within 30s; refusing to move its application.' }
-        if ((Probe-Update 'stopped' @([string]$processId) ([Math]::Min(5, $remaining))).stopped) { return }
+      $started = [DateTime]::UtcNow
+      $running = $null
+      $last = 'no answer'
+      while ($true) {
+        $answer = $null
+        try { $answer = Probe-Update 'stopped' @([string]$processId) 5 }
+        catch {
+          if ($_.Exception.Message -match 'is unresponsive; refusing') { throw }
+          $last = $_.Exception.Message
+        }
+        if ($answer) {
+          if ($answer.stopped) { return }
+          if (-not $running) { $running = [DateTime]::UtcNow }
+          if (([DateTime]::UtcNow - $running).TotalSeconds -ge 60) { throw "WSL server $processId did not exit within 60s; refusing to move its application." }
+          $last = "process $processId still running"
+        }
+        if (([DateTime]::UtcNow - $started).TotalSeconds -ge 600) { throw "Could not confirm WSL server $processId exited within 600s; refusing to move its application. Last: $last" }
         Start-Sleep -Milliseconds 500
-      } while ([DateTime]::UtcNow -lt $deadline)
-      throw 'WSL server did not exit within 30s; refusing to move its application.'
+      }
     }
     function Assert-UpdateRollback {
       if (Test-Path -LiteralPath $rollback) {
@@ -450,6 +476,7 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
     } catch {
       $details.error = $_.Exception.Message
       if ($closed -and (-not $swapStarted -or -not (Test-Path -LiteralPath (Join-Path $rollback 'app')))) {
+        Save-UpdateStatus 'recovering'
         try {
           # A close that timed out may still finish; deciding on the first look would leave no desktop.
           if ($details.closeRequested) { Wait-UpdateDesktopExit 90 | Out-Null }
@@ -475,7 +502,20 @@ function Invoke-LocalDesktopUpdate($ConfigPath, $Mode) {
         } catch { $details.backupRecoveryError = $_.Exception.Message; Save-UpdateStatus $details.status }
       }
       if ($config.notifyThread -and -not $config.checkOnly) {
-        try { Probe-Update 'notify' @($(if ($details.status -eq 'verified') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit). Receipt: $($config.output)/receipt.json. $($details.warning) $($details.reloadHint)") | Out-Null } catch { Add-Content -LiteralPath $log -Value "Notification failed: $_" }
+        $reason = ''
+        if ($details.error) {
+          # Quote-UpdateArgument refuses double quotes and newlines.
+          $flat = ($details.error -replace '\s+', ' ') -replace '"', "'"
+          $reason = ' Error: ' + $flat.Substring(0, [Math]::Min(300, $flat.Length))
+        }
+        try {
+          Probe-Update 'notify' @($(if ($details.status -eq 'verified') { $config.digest } else { $oldDigest }), "Automated local update result: $($details.status). Commit $($config.commit).$reason Receipt: $($config.output)/receipt.json. $($details.warning) $($details.reloadHint)") | Out-Null
+          $details.notification = @{ sent = $true }
+        } catch {
+          $details.notification = @{ sent = $false; error = $_.Exception.Message }
+          Add-Content -LiteralPath $log -Value "Notification failed: $_"
+        }
+        Save-UpdateStatus $details.status
       }
       $mutex.ReleaseMutex()
       $mutex.Dispose()

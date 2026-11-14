@@ -427,7 +427,12 @@ and handed off to a running Weavewing window; the receipt's
 under the new archive digest to answer the environment endpoint with the original environment id.
 `--health-seconds` defaults to 240; the non-migrating fast path caps it at 45 seconds. Transient probe
 failures remain in the receipt while health polling continues to its deadline.
-Failure restores and relaunches the previous app when graceful shutdown succeeds. State snapshots
+Every WSL call first runs `/bin/true` with a 3-second limit. A fragmented WSL kernel can fail the
+hvsock channel each `wsl.exe` launch needs (`page allocation failure: order:7` in `dmesg`), so launches
+can hang for minutes while some still pass. Failed probes retry with backoff, logged as
+`wsl-responsive-retry`, and the updater refuses runtime operations only when nothing answers for 5 minutes.
+Failure restores and relaunches the previous app when graceful shutdown succeeds; the receipt reads
+`recovering` until that relaunch is healthy or gives up. State snapshots
 are retained for manual recovery; rollback does not overwrite live user data or undo database migrations.
 After a healthy full swap, a separate deadline of at most 20 seconds covers both existing Windows/WSL peer
 identities at their saved URLs and a read-only authenticated MCP call from each side. The probes read
@@ -444,7 +449,8 @@ It never force-kills a process. Check `receipt.json` and `activation.log` in the
 restart. Every PowerShell mode records exceptions as `failed` with an error message, including setup
 failures. The detached driver's output also points to `detached.stderr` for startup diagnostics.
 The receipt links `helpers/`, which records every helper PID at spawn.
-`--notify-thread ID` additionally sends the result with `t3 thread send`.
+`--notify-thread ID` additionally sends the result and any error with `t3 thread send`, which queues
+behind a running turn; the receipt's `notification` records whether it was sent.
 
 The staging helper remains available as `scripts/stage-windows-desktop.ps1`. Run its adjacent fixture
 test and `scripts/activate-local-desktop.test.ps1 -WorkerPath <output-directory>\worker.mjs`
