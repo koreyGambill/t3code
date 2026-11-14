@@ -1,4 +1,5 @@
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
@@ -124,18 +125,43 @@ export function changedFiles(root: string, base: string): string[] {
   ].sort();
 }
 
-/** Tree object of the working tree, uncommitted and untracked files included. */
-export function workingTree(root: string): string {
-  const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "sw-tree-"));
-  try {
-    const index = NodePath.join(scratch, "index");
-    NodeFS.copyFileSync(NodePath.resolve(root, git(root, "rev-parse", "--git-path", "index")), index);
-    const env = { ...process.env, GIT_INDEX_FILE: index };
-    NodeChildProcess.execFileSync("git", ["-C", root, "add", "-A"], { env });
-    return NodeChildProcess.execFileSync("git", ["-C", root, "write-tree"], { env, encoding: "utf8" }).trim();
-  } finally {
-    NodeFS.rmSync(scratch, { recursive: true, force: true });
+/**
+ * The inputs check:changed reads, hashed as scripts/check-changed.ts keys its own replay: the
+ * binary diff against base, raw bytes of changed, untracked and ignored generated files, and
+ * install state. Includes the checkout path because ignored caches differ per worktree.
+ */
+export function checkChangedInputs(root: string, base: string): string {
+  const hash = NodeCrypto.createHash("sha256");
+  hash.update(`${root}\0${base}\0${process.env.CI ?? ""}\0`);
+  hash.update(
+    NodeChildProcess.execFileSync(
+      "git",
+      ["-C", root, "diff", "--binary", "--no-renames", "--no-ext-diff", "--no-textconv", base, "--"],
+      { maxBuffer: 1024 * 1024 * 1024 },
+    ),
+  );
+  const ignored = git(
+    root,
+    "ls-files", "--others", "--ignored", "--exclude-standard", "--",
+    ":(glob)**/.generated/**",
+    ":(glob)**/.astro/**",
+    ":(glob)**/*.d.ts",
+    ":(glob)**/.env*",
+    ":(exclude,glob)**/node_modules/**",
+  )
+    .split("\n")
+    .filter(Boolean);
+  for (const file of [
+    ...changedFiles(root, base),
+    ...ignored,
+    "node_modules/.modules.yaml",
+    "node_modules/.pnpm/lock.yaml",
+  ]) {
+    hash.update(`\0${file}\0`);
+    const path = NodePath.join(root, file);
+    if (NodeFS.statSync(path, { throwIfNoEntry: false })?.isFile()) hash.update(NodeFS.readFileSync(path));
   }
+  return hash.digest("hex");
 }
 
 interface WorkspacePackage {
