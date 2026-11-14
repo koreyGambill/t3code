@@ -35,7 +35,7 @@ definePipeline({
       await logged(ctx, co, "pipelines-typecheck", ["npm", "--prefix", ".sparkwing", "run", "typecheck"]);
     })
       .inline()
-      .cores(1)
+      .cores(0.25)
       .skipIf((ctx) => {
         const co = checkout(ctx);
         const base = comparisonBase(co.root, ctx.args.ref || undefined);
