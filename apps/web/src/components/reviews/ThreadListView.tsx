@@ -67,7 +67,7 @@ type Change = ThreadListUpdateInput["changes"][number];
 const filterLabels: Record<TodoFilter, string> = { all: "All", mine: "Mine", agents: "Agents" };
 
 /** A radio item's label with its check on the right, which the menu's radio items omit. */
-function CheckedLabel({ children }: { children: ReactNode }) {
+export function CheckedLabel({ children }: { children: ReactNode }) {
   return (
     <span className="flex items-center justify-between gap-4">
       {children}
@@ -167,10 +167,11 @@ export function ThreadListView({
     void mutate({ changes: [], order });
   };
   const visible = visibleTodoIds(tree);
-  const indent = (id: string, direction: "in" | "out", draftText: string | null = null) => {
-    const update = todoTabUpdate(entry.items, id, draftText, direction, visible);
+  /** `draftText` is undefined from the menu, and the editor's draft (or null) from Tab. */
+  const indent = (id: string, direction: "in" | "out", draftText?: string | null) => {
+    const update = todoTabUpdate(entry.items, id, draftText ?? null, direction, visible);
     if (!update) return false;
-    focusTextRef.current = draftText === null ? null : id;
+    focusTextRef.current = draftText === undefined ? null : id;
     void mutate(update);
     return true;
   };
@@ -436,7 +437,7 @@ function TodoRow({
   const onTextKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") event.currentTarget.blur();
     if (event.key !== "Tab") return;
-    if (onIndent(event.shiftKey ? "out" : "in", text)) {
+    if (onIndent(event.shiftKey ? "out" : "in", text ?? null)) {
       event.preventDefault();
       skipBlurSave.current = true;
       setText(null);
@@ -455,7 +456,6 @@ function TodoRow({
           }
         />
         <div className="min-w-0 flex-1 leading-5">
-          <OwnerIcon owner={item.owner} />
           <button
             type="button"
             className={cn(
@@ -465,6 +465,7 @@ function TodoRow({
             aria-expanded={expanded}
             onClick={() => onExpandedChange(!expanded)}
           >
+            <OwnerIcon owner={item.owner} />
             {item.text}
           </button>
           {item.state === "dropped" ? (

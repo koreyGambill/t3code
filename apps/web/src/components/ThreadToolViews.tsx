@@ -55,7 +55,7 @@ import {
 import { buildThreadRouteParams } from "../threadRoutes";
 import { ThreadInspectPanel, type ThreadInspectSection } from "./insights/ThreadInspectPanel";
 import { ToolHeaderButton } from "./threadToolsHost";
-import { ThreadListView } from "./reviews/ThreadListView";
+import { CheckedLabel, ThreadListView } from "./reviews/ThreadListView";
 import { ArtifactsPanel } from "./reviews/ThreadWorkspacePanel";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -86,7 +86,10 @@ export const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectio
 });
 
 /** Views that lay out their own padding and scrolling. */
-export const FLUSH_THREAD_TOOLS: ReadonlySet<ThreadContextSection> = new Set(["inspect"]);
+export const FLUSH_THREAD_TOOLS: ReadonlySet<ThreadContextSection> = new Set([
+  "inspect",
+  "details",
+]);
 
 export function ThreadToolSection({
   section,
@@ -117,7 +120,7 @@ export function ThreadToolSection({
       return (
         <div
           ref={detailsRef}
-          className="@container group/details-destination mx-auto w-full max-w-4xl"
+          className="@container group/details-destination mx-auto w-full max-w-4xl overflow-y-auto py-1"
         >
           <div className="text-xs group-has-[[data-context-thread-details]]/details-destination:hidden">
             <ThreadSummary threadRef={threadRef} />
@@ -393,7 +396,7 @@ function ThreadLinks({
                 <MenuRadioGroup value={service} onValueChange={(next) => setService(String(next))}>
                   {["all", "Ticket", "Pull request", ...services].map((name) => (
                     <MenuRadioItem key={name} value={name}>
-                      {name === "all" ? "All" : name}
+                      <CheckedLabel>{name === "all" ? "All" : name}</CheckedLabel>
                     </MenuRadioItem>
                   ))}
                 </MenuRadioGroup>
@@ -413,10 +416,18 @@ function ThreadLinks({
                       preferences.setSort(next);
                   }}
                 >
-                  <MenuRadioItem value="newest">Newest first</MenuRadioItem>
-                  <MenuRadioItem value="oldest">Oldest first</MenuRadioItem>
-                  <MenuRadioItem value="service">By service</MenuRadioItem>
-                  <MenuRadioItem value="link">By link</MenuRadioItem>
+                  <MenuRadioItem value="newest">
+                    <CheckedLabel>Newest first</CheckedLabel>
+                  </MenuRadioItem>
+                  <MenuRadioItem value="oldest">
+                    <CheckedLabel>Oldest first</CheckedLabel>
+                  </MenuRadioItem>
+                  <MenuRadioItem value="service">
+                    <CheckedLabel>By service</CheckedLabel>
+                  </MenuRadioItem>
+                  <MenuRadioItem value="link">
+                    <CheckedLabel>By link</CheckedLabel>
+                  </MenuRadioItem>
                 </MenuRadioGroup>
               </MenuGroup>
               <MenuSeparator />
@@ -706,8 +717,7 @@ function ThreadArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
       : null,
   );
   const open = useThreadContextSidebarStore((state) => state.artifactId);
-  const setOpen = (id: string | null) =>
-    useThreadContextSidebarStore.getState().selectArtifact(id);
+  const setOpen = (id: string | null) => useThreadContextSidebarStore.getState().selectArtifact(id);
   const [filter, setFilter] = useState("");
   const { copy, isCopied } = useRowCopy();
   const nowMinute = useNowMinute();
@@ -767,18 +777,20 @@ function ThreadArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
             onClick={() => setOpen(artifact.id)}
           >
             <span className="block break-words font-medium leading-5">{artifact.title}</span>
-            <span className="block truncate text-3xs text-muted-foreground">
-              v{latest?.version ?? 1} · {artifact.format === "html" ? "HTML" : "Markdown"}
-              {latest
-                ? ` · ${formatElapsedDurationLabel(latest.createdAt, Date.parse(`${nowMinute}:00.000Z`))}`
-                : ""}
+            <span className="flex flex-wrap items-center gap-x-1.5 text-3xs text-muted-foreground">
+              <span>
+                v{latest?.version ?? 1} · {artifact.format === "html" ? "HTML" : "Markdown"}
+                {latest
+                  ? ` · ${formatElapsedDurationLabel(latest.createdAt, Date.parse(`${nowMinute}:00.000Z`))}`
+                  : ""}
+              </span>
+              {unanswered ? (
+                <Badge size="sm" variant="warning">
+                  {unanswered} unanswered
+                </Badge>
+              ) : null}
             </span>
           </button>
-          {unanswered ? (
-            <Badge size="sm" variant="warning" className="mt-0.5">
-              {unanswered} unanswered
-            </Badge>
-          ) : null}
           <RowActions
             label={artifact.title}
             copyLabel="Copy content"

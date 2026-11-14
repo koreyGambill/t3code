@@ -72,7 +72,7 @@ export function ThreadInsightsPanel({
   const data = query.data;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
-      <header className="flex h-7 shrink-0 items-center gap-1 border-b px-1">
+      <header className="flex min-h-7 shrink-0 flex-wrap items-center gap-1 border-b px-1 py-0.5">
         {tabs}
         {mode === "loads" && (
           <>
@@ -81,7 +81,7 @@ export function ThreadInsightsPanel({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search…"
-              className="h-5 min-w-0 flex-1 rounded border bg-background px-1 text-xs"
+              className="h-5 min-w-24 flex-1 rounded border bg-background px-1 text-xs"
             />
             <Popover>
               <PopoverTrigger

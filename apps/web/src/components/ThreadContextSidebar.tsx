@@ -203,7 +203,11 @@ export function ThreadToolsBrand({ onBackdrop }: { onBackdrop: boolean }) {
             />
           }
         >
-          <WeavewingMark aria-hidden className="size-5" />
+          <WeavewingMark
+            aria-hidden
+            // The mark's thin green and yellow strokes vanish on the light backdrop without a tile.
+            className={cn("size-5", onBackdrop && "rounded-md bg-background/85 p-0.5")}
+          />
         </TooltipTrigger>
         <TooltipPopup side="bottom">{tooltip("threads", "Thread list")}</TooltipPopup>
       </Tooltip>

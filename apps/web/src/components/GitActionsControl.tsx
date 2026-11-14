@@ -1749,7 +1749,9 @@ export default function GitActionsControl({
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className={cn("shrink-0", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
+            <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              Changes
+            </span>
             {changesBaseLabel ? (
               <Tooltip>
                 <TooltipTrigger
