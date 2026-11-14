@@ -427,16 +427,6 @@ export function ThreadTileWorkspace(props: {
     { label: "Browser", enabled: props.panels.browserAvailable, run: props.panels.onAddBrowser },
     { label: "Terminal", enabled: props.panels.terminalAvailable, run: props.panels.onAddTerminal },
     { label: "Files", enabled: props.panels.filesAvailable, run: props.panels.onAddFiles },
-    {
-      label: "Artifacts",
-      enabled: Boolean(props.panels.onAddReviews),
-      run: props.panels.onAddReviews,
-    },
-    {
-      label: "Inspect",
-      enabled: Boolean(props.panels.onAddInspect),
-      run: props.panels.onAddInspect,
-    },
     { label: "Notes", enabled: Boolean(props.panels.onAddNotes), run: props.panels.onAddNotes },
     { label: "Diff", enabled: props.panels.diffAvailable, run: props.panels.onAddDiff },
     {
