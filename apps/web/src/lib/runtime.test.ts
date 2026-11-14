@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
+// Loads the module graph during collection; a cold load inside the first case outran its timeout under load.
+import "./runtime";
 
 afterEach(() => {
   vi.unstubAllEnvs();
