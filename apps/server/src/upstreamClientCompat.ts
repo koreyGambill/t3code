@@ -168,6 +168,7 @@ export function scheduledTasksForClient(
         : Effect.andThen(refuseHidden(input.id), service.upsert(input)),
     setEnabled: (input) => Effect.andThen(refuseHidden(input.id), service.setEnabled(input)),
     runNow: (input) => Effect.andThen(refuseHidden(input.id), service.runNow(input)),
+    delete: (input) => Effect.andThen(refuseHidden(input.id), service.delete(input)),
     rotateWebhookToken: (input) =>
       Effect.andThen(refuseHidden(input.id), service.rotateWebhookToken(input)),
   };
