@@ -460,7 +460,7 @@ it("moves and resizes floating tiles without docking, and drives the empty choos
   await userEvent.click(screen.getByText("Choose an area", { exact: true }));
   await userEvent.keyboard("{Escape}");
   expect(getTileGroups(layout()).some((group) => group.id === "escaped")).toBe(false);
-  expect(document.activeElement).not.toBe(document.body);
+  await vi.waitFor(() => expect(document.activeElement).not.toBe(document.body));
   store.applyTileAction(threadRef, {
     type: "new-group",
     targetGroupId: "terminal-group",

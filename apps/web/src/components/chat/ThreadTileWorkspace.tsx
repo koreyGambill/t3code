@@ -601,7 +601,7 @@ export function ThreadTileWorkspace(props: {
           /^(?:INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) ||
           event.target.closest('[role="textbox"]') !== null);
       // Enter and arrows belong to whatever control has focus; the chooser takes them only
-      // from the page, its tile or its own box. Letters and Esc also work from its buttons.
+      // from the page, its tile or its own box. Letters and Esc also work from its choices.
       const target = event.target instanceof Element ? event.target : null;
       const onChooser =
         event.target === document.body ||
@@ -985,7 +985,7 @@ export function ThreadTileWorkspace(props: {
                 >
                   {groupNumber}
                 </span>
-                <div className="flex min-w-0 flex-1 items-center">
+                <div className="flex min-w-0 flex-1 items-center overflow-hidden">
                   <div
                     className="workspace-tile-tabs flex min-w-0 items-center overflow-x-auto px-1"
                     ref={observeTabStrip}
@@ -1545,12 +1545,18 @@ function revealTab(tab: HTMLElement | null) {
   const pad = Number.parseFloat(getComputedStyle(strip).paddingLeft) || 0;
   const startOf = (element: Element) => element.getBoundingClientRect().left - origin - pad;
   const start = startOf(tab);
-  // Room for the end fade when tabs follow, so it lands on them rather than this one.
-  const end = start + tab.offsetWidth + 2 * pad + (tab.nextElementSibling ? TAB_FADE_PX : 0);
+  // Room for the end fade when tabs follow, so it lands on them rather than this one, but
+  // never so much that a narrow strip scrolls the tab itself out of view.
+  const fadeRoom = tab.nextElementSibling
+    ? Math.min(TAB_FADE_PX, Math.max(0, strip.clientWidth - tab.offsetWidth - 2 * pad))
+    : 0;
+  const end = start + tab.offsetWidth + 2 * pad + fadeRoom;
   if (start < strip.scrollLeft) strip.scrollLeft = start;
   else if (end > strip.scrollLeft + strip.clientWidth)
-    strip.scrollLeft =
-      [...strip.children].map(startOf).find((edge) => edge >= end - strip.clientWidth) ?? start;
+    strip.scrollLeft = Math.min(
+      start,
+      [...strip.children].map(startOf).find((edge) => edge >= end - strip.clientWidth) ?? start,
+    );
   markTabOverflow(strip);
 }
 
