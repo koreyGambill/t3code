@@ -387,9 +387,17 @@ export function ThreadTileWorkspace(props: {
     else closeTileNow(groupId);
   };
   const closeTab = (tabId: string) => {
+    const owner = getTileGroups(currentLayout()).find((group) => group.tabs.includes(tabId));
+    if (owner) parkFocus(owner.id);
     const surface = props.panels.surfaces.find((entry) => entry.id === tabId);
     if (surface) props.panels.onCloseSurface(surface);
     else apply({ type: "close-tab", tabId });
+    const after = currentLayout();
+    focus(
+      getTileGroups(after).some((group) => group.id === owner?.id)
+        ? owner!.id
+        : after.focusedGroupId,
+    );
   };
   const openNewTab = (groupId: string) => {
     const group = getTileGroups(currentLayout()).find((entry) => entry.id === groupId);
@@ -512,13 +520,16 @@ export function ThreadTileWorkspace(props: {
     };
     const nextTab = (offset: number) => {
       const group = currentGroup();
-      if (group && group.tabs.length > 0)
-        activate(
-          group,
-          group.tabs[
-            (group.tabs.indexOf(group.activeTabId) + offset + group.tabs.length) % group.tabs.length
-          ]!,
-        );
+      if (!group || group.tabs.length === 0) return;
+      // The hidden tab's content may hold focus; keep it in this tile, then move it to the new tab.
+      parkFocus(group.id);
+      activate(
+        group,
+        group.tabs[
+          (group.tabs.indexOf(group.activeTabId) + offset + group.tabs.length) % group.tabs.length
+        ]!,
+      );
+      focus(group.id);
     };
     const actions = {
       "workspace.tile.focusPair": () => {

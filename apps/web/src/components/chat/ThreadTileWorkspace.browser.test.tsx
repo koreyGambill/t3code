@@ -228,9 +228,16 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
     "inspect",
   );
+  // Focus follows into the shown tab, rather than dropping to the page with the hidden one.
+  await vi.waitFor(() =>
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe("inspect"),
+  );
   await userEvent.keyboard("{Control>}{Shift>}{Tab}{/Shift}{/Control}");
   expect(getTileGroups(layout()).find((group) => group.id === tabGroupId)?.activeTabId).toBe(
     "files",
+  );
+  await vi.waitFor(() =>
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe("files"),
   );
   await newTileRight();
   await expect.element(screen.getByText("Choose an area", { exact: true })).toBeVisible();
