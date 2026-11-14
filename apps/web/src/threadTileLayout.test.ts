@@ -62,13 +62,35 @@ describe("thread tile layout", () => {
     expect(resize(rect, { left: true, bottom: true }, { x: 0.5, y: -0.5 })).toEqual([
       0.4, 0.2, 0.2, 0.2,
     ]);
-    const lone = applyTileAction(syncTileLayout(undefined, [], [], null, false), {
+    const single = syncTileLayout(undefined, [], [], null, false);
+    expect(
+      applyTileAction(single, { type: "float-group", groupId: "conversation-group", rect }),
+    ).toBe(single);
+    const chatFloating = applyTileAction(syncTileLayout(undefined, [], ["a"], "a", true), {
       type: "float-group",
       groupId: "conversation-group",
       rect,
     });
-    expect(getTileGroups(lone)[0]?.floating).toBeUndefined();
-    expect(getTileGroups(lone)[0]?.lastFloating).toEqual(rect);
+    expect(
+      applyTileAction(chatFloating, { type: "float-group", groupId: "panels-group", rect }),
+    ).toBe(chatFloating);
+    const maximized = applyTileAction(chatFloating, {
+      type: "maximize",
+      groupId: "panels-group",
+    });
+    const moved = applyTileAction(maximized, {
+      type: "float-group",
+      groupId: "conversation-group",
+      rect: { ...rect, x: 0.3 },
+    });
+    expect([moved.maximizedGroupId, moved.focusedGroupId]).toEqual([
+      "panels-group",
+      "conversation-group",
+    ]);
+    expect(
+      applyTileAction(maximized, { type: "restore-group", groupId: "conversation-group" })
+        .maximizedGroupId,
+    ).toBeNull();
   });
 
   it("treats chat as an ordinary area that closes, reopens and leaves a chooser when last", () => {
@@ -172,6 +194,35 @@ describe("thread tile layout", () => {
       { type: "move", tabId: CONVERSATION_TAB_ID, targetGroupId: "panels-group" },
     );
     expect(getTileGroups(chat)[0]?.tabs).toEqual(["notes", "files", CONVERSATION_TAB_ID]);
+    const byCode = syncTileLayout(
+      fresh,
+      ["files", "notes"],
+      ["files", "notes", "x"],
+      "x",
+      true,
+      false,
+    );
+    expect(getTileGroups(byCode).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, "x"],
+      ["notes", "files", newTabId("b")],
+    ]);
+    const choosing = applyTileAction(fresh, {
+      type: "new-tab",
+      groupId: "conversation-group",
+      tabId: newTabId("c"),
+    });
+    const revealed = syncTileLayout(
+      choosing,
+      ["files", "notes"],
+      ["files", "notes"],
+      "notes",
+      true,
+      false,
+    );
+    expect(getTileGroups(revealed).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, newTabId("c")],
+      ["notes", "files", newTabId("b")],
+    ]);
     const lone = applyTileAction(syncTileLayout(undefined, [], [], null, false), {
       type: "new-tab",
       groupId: "conversation-group",

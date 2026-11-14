@@ -232,6 +232,8 @@ export function syncTileLayout(
   surfaceIds: string[],
   activeSurfaceId: string | null,
   activate: boolean,
+  /** False for surfaces opened by code, which must not fill a tile the user is choosing for. */
+  fillChooser = true,
 ): ThreadTileLayout {
   if (!layout) {
     const conversation: TileGroup = {
@@ -276,14 +278,13 @@ export function syncTileLayout(
     activeTabId: "",
   };
   let next = settle({ ...layout, root });
+  const showsChooser = (group: TileGroup) => !group.tabs.length || isNewTab(group.activeTabId);
   if (
+    fillChooser &&
     activate &&
     activeSurfaceId &&
     surfaceIds.includes(activeSurfaceId) &&
-    getTileGroups(next).some(
-      (group) =>
-        group.id === next.focusedGroupId && (!group.tabs.length || isNewTab(group.activeTabId)),
-    )
+    getTileGroups(next).some((group) => group.id === next.focusedGroupId && showsChooser(group))
   ) {
     next = applyTileAction(next, {
       type: "move",
@@ -294,13 +295,19 @@ export function syncTileLayout(
   const present = new Set(getTileGroups(next).flatMap((group) => group.tabs));
   const missing = surfaceIds.filter((id) => !present.has(id));
   if (missing.length) {
+    const groups = getTileGroups(next);
+    const focused = groups.find((group) => group.id === next.focusedGroupId)!;
+    const target =
+      fillChooser || !showsChooser(focused)
+        ? focused
+        : (groups.find((group) => !showsChooser(group)) ?? focused);
     next = {
       ...next,
       root: mapNode(next.root, (node) =>
-        node.kind === "group" && node.id === next.focusedGroupId
-          ? isNewTab(node.activeTabId)
+        node.kind === "group" && node.id === target.id
+          ? fillChooser && isNewTab(node.activeTabId)
             ? placeTabs(node, missing)
-            : { ...placeTabs(node, missing), activeTabId: node.activeTabId }
+            : { ...node, tabs: [...node.tabs, ...missing] }
           : node,
       ),
     };
@@ -328,8 +335,12 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
     group.id === layout.besideGroupId;
   if (action.type === "float-group" || action.type === "restore-group") {
     if (!groups.some((group) => group.id === action.groupId)) return layout;
-    if (action.type === "float-group" && !Object.values(action.rect).every(Number.isFinite))
-      return layout;
+    const target = groups.find((group) => group.id === action.groupId)!;
+    if (action.type === "float-group") {
+      if (!Object.values(action.rect).every(Number.isFinite)) return layout;
+      // The last docked tile stays docked; floating tiles hover over the docked ones.
+      if (!target.floating && groups.filter((group) => !group.floating).length < 2) return layout;
+    }
     return settle({
       ...layout,
       root: mapNode(layout.root, (node) => {
@@ -340,7 +351,9 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
           : { ...group, ...(floating ? { lastFloating: floating } : {}) };
       }),
       focusedGroupId: action.groupId,
-      maximizedGroupId: null,
+      // Moving a floating tile keeps the maximized view it hovers over.
+      maximizedGroupId:
+        action.type === "float-group" && target.floating ? layout.maximizedGroupId : null,
     });
   }
   if (action.type === "show-beside") {

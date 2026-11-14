@@ -391,6 +391,7 @@ const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
   activate = true,
+  fillChooser = true,
 ): ThreadRightPanelState => {
   const next = {
     ...current,
@@ -399,13 +400,14 @@ const upsertSurface = (
       ? current.surfaces
       : [...current.surfaces, surface],
   };
-  return activate ? activated(next, surface.id) : next;
+  return activate ? activated(next, surface.id, fillChooser) : next;
 };
 
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+  fillChooser = true,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   const updated = updater(current);
@@ -418,6 +420,7 @@ const updateThreadStateMap = (
       updated.surfaces.map((surface) => surface.id),
       updated.activeSurfaceId,
       updated.isOpen && (updated.activeSurfaceId !== current.activeSurfaceId || !current.isOpen),
+      fillChooser,
     ),
   };
   return { ...byThreadKey, [threadKey]: next };
@@ -448,9 +451,10 @@ const updateThread = (
   state: RightPanelStoreData,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+  fillChooser = true,
 ): RightPanelStoreData => {
   const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater);
+  const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater, fillChooser);
   const next = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   let threadPanelVisibilityByThreadKey = state.threadPanelVisibilityByThreadKey;
 
@@ -479,7 +483,7 @@ const automaticUpdate = (
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Partial<RightPanelStoreState> => ({
-  ...updateThread(state, threadKey, updater),
+  ...updateThread(state, threadKey, updater, false),
 });
 
 // A side chat pane has no panel of its own, so its panel actions open in its parent's panel.
@@ -548,7 +552,11 @@ const userActionOnThread = (
     : {}),
 });
 
-const activated = (current: ThreadRightPanelState, surfaceId: string): ThreadRightPanelState =>
+const activated = (
+  current: ThreadRightPanelState,
+  surfaceId: string,
+  fillChooser = true,
+): ThreadRightPanelState =>
   current.surfaces.some((surface) => surface.id === surfaceId)
     ? {
         ...current,
@@ -560,6 +568,7 @@ const activated = (current: ThreadRightPanelState, surfaceId: string): ThreadRig
           current.surfaces.map((surface) => surface.id),
           surfaceId,
           true,
+          fillChooser,
         ),
       }
     : current;
@@ -846,7 +855,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               !pullRequestActive;
             // Record the offer even when refused, so a revisit does not retry this turn.
             return automaticUpdate(state, threadKey, (thread) => ({
-              ...(opened ? upsertSurface(thread, singletonSurface("diff")) : thread),
+              ...(opened ? upsertSurface(thread, singletonSurface("diff"), true, false) : thread),
               proactiveDiffTurnId: request.turnId,
             }));
           }
@@ -865,7 +874,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return state;
           }
           opened = true;
-          return automaticUpdate(state, threadKey, (current) => upsertSurface(current, request));
+          return automaticUpdate(state, threadKey, (current) =>
+            upsertSurface(current, request, true, false),
+          );
         });
         return opened;
       },
@@ -1238,7 +1249,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       revealSurface: (ref, surfaceId) =>
         set((state) =>
-          automaticUpdate(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
+          automaticUpdate(state, scopedThreadKey(ref), (current) =>
+            activated(current, surfaceId, false),
+          ),
         ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>
