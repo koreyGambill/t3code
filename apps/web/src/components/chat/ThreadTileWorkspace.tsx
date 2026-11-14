@@ -54,6 +54,7 @@ import {
 } from "../../threadTileGeometry";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useTheme } from "../../hooks/useTheme";
+import { observeResize } from "../../lib/observeResize";
 import { SurfaceIcon, surfaceTitle, type RightPanelTabsProps } from "../RightPanelTabs";
 import { Button } from "../ui/button";
 import {
@@ -977,6 +978,7 @@ export function ThreadTileWorkspace(props: {
                 <div className="flex min-w-0 flex-1 items-center">
                   <div
                     className="workspace-tile-tabs flex min-w-0 items-center overflow-x-auto px-1"
+                    ref={observeTabStrip}
                     onScroll={(event) => markTabOverflow(event.currentTarget)}
                     role="tablist"
                     aria-label="Tile tabs"
@@ -1485,9 +1487,36 @@ export function ThreadTileWorkspace(props: {
   );
 }
 
+// A tab cut at the strip's start is masked out whole, so no stray close button shows.
 function markTabOverflow(strip: HTMLElement) {
-  strip.dataset.overflowStart = String(strip.scrollLeft > 1);
+  const left = strip.getBoundingClientRect().left;
+  const cut = [...strip.children].find((tab) => {
+    const rect = tab.getBoundingClientRect();
+    return rect.left < left - 0.5 && rect.right > left + 0.5;
+  });
+  strip.style.setProperty(
+    "--tile-tabs-clip",
+    `${cut ? cut.getBoundingClientRect().right - left : 0}px`,
+  );
   strip.dataset.overflowEnd = String(strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1);
+}
+
+// Tab labels change width after they mount (a terminal names its process), so the cut is
+// measured again whenever the strip or a tab resizes.
+function observeTabStrip(strip: HTMLElement | null) {
+  if (!strip) return;
+  let unobserve = () => {};
+  const watch = () => {
+    unobserve();
+    unobserve = observeResize([strip, ...strip.children], () => markTabOverflow(strip));
+  };
+  const mutations = new MutationObserver(watch);
+  mutations.observe(strip, { childList: true });
+  watch();
+  return () => {
+    mutations.disconnect();
+    unobserve();
+  };
 }
 
 // Scrolls only the tab strip, to a whole-tab boundary, so no cut-off tab sits at its start
