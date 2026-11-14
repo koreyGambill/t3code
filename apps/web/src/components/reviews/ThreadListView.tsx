@@ -703,7 +703,7 @@ function TodoLinkChip({
               useThreadContextSidebarStore.getState().show("artifacts", {
                 artifactId: link.target,
                 // The QA view lists other threads, so their artifacts pin the sidebar to them.
-                ...(crossThread ? { thread: threadRef } : {}),
+                ...(crossThread ? { thread: threadRef } : { artifactThread: threadRef }),
               })
             }
           />

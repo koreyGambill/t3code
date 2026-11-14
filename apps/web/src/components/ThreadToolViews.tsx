@@ -716,8 +716,16 @@ function ThreadArtifacts({ threadRef }: { threadRef: ScopedThreadRef }) {
         })
       : null,
   );
-  const open = useThreadContextSidebarStore((state) => state.artifactId);
-  const setOpen = (id: string | null) => useThreadContextSidebarStore.getState().selectArtifact(id);
+  const selection = useThreadContextSidebarStore((state) => state.artifactSelection);
+  const open =
+    selection &&
+    (selection.thread === null ||
+      (selection.thread.environmentId === threadRef.environmentId &&
+        selection.thread.threadId === threadRef.threadId))
+      ? selection.id
+      : null;
+  const setOpen = (id: string | null) =>
+    useThreadContextSidebarStore.getState().selectArtifact(threadRef, id);
   const [filter, setFilter] = useState("");
   const { copy, isCopied } = useRowCopy();
   const nowMinute = useNowMinute();

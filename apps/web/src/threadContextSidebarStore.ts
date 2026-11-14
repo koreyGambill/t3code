@@ -28,6 +28,8 @@ export interface ShowTarget {
   /** Pins the tools to this thread. */
   readonly thread?: ScopedThreadRef;
   readonly artifactId?: string;
+  /** The thread the artifact belongs to, when it shouldn't pin the tools to that thread. */
+  readonly artifactThread?: ScopedThreadRef;
   readonly environmentId?: string;
 }
 
@@ -41,13 +43,13 @@ interface ThreadContextSidebarState {
   environmentSelection: { thread: ScopedThreadRef; id: string } | null;
   /** Set when a tool view was requested while the sidebar may be hidden; the sidebar clears it. */
   revealPending: boolean;
-  /** The artifact the Artifacts view opens on; null lists them all. */
-  artifactId: string | null;
+  /** The artifact the Artifacts view opens on, for its thread only; null lists them all. */
+  artifactSelection: { thread: ScopedThreadRef | null; id: string } | null;
   selectView: (view: SidebarView) => void;
   toggleTools: (sidebarVisible: boolean) => void;
   /** Opens a tool from outside the strip, unhiding it, and reveals a hidden sidebar. */
   show: (view: ThreadContextSection, target?: ShowTarget) => void;
-  selectArtifact: (id: string | null) => void;
+  selectArtifact: (thread: ScopedThreadRef, id: string | null) => void;
   consumeReveal: () => void;
   pin: (thread: ScopedThreadRef | null) => void;
   setHidden: (item: StripItem, hidden: boolean) => void;
@@ -67,11 +69,11 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       todoShowClosed: false,
       environmentSelection: null,
       revealPending: false,
-      artifactId: null,
+      artifactSelection: null,
       selectView: (view) =>
         set((state) => ({
           ...nextSidebarView(state, view),
-          ...(view === "artifacts" ? { artifactId: null } : {}),
+          ...(view === "artifacts" ? { artifactSelection: null } : {}),
         })),
       toggleTools: (sidebarVisible) => set((state) => toggleThreadToolsView(state, sidebarVisible)),
       show: (view, target = {}) =>
@@ -81,7 +83,16 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
           revealPending: true,
           hidden: state.hidden.filter((entry) => entry !== view),
           ...(target.thread ? { pinned: target.thread } : {}),
-          ...(view === "artifacts" ? { artifactId: target.artifactId ?? null } : {}),
+          ...(view === "artifacts"
+            ? {
+                artifactSelection: target.artifactId
+                  ? {
+                      thread: target.thread ?? target.artifactThread ?? null,
+                      id: target.artifactId,
+                    }
+                  : null,
+              }
+            : {}),
           ...(view === "environments"
             ? {
                 environmentSelection:
@@ -91,7 +102,7 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
               }
             : {}),
         })),
-      selectArtifact: (artifactId) => set({ artifactId }),
+      selectArtifact: (thread, id) => set({ artifactSelection: id ? { thread, id } : null }),
       consumeReveal: () => set({ revealPending: false }),
       pin: (pinned) => set({ pinned }),
       setHidden: (item, hide) =>

@@ -56,7 +56,7 @@ function EnvironmentReviewReminders({
   const navigate = useNavigate();
   const active = useParams({ strict: false });
   const tools = useThreadContextSidebarStore(
-    useShallow(({ view, artifactId, pinned }) => ({ view, artifactId, pinned })),
+    useShallow(({ view, artifactSelection, pinned }) => ({ view, artifactSelection, pinned })),
   );
   const [gate] = useState(() => createReviewReminderGate(environmentId, seen));
   const shownReviewId = due.find(
@@ -64,7 +64,9 @@ function EnvironmentReviewReminders({
       active.environmentId === environmentId &&
       active.threadId === review.threadId &&
       tools.view === "artifacts" &&
-      tools.artifactId === review.id &&
+      tools.artifactSelection?.id === review.id &&
+      (tools.artifactSelection.thread === null ||
+        tools.artifactSelection.thread.threadId === review.threadId) &&
       (tools.pinned === null || tools.pinned.threadId === review.threadId),
   )?.id;
 

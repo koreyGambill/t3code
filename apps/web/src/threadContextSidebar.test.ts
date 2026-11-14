@@ -327,14 +327,21 @@ describe("thread tools store", () => {
     expect(useThreadContextSidebarStore.getState()).toMatchObject({
       view: "artifacts",
       lastTool: "artifacts",
-      artifactId: "plan",
+      artifactSelection: { thread: child, id: "plan" },
       pinned: child,
       hidden: [],
       revealPending: true,
     });
     store.selectView("artifacts");
     store.selectView("artifacts");
-    expect(useThreadContextSidebarStore.getState().artifactId).toBeNull();
+    expect(useThreadContextSidebarStore.getState().artifactSelection).toBeNull();
+    // An unpinned open still remembers its thread, so another thread doesn't inherit it.
+    store.pin(null);
+    store.show("artifacts", { artifactThread: child, artifactId: "plan" });
+    expect(useThreadContextSidebarStore.getState()).toMatchObject({
+      artifactSelection: { thread: child, id: "plan" },
+      pinned: null,
+    });
   });
 
   it("migrates the right panel's saved view and persists only viewer choices", () => {

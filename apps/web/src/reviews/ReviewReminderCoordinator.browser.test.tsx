@@ -135,7 +135,7 @@ it.each(["other-thread", "list"])(
     );
     expect(useThreadContextSidebarStore.getState()).toMatchObject({
       view: "artifacts",
-      artifactId: review.id,
+      artifactSelection: { thread: ref, id: review.id },
       pinned: ref,
     });
   },
@@ -204,6 +204,6 @@ it("opens the review from a desktop notification without starting work", async (
   );
   expect(useThreadContextSidebarStore.getState()).toMatchObject({
     view: "artifacts",
-    artifactId: review.id,
+    artifactSelection: { id: review.id },
   });
 });

@@ -1799,16 +1799,8 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:reviews",
-      title: "Open workspace",
-      searchTerms: [
-        "workspace",
-        "reviews",
-        "questions",
-        "action items",
-        "design notes",
-        "summary",
-        "reminders",
-      ],
+      title: "Open artifacts",
+      searchTerms: ["artifacts", "workspace", "reviews", "questions", "reminders"],
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         useThreadContextSidebarStore.getState().show("artifacts");
