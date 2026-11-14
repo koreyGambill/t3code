@@ -4,6 +4,7 @@
 // The rule, the checks and how to fix a failure: docs/internals/fork-wire-compatibility.md.
 import { describe, expect, it } from "@effect/vitest";
 import {
+  EnvironmentHttpApi,
   ExecutionEnvironmentDescriptor,
   PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
   PeerLinkSummary,
@@ -21,6 +22,7 @@ import {
 import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import type * as HttpApi from "effect/http-api/HttpApi";
 import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as Schema from "effect/Schema";
 import * as AST from "effect/SchemaAST";
@@ -365,6 +367,36 @@ const sharedRpcs = [...upstreamRpcs].flatMap(([tag, upstream]) => {
   return fork === undefined ? [] : [{ tag, fork, upstream }];
 });
 
+/** HTTP endpoints by `group.endpoint`; upstream clients load their first screens through these. */
+const httpEndpoints = (api: HttpApi.Top) =>
+  new Map(
+    Object.entries(api.groups).flatMap(([group, { endpoints }]) =>
+      Object.entries(endpoints).map(([name, endpoint]) => [`${group}.${name}`, endpoint] as const),
+    ),
+  );
+const forkEndpoints = httpEndpoints(EnvironmentHttpApi);
+const upstreamEndpoints = httpEndpoints(Upstream.EnvironmentHttpApi);
+function anyOf(schemas: ReadonlySet<Schema.Top>): Schema.Top {
+  const [only, ...others] = schemas;
+  return only !== undefined && others.length === 0 ? only : Schema.Union([...schemas]);
+}
+const httpPairs: ReadonlyArray<Pair> = [...upstreamEndpoints].flatMap(([name, upstream]) => {
+  const fork = forkEndpoints.get(name);
+  return fork === undefined
+    ? []
+    : (["success", "error"] as const).flatMap((kind) =>
+        fork[kind].size === 0
+          ? []
+          : [
+              {
+                name: `http ${name} ${kind}`,
+                fork: anyOf(fork[kind]),
+                upstream: anyOf(upstream[kind]),
+              },
+            ],
+      );
+});
+
 /** Unexpected failures, plus a known gap that no longer fails. */
 function unexpected(failures: ReadonlyArray<Failure>, names: ReadonlyArray<string>) {
   const failed = new Set(failures.map((failure) => failure.name));
@@ -380,10 +412,17 @@ function unexpected(failures: ReadonlyArray<Failure>, names: ReadonlyArray<strin
 
 describe("upstream client wire compatibility", () => {
   it("serves every upstream method", () => {
-    const failures = [...upstreamRpcs.keys()]
-      .filter((tag) => !forkRpcs.has(tag))
-      .map((tag) => ({ name: tag, issue: "not served" }));
-    expect(unexpected(failures, [...upstreamRpcs.keys()])).toEqual([]);
+    const methods = [
+      ...upstreamRpcs.keys(),
+      ...[...upstreamEndpoints.keys()].map((name) => `http ${name}`),
+    ];
+    const failures = [
+      ...[...upstreamRpcs.keys()].filter((tag) => !forkRpcs.has(tag)),
+      ...[...upstreamEndpoints.keys()]
+        .filter((name) => !forkEndpoints.has(name))
+        .map((name) => `http ${name}`),
+    ].map((name) => ({ name, issue: "not served" }));
+    expect(unexpected(failures, methods)).toEqual([]);
   });
 
   it.effect("decodes upstream client requests", () =>
@@ -414,6 +453,7 @@ describe("upstream client wire compatibility", () => {
           fork: ExecutionEnvironmentDescriptor,
           upstream: Upstream.ExecutionEnvironmentDescriptor,
         },
+        ...httpPairs,
         ...sharedRpcs.flatMap(({ tag, fork, upstream }) => {
           const map = responseMappers[tag];
           const mapError = errorMappers[tag];
