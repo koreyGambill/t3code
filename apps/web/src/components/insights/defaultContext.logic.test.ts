@@ -2,7 +2,13 @@ import type { DefaultContextItem, DefaultContextPreview } from "@t3tools/contrac
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultContextSummary, homeOf, shortenPath, splitPath } from "./defaultContext.logic";
+import {
+  defaultContextSummary,
+  fileTree,
+  homeOf,
+  shortenPath,
+  splitPath,
+} from "./defaultContext.logic";
 
 const item = (overrides: Partial<DefaultContextItem>): DefaultContextItem => ({
   id: overrides.label ?? "x",
@@ -82,6 +88,20 @@ describe("defaultContextSummary", () => {
       ["tools", 2],
       ["custom", 1],
     ]);
+  });
+});
+
+describe("fileTree", () => {
+  it("nests linked files under their parent and keeps orphans visible", () => {
+    const { roots, childrenOf } = fileTree([
+      item({ label: "CLAUDE.md" }),
+      item({ label: "a.md", parentId: "CLAUDE.md" }),
+      item({ label: "b.md", parentId: "a.md" }),
+      item({ label: "orphan.md", parentId: "gone.md" }),
+    ]);
+    expect(roots.map((entry) => entry.label)).toEqual(["CLAUDE.md", "orphan.md"]);
+    expect(childrenOf.get("CLAUDE.md")?.map((entry) => entry.label)).toEqual(["a.md"]);
+    expect(childrenOf.get("a.md")?.map((entry) => entry.label)).toEqual(["b.md"]);
   });
 });
 

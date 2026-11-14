@@ -159,6 +159,8 @@ export const DefaultContextItem = Schema.Struct({
   counted: Schema.Boolean,
   readable: Schema.Boolean,
   depth: Schema.optional(NonNegativeInt),
+  /** The file whose markdown link lists this one, read on demand rather than loaded. */
+  parentId: Schema.optional(Schema.String),
   status: Schema.optional(
     Schema.Literals(["expected", "loaded", "not-loaded", "unexpected", "not-read", "secret"]),
   ),

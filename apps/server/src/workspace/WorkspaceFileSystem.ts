@@ -13,15 +13,17 @@ import type {
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isNetworkPath } from "@t3tools/shared/path";
+import { isHostPath, isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import { InstructionFileAllowlist } from "../threadInsights/InstructionFileAllowlist.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -121,7 +123,7 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
-    /** Writes inside a known workspace only. */
+    /** Writes inside a known workspace, or to an existing instruction file on its allowlist. */
     readonly writeFile: (
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
@@ -141,6 +143,78 @@ export const make = Effect.gen(function* () {
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const isServerInternalPath = yield* makeIsServerInternalPath;
+  const instructionFiles = yield* Effect.serviceOption(InstructionFileAllowlist);
+
+  /** The real path of a host file the Files tile may edit, or null. */
+  const editableHostPath = Effect.fn("WorkspaceFileSystem.editableHostPath")(function* (
+    cwd: string,
+    requestedPath: string,
+  ) {
+    if (Option.isNone(instructionFiles) || !isHostPath(requestedPath)) return null;
+    const hostPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
+    if (!path.isAbsolute(hostPath) || isNetworkPath(hostPath)) return null;
+    if (!(yield* knownWorkspaces.assertContains(cwd).pipe(Effect.isSuccess))) return null;
+    const realPath = yield* instructionFiles.value.editablePath(cwd, hostPath);
+    if (realPath === null || (yield* isServerInternalPath(realPath))) return null;
+    // A hard link aliases another file, which may be a credential.
+    const links = yield* Effect.promise(() =>
+      NodeFSP.lstat(realPath).then(
+        (stat) => (stat.isFile() ? stat.nlink : 0),
+        () => 0,
+      ),
+    );
+    return links === 1 ? realPath : null;
+  });
+
+  /**
+   * Rewrites an existing host file in place. The open neither creates, follows a final
+   * symlink, nor blocks on a FIFO; the opened file must be the single-link regular file
+   * still at `realPath`, so a swapped path component or hard-linked alias is refused.
+   */
+  const writeHostFile = Effect.fn("WorkspaceFileSystem.writeHostFile")(function* (
+    input: ProjectWriteFileInput,
+    realPath: string,
+  ) {
+    yield* Effect.tryPromise({
+      try: async () => {
+        const handle = await NodeFSP.open(
+          realPath,
+          NodeFS.constants.O_WRONLY |
+            (NodeFS.constants.O_NONBLOCK ?? 0) |
+            (NodeFS.constants.O_NOFOLLOW ?? 0),
+        );
+        try {
+          const opened = await handle.stat();
+          const [current, resolved] = await Promise.all([
+            NodeFSP.stat(realPath),
+            NodeFSP.realpath(realPath),
+          ]);
+          if (
+            !opened.isFile() ||
+            opened.nlink !== 1 ||
+            resolved !== realPath ||
+            current.dev !== opened.dev ||
+            current.ino !== opened.ino
+          ) {
+            throw new Error("The file changed or is not a single regular file.");
+          }
+          await handle.truncate(0);
+          await handle.writeFile(input.contents);
+        } finally {
+          await handle.close();
+        }
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: realPath,
+          operationPath: realPath,
+          operation: "write-file",
+          cause,
+        }),
+    });
+  });
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
@@ -357,7 +431,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    return yield* Effect.acquireUseRelease(
+    const result = yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking opens prevent FIFO hangs before stat rejects them; Windows lacks the flag.
         try: () =>
@@ -457,6 +531,9 @@ export const make = Effect.gen(function* () {
                 }),
             }),
     );
+    if ("exists" in result || !isHostPath(input.relativePath)) return result;
+    const writable = (yield* editableHostPath(input.cwd, input.relativePath)) === realTargetPath;
+    return writable ? { ...result, writable } : result;
   });
 
   // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
@@ -545,6 +622,17 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
     yield* knownWorkspaces.assertContains(input.cwd);
+    if (isHostPath(input.relativePath)) {
+      const realPath = yield* editableHostPath(input.cwd, input.relativePath);
+      if (realPath === null) {
+        return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+      }
+      yield* writeHostFile(input, realPath);
+      return { relativePath: input.relativePath };
+    }
     const target = yield* resolveWriteTarget(input);
     const realTargetPath = target.realTargetPath;
     const replacesFile = yield* fileSystem

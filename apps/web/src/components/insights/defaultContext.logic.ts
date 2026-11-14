@@ -72,6 +72,18 @@ export function defaultContextSummary(preview: DefaultContextPreview) {
   return { bytes, tokens, categories, groups, attention, injectedDiff };
 }
 
+/** Nests files under the file whose markdown link lists them; a link whose parent is missing stays top-level. */
+export function fileTree(items: ReadonlyArray<DefaultContextItem>) {
+  const ids = new Set(items.map((item) => item.id));
+  const childrenOf = new Map<string, DefaultContextItem[]>();
+  const roots: DefaultContextItem[] = [];
+  for (const item of items) {
+    if (item.parentId === undefined || !ids.has(item.parentId)) roots.push(item);
+    else childrenOf.set(item.parentId, [...(childrenOf.get(item.parentId) ?? []), item]);
+  }
+  return { roots, childrenOf };
+}
+
 /** Splits a path so a narrow row can truncate the folder and keep the file name whole. */
 export function splitPath(path: string) {
   const slash = path.lastIndexOf("/");

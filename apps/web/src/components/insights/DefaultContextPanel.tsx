@@ -12,6 +12,7 @@ import { useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { threadDefaultContextGet, threadDefaultContextItem } from "../../state/threadInsights";
@@ -21,6 +22,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   defaultContextSummary,
   DELIVERY_LABELS,
+  fileTree,
   formatBytes,
   formatTokens,
   homeOf,
@@ -176,18 +178,25 @@ export function DefaultContextPanel({
                   <h3 className="text-3xs font-semibold tracking-wide text-muted-foreground uppercase">
                     {group.label}
                   </h3>
-                  {items.map((item) => (
-                    <ContextRow
-                      key={item.id}
+                  {group.category === "files" ? (
+                    <FileRows
+                      items={items}
                       threadRef={threadRef}
-                      request={request}
-                      item={item}
-                      expandable={item.readable && canReadFiles}
-                      label={
-                        group.category === "files" ? shortenPath(item.label, home) : item.label
-                      }
+                      home={home}
+                      canOpen={canReadFiles}
                     />
-                  ))}
+                  ) : (
+                    items.map((item) => (
+                      <ContextRow
+                        key={item.id}
+                        threadRef={threadRef}
+                        request={request}
+                        item={item}
+                        expandable={item.readable && canReadFiles}
+                        label={item.label}
+                      />
+                    ))
+                  )}
                   {items.length < group.items.length && (
                     <Button variant="ghost" size="xs" onClick={() => setShowAllTools(true)}>
                       Show all {group.items.length}
@@ -233,7 +242,6 @@ function ContextRow({
 }) {
   const [open, setOpen] = useState(false);
   const status = item.status === undefined ? undefined : STATUS_LABELS[item.status];
-  const mark = item.status === undefined ? undefined : STATUS_MARKS[item.status];
   return (
     <div style={item.depth ? { paddingLeft: `${item.depth * 8}px` } : undefined}>
       <button
@@ -254,35 +262,150 @@ function ContextRow({
             !expandable && "invisible",
           )}
         />
-        {item.category === "files" ? (
-          <span className="flex min-w-0 flex-1 flex-col">
-            <MiddleTruncate value={splitPath(label).name} showTitle={false} tail={6} />
-            {/* Clipping from the start keeps the nearest folder; bdi keeps the path's own order. */}
-            <span dir="rtl" className="truncate text-left text-3xs text-muted-foreground">
-              <bdi>{splitPath(label).directory}</bdi>
-            </span>
-          </span>
-        ) : (
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-        )}
-        {mark !== undefined && (
-          <span
-            role="img"
-            aria-label={status}
-            className={cn(
-              "shrink-0",
-              item.status === "loaded" ? "text-success-foreground" : "text-warning-foreground",
-            )}
-          >
-            {mark}
-          </span>
-        )}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <StatusMark item={item} />
         <span className="shrink-0 tabular-nums">{formatTokens(item.estimatedTokens)}</span>
       </button>
       {!item.readable && status !== undefined && (
         <p className="ml-4 text-muted-foreground">{status}</p>
       )}
       {open && <ItemText threadRef={threadRef} request={request} item={item} status={status} />}
+    </div>
+  );
+}
+
+function StatusMark({ item }: { readonly item: DefaultContextItem }) {
+  const mark = item.status === undefined ? undefined : STATUS_MARKS[item.status];
+  if (mark === undefined || item.status === undefined) return null;
+  return (
+    <span
+      role="img"
+      aria-label={STATUS_LABELS[item.status]}
+      className={cn(
+        "shrink-0",
+        item.status === "loaded" ? "text-success-foreground" : "text-warning-foreground",
+      )}
+    >
+      {mark}
+    </span>
+  );
+}
+
+function FileRows({
+  items,
+  threadRef,
+  home,
+  canOpen,
+}: {
+  readonly items: ReadonlyArray<DefaultContextItem>;
+  readonly threadRef: ScopedThreadRef;
+  readonly home: string | null;
+  readonly canOpen: boolean;
+}) {
+  const { roots, childrenOf } = fileTree(items);
+  return roots.map((item) => (
+    <FileRow
+      key={item.id}
+      item={item}
+      childrenOf={childrenOf}
+      threadRef={threadRef}
+      home={home}
+      canOpen={canOpen}
+      indent={item.depth ?? 0}
+    />
+  ));
+}
+
+/** A file opens in the Files tile; the files its markdown links reach stay folded under it. */
+function FileRow({
+  item,
+  childrenOf,
+  threadRef,
+  home,
+  canOpen,
+  indent,
+}: {
+  readonly item: DefaultContextItem;
+  readonly childrenOf: ReadonlyMap<string, ReadonlyArray<DefaultContextItem>>;
+  readonly threadRef: ScopedThreadRef;
+  readonly home: string | null;
+  readonly canOpen: boolean;
+  readonly indent: number;
+}) {
+  const [showLinks, setShowLinks] = useState(false);
+  const links = childrenOf.get(item.id) ?? [];
+  const status = item.status === undefined ? undefined : STATUS_LABELS[item.status];
+  const { name, directory } = splitPath(shortenPath(item.label, home));
+  const linkable = item.readable && canOpen;
+  const content = (
+    <>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          className={cn("flex min-w-0", linkable && "underline-offset-2 group-hover/file:underline")}
+        >
+          <MiddleTruncate value={name} showTitle={false} tail={6} />
+        </span>
+        {/* Clipping from the start keeps the nearest folder; bdi keeps the path's own order. */}
+        <span dir="rtl" className="truncate text-left text-3xs text-muted-foreground">
+          <bdi>{directory}</bdi>
+        </span>
+      </span>
+      <StatusMark item={item} />
+      <span className="shrink-0 tabular-nums">{formatTokens(item.estimatedTokens)}</span>
+    </>
+  );
+  const rowClass = cn(
+    "flex w-full min-w-0 items-center gap-1 rounded px-0.5 py-0.5 pl-4 text-left",
+    !item.counted && "text-muted-foreground",
+  );
+  return (
+    <div style={indent ? { paddingLeft: `${indent * 8}px` } : undefined}>
+      {linkable ? (
+        <button
+          type="button"
+          onClick={() => useRightPanelStore.getState().openFile(threadRef, item.label)}
+          className={cn(
+            rowClass,
+            "group/file cursor-pointer hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring",
+          )}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className={rowClass}>{content}</div>
+      )}
+      {!item.readable && status !== undefined && (
+        <p className="ml-4 text-muted-foreground">{status}</p>
+      )}
+      {links.length > 0 && (
+        <div className="ml-3">
+          <Button
+            variant="ghost"
+            size="xs"
+            className="max-w-full"
+            aria-expanded={showLinks}
+            onClick={() => setShowLinks((value) => !value)}
+          >
+            <ChevronRightIcon aria-hidden="true" className={cn(showLinks && "rotate-90")} />
+            <span className="truncate">
+              {links.length} linked
+              <span className="text-muted-foreground">, read on demand</span>
+            </span>
+          </Button>
+          {showLinks &&
+            links.map((child) => (
+              <FileRow
+                key={child.id}
+                item={child}
+                childrenOf={childrenOf}
+                threadRef={threadRef}
+                home={home}
+                canOpen={canOpen}
+                indent={0}
+              />
+            ))}
+        </div>
+      )}
     </div>
   );
 }

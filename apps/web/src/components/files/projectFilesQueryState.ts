@@ -91,6 +91,12 @@ export function setProjectFileQueryData(
   if (!unsavedFileMounts.has(atom)) {
     unsavedFileMounts.set(atom, appAtomRegistry.mount(atom));
   }
+  // An edited host file stays editable only while the read that allowed it says so.
+  const read = Option.getOrUndefined(
+    AsyncResult.value(
+      appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
+    ),
+  );
   appAtomRegistry.set(atom, {
     confirmedAgainst: undefined,
     data: {
@@ -98,6 +104,7 @@ export function setProjectFileQueryData(
       contents,
       byteLength: new TextEncoder().encode(contents).byteLength,
       truncated: false,
+      ...(read?.writable === true ? { writable: true } : {}),
     },
   });
 }
