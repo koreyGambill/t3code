@@ -2730,6 +2730,13 @@ code {
 }
 .workspace-tile-tabs {
   scrollbar-width: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 0.5rem,
+    black calc(100% - 0.5rem),
+    transparent
+  );
 }
 .workspace-tile-tabs::-webkit-scrollbar {
   display: none;

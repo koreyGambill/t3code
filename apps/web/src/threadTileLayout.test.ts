@@ -3,6 +3,7 @@ import {
   applyTileAction,
   CONVERSATION_TAB_ID,
   getTileGroups,
+  newTabId,
   parseTileLayout,
   resizeFloatingTile,
   syncTileLayout,
@@ -108,6 +109,76 @@ describe("thread tile layout", () => {
     });
     expect(getTileGroups(lastTile)).toMatchObject([{ id: "conversation-group", tabs: [] }]);
     expect(parseTileLayout(JSON.parse(JSON.stringify(lastTile)))).toEqual(lastTile);
+  });
+
+  it("replaces a new tab in place with the area chosen for it, and closes it on its own", () => {
+    let layout = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
+    layout = applyTileAction(layout, {
+      type: "new-tab",
+      groupId: "panels-group",
+      tabId: newTabId("a"),
+    });
+    expect(getTileGroups(layout)[1]).toMatchObject({
+      tabs: ["files", "notes", newTabId("a")],
+      activeTabId: newTabId("a"),
+    });
+    expect(applyTileAction(layout, { type: "new-tab", groupId: "panels-group", tabId: "x" })).toBe(
+      layout,
+    );
+    layout = applyTileAction(layout, {
+      type: "move",
+      tabId: "files",
+      targetGroupId: "panels-group",
+      index: 0,
+    });
+    expect(getTileGroups(layout)[1]?.activeTabId).toBe("files");
+    const persisted = parseTileLayout(JSON.parse(JSON.stringify(layout)))!;
+    const fresh = applyTileAction(persisted, {
+      type: "new-tab",
+      groupId: "panels-group",
+      tabId: newTabId("b"),
+    });
+    expect(syncTileLayout(fresh, ["files", "notes"], ["files", "notes"], null, false)).toEqual(
+      fresh,
+    );
+    const created = syncTileLayout(
+      fresh,
+      ["files", "notes"],
+      ["files", "notes", "diff"],
+      "diff",
+      true,
+    );
+    expect(getTileGroups(created)[1]).toMatchObject({
+      tabs: ["notes", "files", "diff"],
+      activeTabId: "diff",
+    });
+    const existing = syncTileLayout(
+      applyTileAction(fresh, {
+        type: "new-tab",
+        groupId: "conversation-group",
+        tabId: newTabId("c"),
+      }),
+      ["files", "notes"],
+      ["files", "notes"],
+      "notes",
+      true,
+    );
+    expect(getTileGroups(existing).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, "notes"],
+      ["files", newTabId("b")],
+    ]);
+    const chat = applyTileAction(
+      applyTileAction(fresh, { type: "close-tab", tabId: CONVERSATION_TAB_ID }),
+      { type: "move", tabId: CONVERSATION_TAB_ID, targetGroupId: "panels-group" },
+    );
+    expect(getTileGroups(chat)[0]?.tabs).toEqual(["notes", "files", CONVERSATION_TAB_ID]);
+    const lone = applyTileAction(syncTileLayout(undefined, [], [], null, false), {
+      type: "new-tab",
+      groupId: "conversation-group",
+      tabId: newTabId("d"),
+    });
+    const closed = applyTileAction(lone, { type: "close-tab", tabId: newTabId("d") });
+    expect(getTileGroups(closed)[0]?.activeTabId).toBe(CONVERSATION_TAB_ID);
   });
 
   it("moves tabs and splits conversation without losing or duplicating any tab", () => {

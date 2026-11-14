@@ -202,11 +202,12 @@ it("keeps conversation and editor contents mounted through grouping, splitting a
   expect(getTileGroups(layout()).find((group) => group.id === chooser.id)?.tabs).toContain(
     "terminal:new-terminal",
   );
-  await userEvent.click(screen.getByRole("button", { name: "Add area", exact: true }).nth(0));
+  await userEvent.click(screen.getByRole("button", { name: "New tab", exact: true }).nth(0));
+  await expect.element(screen.getByRole("tab", { name: "New tab", exact: true })).toBeVisible();
+  await userEvent.keyboard("t");
   await expect
-    .element(screen.getByRole("menuitem", { name: "Terminal", exact: true }))
-    .toBeVisible();
-  await userEvent.click(screen.getByRole("menuitem", { name: "Terminal", exact: true }));
+    .element(screen.getByRole("tab", { name: "New tab", exact: true }))
+    .not.toBeInTheDocument();
   await expect
     .element(screen.getByRole("textbox", { name: "Editor terminal:new-terminal" }))
     .toBeVisible();

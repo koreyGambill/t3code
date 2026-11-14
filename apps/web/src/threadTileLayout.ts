@@ -1,4 +1,16 @@
 export const CONVERSATION_TAB_ID = "conversation";
+const NEW_TAB_PREFIX = "new-tab:";
+/** An empty tab that shows the area chooser until an area replaces it. */
+export const newTabId = (id: string) => `${NEW_TAB_PREFIX}${id}`;
+export const isNewTab = (tabId: string) => tabId.startsWith(NEW_TAB_PREFIX);
+
+/** Puts tabs where a chosen new tab sat, or after the group's other tabs. */
+function placeTabs(group: TileGroup, tabIds: string[]): TileGroup {
+  const tabs = isNewTab(group.activeTabId)
+    ? group.tabs.flatMap((id) => (id === group.activeTabId ? tabIds : [id]))
+    : [...group.tabs, ...tabIds];
+  return { ...group, tabs, activeTabId: tabIds[0] ?? group.activeTabId };
+}
 
 export type FloatingTileRect = { x: number; y: number; width: number; height: number };
 
@@ -93,6 +105,7 @@ export type TileAction =
     }
   | { type: "close-group"; groupId: string }
   | { type: "close-tab"; tabId: string }
+  | { type: "new-tab"; groupId: string; tabId: string }
   | { type: "merge-groups"; groupId: string; targetGroupId: string }
   | { type: "swap-groups"; firstGroupId: string; secondGroupId: string }
   | {
@@ -136,7 +149,7 @@ function prune(
 ): TileNode | null {
   if (node.kind === "group") {
     const tabs = node.tabs.filter((id) => {
-      if (!valid.has(id) || seen.has(id)) return false;
+      if ((!valid.has(id) && !isNewTab(id)) || seen.has(id)) return false;
       seen.add(id);
       return true;
     });
@@ -267,7 +280,10 @@ export function syncTileLayout(
     activate &&
     activeSurfaceId &&
     surfaceIds.includes(activeSurfaceId) &&
-    getTileGroups(next).some((group) => group.id === next.focusedGroupId && !group.tabs.length)
+    getTileGroups(next).some(
+      (group) =>
+        group.id === next.focusedGroupId && (!group.tabs.length || isNewTab(group.activeTabId)),
+    )
   ) {
     next = applyTileAction(next, {
       type: "move",
@@ -282,7 +298,9 @@ export function syncTileLayout(
       ...next,
       root: mapNode(next.root, (node) =>
         node.kind === "group" && node.id === next.focusedGroupId
-          ? { ...node, tabs: [...node.tabs, ...missing] }
+          ? isNewTab(node.activeTabId)
+            ? placeTabs(node, missing)
+            : { ...placeTabs(node, missing), activeTabId: node.activeTabId }
           : node,
       ),
     };
@@ -393,6 +411,24 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       root: root ?? { kind: "group", id: group.id, tabs: [], activeTabId: "" },
       focusedGroupId: root ? layout.focusedGroupId : group.id,
       maximizedGroupId: null,
+    });
+  }
+  if (action.type === "new-tab") {
+    const group = groups.find((entry) => entry.id === action.groupId);
+    if (
+      !group ||
+      !isNewTab(action.tabId) ||
+      groups.some((entry) => entry.tabs.includes(action.tabId))
+    )
+      return layout;
+    return settle({
+      ...layout,
+      root: mapNode(layout.root, (node) =>
+        node.id === group.id
+          ? { ...group, tabs: [...group.tabs, action.tabId], activeTabId: action.tabId }
+          : node,
+      ),
+      focusedGroupId: group.id,
     });
   }
   if (action.type === "close-tab") {
@@ -513,7 +549,7 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
       ...layout,
       root: mapNode(layout.root, (node) =>
         node.id === target.id && node.kind === "group"
-          ? { ...node, tabs: [...node.tabs, CONVERSATION_TAB_ID], activeTabId: CONVERSATION_TAB_ID }
+          ? placeTabs(node, [CONVERSATION_TAB_ID])
           : node,
       ),
       focusedGroupId: target.id,
@@ -533,9 +569,21 @@ export function applyTileAction(layout: ThreadTileLayout, action: TileAction): T
   }
   let root = mapNode(layout.root, (node) => {
     if (node.kind !== "group") return node;
-    const tabs = node.tabs.filter((id) => id !== action.tabId);
+    const replaced =
+      action.type === "move" &&
+      node.id === target.id &&
+      isNewTab(node.activeTabId) &&
+      node.activeTabId !== action.tabId
+        ? node.activeTabId
+        : null;
+    const index = replaced
+      ? node.tabs.indexOf(replaced)
+      : action.type === "move"
+        ? (action.index ?? node.tabs.length)
+        : node.tabs.length;
+    const tabs = node.tabs.filter((id) => id !== action.tabId && id !== replaced);
     if (action.type === "move" && node.id === target.id)
-      tabs.splice(Math.min(tabs.length, Math.max(0, action.index ?? tabs.length)), 0, action.tabId);
+      tabs.splice(Math.min(tabs.length, Math.max(0, index)), 0, action.tabId);
     const group = {
       ...node,
       tabs,
