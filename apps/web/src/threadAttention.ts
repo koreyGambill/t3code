@@ -1,7 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
-import { displayTileRoot } from "./threadTileGeometry";
-import { CONVERSATION_TAB_ID, getTileGroups, type ThreadTileLayout } from "./threadTileLayout";
+import { visibleTileGroups } from "./threadTileGeometry";
+import { CONVERSATION_TAB_ID, type ThreadTileLayout } from "./threadTileLayout";
 
 export const THREAD_ATTENTION_DURATION_MS = 1000;
 export const THREAD_PANE_ATTENTION_DURATION_MS = 750;
@@ -16,11 +16,7 @@ export function isThreadVisible(
     return false;
   const tabId =
     thread.threadId === route.threadId ? CONVERSATION_TAB_ID : `side-chat:${thread.threadId}`;
-  return getTileGroups(displayTileRoot(layout)).some(
-    (group) =>
-      (!layout.maximizedGroupId || group.id === layout.maximizedGroupId) &&
-      group.activeTabId === tabId,
-  );
+  return visibleTileGroups(layout).some((group) => group.activeTabId === tabId);
 }
 
 type ThreadAttention = {

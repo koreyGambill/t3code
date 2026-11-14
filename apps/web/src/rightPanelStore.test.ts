@@ -205,6 +205,23 @@ describe("rightPanelStore", () => {
     ).toEqual([["conversation"]]);
   });
 
+  it("closing the active surface selects a neighbour from the same tile", () => {
+    const store = useRightPanelStore.getState();
+    for (const kind of ["files", "inspect", "notes"] as const) store.open(refA, kind);
+    store.applyTileAction(refA, { type: "move", tabId: "files", targetGroupId: "panels-group" });
+    store.applyTileAction(refA, { type: "move", tabId: "notes", targetGroupId: "panels-group" });
+    store.applyTileAction(refA, {
+      type: "move",
+      tabId: "inspect",
+      targetGroupId: "conversation-group",
+    });
+    store.activateSurface(refA, "files");
+    store.closeSurface(refA, "files");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).activeSurfaceId,
+    ).toBe("notes");
+  });
+
   it("reveals an existing active surface after its group selected conversation", () => {
     const store = useRightPanelStore.getState();
     store.openBrowser(refA, "existing");

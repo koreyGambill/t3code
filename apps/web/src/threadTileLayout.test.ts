@@ -3,7 +3,9 @@ import {
   applyTileAction,
   CONVERSATION_TAB_ID,
   getTileGroups,
+  newTabId,
   parseTileLayout,
+  resizeFloatingTile,
   syncTileLayout,
 } from "./threadTileLayout";
 
@@ -25,7 +27,11 @@ describe("thread tile layout", () => {
     const synced = syncTileLayout(floating, ["a", "b"], ["a", "b", "c"], "c", true);
     expect(getTileGroups(synced)[1]?.floating).toEqual(getTileGroups(floating)[1]?.floating);
     const docked = applyTileAction(floating, { type: "restore-group", groupId: "panels-group" });
-    expect(getTileGroups(docked)).toEqual(getTileGroups(initial));
+    expect(getTileGroups(docked)).toEqual([
+      getTileGroups(initial)[0],
+      { ...getTileGroups(initial)[1], lastFloating: getTileGroups(floating)[1]?.floating },
+    ]);
+    expect(parseTileLayout(JSON.parse(JSON.stringify(docked)))).toEqual(docked);
     const moved = applyTileAction(floating, {
       type: "dock-group",
       groupId: "panels-group",
@@ -43,6 +49,187 @@ describe("thread tile layout", () => {
     expect(getTileGroups(merged).map((group) => group.tabs)).toEqual([
       [CONVERSATION_TAB_ID, "a", "b"],
     ]);
+  });
+
+  it("resizes floating tiles from any edge inside the workspace and keeps one tile docked", () => {
+    const rect = { x: 0.2, y: 0.2, width: 0.4, height: 0.4 };
+    const resize = (...args: Parameters<typeof resizeFloatingTile>) =>
+      Object.values(resizeFloatingTile(...args)).map((value) => Math.round(value * 100) / 100);
+    expect(resize(rect, { left: true, top: true }, { x: -0.1, y: -0.5 })).toEqual([
+      0.1, 0, 0.5, 0.6,
+    ]);
+    expect(resize(rect, { right: true }, { x: 1, y: 1 })).toEqual([0.2, 0.2, 0.8, 0.4]);
+    expect(resize(rect, { left: true, bottom: true }, { x: 0.5, y: -0.5 })).toEqual([
+      0.4, 0.2, 0.2, 0.2,
+    ]);
+    const single = syncTileLayout(undefined, [], [], null, false);
+    expect(
+      applyTileAction(single, { type: "float-group", groupId: "conversation-group", rect }),
+    ).toBe(single);
+    const chatFloating = applyTileAction(syncTileLayout(undefined, [], ["a"], "a", true), {
+      type: "float-group",
+      groupId: "conversation-group",
+      rect,
+    });
+    expect(
+      applyTileAction(chatFloating, { type: "float-group", groupId: "panels-group", rect }),
+    ).toBe(chatFloating);
+    const maximized = applyTileAction(chatFloating, {
+      type: "maximize",
+      groupId: "panels-group",
+    });
+    const moved = applyTileAction(maximized, {
+      type: "float-group",
+      groupId: "conversation-group",
+      rect: { ...rect, x: 0.3 },
+    });
+    expect([moved.maximizedGroupId, moved.focusedGroupId]).toEqual([
+      "panels-group",
+      "conversation-group",
+    ]);
+    expect(
+      applyTileAction(maximized, { type: "restore-group", groupId: "conversation-group" })
+        .maximizedGroupId,
+    ).toBeNull();
+  });
+
+  it("treats chat as an ordinary area that closes, reopens and leaves a chooser when last", () => {
+    const initial = syncTileLayout(undefined, [], ["files"], "files", true);
+    const noChat = applyTileAction(initial, { type: "close-tab", tabId: CONVERSATION_TAB_ID });
+    expect(getTileGroups(noChat).map((group) => group.tabs)).toEqual([["files"]]);
+    const stillNoChat = syncTileLayout(noChat, ["files"], ["files", "notes"], "notes", true);
+    expect(getTileGroups(stillNoChat).map((group) => group.tabs)).toEqual([["files", "notes"]]);
+    const chooser = syncTileLayout(noChat, ["files"], [], null, false);
+    expect(getTileGroups(chooser)).toMatchObject([{ tabs: [], activeTabId: "" }]);
+    expect(applyTileAction(chooser, { type: "close-group", groupId: chooser.focusedGroupId })).toBe(
+      chooser,
+    );
+    const reopened = applyTileAction(chooser, {
+      type: "move",
+      tabId: CONVERSATION_TAB_ID,
+      targetGroupId: chooser.focusedGroupId,
+    });
+    expect(getTileGroups(reopened)).toMatchObject([
+      { tabs: [CONVERSATION_TAB_ID], activeTabId: CONVERSATION_TAB_ID },
+    ]);
+    const lastChat = applyTileAction(reopened, { type: "close-tab", tabId: CONVERSATION_TAB_ID });
+    expect(getTileGroups(lastChat)).toMatchObject([{ tabs: [] }]);
+    const shared = applyTileAction(initial, {
+      type: "move",
+      tabId: "files",
+      targetGroupId: "conversation-group",
+      index: 0,
+    });
+    expect(
+      getTileGroups(applyTileAction(shared, { type: "close-tab", tabId: CONVERSATION_TAB_ID })),
+    ).toMatchObject([{ tabs: ["files"], activeTabId: "files" }]);
+    const closedTile = applyTileAction(initial, { type: "close-group", groupId: "panels-group" });
+    expect(getTileGroups(closedTile).map((group) => group.id)).toEqual(["conversation-group"]);
+    const lastTile = applyTileAction(closedTile, {
+      type: "close-group",
+      groupId: "conversation-group",
+    });
+    expect(getTileGroups(lastTile)).toMatchObject([{ id: "conversation-group", tabs: [] }]);
+    expect(parseTileLayout(JSON.parse(JSON.stringify(lastTile)))).toEqual(lastTile);
+  });
+
+  it("replaces a new tab in place with the area chosen for it, and closes it on its own", () => {
+    let layout = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
+    layout = applyTileAction(layout, {
+      type: "new-tab",
+      groupId: "panels-group",
+      tabId: newTabId("a"),
+    });
+    expect(getTileGroups(layout)[1]).toMatchObject({
+      tabs: ["files", "notes", newTabId("a")],
+      activeTabId: newTabId("a"),
+    });
+    expect(applyTileAction(layout, { type: "new-tab", groupId: "panels-group", tabId: "x" })).toBe(
+      layout,
+    );
+    layout = applyTileAction(layout, {
+      type: "move",
+      tabId: "files",
+      targetGroupId: "panels-group",
+      index: 0,
+    });
+    expect(getTileGroups(layout)[1]?.activeTabId).toBe("files");
+    const persisted = parseTileLayout(JSON.parse(JSON.stringify(layout)))!;
+    const fresh = applyTileAction(persisted, {
+      type: "new-tab",
+      groupId: "panels-group",
+      tabId: newTabId("b"),
+    });
+    expect(syncTileLayout(fresh, ["files", "notes"], ["files", "notes"], null, false)).toEqual(
+      fresh,
+    );
+    const created = syncTileLayout(
+      fresh,
+      ["files", "notes"],
+      ["files", "notes", "diff"],
+      "diff",
+      true,
+    );
+    expect(getTileGroups(created)[1]).toMatchObject({
+      tabs: ["notes", "files", "diff"],
+      activeTabId: "diff",
+    });
+    const existing = syncTileLayout(
+      applyTileAction(fresh, {
+        type: "new-tab",
+        groupId: "conversation-group",
+        tabId: newTabId("c"),
+      }),
+      ["files", "notes"],
+      ["files", "notes"],
+      "notes",
+      true,
+    );
+    expect(getTileGroups(existing).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, "notes"],
+      ["files", newTabId("b")],
+    ]);
+    const chat = applyTileAction(
+      applyTileAction(fresh, { type: "close-tab", tabId: CONVERSATION_TAB_ID }),
+      { type: "move", tabId: CONVERSATION_TAB_ID, targetGroupId: "panels-group" },
+    );
+    expect(getTileGroups(chat)[0]?.tabs).toEqual(["notes", "files", CONVERSATION_TAB_ID]);
+    const byCode = syncTileLayout(
+      fresh,
+      ["files", "notes"],
+      ["files", "notes", "x"],
+      "x",
+      true,
+      false,
+    );
+    expect(getTileGroups(byCode).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, "x"],
+      ["notes", "files", newTabId("b")],
+    ]);
+    const choosing = applyTileAction(fresh, {
+      type: "new-tab",
+      groupId: "conversation-group",
+      tabId: newTabId("c"),
+    });
+    const revealed = syncTileLayout(
+      choosing,
+      ["files", "notes"],
+      ["files", "notes"],
+      "notes",
+      true,
+      false,
+    );
+    expect(getTileGroups(revealed).map((group) => group.tabs)).toEqual([
+      [CONVERSATION_TAB_ID, newTabId("c")],
+      ["notes", "files", newTabId("b")],
+    ]);
+    const lone = applyTileAction(syncTileLayout(undefined, [], [], null, false), {
+      type: "new-tab",
+      groupId: "conversation-group",
+      tabId: newTabId("d"),
+    });
+    const closed = applyTileAction(lone, { type: "close-tab", tabId: newTabId("d") });
+    expect(getTileGroups(closed)[0]?.activeTabId).toBe(CONVERSATION_TAB_ID);
   });
 
   it("moves tabs and splits conversation without losing or duplicating any tab", () => {
@@ -210,9 +397,9 @@ describe("thread tile layout", () => {
     expect(applyTileAction(empty, { type: "close-group", groupId: "chooser-group" })).toEqual(
       initial,
     );
-    expect(applyTileAction(empty, { type: "close-group", groupId: "conversation-group" })).toBe(
-      empty,
-    );
+    expect(
+      getTileGroups(applyTileAction(empty, { type: "close-group", groupId: "conversation-group" })),
+    ).toEqual([getTileGroups(empty)[1]]);
     expect(applyTileAction(empty, { type: "close-group", groupId: "missing" })).toBe(empty);
     const loneEmpty = parseTileLayout({
       root: { kind: "group", id: "empty", tabs: [], activeTabId: "" },
@@ -295,118 +482,63 @@ describe("thread tile layout", () => {
     }
   });
 
-  it("focuses any two tabs without moving them and restores the layout after focus closes", () => {
-    const initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
-    const paired = applyTileAction(initial, { type: "focus-pair", groupId: "panels-group" });
-    expect(paired.root).toBe(initial.root);
-    expect(paired.focusPairRightTabId).toBe("files");
-    expect(paired.focusPairLeftTabId).toBeNull();
-    const selected = applyTileAction(paired, { type: "focus-left", tabId: "notes" });
-    expect(selected.root).toBe(initial.root);
-    expect(selected.focusedGroupId).toBe("focus-left-group");
-    expect(applyTileAction(selected, { type: "focus-left", tabId: "files" })).toBe(selected);
-    expect(applyTileAction(selected, { type: "focus-left", tabId: "missing" })).toBe(selected);
-    const resized = applyTileAction(selected, { type: "resize-focus-pair", ratio: 0.7 });
-    expect(parseTileLayout(JSON.parse(JSON.stringify(resized)))).toEqual(resized);
-    const maximized = applyTileAction(resized, { type: "maximize", groupId: "focus-left-group" });
-    expect(maximized.maximizedGroupId).toBe("focus-left-group");
-    expect(maximized.focusPairRightTabId).toBe("files");
-    expect(applyTileAction(maximized, { type: "maximize", groupId: null }).focusPairLeftTabId).toBe(
-      "notes",
-    );
-    expect(parseTileLayout(JSON.parse(JSON.stringify(maximized)))).toEqual(maximized);
-    const externalLeft = syncTileLayout(
-      selected,
-      ["files", "notes"],
-      ["files", "notes"],
-      "notes",
-      true,
-    );
-    expect(externalLeft.focusPairRightTabId).toBe("files");
-    expect(externalLeft.focusPairLeftTabId).toBe("notes");
-    expect(externalLeft.focusedGroupId).toBe("focus-left-group");
-    const switchedRight = applyTileAction(selected, {
-      type: "activate",
-      groupId: "panels-group",
-      tabId: "notes",
-    });
-    expect(switchedRight.focusPairRightTabId).toBe("files");
-    expect(switchedRight.focusPairLeftTabId).toBe("notes");
-    expect(switchedRight.focusedGroupId).toBe("focus-left-group");
-    expect(switchedRight.root).toBe(initial.root);
-    const switchedLeft = applyTileAction(selected, {
-      type: "activate",
-      groupId: "focus-left-group",
-      tabId: CONVERSATION_TAB_ID,
-    });
-    expect(switchedLeft.focusPairLeftTabId).toBe(CONVERSATION_TAB_ID);
-    expect(switchedLeft.root).toBe(initial.root);
-    const externalRight = applyTileAction(selected, {
-      type: "activate",
-      groupId: "conversation-group",
-      tabId: CONVERSATION_TAB_ID,
-    });
-    expect(externalRight.focusPairRightTabId).toBe(CONVERSATION_TAB_ID);
-    expect(externalRight.focusPairLeftTabId).toBe("notes");
-    const withNewArea = syncTileLayout(
-      selected,
-      ["files", "notes"],
-      ["files", "notes", "inspect"],
-      "inspect",
-      true,
-    );
-    expect(withNewArea.focusPairGroupId).toBeNull();
-    expect(getTileGroups(withNewArea).some((group) => group.tabs.includes("inspect"))).toBe(true);
-    expect(
-      syncTileLayout(selected, ["files", "notes"], ["files"], "files", false).focusPairLeftTabId,
-    ).toBeNull();
-    expect(
-      syncTileLayout(selected, ["files", "notes"], ["notes"], "notes", false).focusPairGroupId,
-    ).toBeNull();
-    expect(applyTileAction(selected, { type: "focus-pair", groupId: null }).root).toBe(
-      initial.root,
-    );
-    expect(applyTileAction(selected, { type: "focus-pair", groupId: null }).focusedGroupId).toBe(
-      "panels-group",
-    );
-    const created = applyTileAction(selected, {
-      type: "new-group",
-      targetGroupId: "panels-group",
-      axis: "vertical",
-      side: "after",
-      groupId: "empty",
-      splitId: "empty-split",
-    });
-    expect(created.focusPairGroupId).toBeNull();
-    const split = applyTileAction(selected, {
+  it("shows a tile beside the maximized one, swaps them and restores on outside focus", () => {
+    let initial = syncTileLayout(undefined, [], ["files", "notes"], "files", true);
+    initial = applyTileAction(initial, {
       type: "split",
       tabId: "notes",
       targetGroupId: "panels-group",
       axis: "vertical",
       side: "after",
-      groupId: "split-notes",
+      groupId: "notes-group",
       splitId: "notes-split",
     });
-    expect(split.focusPairGroupId).toBeNull();
+    expect(applyTileAction(initial, { type: "show-beside", groupId: "panels-group" })).toBe(
+      initial,
+    );
+    const maximized = applyTileAction(initial, { type: "maximize", groupId: "conversation-group" });
+    expect(applyTileAction(maximized, { type: "show-beside", groupId: "conversation-group" })).toBe(
+      maximized,
+    );
+    expect(applyTileAction(maximized, { type: "show-beside", groupId: "missing" })).toBe(maximized);
+    const paired = applyTileAction(maximized, { type: "show-beside", groupId: "panels-group" });
+    expect([paired.maximizedGroupId, paired.besideGroupId, paired.focusedGroupId]).toEqual([
+      "conversation-group",
+      "panels-group",
+      "panels-group",
+    ]);
+    expect(parseTileLayout(JSON.parse(JSON.stringify(paired)))).toEqual(paired);
+    const swapped = applyTileAction(paired, { type: "swap-beside" });
+    expect([swapped.maximizedGroupId, swapped.besideGroupId]).toEqual([
+      "panels-group",
+      "conversation-group",
+    ]);
+    expect(applyTileAction(maximized, { type: "swap-beside" })).toBe(maximized);
     expect(
-      parseTileLayout({ ...initial, focusPairGroupId: "panels-group" })?.focusPairRightTabId,
-    ).toBe("files");
-    expect(
-      parseTileLayout({
-        ...initial,
-        focusPairGroupId: "panels-group",
-        maximizedGroupId: "conversation-group",
-      })?.maximizedGroupId,
-    ).toBeNull();
-    expect(
-      parseTileLayout({
-        ...initial,
-        focusPairGroupId: "panels-group",
-        focusedGroupId: "conversation-group",
-      })?.focusedGroupId,
+      applyTileAction(paired, { type: "activate", groupId: "panels-group", tabId: "files" })
+        .besideGroupId,
     ).toBe("panels-group");
+    const outside = applyTileAction(paired, { type: "focus", groupId: "notes-group" });
+    expect([outside.maximizedGroupId, outside.besideGroupId]).toEqual([null, undefined]);
+    const restored = applyTileAction(paired, { type: "maximize", groupId: null });
+    expect(restored).toEqual({ ...initial, focusedGroupId: "panels-group" });
+    expect(applyTileAction(paired, { type: "show-beside", groupId: null })).toEqual({
+      ...maximized,
+      focusedGroupId: "panels-group",
+    });
+    const closedBeside = syncTileLayout(paired, ["files", "notes"], ["notes"], "notes", false);
+    expect([closedBeside.maximizedGroupId, closedBeside.besideGroupId]).toEqual([
+      "conversation-group",
+      undefined,
+    ]);
+    const newArea = syncTileLayout(paired, ["files", "notes"], ["files", "notes", "x"], "x", true);
+    expect(getTileGroups(newArea).find((group) => group.tabs.includes("x"))?.id).toBe(
+      "panels-group",
+    );
+    expect(newArea.besideGroupId).toBe("panels-group");
+    expect(parseTileLayout({ ...paired, maximizedGroupId: null })?.besideGroupId).toBeUndefined();
     expect(parseTileLayout({ ...paired, focusPairRatio: 12 })?.focusPairRatio).toBe(0.9);
-    expect(applyTileAction(selected, { type: "resize-focus-pair", ratio: NaN })).toBe(selected);
+    expect(applyTileAction(paired, { type: "resize-focus-pair", ratio: NaN })).toBe(paired);
   });
 
   it("preserves independent active tabs while external activation selects the owning group", () => {
@@ -425,6 +557,31 @@ describe("thread tile layout", () => {
     expect(
       syncTileLayout(focused, ["a", "b", "c"], ["a", "b", "c"], "a", false).focusedGroupId,
     ).toBe("conversation-group");
+  });
+
+  it("closing a tab only changes its own group's active tab", () => {
+    let layout = syncTileLayout(undefined, [], ["side", "browser"], "browser", true);
+    layout = applyTileAction(layout, {
+      type: "move",
+      tabId: "side",
+      targetGroupId: "conversation-group",
+    });
+    layout = applyTileAction(layout, {
+      type: "activate",
+      groupId: "conversation-group",
+      tabId: CONVERSATION_TAB_ID,
+    });
+    layout = applyTileAction(layout, { type: "focus", groupId: "panels-group" });
+    // The store falls back to the next surface in its flat list, which lives in the other group.
+    const closed = syncTileLayout(layout, ["side", "browser"], ["side"], "side", true);
+    expect(getTileGroups(closed).map((group) => [group.id, group.activeTabId])).toEqual([
+      ["conversation-group", CONVERSATION_TAB_ID],
+    ]);
+    let three = syncTileLayout(undefined, [], ["a", "b", "c"], "b", true);
+    three = applyTileAction(three, { type: "activate", groupId: "panels-group", tabId: "b" });
+    expect(
+      getTileGroups(syncTileLayout(three, ["a", "b", "c"], ["a", "c"], "a", true))[1]?.activeTabId,
+    ).toBe("c");
   });
 
   it("prunes closed groups and restores a usable conversation after maximizing", () => {

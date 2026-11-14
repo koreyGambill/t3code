@@ -1,4 +1,9 @@
-import { getTileGroups, type TileNode, type ThreadTileLayout } from "./threadTileLayout";
+import {
+  getTileGroups,
+  type TileGroup,
+  type TileNode,
+  type ThreadTileLayout,
+} from "./threadTileLayout";
 
 export interface TileRect {
   x: number;
@@ -16,67 +21,40 @@ export function tileDropOrder<T extends { id: string }>(
     .sort((a, b) => Number(b.id === focusedFloatingId) - Number(a.id === focusedFloatingId));
 }
 
-export function isFocusOverviewGroup(id: string) {
-  return id.startsWith("focus-overview:");
-}
-
-function focusOverview(node: TileNode, excludedTabId: string): TileNode | null {
-  if (node.kind === "group") {
-    const tabs = node.tabs.filter((tabId) => tabId !== excludedTabId);
-    return tabs.length
-      ? {
-          ...node,
-          id: `focus-overview:${node.id}`,
-          tabs,
-          activeTabId: tabs.includes(node.activeTabId) ? node.activeTabId : tabs[0]!,
-        }
-      : null;
-  }
-  const first = focusOverview(node.first, excludedTabId);
-  const second = focusOverview(node.second, excludedTabId);
-  return first && second
-    ? { ...node, id: `focus-overview-split:${node.id}`, first, second }
-    : (first ?? second);
-}
-
+/** The maximized tile, beside its pair when one is chosen, or the whole docked tree. */
 export function displayTileRoot(layout: ThreadTileLayout): TileNode {
-  if (!layout.focusPairGroupId) return layout.root;
   const groups = getTileGroups(layout);
-  const right = groups.find((group) => group.id === layout.focusPairGroupId);
-  const rightTabId = layout.focusPairRightTabId ?? right?.activeTabId;
-  if (!right || !right.tabs.includes(rightTabId ?? "")) return layout.root;
-  const leftOwner =
-    layout.focusPairLeftTabId && layout.focusPairLeftTabId !== rightTabId
-      ? groups.find((group) => group.tabs.includes(layout.focusPairLeftTabId!))
-      : undefined;
-  const left: TileNode = leftOwner
-    ? {
-        ...leftOwner,
-        id: "focus-left-group",
-        tabs: [layout.focusPairLeftTabId!],
-        activeTabId: layout.focusPairLeftTabId!,
-      }
-    : (focusOverview(layout.root, rightTabId!) ?? {
-        kind: "group",
-        id: "focus-left-chooser",
-        tabs: [],
-        activeTabId: "",
-        colorIndex: right.colorIndex ?? 0,
-      });
-  return {
-    kind: "split",
-    id: "focus-pair-split",
-    axis: "horizontal",
-    ratio: layout.focusPairRatio ?? 0.55,
-    first: left,
-    second: {
-      ...right,
-      tabs: leftOwner
-        ? right.tabs.filter((tabId) => tabId !== layout.focusPairLeftTabId)
-        : [rightTabId!],
-      activeTabId: rightTabId!,
-    },
+  const docked = (id: string | null | undefined): TileGroup | undefined => {
+    const group = groups.find((entry) => entry.id === id);
+    if (!group) return undefined;
+    const { floating: _floating, ...rest } = group;
+    return rest;
   };
+  const maximized = docked(layout.maximizedGroupId);
+  if (!maximized) return layout.root;
+  const beside = docked(layout.besideGroupId);
+  return beside
+    ? {
+        kind: "split",
+        id: "focus-pair-split",
+        axis: "horizontal",
+        ratio: layout.focusPairRatio ?? 0.5,
+        first: maximized,
+        second: beside,
+      }
+    : maximized;
+}
+
+/** Every tile on screen: the displayed tree plus floating tiles that hover above a zoomed view. */
+export function visibleTileGroups(layout: ThreadTileLayout): TileGroup[] {
+  if (!layout.maximizedGroupId) return getTileGroups(layout);
+  return [
+    ...getTileGroups(displayTileRoot(layout)),
+    ...getTileGroups(layout).filter(
+      (group) =>
+        group.floating && group.id !== layout.maximizedGroupId && group.id !== layout.besideGroupId,
+    ),
+  ];
 }
 
 export function tileGeometry(root: TileNode) {
@@ -170,7 +148,6 @@ export function resizeTileSplits(
     y: group.rect.y + group.rect.height / 2,
   };
   const borders = splits.filter((split) => {
-    if (split.id.startsWith("focus-overview-split:")) return false;
     const rect = split.rect;
     if (
       center.x <= rect.x ||
