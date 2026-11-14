@@ -1768,6 +1768,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    setScheduledTaskThreadEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:set-thread-enabled",
+      tag: WS_METHODS.scheduledTasksSetThreadEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     deleteScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:delete",
       tag: WS_METHODS.scheduledTasksDelete,

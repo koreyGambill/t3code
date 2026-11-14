@@ -2384,6 +2384,13 @@ export const layerWsRpc = (
             Effect.andThen(scheduledTasks.setEnabled(input)),
             Effect.map((result) => forClient[WS_METHODS.scheduledTasksSetEnabled](result, client)),
           ),
+        [WS_METHODS.scheduledTasksSetThreadEnabled]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.setThreadEnabled(input)),
+            Effect.map((result) =>
+              forClient[WS_METHODS.scheduledTasksSetThreadEnabled](result, client),
+            ),
+          ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),

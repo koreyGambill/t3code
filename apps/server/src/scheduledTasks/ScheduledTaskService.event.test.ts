@@ -293,6 +293,71 @@ it.effect("run_ended fires once per run, only for matching threads", () =>
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a thread switched off for a task queues no runs there until it is back on", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const sql = yield* SqlClient.SqlClient;
+    yield* insertThread("thread:a");
+    yield* insertThread("thread:b");
+    yield* withService(f, (service, queued) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* decode({
+            ...input,
+            schedule: { type: "event", event: "run_ended", coalesceSeconds: 60 },
+          }),
+        );
+        const threadA = ThreadId.make("thread:a");
+        yield* f.publish(yield* runEnded("run:a1", "thread:a"));
+        yield* queued("thread:a", "run:run:a1");
+        const off = yield* service.setThreadEnabled({
+          id: task.id,
+          threadId: threadA,
+          enabled: false,
+        });
+        expect(off.task.disabledThreadIds).toEqual([threadA]);
+        // Switching off drops the run already queued for that thread.
+        const pending = yield* sql`SELECT 1 FROM scheduled_task_event_subjects
+          WHERE task_id = ${task.id} AND subject = 'thread:a' AND due_at IS NOT NULL`;
+        expect(pending).toHaveLength(0);
+        // Events arrive in order, so once thread b's is queued, thread a's was already skipped.
+        yield* f.publish(yield* runEnded("run:a2", "thread:a"));
+        yield* f.publish(yield* runEnded("run:b1", "thread:b"));
+        yield* queued("thread:b", "run:run:b1");
+        yield* TestClock.adjust("61 seconds");
+        yield* f.tick;
+        const afterOff = yield* Ref.get(f.launches);
+        expect(afterOff).toHaveLength(1);
+        expect(afterOff[0]).toContain("thread:b");
+        // An upsert from a form that knows nothing of the list keeps it.
+        const { task: saved } = yield* service.upsert(
+          yield* decode({
+            ...input,
+            id: task.id,
+            title: "Renamed",
+            schedule: { type: "event", event: "run_ended", coalesceSeconds: 60 },
+          }),
+        );
+        expect(saved.disabledThreadIds).toEqual([threadA]);
+        const on = yield* service.setThreadEnabled({
+          id: task.id,
+          threadId: threadA,
+          enabled: true,
+        });
+        expect(on.task.disabledThreadIds).toBeUndefined();
+        yield* f.publish(yield* runEnded("run:a3", "thread:a"));
+        yield* queued("thread:a", "run:run:a3");
+        yield* TestClock.adjust("61 seconds");
+        yield* f.tick;
+        const launches = yield* Ref.get(f.launches);
+        expect(launches).toHaveLength(2);
+        expect(launches[1]).toContain("thread:a");
+        expect((yield* service.list()).tasks[0]?.disabledThreadIds).toBeUndefined();
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a task's own turns and threads never retrigger it", () =>
   Effect.gen(function* () {
     const f = yield* fixture;

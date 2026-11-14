@@ -173,9 +173,10 @@ const loadThreadContext = Effect.fn("ScheduledTaskEventTriggers.loadThreadContex
   };
 });
 
-interface CandidateTask {
+export interface CandidateTask {
   readonly id: ScheduledTaskId;
   readonly schedule: ScheduledTaskEventSchedule;
+  readonly disabledThreadIds: ReadonlyArray<ThreadId>;
 }
 
 /**
@@ -193,7 +194,11 @@ export const recordEventFact = Effect.fn("ScheduledTaskEventTriggers.recordEvent
   const nowIso = iso(now);
   if (fact.occurredAt < isoAfter(nowIso, -EVENT_FACT_MAX_AGE_MS)) return [];
   const thread = fact.threadId === null ? null : yield* loadThreadContext(fact);
-  const matching = candidates.filter((task) => matchesEventSchedule(task.schedule, fact, thread));
+  const matching = candidates.filter(
+    (task) =>
+      (fact.threadId === null || !task.disabledThreadIds.includes(fact.threadId)) &&
+      matchesEventSchedule(task.schedule, fact, thread),
+  );
   if (matching.length === 0) return [];
   // A late update for a run a newer, already ended run superseded is not a turn ending now. A
   // newer run that is still going (a queued follow-up) doesn't hide this one's ending.
@@ -386,6 +391,16 @@ export const markOwnedThread = Effect.fn("ScheduledTaskEventTriggers.markOwnedTh
     VALUES (${taskId}, ${threadId}, 1)
     ON CONFLICT (task_id, subject) DO UPDATE SET owned = 1, due_at = NULL,
       event_key = NULL, event_json = NULL, event_count = 0`;
+});
+
+/** A thread switched off for this task drops the run its events queued there. */
+export const clearPendingThreadEvents = Effect.fn(
+  "ScheduledTaskEventTriggers.clearPendingThreadEvents",
+)(function* (taskId: ScheduledTaskId, threadId: ThreadId) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE scheduled_task_event_subjects
+    SET due_at = NULL, event_key = NULL, event_json = NULL, event_count = 0
+    WHERE task_id = ${taskId} AND subject = ${threadId} AND due_at IS NOT NULL`;
 });
 
 export const clearPendingEvents = Effect.fn("ScheduledTaskEventTriggers.clearPendingEvents")(
