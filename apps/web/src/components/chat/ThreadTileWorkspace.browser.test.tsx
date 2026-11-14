@@ -442,8 +442,11 @@ it("moves and resizes floating tiles without docking, and drives the empty choos
   expect(getTileGroups(layout()).find((group) => group.id === "chooser")?.tabs).toEqual([]);
   await userEvent.click(screen.getByText("Choose an area", { exact: true }));
   await userEvent.keyboard("{ArrowRight}{ArrowLeft}n");
-  expect(getTileGroups(layout()).find((group) => group.id === "chooser")?.tabs[0]).toMatch(
-    /^notes:/,
+  const chosen = getTileGroups(layout()).find((group) => group.id === "chooser")!.tabs[0]!;
+  expect(chosen).toMatch(/^notes:/);
+  // The chooser unmounts; focus moves into the chosen area rather than dropping to the page.
+  await vi.waitFor(() =>
+    expect(document.activeElement?.getAttribute("data-tile-content")).toBe(chosen),
   );
   store.applyTileAction(threadRef, {
     type: "new-group",
@@ -457,6 +460,26 @@ it("moves and resizes floating tiles without docking, and drives the empty choos
   await userEvent.click(screen.getByText("Choose an area", { exact: true }));
   await userEvent.keyboard("{Escape}");
   expect(getTileGroups(layout()).some((group) => group.id === "escaped")).toBe(false);
+  expect(document.activeElement).not.toBe(document.body);
+  store.applyTileAction(threadRef, {
+    type: "new-group",
+    targetGroupId: "terminal-group",
+    axis: "vertical",
+    side: "after",
+    groupId: "tabbed",
+    splitId: "tabbed-split",
+  });
+  await userEvent.click(screen.getByText("Choose an area", { exact: true }));
+  // Chat is highlighted, but Enter on a Tabbed-to choice presses that choice.
+  await userEvent.keyboard("{Tab}{Tab}{Tab}");
+  await expect.element(screen.getByRole("button", { name: "Notes", exact: true })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(getTileGroups(layout()).find((group) => group.id === "tabbed")?.tabs[0]).toMatch(
+    /^notes:/,
+  );
+  expect(getTileGroups(layout()).find((group) => group.tabs.includes("conversation"))?.id).toBe(
+    "conversation-group",
+  );
 
   store.applyTileAction(threadRef, {
     type: "move",

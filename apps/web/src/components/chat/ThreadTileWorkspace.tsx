@@ -398,6 +398,12 @@ export function ThreadTileWorkspace(props: {
     else apply({ type: "focus", groupId });
     focusChooser(groupId);
   };
+  // A chooser unmounts once its area arrives or it closes. Focus left on it would drop to the
+  // page, and workspace focus recovery would hand it to the composer, in another tile.
+  const parkFocus = (groupId: string) =>
+    rootRef.current
+      ?.querySelector<HTMLElement>(`[data-tile-group="${CSS.escape(groupId)}"]`)
+      ?.focus({ preventScroll: true });
   const focus = (groupId: string) => {
     const group = getTileGroups(currentLayout()).find((entry) => entry.id === groupId);
     if (!group) return;
@@ -453,11 +459,7 @@ export function ThreadTileWorkspace(props: {
               key,
               enabled,
               run: (groupId: string) => {
-                // The chooser unmounts once the area arrives. Focus left on it would drop to the
-                // page, and workspace focus recovery would hand it to the composer in another tile.
-                rootRef.current
-                  ?.querySelector<HTMLElement>(`[data-tile-group="${CSS.escape(groupId)}"]`)
-                  ?.focus({ preventScroll: true });
+                parkFocus(groupId);
                 if (label === "Chat")
                   apply({ type: "move", tabId: CONVERSATION_TAB_ID, targetGroupId: groupId });
                 else {
@@ -598,12 +600,18 @@ export function ThreadTileWorkspace(props: {
         (event.target.isContentEditable ||
           /^(?:INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) ||
           event.target.closest('[role="textbox"]') !== null);
-      // Keys reach the chooser only from inside its tile, or when nothing else has focus.
-      const inTile =
+      // Enter and arrows belong to whatever control has focus; the chooser takes them only
+      // from the page, its tile or its own box. Letters and Esc also work from its buttons.
+      const target = event.target instanceof Element ? event.target : null;
+      const onChooser =
         event.target === document.body ||
-        (event.target instanceof Element &&
-          event.target.closest("[data-tile-group]")?.getAttribute("data-tile-group") === group?.id);
-      if (group && (!group.tabs.length || isNewTab(group.activeTabId)) && !editing && inTile) {
+        (target?.matches("[data-tile-group], [data-tile-chooser]") &&
+          (target.getAttribute("data-tile-group") ?? target.getAttribute("data-tile-chooser")) ===
+            group?.id);
+      const inChooser =
+        onChooser ||
+        target?.closest("[data-tile-chooser]")?.getAttribute("data-tile-chooser") === group?.id;
+      if (group && (!group.tabs.length || isNewTab(group.activeTabId)) && !editing && inChooser) {
         const choices = areaChoices;
         const index = chooserIndex?.groupId === group.id ? chooserIndex.index : 0;
         const key = event.key.toLowerCase();
@@ -614,20 +622,22 @@ export function ThreadTileWorkspace(props: {
             : event.key === "ArrowLeft" || event.key === "ArrowUp"
               ? -1
               : 0;
-        if (byKey || step || event.key === "Enter" || event.key === "Escape") {
+        if (byKey || event.key === "Escape" || (onChooser && (step || event.key === "Enter"))) {
           event.preventDefault();
           if (step)
             setChooserIndex({
               groupId: group.id,
               index: (index + step + choices.length) % choices.length,
             });
-          else if (event.key === "Escape")
+          else if (event.key === "Escape") {
+            parkFocus(group.id);
             apply(
               group.tabs.length
                 ? { type: "close-tab", tabId: group.activeTabId }
                 : { type: "close-group", groupId: group.id },
             );
-          else (byKey ?? choices[index])?.run(group.id);
+            focus(currentLayout().focusedGroupId);
+          } else (byKey ?? choices[index])?.run(group.id);
           return;
         }
       }
@@ -1487,18 +1497,25 @@ export function ThreadTileWorkspace(props: {
   );
 }
 
-// A tab cut at the strip's start is masked out whole, so no stray close button shows.
+const TAB_FADE_PX = 24;
+
+// A tab cut at the strip's start is masked out whole, so no stray close button shows, and the
+// end fades to show more tabs follow without ever dimming the active tab.
 function markTabOverflow(strip: HTMLElement) {
-  const left = strip.getBoundingClientRect().left;
+  const bounds = strip.getBoundingClientRect();
   const cut = [...strip.children].find((tab) => {
     const rect = tab.getBoundingClientRect();
-    return rect.left < left - 0.5 && rect.right > left + 0.5;
+    return rect.left < bounds.left - 0.5 && rect.right > bounds.left + 0.5;
   });
-  strip.style.setProperty(
-    "--tile-tabs-clip",
-    `${cut ? cut.getBoundingClientRect().right - left : 0}px`,
-  );
-  strip.dataset.overflowEnd = String(strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1);
+  const clip = cut ? cut.getBoundingClientRect().right - bounds.left : 0;
+  const overflowEnd = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+  const activeRight = strip.querySelector('[data-active="true"]')?.getBoundingClientRect().right;
+  const fade = overflowEnd
+    ? Math.max(0, Math.min(TAB_FADE_PX, bounds.right - (activeRight ?? bounds.left)))
+    : 0;
+  strip.style.setProperty("--tile-tabs-clip", `${clip}px`);
+  strip.style.setProperty("--tile-tabs-fade-end", `${fade}px`);
+  strip.dataset.masked = String(clip > 0 || fade > 0);
 }
 
 // Tab labels change width after they mount (a terminal names its process), so the cut is
@@ -1528,7 +1545,8 @@ function revealTab(tab: HTMLElement | null) {
   const pad = Number.parseFloat(getComputedStyle(strip).paddingLeft) || 0;
   const startOf = (element: Element) => element.getBoundingClientRect().left - origin - pad;
   const start = startOf(tab);
-  const end = start + tab.offsetWidth + 2 * pad;
+  // Room for the end fade when tabs follow, so it lands on them rather than this one.
+  const end = start + tab.offsetWidth + 2 * pad + (tab.nextElementSibling ? TAB_FADE_PX : 0);
   if (start < strip.scrollLeft) strip.scrollLeft = start;
   else if (end > strip.scrollLeft + strip.clientWidth)
     strip.scrollLeft =
