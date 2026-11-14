@@ -804,6 +804,7 @@ describe("upstream client wire compatibility", () => {
           list: () => Effect.succeed({ tasks: [shown, onEvent] }),
           upsert: record("upsert"),
           setEnabled: record("setEnabled"),
+          setThreadEnabled: record("setThreadEnabled"),
           runNow: record("runNow"),
           rotateWebhookToken: record("rotateWebhookToken"),
           delete: record("delete"),
@@ -822,6 +823,7 @@ describe("upstream client wire compatibility", () => {
         ): Array<Effect.Effect<object, ScheduledTaskError>> => [
           forUpstream.upsert({ ...upsert, id }),
           forUpstream.setEnabled({ id, enabled: false }),
+          forUpstream.setThreadEnabled({ id, threadId: ThreadId.make("thread:a"), enabled: false }),
           forUpstream.runNow({ id }),
           forUpstream.rotateWebhookToken({ id }),
           forUpstream.delete({ id }),
@@ -843,6 +845,7 @@ describe("upstream client wire compatibility", () => {
         expect(ran).toEqual([
           `upsert ${shown.id}`,
           `setEnabled ${shown.id}`,
+          `setThreadEnabled ${shown.id}`,
           `runNow ${shown.id}`,
           `rotateWebhookToken ${shown.id}`,
           `delete ${shown.id}`,

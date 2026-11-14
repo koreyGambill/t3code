@@ -20,7 +20,6 @@ import {
   ThreadId,
   ScheduledTaskWebhookDeliveryId,
   type ScheduledTaskDeleteInput,
-  type ScheduledTaskEventSchedule,
   type ScheduledTaskDeleteResult,
   type ScheduledTaskGetWebhookDeliveryInput,
   type ScheduledTaskGetWebhookDeliveryResult,
@@ -38,6 +37,8 @@ import {
   type ScheduledTaskRunNowInput,
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
+  type ScheduledTaskSetThreadEnabledInput,
+  MAX_DISABLED_THREADS,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
   isEventDrivenWake,
@@ -218,6 +219,9 @@ const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
 const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
+const DisabledThreadsJson = Schema.fromJsonString(Schema.Array(ThreadId));
+const decodeDisabledThreadsJson = Schema.decodeUnknownOption(DisabledThreadsJson);
+const encodeDisabledThreadsJson = Schema.encodeSync(DisabledThreadsJson);
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const MissingFieldsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeHeadersJson = Schema.decodeUnknownOption(HeadersJson);
@@ -261,6 +265,7 @@ interface ScheduledTaskRow {
   readonly last_run_error: string | null;
   readonly run_count: number;
   readonly last_run_ended_at?: string | null;
+  readonly disabled_thread_ids_json?: string;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
 }
@@ -293,6 +298,10 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /** Switches the task off or back on for one thread; its events there queue no runs. */
+    readonly setThreadEnabled: (
+      input: ScheduledTaskSetThreadEnabledInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly delete: (
       input: ScheduledTaskDeleteInput,
@@ -430,6 +439,11 @@ const decodeRow = Effect.fnUntraced(
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
+    // A damaged list switches nothing off rather than hiding the whole task.
+    const disabledThreadIds = Option.getOrElse(
+      decodeDisabledThreadsJson(row.disabled_thread_ids_json ?? "[]"),
+      () => [],
+    );
     return yield* decodeTask({
       id: row.task_id,
       title: row.title,
@@ -453,6 +467,7 @@ const decodeRow = Effect.fnUntraced(
       lastRunError: row.last_run_error,
       runCount: row.run_count,
       ...(row.last_run_ended_at == null ? {} : { lastRunEndedAt: row.last_run_ended_at }),
+      ...(disabledThreadIds.length === 0 ? {} : { disabledThreadIds }),
       ...(webhook === undefined ? {} : { webhook }),
     });
   },
@@ -623,11 +638,15 @@ export const layer = Layer.effect(
       const rows = yield* sql<ScheduledTaskRow>`SELECT * FROM scheduled_tasks
         WHERE enabled = 1 AND json_extract(schedule_json, '$.type') = 'event'
           AND json_extract(schedule_json, '$.event') = ${kind}`;
-      const candidates: Array<{ id: ScheduledTaskId; schedule: ScheduledTaskEventSchedule }> = [];
+      const candidates: Array<EventTriggers.CandidateTask> = [];
       for (const row of rows) {
         const decoded = yield* Effect.result(decodeRow(row));
         if (Result.isSuccess(decoded) && decoded.success.schedule.type === "event") {
-          candidates.push({ id: decoded.success.id, schedule: decoded.success.schedule });
+          candidates.push({
+            id: decoded.success.id,
+            schedule: decoded.success.schedule,
+            disabledThreadIds: decoded.success.disabledThreadIds ?? [],
+          });
         }
       }
       return candidates;
@@ -735,6 +754,7 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         last_run_ended_at,
+        disabled_thread_ids_json,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -778,6 +798,7 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         last_run_ended_at,
+        disabled_thread_ids_json,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -1256,7 +1277,12 @@ export const layer = Layer.effect(
         const peeked =
           eventSchedule === null
             ? null
-            : yield* EventTriggers.peekDueEvent(active.id, eventSchedule, startedAtIso).pipe(
+            : yield* EventTriggers.peekDueEvent(
+                active.id,
+                eventSchedule,
+                startedAtIso,
+                active.disabledThreadIds ?? [],
+              ).pipe(
                 withSql,
                 Effect.mapError((cause) =>
                   taskError("Could not read the triggering event.", { taskId: active.id, cause }),
@@ -2286,6 +2312,62 @@ export const layer = Layer.effect(
       }
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
+    });
+
+    const setThreadEnabled: ScheduledTaskService["Service"]["setThreadEnabled"] = Effect.fn(
+      "ScheduledTaskService.setThreadEnabled",
+    )(function* (input) {
+      const now = iso(yield* localNow);
+      // Read and write in one transaction so two toggles cannot drop each other's thread.
+      const outcome = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const [row] = yield* sql<{ disabled_thread_ids_json: string }>`
+              SELECT disabled_thread_ids_json FROM scheduled_tasks WHERE task_id = ${input.id}`;
+            if (row === undefined) return "missing" as const;
+            const current = Option.getOrElse(
+              decodeDisabledThreadsJson(row.disabled_thread_ids_json),
+              (): ReadonlyArray<ThreadId> => [],
+            );
+            if (current.includes(input.threadId) !== input.enabled) return "unchanged" as const;
+            let next = input.enabled
+              ? current.filter((threadId) => threadId !== input.threadId)
+              : [...current, input.threadId];
+            if (next.length > MAX_DISABLED_THREADS) {
+              // Deleted threads no longer need switching off, so they do not count toward the cap.
+              const live = yield* sql<{ thread_id: string }>`
+                SELECT thread_id FROM orchestration_v2_projection_threads
+                WHERE deleted_at IS NULL AND thread_id IN ${sql.in(next)}`;
+              const kept = new Set<string>([input.threadId, ...live.map((t) => t.thread_id)]);
+              next = next.filter((threadId) => kept.has(threadId));
+              if (next.length > MAX_DISABLED_THREADS) return "full" as const;
+            }
+            if (!input.enabled) {
+              yield* EventTriggers.clearPendingThreadEvents(input.id, input.threadId);
+            }
+            yield* sql`UPDATE scheduled_tasks
+              SET disabled_thread_ids_json = ${encodeDisabledThreadsJson(next)}, updated_at = ${now}
+              WHERE task_id = ${input.id}`;
+            return "updated" as const;
+          }),
+        )
+        .pipe(
+          withSql,
+          Effect.mapError((cause) =>
+            taskError("Could not update schedule task.", { taskId: input.id, cause }),
+          ),
+        );
+      if (outcome === "missing") {
+        return yield* taskError("Schedule task not found.", { taskId: input.id });
+      }
+      if (outcome === "full") {
+        return yield* taskError(
+          `An automation can be off for at most ${MAX_DISABLED_THREADS} threads.`,
+          { taskId: input.id },
+        );
+      }
+      if (outcome === "updated") yield* notifyChanged;
+      return { task: yield* loadTask(input.id) };
     });
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
@@ -3349,6 +3431,7 @@ export const layer = Layer.effect(
       subscribeList,
       upsert,
       setEnabled,
+      setThreadEnabled,
       delete: deleteTask,
       deleteForThread,
       runNow,

@@ -228,6 +228,7 @@ export const ScheduledTaskEventKind = Schema.Literals([
 export type ScheduledTaskEventKind = typeof ScheduledTaskEventKind.Type;
 
 export const MAX_EVENT_FILTER_THREADS = 50;
+export const MAX_DISABLED_THREADS = 200;
 export const DEFAULT_EVENT_MAX_RUNS_PER_HOUR = 12;
 export const DEFAULT_RUN_ENDED_COOLDOWN_SECONDS = 60;
 
@@ -347,6 +348,10 @@ export const ScheduledTask = Schema.Struct({
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   /** When the latest recorded run ended, so clients know to refetch its history. */
   lastRunEndedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** Threads where this automation is switched off; its events there queue no runs. */
+  disabledThreadIds: Schema.optional(
+    Schema.Array(ThreadId).check(Schema.isMaxLength(MAX_DISABLED_THREADS)),
+  ),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
@@ -391,6 +396,13 @@ export const ScheduledTaskSetEnabledInput = Schema.Struct({
   enabled: Schema.Boolean,
 });
 export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.Type;
+
+export const ScheduledTaskSetThreadEnabledInput = Schema.Struct({
+  id: ScheduledTaskId,
+  threadId: ThreadId,
+  enabled: Schema.Boolean,
+});
+export type ScheduledTaskSetThreadEnabledInput = typeof ScheduledTaskSetThreadEnabledInput.Type;
 
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,

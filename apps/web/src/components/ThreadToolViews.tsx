@@ -95,6 +95,7 @@ export const sidebarWorkspaceGet = createEnvironmentRpcQueryAtomFamily(connectio
 export const FLUSH_THREAD_TOOLS: ReadonlySet<ThreadContextSection> = new Set([
   "inspect",
   "details",
+  "automations",
 ]);
 
 export function ThreadToolSection({
@@ -103,7 +104,7 @@ export function ThreadToolSection({
   detailsRef,
   actions,
 }: {
-  section: ThreadContextSection;
+  section: Exclude<ThreadContextSection, "automations">;
   threadRef: ScopedThreadRef;
   detailsRef: (element: HTMLDivElement | null) => void;
   actions: HTMLDivElement | null;
@@ -142,7 +143,7 @@ export function ThreadToolSection({
   }
 }
 
-function SectionHeading({ children }: { children: ReactNode }) {
+export function SectionHeading({ children }: { children: ReactNode }) {
   return <h3 className="text-xs font-medium text-muted-foreground">{children}</h3>;
 }
 
@@ -188,7 +189,7 @@ function useRowCopy() {
   };
 }
 
-function ToolFilterInput({
+export function ToolFilterInput({
   label,
   value,
   onChange,

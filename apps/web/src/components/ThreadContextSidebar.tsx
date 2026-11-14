@@ -5,6 +5,7 @@ import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contr
 import {
   BellIcon,
   BoxesIcon,
+  CalendarClockIcon,
   FilesIcon,
   IdCardIcon,
   InfoIcon,
@@ -68,6 +69,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { useSidebar, useSidebarVisibility } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { WeavewingMark } from "./WeavewingMark";
+import { AutomationsView } from "./automations/AutomationsView";
 
 const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; about: string }> = {
   todos: {
@@ -123,6 +125,12 @@ const tools: Record<ThreadContextSection, { title: string; icon: LucideIcon; abo
     icon: ScanSearchIcon,
     about:
       "What the agent loaded and spent: file and skill reads, context per turn, and tokens. T3 records it as turns run.",
+  },
+  automations: {
+    title: "Automations",
+    icon: CalendarClockIcon,
+    about:
+      "Agents that run on a schedule, a webhook or an event. Switch them on or off for this thread, the project or the whole server, and open a run's thread from its history.",
   },
 };
 
@@ -571,6 +579,8 @@ function ThreadToolView({
     >
       {view === "inbox" ? (
         <InboxView actions={actions} />
+      ) : view === "automations" ? (
+        <AutomationsView threadRef={threadRef} />
       ) : threadRef ? (
         <ThreadToolSection
           section={view}

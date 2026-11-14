@@ -19,7 +19,8 @@ export type ThreadContextSection =
   | "details"
   | "environments"
   | "inspect"
-  | "inbox";
+  | "inbox"
+  | "automations";
 
 export type SidebarView = "threads" | ThreadContextSection;
 
@@ -43,6 +44,12 @@ export interface ShowTarget {
   readonly notification?: { readonly environmentId: string; readonly id: string };
 }
 
+/** The automation the Automations view shows in detail; it outlives switching threads. */
+export interface AutomationSelection {
+  readonly environmentId: string;
+  readonly taskId: string;
+}
+
 interface ThreadContextSidebarState {
   view: SidebarView;
   lastTool: ThreadContextSection;
@@ -57,6 +64,11 @@ interface ThreadContextSidebarState {
   artifactSelection: { thread: ScopedThreadRef | null; id: string } | null;
   inboxTab: InboxTab;
   inboxSelection: InboxSelection | null;
+  automationSelection: AutomationSelection | null;
+  /** Null follows the context: Thread with a thread open, else Server. */
+  automationScope: "thread" | "project" | "server" | null;
+  selectAutomation: (selection: AutomationSelection | null) => void;
+  setAutomationScope: (scope: "thread" | "project" | "server") => void;
   selectView: (view: SidebarView) => void;
   toggleTools: (sidebarVisible: boolean) => void;
   /** Opens a tool from outside the strip, unhiding it, and reveals a hidden sidebar. */
@@ -86,6 +98,10 @@ export const useThreadContextSidebarStore = create<ThreadContextSidebarState>()(
       artifactSelection: null,
       inboxTab: "inbox",
       inboxSelection: null,
+      automationSelection: null,
+      automationScope: null,
+      selectAutomation: (automationSelection) => set({ automationSelection }),
+      setAutomationScope: (automationScope) => set({ automationScope }),
       selectView: (view) =>
         set((state) => ({
           ...nextSidebarView(state, view),

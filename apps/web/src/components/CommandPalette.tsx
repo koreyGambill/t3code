@@ -87,6 +87,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  CalendarClockIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -1895,6 +1896,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:automations",
+    title: "Open automations",
+    searchTerms: ["automations", "scheduled tasks", "schedules", "runs", "webhooks", "triggers"],
+    icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      useThreadContextSidebarStore.getState().show("automations");
+    },
+  });
 
   actionItems.push({
     kind: "action",
