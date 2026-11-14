@@ -462,6 +462,7 @@ it.effect.each([
     const projectId = ProjectId.make("project:test");
     const ended = yield* Deferred.make<void>();
     const sent = yield* Ref.make("");
+    const sentText = yield* Ref.make("");
     const run = { id: "run:2", status: outcome.status, rootNodeId: "node:root" };
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
@@ -469,7 +470,11 @@ it.effect.each([
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            sendToThread: (input) => Ref.set(sent, input.messageId).pipe(Effect.as({} as never)),
+            sendToThread: (input) =>
+              Ref.set(sent, input.messageId).pipe(
+                Effect.andThen(Ref.set(sentText, input.text)),
+                Effect.as({} as never),
+              ),
             getThreadShell: () => Effect.succeed(threadShell(projectId)),
             getProjectThreadRecords: () =>
               Effect.map(
@@ -547,6 +552,11 @@ it.effect.each([
         messageId: MessageId.make(yield* Ref.get(sent)),
       });
       assert.isNotNull(runs[0]?.endedAt);
+      // A person pressed Run now, so the preface does not claim nobody is watching.
+      assert.equal(
+        yield* Ref.get(sentText),
+        '[Automated run of "Quota bookkeeping" (Run now). Use t3_notify for anything the user must see.]\n\nUpdate the notes',
+      );
       const sql = yield* SqlClient.SqlClient;
       const [bound] = yield* sql<{
         orchestration_run_id: string;
