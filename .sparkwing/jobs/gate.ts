@@ -15,6 +15,32 @@ import {
 // Two gates fit beside the daemon's machine reserve on 16 cores. check-changed weighs typecheck
 // by its worker count, so a budget below 6 queued typecheck behind knip (+25 s measured).
 const GATE_CORES = 6;
+
+interface LockPackage {
+  readonly version?: string;
+  readonly integrity?: string;
+  readonly optional?: boolean;
+}
+
+/** npm's hidden lockfile records what is installed; optional platform packages may be absent. */
+function pipelineDepsMatchLockfile(root: string): boolean {
+  const read = (file: string): Record<string, LockPackage> | undefined => {
+    try {
+      return JSON.parse(NodeFS.readFileSync(NodePath.join(root, ".sparkwing", file), "utf8")).packages;
+    } catch {
+      return undefined;
+    }
+  };
+  const wanted = read("package-lock.json");
+  const installed = read("node_modules/.package-lock.json");
+  if (!wanted || !installed) return false;
+  return Object.entries(wanted).every(([path, want]) => {
+    if (path === "") return true;
+    const have = installed[path];
+    if (!have) return want.optional === true;
+    return have.version === want.version && have.integrity === want.integrity;
+  });
+}
 const CHECK_CHANGED_CONCURRENCY = String(GATE_CORES);
 
 definePipeline({
@@ -30,11 +56,9 @@ definePipeline({
   plan(p) {
     p.job("pipelines", async (ctx) => {
       const co = checkout(ctx);
-      const base = comparisonBase(co.root, ctx.args.ref || undefined);
-      if (
-        !NodeFS.existsSync(NodePath.join(co.root, ".sparkwing/node_modules/.bin/tsc")) ||
-        changedFiles(co.root, base).includes(".sparkwing/package-lock.json")
-      )
+      // Sparkwing installs .sparkwing/ for the checkout it runs from, and other jobs' SDK processes load
+      // from it, so reinstall only a tree that does not match its lockfile (another --worktree).
+      if (!pipelineDepsMatchLockfile(co.root))
         await logged(ctx, co, "pipelines-install", [
           "npm", "ci", "--prefix", ".sparkwing", "--ignore-scripts", "--no-audit", "--no-fund",
         ]);
