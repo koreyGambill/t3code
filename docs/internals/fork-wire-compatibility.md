@@ -17,6 +17,8 @@ The rule for changes to `packages/contracts` that cross the wire:
   mappings live in `apps/server/src/upstreamClientCompat.ts`, and `ws.ts` applies them.
   `skipped` scheduled-task runs become `succeeded`, `unauthorized` peer links become `expired`, and
   `TerminalWorkspaceChangedError` becomes a `TerminalCwdStatError` whose rendered message carries its text.
+  A value with no upstream equivalent is withheld instead: event-scheduled tasks leave their task
+  list, and the server refuses to change or run one for them with a `ScheduledTaskError`.
 - **Methods upstream clients call stay served** under the same names and request shapes. A feature
   the fork dropped answers with a typed error upstream clients show: `projects.createFromThread`
   points to Change folder, and `threadProjectFromScratch` stays unadvertised so they hide the action.

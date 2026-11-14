@@ -25,6 +25,8 @@ export const SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY = "scheduledTaskSkippedSta
 export const PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY = "peerLinkUnauthorizedStatus";
 /** Terminal calls may fail with `TerminalWorkspaceChangedError`; others get a `TerminalCwdStatError`. */
 export const TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY = "terminalWorkspaceChangedError";
+/** Scheduled tasks may have an `event` schedule; others never see or change such a task. */
+export const SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY = "scheduledTaskEventSchedule";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",

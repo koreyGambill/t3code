@@ -1071,6 +1071,7 @@ it.effect.each([
               scheduledTaskSkippedStatus: true,
               peerLinkUnauthorizedStatus: true,
               terminalWorkspaceChangedError: true,
+              scheduledTaskEventSchedule: true,
             },
           ).pipe(Layer.provide(configRpcServices)),
         ),
@@ -1231,6 +1232,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
             scheduledTaskSkippedStatus: true,
             peerLinkUnauthorizedStatus: true,
             terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
           },
         ).pipe(
           Layer.merge(RpcAuthorization.layer([AuthAccessReadScope])),
@@ -1566,6 +1568,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
             scheduledTaskSkippedStatus: true,
             peerLinkUnauthorizedStatus: true,
             terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
           },
         ).pipe(Layer.provide(configRpcServices)),
       ),
@@ -1931,6 +1934,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
             scheduledTaskSkippedStatus: true,
             peerLinkUnauthorizedStatus: true,
             terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
           },
         ).pipe(Layer.provide(services)),
       ),
@@ -2014,6 +2018,7 @@ it.effect("a git action that fails partway still refreshes the repository status
             scheduledTaskSkippedStatus: true,
             peerLinkUnauthorizedStatus: true,
             terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
           },
         ).pipe(
           Layer.provide(services),
@@ -2098,6 +2103,7 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
             scheduledTaskSkippedStatus: true,
             peerLinkUnauthorizedStatus: true,
             terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
           },
         ).pipe(
           Layer.provide(services),
@@ -2594,6 +2600,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
             scheduledTaskSkippedStatus: true,
             peerLinkUnauthorizedStatus: true,
             terminalWorkspaceChangedError: true,
+            scheduledTaskEventSchedule: true,
           },
         ).pipe(
           Layer.provide(services),

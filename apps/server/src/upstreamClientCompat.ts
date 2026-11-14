@@ -1,7 +1,9 @@
 import {
   OrchestrationDispatchCommandError,
   PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
+  SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY,
   SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY,
+  ScheduledTaskError,
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
   TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY,
   TerminalCwdStatError,
@@ -10,12 +12,14 @@ import {
   type TerminalError,
   type PeerLinkSummary,
   type ScheduledTask,
+  type ScheduledTaskId,
   type ScheduledTaskListResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import type * as TerminalManager from "./terminal/Manager.ts";
 
 const isTerminalWorkspaceChangedError = Schema.is(TerminalWorkspaceChangedError);
@@ -30,6 +34,7 @@ export interface ClientWireCapabilities {
   readonly scheduledTaskSkippedStatus: boolean;
   readonly peerLinkUnauthorizedStatus: boolean;
   readonly terminalWorkspaceChangedError: boolean;
+  readonly scheduledTaskEventSchedule: boolean;
 }
 
 export function readClientWireCapabilities(param: string | null): ClientWireCapabilities {
@@ -39,6 +44,7 @@ export function readClientWireCapabilities(param: string | null): ClientWireCapa
     scheduledTaskSkippedStatus: declared.has(SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY),
     peerLinkUnauthorizedStatus: declared.has(PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY),
     terminalWorkspaceChangedError: declared.has(TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY),
+    scheduledTaskEventSchedule: declared.has(SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY),
   };
 }
 
@@ -48,6 +54,10 @@ function scheduledTaskForClient(task: ScheduledTask, client: ClientWireCapabilit
     ? { ...task, lastRunStatus: "succeeded" as const }
     : task;
 }
+
+/** Upstream clients have no schedule to show an event-triggered task as. */
+export const hidesScheduledTask = (task: ScheduledTask, client: ClientWireCapabilities) =>
+  task.schedule.type === "event" && !client.scheduledTaskEventSchedule;
 
 const scheduledTaskResultForClient = <Result extends { readonly task: ScheduledTask }>(
   result: Result,
@@ -60,9 +70,14 @@ export const responseForClient = {
     result: ScheduledTaskListResult,
     client: ClientWireCapabilities,
   ): ScheduledTaskListResult =>
-    client.scheduledTaskSkippedStatus
+    client.scheduledTaskSkippedStatus && client.scheduledTaskEventSchedule
       ? result
-      : { ...result, tasks: result.tasks.map((task) => scheduledTaskForClient(task, client)) },
+      : {
+          ...result,
+          tasks: result.tasks.flatMap((task) =>
+            hidesScheduledTask(task, client) ? [] : [scheduledTaskForClient(task, client)],
+          ),
+        },
   [WS_METHODS.scheduledTasksUpsert]: scheduledTaskResultForClient,
   [WS_METHODS.scheduledTasksSetEnabled]: scheduledTaskResultForClient,
   [WS_METHODS.scheduledTasksRunNow]: scheduledTaskResultForClient,
@@ -120,6 +135,41 @@ export function terminalManagerForClient(
     resize: (...args) => Effect.mapError(manager.resize(...args), forClient),
     clear: (...args) => Effect.mapError(manager.clear(...args), forClient),
     close: (...args) => Effect.mapError(manager.close(...args), forClient),
+  };
+}
+
+/**
+ * Scheduled tasks as one connection's RPC handlers see them. A client's list never holds a task it
+ * cannot show, so it reaches one by id only in a race; it is refused before anything changes.
+ */
+export function scheduledTasksForClient(
+  service: ScheduledTasks.ScheduledTaskService["Service"],
+  client: ClientWireCapabilities,
+): ScheduledTasks.ScheduledTaskService["Service"] {
+  if (client.scheduledTaskEventSchedule) return service;
+  const refuseHidden = (id: ScheduledTaskId) =>
+    Effect.flatMap(service.list(), ({ tasks }) => {
+      const task = tasks.find((candidate) => candidate.id === id);
+      return task !== undefined && hidesScheduledTask(task, client)
+        ? Effect.fail(
+            new ScheduledTaskError({
+              message:
+                "This automation runs on server events, which this app cannot show. Manage it in this server's T3 Code app.",
+              taskId: id,
+            }),
+          )
+        : Effect.void;
+    });
+  return {
+    ...service,
+    upsert: (input) =>
+      input.id === undefined
+        ? service.upsert(input)
+        : Effect.andThen(refuseHidden(input.id), service.upsert(input)),
+    setEnabled: (input) => Effect.andThen(refuseHidden(input.id), service.setEnabled(input)),
+    runNow: (input) => Effect.andThen(refuseHidden(input.id), service.runNow(input)),
+    rotateWebhookToken: (input) =>
+      Effect.andThen(refuseHidden(input.id), service.rotateWebhookToken(input)),
   };
 }
 

@@ -1475,7 +1475,10 @@ export const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const scheduledTasks = UpstreamClientCompat.scheduledTasksForClient(
+        yield* ScheduledTasks.ScheduledTaskService,
+        client,
+      );
       const statusSources = yield* StatusSources.StatusSources;
       const monitoring = yield* MonitoringService.MonitoringService;
       const monitoringDialogue = yield* MonitoringDialogue.MonitoringDialogue;

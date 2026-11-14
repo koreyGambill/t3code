@@ -7,8 +7,10 @@ import {
   ExecutionEnvironmentDescriptor,
   PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
   PeerLinkSummary,
+  SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY,
   SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY,
   ScheduledTask,
+  ScheduledTaskError,
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
   TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY,
   TerminalCwdStatError,
@@ -24,10 +26,13 @@ import * as Schema from "effect/Schema";
 import * as AST from "effect/SchemaAST";
 
 import * as Upstream from "./upstreamClientCompat.snapshot.js";
+import type * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   errorForClient,
+  hidesScheduledTask,
   readClientWireCapabilities,
   responseForClient,
+  scheduledTasksForClient,
   type ClientWireCapabilities,
 } from "./upstreamClientCompat.ts";
 
@@ -54,6 +59,16 @@ const upstreamClient = readClientWireCapabilities(SETTINGS_SECRET_REFERENCES_CAP
 type Mapper = (value: never, client: ClientWireCapabilities) => unknown;
 const responseMappers: Readonly<Record<string, Mapper>> = responseForClient;
 const errorMappers: Readonly<Record<string, Mapper>> = errorForClient;
+// scheduledTasksForClient refuses these on a task the client cannot show before they run, and
+// upstream's upsert has no event schedule to create one with.
+const refusedTask = (result: { readonly task: ScheduledTask }) =>
+  hidesScheduledTask(result.task, upstreamClient);
+const REFUSED: Readonly<Record<string, (value: never) => boolean>> = {
+  [WS_METHODS.scheduledTasksUpsert]: refusedTask,
+  [WS_METHODS.scheduledTasksSetEnabled]: refusedTask,
+  [WS_METHODS.scheduledTasksRunNow]: refusedTask,
+  [WS_METHODS.scheduledTasksRotateWebhookToken]: refusedTask,
+};
 
 type Wire = unknown;
 
@@ -270,6 +285,8 @@ interface Pair {
   readonly fork: Schema.Top;
   readonly upstream: Schema.Top;
   readonly map?: (value: never, client: ClientWireCapabilities) => unknown;
+  /** Values the server refuses to answer upstream clients with. */
+  readonly refused?: (value: never) => boolean;
 }
 
 interface Failure {
@@ -289,7 +306,7 @@ function firstFailure(pair: Pair, samples: ReadonlyArray<Wire>): Failure | undef
   // Undefined when the fork's server could not have sent this wire; null when upstream decodes it.
   const check = (forkWire: Wire): string | null | undefined => {
     const decoded = fromWire(pair.fork, forkWire);
-    if (Exit.isFailure(decoded)) return undefined;
+    if (Exit.isFailure(decoded) || pair.refused?.(decoded.value as never)) return undefined;
     const mapped = pair.map ? pair.map(decoded.value as never, upstreamClient) : decoded.value;
     const sent = toWire(pair.fork, mapped);
     if (sent === undefined) return undefined;
@@ -400,10 +417,16 @@ describe("upstream client wire compatibility", () => {
         ...sharedRpcs.flatMap(({ tag, fork, upstream }) => {
           const map = responseMappers[tag];
           const mapError = errorMappers[tag];
+          const refused = REFUSED[tag];
           const success = { fork: successOf(fork), upstream: successOf(upstream) };
           const error = { fork: errorOf(fork), upstream: errorOf(upstream) };
           return [
-            { name: `${tag} success`, ...success, ...(map ? { map } : {}) },
+            {
+              name: `${tag} success`,
+              ...success,
+              ...(map ? { map } : {}),
+              ...(refused ? { refused } : {}),
+            },
             ...(AST.toType(error.fork.ast)._tag === "Never"
               ? []
               : [{ name: `${tag} error`, ...error, ...(mapError ? { map: mapError } : {}) }]),
@@ -430,6 +453,7 @@ describe("upstream client wire compatibility", () => {
           SCHEDULED_TASK_SKIPPED_STATUS_CAPABILITY,
           PEER_LINK_UNAUTHORIZED_STATUS_CAPABILITY,
           TERMINAL_WORKSPACE_CHANGED_ERROR_CAPABILITY,
+          SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY,
         ].join(","),
       );
       const [task] = (yield* sampleValues(ScheduledTask)) as ReadonlyArray<ScheduledTask>;
@@ -445,6 +469,18 @@ describe("upstream client wire compatibility", () => {
       expect(runNow(skipped, upstreamClient).task.lastRunStatus).toBe("succeeded");
       expect(listLinks(unauthorized, upstreamClient).links[0]?.status).toBe("expired");
 
+      const once = { ...task, schedule: { type: "once" as const, runAt: task.createdAt } };
+      const onEvent = {
+        ...task,
+        schedule: { type: "event" as const, event: "run_ended" as const },
+      };
+      const list = { tasks: [onEvent, once] };
+      const listTasks = responseForClient[WS_METHODS.scheduledTasksSubscribe];
+      expect(listTasks(list, forkClient).tasks).toEqual([onEvent, once]);
+      expect(listTasks(list, upstreamClient).tasks.map(({ schedule }) => schedule)).toEqual([
+        once.schedule,
+      ]);
+
       const moved = new TerminalWorkspaceChangedError({
         threadId: "thread",
         terminalId: "default",
@@ -456,5 +492,65 @@ describe("upstream client wire compatibility", () => {
       expect(mapped).toBeInstanceOf(TerminalCwdStatError);
       expect(mapped.message).toBe(`Failed to access terminal cwd: ${moved.message}`);
     }),
+  );
+
+  it.effect(
+    "refuses upstream clients' changes to a task they cannot show before running them",
+    () =>
+      Effect.gen(function* () {
+        const [task] = (yield* sampleValues(ScheduledTask)) as ReadonlyArray<ScheduledTask>;
+        if (task === undefined) throw new Error("no samples");
+        const shown = { ...task, schedule: { type: "once" as const, runAt: task.createdAt } };
+        const onEvent = {
+          ...task,
+          id: `${task.id}-event` as ScheduledTask["id"],
+          schedule: { type: "event" as const, event: "thread_created" as const },
+        };
+        const ran: Array<string> = [];
+        const record = (method: string) => (input: { readonly id?: string | undefined }) =>
+          Effect.sync(() => {
+            ran.push(`${method} ${input.id ?? "new"}`);
+            return { task: shown, threadId: null };
+          });
+        const service = {
+          list: () => Effect.succeed({ tasks: [shown, onEvent] }),
+          upsert: record("upsert"),
+          setEnabled: record("setEnabled"),
+          runNow: record("runNow"),
+          rotateWebhookToken: record("rotateWebhookToken"),
+        } as Partial<
+          ScheduledTasks.ScheduledTaskService["Service"]
+        > as ScheduledTasks.ScheduledTaskService["Service"];
+        const forUpstream = scheduledTasksForClient(service, upstreamClient);
+        const { id: _id, ...upsert } = shown;
+        const calls = (id: ScheduledTask["id"]) => [
+          forUpstream.upsert({ ...upsert, id }),
+          forUpstream.setEnabled({ id, enabled: false }),
+          forUpstream.runNow({ id }),
+          forUpstream.rotateWebhookToken({ id }),
+        ];
+
+        const runNowRpc = upstreamRpcs.get(WS_METHODS.scheduledTasksRunNow);
+        if (runNowRpc === undefined) throw new Error("upstream has no runNow");
+        for (const call of calls(onEvent.id)) {
+          const refusal = yield* Effect.flip(call);
+          expect(refusal).toBeInstanceOf(ScheduledTaskError);
+          expect(refusal.taskId).toBe(onEvent.id);
+          const wire = toWire(ScheduledTaskError, refusal);
+          expect(Exit.isSuccess(fromWire(errorOf(runNowRpc), wire))).toBe(true);
+        }
+        expect(ran).toEqual([]);
+
+        yield* Effect.all([...calls(shown.id), forUpstream.upsert(upsert)]);
+        expect(ran).toEqual([
+          `upsert ${shown.id}`,
+          `setEnabled ${shown.id}`,
+          `runNow ${shown.id}`,
+          `rotateWebhookToken ${shown.id}`,
+          "upsert new",
+        ]);
+        const forFork = readClientWireCapabilities(SCHEDULED_TASK_EVENT_SCHEDULE_CAPABILITY);
+        expect(scheduledTasksForClient(service, forFork)).toBe(service);
+      }),
   );
 });
