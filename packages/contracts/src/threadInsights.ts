@@ -138,3 +138,74 @@ export const ThreadContextResult = Schema.Struct({
   coverage: Schema.String,
 });
 export type ThreadContextResult = typeof ThreadContextResult.Type;
+
+export const DefaultContextItem = Schema.Struct({
+  id: Schema.String,
+  category: Schema.Literals(["t3", "app-context", "custom", "files", "tools"]),
+  label: Schema.String,
+  source: Schema.String,
+  delivery: Schema.Literals([
+    "every-turn",
+    "first-prompt",
+    "session-start",
+    "first-message",
+    "on-demand",
+  ]),
+  bytes: NonNegativeInt,
+  estimatedTokens: NonNegativeInt,
+  /** False for text that stays out of the default load, such as deferred tool descriptions. */
+  counted: Schema.Boolean,
+  readable: Schema.Boolean,
+  depth: Schema.optional(NonNegativeInt),
+  status: Schema.optional(
+    Schema.Literals([
+      "expected",
+      "loaded",
+      "not-loaded",
+      "unexpected",
+      "changed",
+      "last-turn-only",
+      "outside-home",
+      "secret",
+    ]),
+  ),
+});
+export type DefaultContextItem = typeof DefaultContextItem.Type;
+export const DefaultContextPreview = Schema.Struct({
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+  driver: Schema.String,
+  model: Schema.String,
+  cwd: Schema.NullOr(Schema.String),
+  support: Schema.Literals(["exact", "estimate", "unsupported"]),
+  filesSupported: Schema.Boolean,
+  notes: Schema.Array(Schema.String),
+  items: Schema.Array(DefaultContextItem),
+  notVisible: Schema.Array(Schema.Struct({ label: Schema.String, why: Schema.String })),
+  lastTurn: Schema.NullOr(
+    Schema.Struct({
+      capturedAt: IsoDateTime,
+      model: Schema.String,
+      reportsFiles: Schema.Boolean,
+    }),
+  ),
+  estimateMethod: Schema.String,
+});
+export type DefaultContextPreview = typeof DefaultContextPreview.Type;
+export const DefaultContextGetInput = Schema.Struct({
+  threadId: ThreadId,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  model: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type DefaultContextGetInput = typeof DefaultContextGetInput.Type;
+export const DefaultContextItemInput = Schema.Struct({
+  ...DefaultContextGetInput.fields,
+  itemId: Schema.String.check(Schema.isMaxLength(2048)),
+});
+export type DefaultContextItemInput = typeof DefaultContextItemInput.Type;
+export const DefaultContextItemText = Schema.Struct({
+  itemId: Schema.String,
+  text: Schema.String,
+  truncated: Schema.Boolean,
+});
+export type DefaultContextItemText = typeof DefaultContextItemText.Type;

@@ -1989,6 +1989,23 @@ export function claudePreparedContextEntries(
   return entries;
 }
 
+/** The text T3 appends to Claude Code's preset system prompt on every turn. */
+export function claudeSystemPromptAppend(input: {
+  readonly hasT3Mcp: boolean;
+  readonly deviceTools: boolean;
+  readonly launchAppend?: ReadonlyArray<string>;
+}): string {
+  return [
+    buildRuntimeInstructions({ harness: "Claude Code" }) +
+      (input.hasT3Mcp
+        ? T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+          CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+          (input.deviceTools ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")
+        : ""),
+    ...(input.launchAppend ?? []),
+  ].join("\n\n");
+}
+
 const CLAUDE_CODE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
 
 export function makeClaudeQueryOptions(input: {
@@ -2153,17 +2170,11 @@ export function makeClaudeQueryOptions(input: {
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
-      append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
-        ...launchAppendSystemPrompt,
-      ].join("\n\n"),
+      append: claudeSystemPromptAppend({
+        hasT3Mcp: input.mcpServers !== undefined,
+        deviceTools: deviceInstructions,
+        launchAppend: launchAppendSystemPrompt,
+      }),
     },
     ...(deviceInstructions
       ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }

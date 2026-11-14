@@ -15,3 +15,17 @@ export const threadContextGet = createEnvironmentRpcQueryAtomFamily(connectionAt
   staleTimeMs: 30_000,
   idleTtlMs: 0,
 });
+
+export const threadDefaultContextGet = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadInsights:defaultContext",
+  tag: WS_METHODS.threadDefaultContextGet,
+  staleTimeMs: 30_000,
+  idleTtlMs: 0,
+});
+
+export const threadDefaultContextItem = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "threadInsights:defaultContextItem",
+  tag: WS_METHODS.threadDefaultContextItem,
+  staleTimeMs: 30_000,
+  idleTtlMs: 0,
+});

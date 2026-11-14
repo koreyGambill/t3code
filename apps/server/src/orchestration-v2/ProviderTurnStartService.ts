@@ -74,6 +74,11 @@ import {
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
 
+export const SCRATCH_FOLDER_CONTEXT = {
+  key: "scratch-folder",
+  text: "This folder holds shared repositories; don't edit them here. Use /tmp for throwaway files and an Xwing environment you created for changes.",
+};
+
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
   {
@@ -1792,13 +1797,7 @@ export const layer: Layer.Layer<
             startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
               deliverySession.startTurn({
                 ...turnInput,
-                appContext: [
-                  ...(turnInput.appContext ?? []),
-                  {
-                    key: "scratch-folder",
-                    text: "This folder holds shared repositories; don't edit them here. Use /tmp for throwaway files and an Xwing environment you created for changes.",
-                  },
-                ],
+                appContext: [...(turnInput.appContext ?? []), SCRATCH_FOLDER_CONTEXT],
               }),
           }
         : deliverySession;

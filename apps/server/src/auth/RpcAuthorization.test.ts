@@ -39,6 +39,8 @@ describe("RPC authorization scopes", () => {
 
   it("keeps review drafts and sends under their read and operate scopes", () => {
     for (const method of [
+      WS_METHODS.threadDefaultContextGet,
+      WS_METHODS.threadDefaultContextItem,
       WS_METHODS.threadWorkspaceGet,
       WS_METHODS.threadListRead,
       WS_METHODS.threadArtifactRead,

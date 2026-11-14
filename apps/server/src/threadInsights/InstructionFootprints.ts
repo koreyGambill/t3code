@@ -100,11 +100,20 @@ const knownParts = [
   },
 ].toSorted((left, right) => right.text.length - left.text.length);
 
-/** Counts only payload supplied by an adapter, without retaining its text or estimating hidden harness instructions. */
-function measurePreparedContext(
+export interface PreparedContextPart extends InstructionFootprintPart {
+  readonly text: string;
+}
+
+/** Splits adapter-supplied payload into labelled parts, without estimating hidden harness instructions. */
+export function splitPreparedContext(
   entries: PreparedContext["entries"],
-): ReadonlyArray<InstructionFootprintPart> {
-  const parts: InstructionFootprintPart[] = [];
+): ReadonlyArray<PreparedContextPart> {
+  const parts: {
+    key: string;
+    label: string;
+    category: PreparedContextPart["category"];
+    text: string;
+  }[] = [];
   const add = (
     key: string,
     label: string,
@@ -112,8 +121,12 @@ function measurePreparedContext(
     text: string,
   ) => {
     if (!text.length) return;
-    const bytes = Buffer.byteLength(text, "utf8");
-    parts.push({ key, label, category, bytes, estimatedTokens: Math.ceil(bytes / 4) });
+    const separator = category === "t3" && text.trim() === "";
+    parts.push(
+      separator
+        ? { key: "t3:separators", label: "Prompt separators", category, text }
+        : { key, label, category, text },
+    );
   };
   for (const entry of entries) {
     const category = entry.key.startsWith("t3_code_")
@@ -156,7 +169,9 @@ function measurePreparedContext(
       ? "Background wait"
       : entry.key.includes("separator")
         ? "Prompt separators"
-        : entry.key;
+        : entry.key === "t3_code_prompt"
+          ? "Prompt wrapper and mode notes"
+          : entry.key;
     for (const range of ranges) {
       add(entry.key, label, category, entry.text.slice(cursor, range.start));
       add(range.key, range.label, category, entry.text.slice(range.start, range.end));
@@ -164,15 +179,20 @@ function measurePreparedContext(
     }
     add(entry.key, label, category, entry.text.slice(cursor));
   }
-  const grouped = new Map<string, InstructionFootprintPart>();
+  const grouped = new Map<string, PreparedContextPart>();
   for (const part of parts) {
     const identity = `${part.category}:${part.key}:${part.label}`;
-    const previous = grouped.get(identity);
-    const bytes = (previous?.bytes ?? 0) + part.bytes;
-    grouped.set(identity, { ...part, bytes, estimatedTokens: Math.ceil(bytes / 4) });
+    const text = (grouped.get(identity)?.text ?? "") + part.text;
+    const bytes = Buffer.byteLength(text, "utf8");
+    grouped.set(identity, { ...part, text, bytes, estimatedTokens: Math.ceil(bytes / 4) });
   }
   return [...grouped.values()];
 }
+
+const measurePreparedContext = (
+  entries: PreparedContext["entries"],
+): ReadonlyArray<InstructionFootprintPart> =>
+  splitPreparedContext(entries).map(({ text: _text, ...part }) => part);
 
 const Persisted = Schema.Struct({
   formatVersion: Schema.Literal(1),

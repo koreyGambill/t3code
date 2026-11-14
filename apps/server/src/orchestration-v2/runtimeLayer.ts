@@ -9,6 +9,8 @@ import * as MonitoringDelivery from "../monitoring/MonitoringDelivery.ts";
 import * as MonitoringFollowup from "../monitoring/MonitoringFollowup.ts";
 import * as ThreadMarks from "../threadWorkspace/ThreadMarks.ts";
 import * as ThreadInsights from "../threadInsights/ThreadInsights.ts";
+import * as DefaultContext from "../threadInsights/DefaultContext.ts";
+import * as McpToolCatalog from "../mcp/McpToolCatalog.ts";
 import * as InstructionFootprints from "../threadInsights/InstructionFootprints.ts";
 import * as ThreadNotes from "../threadNotes/ThreadNotes.ts";
 import * as ThreadWorkspace from "../threadWorkspace/ThreadWorkspace.ts";
@@ -502,6 +504,18 @@ export const layerProduction = Layer.mergeAll(
   layerContextRecordsProvided,
   ThreadInsights.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, InstructionFootprints.layer)),
+  ),
+  DefaultContext.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerOrchestratorProvided,
+        InstructionFootprints.layer,
+        McpAppModelContext.layer,
+        layerManagedProjectFoldersProvided,
+        layerProjectService,
+        McpToolCatalog.layer,
+      ),
+    ),
   ),
   ThreadNotes.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerThreadManagementProvided)),

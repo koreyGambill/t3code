@@ -1,13 +1,15 @@
+import { DefaultContextPanel } from "./DefaultContextPanel";
 import { ThreadContextPanel } from "./ThreadContextPanel";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ThreadInsightsPanel } from "./ThreadInsightsPanel";
 
-export type ThreadInspectSection = "loads" | "tokens" | "context";
+export type ThreadInspectSection = "loads" | "tokens" | "context" | "defaults";
 
 const sections = [
   ["loads", "Loads"],
   ["context", "Context"],
   ["tokens", "Tokens"],
+  ["defaults", "Default"],
 ] as const;
 
 export function ThreadInspectPanel({
@@ -24,14 +26,14 @@ export function ThreadInspectPanel({
   readonly onSectionChange: (section: ThreadInspectSection) => void;
 }) {
   const tabs = (
-    <div role="tablist" aria-label="Inspect sections" className="flex shrink-0 gap-0.5">
+    <div role="tablist" aria-label="Inspect sections" className="flex min-w-0 flex-wrap gap-0.5">
       {sections.map(([id, label]) => (
         <button
           key={id}
           type="button"
           role="tab"
           aria-selected={section === id}
-          className="shrink-0 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
+          className="shrink-0 rounded px-1 py-1 text-xs font-medium text-muted-foreground hover:bg-muted aria-selected:bg-muted aria-selected:text-foreground"
           onClick={() => onSectionChange(id)}
         >
           {label}
@@ -42,7 +44,14 @@ export function ThreadInspectPanel({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {startedThread ? (
-        section === "context" ? (
+        section === "defaults" ? (
+          <DefaultContextPanel
+            key={`${threadRef.environmentId}:${threadRef.threadId}`}
+            threadRef={threadRef}
+            visible={visible}
+            tabs={tabs}
+          />
+        ) : section === "context" ? (
           <ThreadContextPanel
             key={`${threadRef.environmentId}:${threadRef.threadId}`}
             threadRef={threadRef}
@@ -54,7 +63,9 @@ export function ThreadInspectPanel({
         )
       ) : (
         <>
-          <div className="flex h-7 shrink-0 items-center border-b border-border px-1">{tabs}</div>
+          <div className="flex min-h-7 shrink-0 items-center border-b border-border px-1">
+            {tabs}
+          </div>
           <p className="p-2 text-xs text-muted-foreground">Send a message to inspect activity.</p>
         </>
       )}

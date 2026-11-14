@@ -1,0 +1,91 @@
+import type { DefaultContextItem, DefaultContextPreview } from "@t3tools/contracts";
+
+const CATEGORY_LABELS: Record<DefaultContextItem["category"], string> = {
+  t3: "T3 instructions",
+  files: "Instruction files",
+  tools: "T3 tools",
+  "app-context": "App context",
+  custom: "Custom append",
+};
+const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS) as ReadonlyArray<
+  DefaultContextItem["category"]
+>;
+
+export const DELIVERY_LABELS: Record<DefaultContextItem["delivery"], string> = {
+  "every-turn": "every turn",
+  "first-prompt": "first prompt",
+  "session-start": "session start",
+  "first-message": "first message",
+  "on-demand": "on demand",
+};
+
+export const STATUS_LABELS: Record<NonNullable<DefaultContextItem["status"]>, string> = {
+  expected: "Expected",
+  loaded: "Loaded last turn",
+  "not-loaded": "Expected, not loaded last turn",
+  unexpected: "Loaded last turn, not expected",
+  changed: "Changed since last turn",
+  "last-turn-only": "Sent last turn only",
+  "outside-home": "Outside $HOME, not read",
+  secret: "Looks like a secret, not read",
+};
+
+export const TOOL_PREVIEW_COUNT = 20;
+
+export interface CategoryTotal {
+  readonly category: DefaultContextItem["category"];
+  readonly label: string;
+  readonly bytes: number;
+  readonly tokens: number;
+  readonly share: number;
+}
+
+/** Totals count only what loads by default; deferred and unread items stay out. */
+export function defaultContextSummary(preview: DefaultContextPreview) {
+  const counted = preview.items.filter((item) => item.counted);
+  const bytes = counted.reduce((sum, item) => sum + item.bytes, 0);
+  const tokens = counted.reduce((sum, item) => sum + item.estimatedTokens, 0);
+  const categories: CategoryTotal[] = CATEGORY_ORDER.flatMap((category) => {
+    const items = counted.filter((item) => item.category === category);
+    if (items.length === 0) return [];
+    const categoryBytes = items.reduce((sum, item) => sum + item.bytes, 0);
+    return [
+      {
+        category,
+        label: CATEGORY_LABELS[category],
+        bytes: categoryBytes,
+        tokens: items.reduce((sum, item) => sum + item.estimatedTokens, 0),
+        share: bytes === 0 ? 0 : categoryBytes / bytes,
+      },
+    ];
+  });
+  const groups = CATEGORY_ORDER.flatMap((category) => {
+    const items = preview.items.filter((item) => item.category === category);
+    return items.length === 0 ? [] : [{ category, label: CATEGORY_LABELS[category], items }];
+  });
+  const attention = preview.items.filter(
+    (item) =>
+      item.status === "not-loaded" || item.status === "unexpected" || item.status === "changed",
+  ).length;
+  return { bytes, tokens, categories, groups, attention };
+}
+
+export function shortenPath(path: string, home: string | null) {
+  return home !== null && (path === home || path.startsWith(`${home}/`))
+    ? `~${path.slice(home.length)}`
+    : path;
+}
+
+/** The home directory, inferred from a path under `/home/<user>` or `/Users/<user>`. */
+export function homeOf(paths: ReadonlyArray<string>) {
+  for (const path of paths) {
+    const match = /^(\/(?:home|Users)\/[^/]+)(?:\/|$)/.exec(path);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+export const formatTokens = (tokens: number) =>
+  tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
+export const formatBytes = (bytes: number) =>
+  bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;

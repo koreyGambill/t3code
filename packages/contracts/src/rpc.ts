@@ -27,6 +27,10 @@ import {
   ThreadInsightsError,
   ThreadContextGetInput,
   ThreadContextResult,
+  DefaultContextGetInput,
+  DefaultContextPreview,
+  DefaultContextItemInput,
+  DefaultContextItemText,
 } from "./threadInsights.ts";
 import {
   ThreadNote,
@@ -548,6 +552,8 @@ export const WS_METHODS = {
   threadMarksAnnotate: "threadMarks.annotate",
   threadInsightsGet: "threadInsights.get",
   threadContextGet: "threadInsights.context",
+  threadDefaultContextGet: "threadInsights.defaultContext",
+  threadDefaultContextItem: "threadInsights.defaultContextItem",
   threadNotesGet: "threadNotes.get",
   threadNotesSave: "threadNotes.save",
   threadNotesSettings: "threadNotes.settings",
@@ -1624,6 +1630,18 @@ const WsThreadMarksAnnotateRpc = Rpc.make(WS_METHODS.threadMarksAnnotate, {
 const WsThreadContextGetRpc = Rpc.make(WS_METHODS.threadContextGet, {
   payload: ThreadContextGetInput,
   success: ThreadContextResult,
+  error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadDefaultContextGetRpc = Rpc.make(WS_METHODS.threadDefaultContextGet, {
+  payload: DefaultContextGetInput,
+  success: DefaultContextPreview,
+  error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadDefaultContextItemRpc = Rpc.make(WS_METHODS.threadDefaultContextItem, {
+  payload: DefaultContextItemInput,
+  success: DefaultContextItemText,
   error: Schema.Union([ThreadInsightsError, EnvironmentAuthorizationError]),
 });
 
@@ -2719,6 +2737,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadMarksGetRpc,
   WsThreadMarksAnnotateRpc,
   WsThreadInsightsGetRpc,
+  WsThreadDefaultContextGetRpc,
+  WsThreadDefaultContextItemRpc,
   WsThreadContextGetRpc,
   WsThreadNotesGetRpc,
   WsThreadNotesSaveRpc,

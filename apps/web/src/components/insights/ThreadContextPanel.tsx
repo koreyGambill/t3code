@@ -56,7 +56,7 @@ export function ThreadContextPanel({
       {headerActions ? (
         createPortal(refreshAction, headerActions)
       ) : (
-        <header className="flex shrink-0 items-center justify-between">
+        <header className="flex shrink-0 flex-wrap items-center justify-between">
           {tabs}
           {refreshAction}
         </header>
