@@ -32,7 +32,11 @@ const dependencies = Layer.mergeAll(
     namedProjectsRoot: "/projects",
     isScratchProject: () => Effect.succeed(false),
   }),
-  Layer.mock(ThreadManagementService.ThreadManagementService)({ streamDomainEvents: Stream.empty }),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({
+    streamDomainEvents: Stream.empty,
+    streamDomainEventsFrom: () => Stream.empty,
+    latestDomainEventSequence: Effect.succeed(0),
+  }),
   Layer.mock(SecretRequests.SecretRequests)({}),
 );
 const serviceLayer = ScheduledTaskService.layer.pipe(Layer.provide(dependencies));

@@ -53,6 +53,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -88,6 +89,17 @@ import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookF
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
+const REACTOR_EVENT_TYPES = [
+  "run.updated",
+  "subagent.updated",
+  "thread.created",
+  "thread.settled",
+] as const;
+const REACTOR_RETRY = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.minutes(1))),
+  ),
+);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
 const WEBHOOK_DELIVERY_RETENTION = 50;
@@ -591,34 +603,70 @@ export const layer = Layer.effect(
       if (moved.length > 0) yield* notifyChanged;
     });
 
-    const handleDomainEvent = Effect.fn("ScheduledTaskService.handleDomainEvent")(function* (
-      event: OrchestrationV2DomainEvent,
-    ) {
+    // Untraced: runs for every reactor event; a matched fact gets its own span in handleEventFact.
+    const handleDomainEvent = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
       const woken = yield* EventTriggers.dueWakesForEvent(event, yield* localNow).pipe(withSql);
       if (woken.length > 0) yield* notifyChanged;
       const fact = EventTriggers.factFromDomainEvent(event);
       if (fact !== null) yield* handleEventFact(fact);
     });
 
-    const eventFacts = Stream.merge(
-      threadManagement.streamDomainEvents.pipe(Stream.map((event) => handleDomainEvent(event))),
-      Option.isSome(statusSources)
-        ? statusSources.value.transitions.pipe(
-            Stream.map((transition) =>
-              handleEventFact(EventTriggers.factFromStatusTransition(transition)),
-            ),
-          )
-        : Stream.empty,
-    );
-    yield* forkParked(
-      Stream.runForEach(eventFacts, (handle) =>
-        handle.pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not record scheduled task event", { cause }),
+    // Each type resumes after its stored cursor, so events committed while the server was down or
+    // before this subscribed still arrive. The cursor moves only after the event is handled.
+    const domainEventsOfType = (eventType: (typeof REACTOR_EVENT_TYPES)[number]) =>
+      Stream.unwrap(
+        EventTriggers.readEventCursor(eventType).pipe(
+          withSql,
+          Effect.map((afterSequence) =>
+            threadManagement.streamDomainEventsFrom({
+              eventType,
+              afterSequence: afterSequence ?? 0,
+            }),
           ),
         ),
       ).pipe(
-        Effect.catch((cause) => Effect.logWarning("Scheduled task event stream failed", { cause })),
+        Stream.mapEffect((stored) =>
+          handleDomainEvent(stored.event).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not record scheduled task event", { cause }),
+            ),
+            Effect.andThen(EventTriggers.saveEventCursor(eventType, stored.sequence).pipe(withSql)),
+          ),
+        ),
+      );
+    const statusTransitions = Option.isSome(statusSources)
+      ? statusSources.value.transitions.pipe(
+          Stream.mapEffect((transition) =>
+            handleEventFact(EventTriggers.factFromStatusTransition(transition)).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not record status transition", { cause }),
+              ),
+            ),
+          ),
+        )
+      : Stream.empty;
+    // A first start begins at the store's latest event; set before subscribing, so nothing slips by.
+    yield* threadManagement.latestDomainEventSequence.pipe(
+      Effect.flatMap((latest) =>
+        Effect.forEach(
+          REACTOR_EVENT_TYPES,
+          (eventType) => EventTriggers.initEventCursor(eventType, latest).pipe(withSql),
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not start scheduled task event cursors", { cause }),
+      ),
+    );
+    yield* forkParked(
+      Stream.mergeAll([...REACTOR_EVENT_TYPES.map(domainEventsOfType), statusTransitions], {
+        concurrency: "unbounded",
+      }).pipe(
+        Stream.tapError((cause) =>
+          Effect.logWarning("Scheduled task event stream failed; retrying", { cause }),
+        ),
+        Stream.retry(REACTOR_RETRY),
+        Stream.runDrain,
       ),
     );
 
@@ -1106,27 +1154,41 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
-        const eventFire =
-          active.schedule.type === "event" && trigger === "scheduled"
-            ? yield* EventTriggers.claimDueEvent(active.id, startedAtIso).pipe(
+        const eventSchedule =
+          active.schedule.type === "event" && trigger === "scheduled" ? active.schedule : null;
+        const peeked =
+          eventSchedule === null
+            ? null
+            : yield* EventTriggers.peekDueEvent(active.id, eventSchedule, startedAtIso).pipe(
                 withSql,
                 Effect.mapError((cause) =>
                   taskError("Could not read the triggering event.", { taskId: active.id, cause }),
                 ),
-              )
-            : null;
-        if (active.schedule.type === "event" && trigger === "scheduled" && eventFire === null) {
-          yield* EventTriggers.pendingEventRunAt(active.id).pipe(
-            Effect.flatMap(
-              (next) =>
-                sql`UPDATE scheduled_tasks SET next_run_at = ${next}
-                  WHERE task_id = ${active.id} AND next_run_at IS ${active.nextRunAt}`,
-            ),
-            withSql,
-            Effect.mapError((cause) =>
-              taskError("Could not reschedule event task.", { taskId: active.id, cause }),
-            ),
-          );
+              );
+        const eventFire = peeked?.fire ?? null;
+        if (peeked !== null && eventFire === null) {
+          const cappedUntil = peeked.cappedUntil;
+          yield* sql
+            .withTransaction(
+              EventTriggers.pendingEventRunAt(active.id).pipe(
+                Effect.map((pending) =>
+                  pending !== null && cappedUntil !== null && cappedUntil > pending
+                    ? cappedUntil
+                    : pending,
+                ),
+                Effect.flatMap(
+                  (next) =>
+                    sql`UPDATE scheduled_tasks SET next_run_at = ${next}
+                      WHERE task_id = ${active.id} AND next_run_at IS ${active.nextRunAt}`,
+                ),
+              ),
+            )
+            .pipe(
+              withSql,
+              Effect.mapError((cause) =>
+                taskError("Could not reschedule event task.", { taskId: active.id, cause }),
+              ),
+            );
           yield* notifyChanged;
           return { task: active, threadId: null, dispatchFailed: false };
         }
@@ -1442,6 +1504,16 @@ export const layer = Layer.effect(
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
         const origin = yield* readWebhookOrigin;
+        const settleFire =
+          eventFire === null || eventSchedule === null
+            ? Effect.void
+            : EventTriggers.settleEventFire(
+                active.id,
+                eventSchedule,
+                eventFire,
+                iso(completedAt),
+                runSucceeded,
+              );
         const record = Effect.gen(function* () {
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
@@ -1460,7 +1532,10 @@ export const layer = Layer.effect(
             nextRunAt: consumeWake
               ? null
               : scheduleSource.schedule.type === "event"
-                ? yield* EventTriggers.pendingEventRunAt(task.id).pipe(withSql)
+                ? yield* settleFire.pipe(
+                    Effect.andThen(EventTriggers.pendingEventRunAt(task.id)),
+                    withSql,
+                  )
                 : nextRunAt(
                     scheduleSource,
                     scheduleSource.schedule.type === "once" ? startedAt : completedAt,

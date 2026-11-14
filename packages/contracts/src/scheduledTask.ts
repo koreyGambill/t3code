@@ -226,6 +226,8 @@ export const ScheduledTaskEventKind = Schema.Literals([
 export type ScheduledTaskEventKind = typeof ScheduledTaskEventKind.Type;
 
 export const MAX_EVENT_FILTER_THREADS = 50;
+export const DEFAULT_EVENT_MAX_RUNS_PER_HOUR = 12;
+export const DEFAULT_RUN_ENDED_COOLDOWN_SECONDS = 60;
 
 export const ScheduledTaskEventSchedule = Schema.Struct({
   type: Schema.Literal("event"),
@@ -244,13 +246,17 @@ export const ScheduledTaskEventSchedule = Schema.Struct({
   cooldownSeconds: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86_400 })),
   ).annotate({
-    description: "Min seconds between runs per thread or source; later events wait.",
+    description:
+      "Min seconds between runs per thread or source; later events wait. Default 60 for run_ended, else 0.",
   }),
   coalesceSeconds: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3600 })),
   ).annotate({
     description: "Wait this long after the first event, then run once with the latest.",
   }),
+  maxRunsPerHour: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 })),
+  ).annotate({ description: "Runs over this wait for the next hour. Default 12." }),
 }).annotate({
   description:
     "Run on a server event; the prompt gets it appended. The task's own turns and threads never trigger it.",
@@ -508,6 +514,13 @@ const EVENT_LABELS: Record<ScheduledTaskEventKind, string> = {
   thread_settled: "When a thread settles",
   status_transition: "When a status source changes",
 };
+
+export function eventCooldownSeconds(schedule: ScheduledTaskEventSchedule): number {
+  return (
+    schedule.cooldownSeconds ??
+    (schedule.event === "run_ended" ? DEFAULT_RUN_ENDED_COOLDOWN_SECONDS : 0)
+  );
+}
 
 export function scheduledTaskEventLabel(schedule: ScheduledTaskEventSchedule): string {
   return EVENT_LABELS[schedule.event];

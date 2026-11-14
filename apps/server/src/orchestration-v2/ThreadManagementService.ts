@@ -534,6 +534,8 @@ export interface ThreadManagementServiceShape {
   readonly streamStoredEvents: Orchestrator.OrchestratorV2["Service"]["streamStoredEvents"];
   readonly streamStoredEventsFrom: Orchestrator.OrchestratorV2["Service"]["streamStoredEventsFrom"];
   readonly streamDomainEvents: Orchestrator.OrchestratorV2["Service"]["streamDomainEvents"];
+  readonly streamDomainEventsFrom: Orchestrator.OrchestratorV2["Service"]["streamDomainEventsFrom"];
+  readonly latestDomainEventSequence: Orchestrator.OrchestratorV2["Service"]["latestDomainEventSequence"];
 }
 
 export class ThreadManagementService extends Context.Service<
@@ -1857,6 +1859,8 @@ const make = Effect.gen(function* () {
     streamStoredEvents: orchestrator.streamStoredEvents,
     streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
     streamDomainEvents: orchestrator.streamDomainEvents,
+    streamDomainEventsFrom: orchestrator.streamDomainEventsFrom,
+    latestDomainEventSequence: orchestrator.latestDomainEventSequence,
   });
 });
 

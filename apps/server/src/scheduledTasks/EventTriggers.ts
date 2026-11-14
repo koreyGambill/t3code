@@ -1,4 +1,6 @@
 import {
+  DEFAULT_EVENT_MAX_RUNS_PER_HOUR,
+  eventCooldownSeconds,
   isListedThreadLineage,
   type OrchestrationV2DomainEvent,
   type ScheduledTaskEventKind,
@@ -14,9 +16,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { StatusSourceTransition } from "../statusSources/StatusSources.ts";
 
 const TERMINAL_RUN = new Set(["completed", "failed", "cancelled", "interrupted", "rolled_back"]);
+// A rollback rewrites an old run's status; it is not a turn ending.
+const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const TERMINAL_SUBAGENT = new Set(["completed", "failed", "cancelled", "interrupted"]);
 // Dedupe keys outlive the cooldown by this much, so a replayed terminal update cannot fire twice.
 const SUBJECT_RETENTION_MS = 24 * 60 * 60 * 1_000;
+const HOUR_MS = 60 * 60 * 1_000;
+// Replayed after downtime, older events would fire stale runs; wakes re-check state instead.
+const EVENT_FACT_MAX_AGE_MS = HOUR_MS;
+const FAILED_FIRE_RETRY_MS = 60_000;
 
 export interface EventFact {
   readonly kind: ScheduledTaskEventKind;
@@ -27,6 +35,7 @@ export interface EventFact {
   /** The thread's project and parent, when the event carries them. */
   readonly thread?: { readonly projectId: string; readonly parentId: string | null };
   readonly runUserMessageId?: string;
+  readonly runOrdinal?: number;
   readonly statusSource?: string;
   readonly toState?: string;
   readonly detail: string;
@@ -43,7 +52,7 @@ const isoAfter = (value: string, ms: number) =>
 
 export function factFromDomainEvent(event: OrchestrationV2DomainEvent): EventFact | null {
   const occurredAt = iso(event.occurredAt);
-  if (event.type === "run.updated" && TERMINAL_RUN.has(event.payload.status)) {
+  if (event.type === "run.updated" && ENDED_RUN.has(event.payload.status)) {
     const run = event.payload;
     return {
       kind: "run_ended",
@@ -51,6 +60,7 @@ export function factFromDomainEvent(event: OrchestrationV2DomainEvent): EventFac
       key: `run:${run.id}`,
       threadId: run.threadId,
       runUserMessageId: run.userMessageId,
+      runOrdinal: run.ordinal,
       detail: `A turn ended (${run.status}) on thread ${run.threadId}.`,
       occurredAt,
     };
@@ -135,12 +145,15 @@ const loadThreadContext = Effect.fn("ScheduledTaskEventTriggers.loadThreadContex
   const start = fact.thread?.parentId ?? null;
   const [row] =
     fact.thread === undefined
-      ? yield* sql<{ project_id: string; parent_id: string | null }>`
+      ? yield* sql<{ project_id: string; parent_id: string | null; listed: number }>`
           SELECT project_id, COALESCE(json_extract(payload_json, '$.lineage.parentThreadId'),
-            json_extract(payload_json, '$.delegatedFrom.threadId')) AS parent_id
+            json_extract(payload_json, '$.delegatedFrom.threadId')) AS parent_id,
+            COALESCE(json_extract(payload_json, '$.lineage.relationshipToParent'), '') <> 'subagent'
+              AND COALESCE(json_extract(payload_json, '$.lineage.sideChat'), 0) = 0 AS listed
           FROM orchestration_v2_projection_threads WHERE thread_id = ${fact.threadId}`
-      : [{ project_id: fact.thread.projectId, parent_id: start }];
-  if (row === undefined) return null;
+      : [{ project_id: fact.thread.projectId, parent_id: start, listed: 1 }];
+  // Subagents and side chats live inside their parent's view, so they trigger nothing.
+  if (row === undefined || row.listed !== 1) return null;
   const ancestors =
     row.parent_id === null
       ? []
@@ -177,16 +190,23 @@ export const recordEventFact = Effect.fn("ScheduledTaskEventTriggers.recordEvent
 ) {
   const sql = yield* SqlClient.SqlClient;
   if (candidates.length === 0) return [];
+  const nowIso = iso(now);
+  if (fact.occurredAt < isoAfter(nowIso, -EVENT_FACT_MAX_AGE_MS)) return [];
   const thread = fact.threadId === null ? null : yield* loadThreadContext(fact);
   const matching = candidates.filter((task) => matchesEventSchedule(task.schedule, fact, thread));
   if (matching.length === 0) return [];
+  // A late update for a run that is no longer the thread's latest is not a turn ending now.
+  if (fact.runOrdinal !== undefined) {
+    const newer = yield* sql`SELECT 1 FROM orchestration_v2_projection_runs
+      WHERE thread_id = ${fact.threadId} AND ordinal > ${fact.runOrdinal} LIMIT 1`;
+    if (newer.length > 0) return [];
+  }
   const [origin] =
     fact.runUserMessageId === undefined
       ? []
       : yield* sql<{ task_id: string | null }>`
           SELECT json_extract(payload_json, '$.scheduledTaskId') AS task_id
           FROM orchestration_v2_projection_messages WHERE message_id = ${fact.runUserMessageId}`;
-  const nowIso = iso(now);
   const lineage = thread?.lineage ?? [];
   const moved: ScheduledTaskId[] = [];
   for (const task of matching) {
@@ -211,7 +231,7 @@ export const recordEventFact = Effect.fn("ScheduledTaskEventTriggers.recordEvent
         const cooldownDue =
           row?.last_fired_at == null
             ? nowIso
-            : isoAfter(row.last_fired_at, (task.schedule.cooldownSeconds ?? 0) * 1_000);
+            : isoAfter(row.last_fired_at, eventCooldownSeconds(task.schedule) * 1_000);
         const dueAt = row?.due_at ?? (coalesceDue > cooldownDue ? coalesceDue : cooldownDue);
         const event = encodeStoredEvent({ detail: fact.detail, occurredAt: fact.occurredAt });
         yield* sql`INSERT INTO scheduled_task_event_subjects
@@ -225,7 +245,7 @@ export const recordEventFact = Effect.fn("ScheduledTaskEventTriggers.recordEvent
             AND (next_run_at IS NULL OR next_run_at > ${dueAt})`;
         const retention = Math.max(
           SUBJECT_RETENTION_MS,
-          (task.schedule.cooldownSeconds ?? 0) * 1_000,
+          eventCooldownSeconds(task.schedule) * 1_000,
         );
         yield* sql`DELETE FROM scheduled_task_event_subjects
           WHERE task_id = ${task.id} AND owned = 0 AND due_at IS NULL
@@ -238,39 +258,58 @@ export const recordEventFact = Effect.fn("ScheduledTaskEventTriggers.recordEvent
   return moved;
 });
 
-/** Thread and task wakes are due as soon as the event they wait on happens. */
-export const dueWakesForEvent = Effect.fn("ScheduledTaskEventTriggers.dueWakesForEvent")(function* (
+/**
+ * Thread and task wakes are due as soon as the event they wait on happens. The write always changes
+ * next_run_at, so a scheduler pass that read the wake as unmet cannot clear it with a stale guard.
+ */
+// Untraced: runs for every domain event, and the reactor's handler already owns the span.
+export const dueWakesForEvent = Effect.fnUntraced(function* (
   event: OrchestrationV2DomainEvent,
   now: DateTime.DateTime,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const nowIso = iso(now);
+  const due = sql`CASE WHEN next_run_at IS ${nowIso} THEN ${isoAfter(nowIso, 1)} ELSE ${nowIso} END`;
   if (event.type === "run.updated" && TERMINAL_RUN.has(event.payload.status)) {
-    return yield* sql`UPDATE scheduled_tasks SET next_run_at = ${nowIso}
+    return yield* sql`UPDATE scheduled_tasks SET next_run_at = ${due}
         WHERE enabled = 1
           AND json_extract(schedule_json, '$.wakeWhen.type') = 'thread_finished'
           AND json_extract(schedule_json, '$.wakeWhen.threadId') = ${event.payload.threadId}
-          AND (next_run_at IS NULL OR next_run_at > ${nowIso})
         RETURNING task_id`;
   }
   if (event.type === "subagent.updated" && TERMINAL_SUBAGENT.has(event.payload.status)) {
-    return yield* sql`UPDATE scheduled_tasks SET next_run_at = ${nowIso}
+    return yield* sql`UPDATE scheduled_tasks SET next_run_at = ${due}
         WHERE enabled = 1 AND thread_id = ${event.payload.threadId}
           AND json_extract(schedule_json, '$.wakeWhen.type') = 'task_finished'
-          AND (next_run_at IS NULL OR next_run_at > ${nowIso})
         RETURNING task_id`;
   }
   return [];
 });
 
-/** Takes the earliest due event for a run; its subject's cooldown starts now. */
-export const claimDueEvent = Effect.fn("ScheduledTaskEventTriggers.claimDueEvent")(function* (
+export interface EventFire {
+  readonly subject: string;
+  readonly key: string;
+  readonly prompt: string;
+}
+
+/**
+ * The earliest due event, without consuming it: `settleEventFire` does that once dispatch is known.
+ * Each attempt counts toward the hourly cap; over the cap, `cappedUntil` says when the next may run.
+ */
+export const peekDueEvent = Effect.fn("ScheduledTaskEventTriggers.peekDueEvent")(function* (
   taskId: ScheduledTaskId,
+  schedule: ScheduledTaskEventSchedule,
   nowIso: string,
 ) {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
+      const hourAgo = isoAfter(nowIso, -HOUR_MS);
+      yield* sql`DELETE FROM scheduled_task_event_fires
+        WHERE task_id = ${taskId} AND fired_at <= ${hourAgo}`;
+      const fires = yield* sql<{ fired_at: string }>`SELECT fired_at FROM scheduled_task_event_fires
+        WHERE task_id = ${taskId} ORDER BY fired_at`;
+      const cap = schedule.maxRunsPerHour ?? DEFAULT_EVENT_MAX_RUNS_PER_HOUR;
       const [row] = yield* sql<{
         subject: string;
         event_key: string;
@@ -279,19 +318,50 @@ export const claimDueEvent = Effect.fn("ScheduledTaskEventTriggers.claimDueEvent
       }>`SELECT subject, event_key, event_json, event_count FROM scheduled_task_event_subjects
         WHERE task_id = ${taskId} AND due_at IS NOT NULL AND due_at <= ${nowIso}
         ORDER BY due_at, subject LIMIT 1`;
-      if (row === undefined) return null;
-      yield* sql`UPDATE scheduled_task_event_subjects
-        SET due_at = NULL, event_key = NULL, event_json = NULL, event_count = 0,
-          last_event_key = ${row.event_key}, last_fired_at = ${nowIso}
-        WHERE task_id = ${taskId} AND subject = ${row.subject}`;
+      if (row === undefined) return { fire: null, cappedUntil: null };
+      const oldest = fires[fires.length - cap];
+      if (fires.length >= cap && oldest !== undefined) {
+        return { fire: null, cappedUntil: isoAfter(oldest.fired_at, HOUR_MS) };
+      }
+      yield* sql`INSERT INTO scheduled_task_event_fires (task_id, fired_at) VALUES (${taskId}, ${nowIso})`;
       const event = decodeStoredEvent(row.event_json);
-      return {
+      const fire: EventFire = {
         subject: row.subject,
         key: row.event_key,
         prompt: event._tag === "Some" ? eventPromptSuffix(event.value, row.event_count) : "",
       };
+      return { fire, cappedUntil: null };
     }),
   );
+});
+
+/**
+ * After dispatch: a delivered event starts its subject's cooldown, and one that arrived meanwhile
+ * waits for it. A failed dispatch keeps the event and retries after a minute.
+ */
+export const settleEventFire = Effect.fn("ScheduledTaskEventTriggers.settleEventFire")(function* (
+  taskId: ScheduledTaskId,
+  schedule: ScheduledTaskEventSchedule,
+  fire: EventFire,
+  nowIso: string,
+  delivered: boolean,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  if (!delivered) {
+    const retryAt = isoAfter(nowIso, FAILED_FIRE_RETRY_MS);
+    yield* sql`UPDATE scheduled_task_event_subjects
+      SET due_at = MAX(due_at, ${retryAt})
+      WHERE task_id = ${taskId} AND subject = ${fire.subject} AND due_at IS NOT NULL`;
+    return;
+  }
+  const cooledAt = isoAfter(nowIso, eventCooldownSeconds(schedule) * 1_000);
+  yield* sql`UPDATE scheduled_task_event_subjects SET
+      due_at = CASE WHEN event_key = ${fire.key} THEN NULL ELSE MAX(due_at, ${cooledAt}) END,
+      event_json = CASE WHEN event_key = ${fire.key} THEN NULL ELSE event_json END,
+      event_count = CASE WHEN event_key = ${fire.key} THEN 0 ELSE event_count END,
+      event_key = CASE WHEN event_key = ${fire.key} THEN NULL ELSE event_key END,
+      last_event_key = ${fire.key}, last_fired_at = ${nowIso}
+    WHERE task_id = ${taskId} AND subject = ${fire.subject}`;
 });
 
 export const pendingEventRunAt = Effect.fn("ScheduledTaskEventTriggers.pendingEventRunAt")(
@@ -324,3 +394,28 @@ export const clearPendingEvents = Effect.fn("ScheduledTaskEventTriggers.clearPen
       WHERE task_id = ${taskId} AND due_at IS NOT NULL`;
   },
 );
+
+export const readEventCursor = Effect.fn("ScheduledTaskEventTriggers.readEventCursor")(function* (
+  eventType: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const [row] = yield* sql<{ sequence: number }>`
+    SELECT sequence FROM scheduled_task_event_cursors WHERE event_type = ${eventType}`;
+  return row?.sequence;
+});
+
+export const initEventCursor = Effect.fn("ScheduledTaskEventTriggers.initEventCursor")(function* (
+  eventType: string,
+  sequence: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO scheduled_task_event_cursors (event_type, sequence) VALUES (${eventType}, ${sequence})
+    ON CONFLICT (event_type) DO NOTHING`;
+});
+
+// Untraced: runs for every reactor event, inside the handler's span.
+export const saveEventCursor = Effect.fnUntraced(function* (eventType: string, sequence: number) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO scheduled_task_event_cursors (event_type, sequence) VALUES (${eventType}, ${sequence})
+    ON CONFLICT (event_type) DO UPDATE SET sequence = MAX(sequence, excluded.sequence)`;
+});

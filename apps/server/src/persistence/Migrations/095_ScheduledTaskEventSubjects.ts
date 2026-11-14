@@ -18,4 +18,15 @@ export default Effect.gen(function* () {
   )`;
   yield* sql`CREATE INDEX idx_scheduled_task_event_subjects_due
     ON scheduled_task_event_subjects(task_id, due_at) WHERE due_at IS NOT NULL`;
+  // Attempts in the last hour, for the per-task run cap.
+  yield* sql`CREATE TABLE scheduled_task_event_fires (
+    task_id TEXT NOT NULL REFERENCES scheduled_tasks(task_id) ON DELETE CASCADE,
+    fired_at TEXT NOT NULL
+  )`;
+  yield* sql`CREATE INDEX idx_scheduled_task_event_fires ON scheduled_task_event_fires(task_id, fired_at)`;
+  // Last processed sequence per event type, so the reactor resumes after a restart.
+  yield* sql`CREATE TABLE scheduled_task_event_cursors (
+    event_type TEXT PRIMARY KEY,
+    sequence INTEGER NOT NULL
+  )`;
 });

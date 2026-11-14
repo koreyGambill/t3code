@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 const MINUTE_MS = 60_000;
+export const EVENT_WAKE_BACKSTOP_MS = 5 * MINUTE_MS;
 
 function parseTimeOfDay(value: string): { hour: number; minute: number } | null {
   const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
@@ -18,10 +19,10 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
-  // Event triggers and event wakes have no clock time; events set their next run.
-  if (schedule.type === "webhook" || schedule.type === "event" || isEventDrivenWake(schedule)) {
-    return null;
-  }
+  // Event triggers have no clock time; events set their next run.
+  if (schedule.type === "webhook" || schedule.type === "event") return null;
+  // Thread and task wakes fire on their event; this slow check backs up a missed one.
+  if (isEventDrivenWake(schedule)) return DateTime.addDuration(from, EVENT_WAKE_BACKSTOP_MS);
   if (schedule.type === "once") {
     const runAt = DateTime.make(schedule.runAt);
     return Option.isSome(runAt) &&
@@ -78,7 +79,8 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
       a.statusSource === b.statusSource &&
       a.toState === b.toState &&
       (a.cooldownSeconds ?? 0) === (b.cooldownSeconds ?? 0) &&
-      (a.coalesceSeconds ?? 0) === (b.coalesceSeconds ?? 0)
+      (a.coalesceSeconds ?? 0) === (b.coalesceSeconds ?? 0) &&
+      a.maxRunsPerHour === b.maxRunsPerHour
     );
   }
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);

@@ -590,6 +590,12 @@ export interface OrchestratorV2Shape {
     readonly eventType?: OrchestrationV2DomainEvent["type"];
   }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamDomainEvents: Stream.Stream<OrchestrationV2DomainEvent, OrchestratorV2Error>;
+  /** Unbounded, for workers that resume from a stored cursor. */
+  readonly streamDomainEventsFrom: (input: {
+    readonly eventType: OrchestrationV2DomainEvent["type"];
+    readonly afterSequence: number;
+  }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
+  readonly latestDomainEventSequence: Effect.Effect<number, OrchestratorV2Error>;
 }
 
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
@@ -17084,6 +17090,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     streamStoredEventsFrom: (input) =>
       eventSink.stream({ ...input, bounded: true }).pipe(
+        Stream.mapError(
+          (cause) =>
+            new OrchestratorDomainEventStreamError({
+              cause,
+            }),
+        ),
+      ),
+    latestDomainEventSequence: eventSink
+      .latestSequence()
+      .pipe(Effect.mapError((cause) => new OrchestratorDomainEventStreamError({ cause }))),
+    streamDomainEventsFrom: (input) =>
+      eventSink.stream(input).pipe(
         Stream.mapError(
           (cause) =>
             new OrchestratorDomainEventStreamError({
